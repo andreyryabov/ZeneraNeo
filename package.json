@@ -40,6 +40,8 @@
     "check:node": "node -e \"if (+process.versions.node.split('.')[0] < 24) { console.error('Node >=24 required (running ' + process.version + '). Run: nvm use'); process.exit(1); }\"",
     "predemo": "npm run check:node",
     "demo": "node examples/demo.ts",
+    "predemo:fanout": "npm run check:node",
+    "demo:fanout": "node examples/fanout.ts",
     "prepublishOnly": "npm run clean && npm run build"
   },
   "dependencies": {

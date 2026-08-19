@@ -1,22 +1,15 @@
-import { readFile } from 'node:fs/promises';
-import boxen from 'boxen';
-import pc from 'picocolors';
 import { z } from 'zod';
 import { AgentRunner } from '../src/runner.ts';
-import type { AgentEvent, RunStream } from '../src/events.ts';
 import { InMemoryMemoryStore } from '../src/memory.ts';
 import { createModel } from '../src/models/factory.ts';
 import { StaticSkillProvider } from '../src/skills.ts';
 import { exportRun, InMemoryPayloadStore, importRun } from '../src/payload.ts';
-import { turns, type AgentState, type RunResult } from '../src/state.ts';
+import { turns, type AgentState } from '../src/state.ts';
 import { tool } from '../src/types.ts';
+// Terminal rendering — the harness every example shares. See ./ui.ts.
+import { banner, box, code, dataUrl, loadEnv, stats, step, trace } from './ui.ts';
 
-// Load OPENAI_API_KEY (and friends) from the repo-root .env, if present.
-try {
-    process.loadEnvFile(new URL('../.env', import.meta.url));
-} catch {
-    console.warn('no .env found — copy .env.example to .env');
-}
+loadEnv();
 
 // ---------------------------------------------------------------------------
 // Demo
@@ -71,234 +64,6 @@ const travelSkills = new StaticSkillProvider(
     ],
     'travel',
 );
-
-// ---------------------------------------------------------------------------
-// Output helpers
-// ---------------------------------------------------------------------------
-
-/** Numbered section header, so each demo step is easy to spot. */
-function step(n: number, title: string): void {
-    console.log(`\n${pc.bgBlue(pc.black(` ${n} `))} ${pc.bold(pc.blue(title))}`);
-}
-
-/** Dimmed one-liner for run mechanics (tool calls, handoffs, branches). */
-function line(icon: string, text: string): void {
-    console.log(pc.dim(`  ${icon} ${text}`));
-}
-
-/** Width available to boxes and streamed text, minus the 2-column left margin.
- *  `columns` is undefined when stdout is piped, so `$COLUMNS` is the fallback. */
-const COLS = process.stdout.columns || Number(process.env.COLUMNS) || 100;
-const WIDTH = Math.max(40, Math.min(COLS - 4, 96));
-
-/**
- * Word-wrapping writer for streamed deltas: text still appears token by token,
- * but every line is prefixed with a gutter and broken at `width` instead of
- * relying on the terminal's soft wrap, which would ignore the gutter.
- */
-function wrapWriter(gutter: string, width: number, paint: (s: string) => string) {
-    let col = 0;
-    // The current word, held back until we know whether it fits on this line.
-    let word = '';
-    let started = false;
-    // True at the start of a line the model asked for, false after a soft wrap:
-    // real indentation is kept, wrap-induced leading space is not.
-    let ownLine = true;
-    const newline = (hard: boolean): void => {
-        process.stdout.write(`\n${gutter}`);
-        col = 0;
-        ownLine = hard;
-    };
-    const flushWord = (): void => {
-        if (!word) {
-            return;
-        }
-        if (col > 0 && col + word.length > width) {
-            newline(false);
-        }
-        process.stdout.write(paint(word));
-        col += word.length;
-        word = '';
-    };
-    return {
-        write(text: string): void {
-            if (!started) {
-                process.stdout.write(gutter);
-                started = true;
-            }
-            for (const ch of text) {
-                if (ch === '\n') {
-                    flushWord();
-                    newline(true);
-                } else if (ch === ' ' || ch === '\t') {
-                    flushWord();
-                    // Keep the model's own indentation; drop the space that a
-                    // soft wrap would otherwise push to the next line.
-                    if (col > 0 || ownLine) {
-                        process.stdout.write(ch);
-                        col += ch === '\t' ? 4 : 1;
-                    }
-                } else {
-                    word += ch;
-                    // A token longer than the line gets a hard break.
-                    if (word.length >= width) {
-                        flushWord();
-                    }
-                }
-            }
-        },
-        end(): void {
-            flushWord();
-            if (started) {
-                process.stdout.write('\n');
-            }
-        },
-    };
-}
-
-/**
- * Consumes a run's full event stream, printing every event, and returns the
- * result. Deltas stream into a gutter; every checkpoint gets its own row.
- */
-async function trace<T>(stream: RunStream<T>): Promise<RunResult<T>> {
-    // Which kind of delta is mid-flight, so a checkpoint can close it first.
-    let open: 'text' | 'thinking' | null = null;
-    let writer: ReturnType<typeof wrapWriter> | null = null;
-    const flush = (): void => {
-        writer?.end();
-        writer = null;
-        open = null;
-    };
-    const delta = (kind: 'text' | 'thinking', text: string): void => {
-        if (open !== kind) {
-            flush();
-            if (kind === 'text') {
-                writer = wrapWriter(pc.dim('  │ '), WIDTH - 4, (s) => s);
-            } else {
-                // Reasoning is labelled and coloured so it never reads as part
-                // of the answer, which shares the gutter directly below it.
-                console.log(pc.yellow(`  ✻ ${pc.italic('thinking')}`));
-                writer = wrapWriter(pc.yellow('  ┊ '), WIDTH - 4, (s) => pc.yellow(pc.italic(s)));
-            }
-            open = kind;
-        }
-        writer?.write(text);
-    };
-    /** Branch events are tagged; the trunk is not. */
-    const where = (e: AgentEvent): string => (e.branch ? pc.magenta(`[${e.branch.name}] `) : '');
-
-    for await (const event of stream) {
-        if (event.type !== 'text_delta' && event.type !== 'thinking_delta') {
-            flush();
-        }
-        const at = where(event);
-        switch (event.type) {
-            // --- stream deltas -------------------------------------------------
-            case 'thinking_delta':
-                delta('thinking', event.delta);
-                break;
-            case 'text_delta':
-                delta('text', event.delta);
-                break;
-            case 'tool_call_detected':
-                line('◇', `${at}${pc.bold(event.name)} detected`);
-                break;
-            case 'tool_args_delta':
-                // Arg fragments arrive token by token; the assembled call shows
-                // up in `before_tool_call`, so they are dropped here.
-                break;
-            // --- checkpoints ---------------------------------------------------
-            case 'run_created':
-                line('○', `${at}run ${event.runId} · agent ${pc.cyan(event.agent)}`);
-                break;
-            case 'before_llm_call':
-                line('↑', `${at}llm call · ${pc.cyan(event.agent)}`);
-                break;
-            case 'after_llm_call':
-                line(
-                    '↓',
-                    `${at}${event.node.model} · ${event.node.stopReason} · ` +
-                        `${event.node.usage.inputTokens} in / ${event.node.usage.outputTokens} out` +
-                        (event.node.usage.reasoningTokens
-                            ? ` (${event.node.usage.reasoningTokens} reasoning)`
-                            : ''),
-                );
-                break;
-            case 'before_tool_call':
-                line('→', `${at}${pc.bold(event.call.name)}(${event.call.args.preview})`);
-                break;
-            case 'after_tool_call':
-                line(
-                    event.node.isError ? '✕' : '←',
-                    `${at}${pc.bold(event.node.name)}: ${event.node.result.preview}`,
-                );
-                break;
-            case 'handoff':
-                line('⇄', `${at}handoff ${pc.cyan(event.from)} → ${pc.cyan(event.to)}`);
-                break;
-            case 'before_fork':
-                line(
-                    '⑂',
-                    `${at}fork ${event.node.branches.map((b) => b.name).join(', ')}`,
-                );
-                break;
-            case 'branch_started':
-                line('├', `${at}branch ${pc.magenta(event.child.name)} (${event.child.runId})`);
-                break;
-            case 'branch_finished':
-                line('┤', `${at}branch ${pc.magenta(event.child.name)} ${event.status}`);
-                break;
-            case 'after_join':
-                line('⑃', `${at}join ${event.node.results.length} branches`);
-                break;
-            case 'run_finished':
-                line('●', `${at}run finished`);
-                break;
-        }
-    }
-    flush();
-    return stream.final();
-}
-
-/** Boxed block for anything the user is meant to actually read. */
-function box(title: string, body: string): void {
-    console.log(
-        boxen(body.trim(), {
-            title,
-            padding: { top: 0, bottom: 0, left: 1, right: 1 },
-            margin: { top: 1, bottom: 0, left: 2, right: 0 },
-            borderStyle: 'round',
-            borderColor: 'cyan',
-            width: WIDTH,
-        }),
-    );
-}
-
-/** Compact `key=value` footer, e.g. token usage. */
-function stats(entries: Record<string, unknown>): void {
-    const line = Object.entries(entries)
-        .map(([k, v]) => `${pc.dim(k)}=${pc.bold(String(v))}`)
-        .join(pc.dim('  ·  '));
-    console.log(`  ${line}`);
-}
-
-/**
- * Verbatim block for pre-formatted text such as JSON. `box()` cannot be used:
- * its wrapper trims each line, which would flatten the indentation.
- */
-function code(title: string, body: string): void {
-    console.log(`\n  ${pc.dim(`┌─ ${title}`)}`);
-    for (const l of body.split('\n')) {
-        console.log(`  ${pc.dim('│')} ${l}`);
-    }
-    console.log(`  ${pc.dim('└─')}`);
-}
-
-/** Inline a local image as a base64 data URL. */
-async function dataUrl(path: string, mimeType: string): Promise<string> {
-    const bytes = await readFile(new URL(path, import.meta.url));
-    return `data:${mimeType};base64,${bytes.toString('base64')}`;
-}
 
 async function test() {
     const model = createModel({
@@ -355,14 +120,7 @@ async function test() {
         handoffs: [planner],
     });
 
-    console.log(
-        boxen(`${pc.bold('ZeneraNeo demo')}\n${pc.dim(`model ${model.id}`)}`, {
-            padding: { top: 0, bottom: 0, left: 2, right: 2 },
-            borderStyle: 'double',
-            borderColor: 'magenta',
-            textAlignment: 'center',
-        }),
-    );
+    banner('ZeneraNeo demo', `model ${model.id}`);
 
     // Every step below drives its run through `trace()`, which iterates the
     // handle's event stream — token deltas plus a checkpoint for every llm
