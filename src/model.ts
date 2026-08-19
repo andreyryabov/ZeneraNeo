@@ -46,13 +46,24 @@ function toStopReason(finish: string | null | undefined): StopReason {
     }
 }
 
+/**
+ * Provider-specific knobs. Reasoning effort is deliberately *not* part of
+ * `ModelRequest`: every provider spells it differently (and most models ignore
+ * it), so it belongs to the concrete adapter rather than the `Model` contract.
+ */
+export interface OpenAIModelOptions {
+    reasoningEffort?: OpenAI.ReasoningEffort;
+}
+
 export class OpenAIModel implements Model {
     readonly id: string;
     readonly #client: OpenAI;
+    readonly #reasoningEffort: OpenAI.ReasoningEffort | undefined;
 
-    constructor(id = 'gpt-4o-mini', client = new OpenAI()) {
+    constructor(id: string, client = new OpenAI(), options: OpenAIModelOptions = {}) {
         this.id = id;
         this.#client = client;
+        this.#reasoningEffort = options.reasoningEffort;
     }
 
     async generate(req: ModelRequest): Promise<ModelResponse> {
@@ -162,6 +173,7 @@ export class OpenAIModel implements Model {
         return {
             model: this.id,
             messages,
+            reasoning_effort: this.#reasoningEffort,
             tools: req.tools.length
                 ? req.tools.map((t) => ({
                       type: 'function' as const,

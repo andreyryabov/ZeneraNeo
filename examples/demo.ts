@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import boxen from 'boxen';
+import OpenAI from 'openai';
 import pc from 'picocolors';
 import { z } from 'zod';
 import { AgentRunner } from '../src/runner.ts';
@@ -297,7 +298,7 @@ async function dataUrl(path: string, mimeType: string): Promise<string> {
 }
 
 async function test() {
-    const model = new OpenAIModel('gpt-5.4-mini');
+    const model = new OpenAIModel('gpt-5.4-mini', new OpenAI(), { reasoningEffort: 'medium' });
 
     // The runner owns the shared services (model, payload store, memory stores,
     // skill providers) that every agent declared on it can draw from by name.
