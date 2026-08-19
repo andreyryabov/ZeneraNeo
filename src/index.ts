@@ -3,6 +3,7 @@ export * from './events.ts';
 export * from './ids.ts';
 export * from './memory.ts';
 export * from './model.ts';
+export * from './models/index.ts';
 export * from './payload.ts';
 export * from './runner.ts';
 export * from './services.ts';

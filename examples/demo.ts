@@ -1,12 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import boxen from 'boxen';
-import OpenAI from 'openai';
 import pc from 'picocolors';
 import { z } from 'zod';
 import { AgentRunner } from '../src/runner.ts';
 import type { AgentEvent, RunStream } from '../src/events.ts';
 import { InMemoryMemoryStore } from '../src/memory.ts';
-import { OpenAIModel } from '../src/model.ts';
+import { createModel } from '../src/models/factory.ts';
 import { StaticSkillProvider } from '../src/skills.ts';
 import { exportRun, InMemoryPayloadStore, importRun } from '../src/payload.ts';
 import { turns, type AgentState, type RunResult } from '../src/state.ts';
@@ -173,10 +172,14 @@ async function trace<T>(stream: RunStream<T>): Promise<RunResult<T>> {
     const delta = (kind: 'text' | 'thinking', text: string): void => {
         if (open !== kind) {
             flush();
-            writer =
-                kind === 'text'
-                    ? wrapWriter(pc.dim('  │ '), WIDTH - 4, (s) => s)
-                    : wrapWriter(pc.dim('  ┊ '), WIDTH - 4, pc.dim);
+            if (kind === 'text') {
+                writer = wrapWriter(pc.dim('  │ '), WIDTH - 4, (s) => s);
+            } else {
+                // Reasoning is labelled and coloured so it never reads as part
+                // of the answer, which shares the gutter directly below it.
+                console.log(pc.yellow(`  ✻ ${pc.italic('thinking')}`));
+                writer = wrapWriter(pc.yellow('  ┊ '), WIDTH - 4, (s) => pc.yellow(pc.italic(s)));
+            }
             open = kind;
         }
         writer?.write(text);
@@ -298,7 +301,14 @@ async function dataUrl(path: string, mimeType: string): Promise<string> {
 }
 
 async function test() {
-    const model = new OpenAIModel('gpt-5.4-mini', new OpenAI(), { reasoningEffort: 'medium' });
+    const model = createModel({
+        model: 'gpt-5.4-mini',
+        api: 'responses',
+        reasoningEffort: 'medium',
+        // Without a summary the responses API emits reasoning *tokens* but no
+        // reasoning *text*, so no `thinking_delta` would ever reach `trace()`.
+        reasoningSummary: 'auto',
+    });
 
     // The runner owns the shared services (model, payload store, memory stores,
     // skill providers) that every agent declared on it can draw from by name.

@@ -45,8 +45,9 @@ Scope: `experiments/src.js/agent/agent.ts` rewrite
 
 ## 2. Non-goals
 
-- Provider streaming beyond OpenAI chat completions (the `Model` interface
-  defines the stream contract; only `OpenAIModel` implements it initially).
+- Provider streaming beyond OpenAI (the `Model` interface defines the stream
+  contract; only `OpenAIModel` (chat completions) and `OpenAIResponsesModel`
+  (responses) implement it initially).
 - Automatic context compaction policy (only the mechanism: `CompactionNode`).
 - Concrete `MemoryStore` / `SkillProvider` backends (pgvector, filesystem, …):
   this document specifies the interfaces and how they touch the trajectory; a
