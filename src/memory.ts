@@ -149,23 +149,7 @@ export class InMemoryMemoryStore implements MemoryStore {
     }
 
     async search(scope: string, q: MemoryQuery): Promise<MemoryHit[]> {
-        const limit = q.limit ?? 8;
-        const terms = tokenize(q.text ?? '');
-        const hits: MemoryHit[] = [];
-        for (const rec of this.#space(scope).values()) {
-            if (q.kind && rec.kind !== q.kind) {
-                continue;
-            }
-            if (q.filter && !matches(rec.metadata, q.filter)) {
-                continue;
-            }
-            const score = terms.length ? overlap(terms, tokenize(rec.text)) : 1;
-            if (score <= 0 || (q.minScore !== undefined && score < q.minScore)) {
-                continue;
-            }
-            hits.push({ record: rec, score });
-        }
-        return hits.sort((a, b) => b.score - a.score).slice(0, limit);
+        return rankMemories(this.#space(scope).values(), q);
     }
 
     async get(scope: string, id: string): Promise<MemoryRecord | undefined> {
@@ -239,6 +223,31 @@ export class InMemoryMemoryStore implements MemoryStore {
         this.#scopes.set(scope, s);
         return s;
     }
+}
+
+/**
+ * Filtering plus token-overlap scoring, shared by the backends that have no
+ * embeddings of their own. A vector store ignores this and ranks in the
+ * database instead — the kernel only ever sees `MemoryHit[]`.
+ */
+export function rankMemories(records: Iterable<MemoryRecord>, q: MemoryQuery): MemoryHit[] {
+    const limit = q.limit ?? 8;
+    const terms = tokenize(q.text ?? '');
+    const hits: MemoryHit[] = [];
+    for (const rec of records) {
+        if (q.kind && rec.kind !== q.kind) {
+            continue;
+        }
+        if (q.filter && !matches(rec.metadata, q.filter)) {
+            continue;
+        }
+        const score = terms.length ? overlap(terms, tokenize(rec.text)) : 1;
+        if (score <= 0 || (q.minScore !== undefined && score < q.minScore)) {
+            continue;
+        }
+        hits.push({ record: rec, score });
+    }
+    return hits.sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
 function tokenize(v: string): string[] {

@@ -10,6 +10,18 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./payload-stores": {
+      "types": "./dist/payload-stores/index.d.ts",
+      "default": "./dist/payload-stores/index.js"
+    },
+    "./memory-stores": {
+      "types": "./dist/memory-stores/index.d.ts",
+      "default": "./dist/memory-stores/index.js"
+    },
+    "./skill-providers": {
+      "types": "./dist/skill-providers/index.d.ts",
+      "default": "./dist/skill-providers/index.js"
     }
   },
   "files": [
@@ -26,8 +38,6 @@
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "check:node": "node -e \"if (+process.versions.node.split('.')[0] < 24) { console.error('Node >=24 required (running ' + process.version + '). Run: nvm use'); process.exit(1); }\"",
-    "presmoke": "npm run check:node",
-    "smoke": "node src/smoke.ts",
     "predemo": "npm run check:node",
     "demo": "node examples/demo.ts",
     "prepublishOnly": "npm run clean && npm run build"

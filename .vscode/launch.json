@@ -12,16 +12,6 @@
       "skipFiles": ["<node_internals>/**"]
     },
     {
-      "name": "Smoke",
-      "type": "node",
-      "request": "launch",
-      "program": "${workspaceFolder}/src/smoke.ts",
-      "runtimeVersion": "24",
-      "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
-      "skipFiles": ["<node_internals>/**"]
-    },
-    {
       "name": "Current TS file",
       "type": "node",
       "request": "launch",

@@ -27,7 +27,11 @@ export interface Credentials {
  * options that do not apply to the chosen `api` are ignored.
  */
 export interface OpenAIModelSpec extends Credentials, OpenAIResponsesModelOptions {
-    provider?: 'openai';
+    /**
+     * Discriminator. Optional only for OpenAI, which is the default, so the
+     * common case stays `{ model: 'gpt-4o' }`.
+     */
+    kind?: 'openai';
     /** which OpenAI API to speak; defaults to chat completions */
     api?: 'chat' | 'responses';
     model: string;
@@ -35,11 +39,15 @@ export interface OpenAIModelSpec extends Credentials, OpenAIResponsesModelOption
     client?: OpenAI;
 }
 
-/** Grows into a union as providers (Google, Anthropic, …) are added. */
+/**
+ * Discriminated on `kind`, so it grows into
+ * `OpenAIModelSpec | AnthropicModelSpec | GeminiModelSpec | …` without any
+ * member having to know about the others, and `createModel` stays exhaustive.
+ */
 export type ModelSpec = OpenAIModelSpec;
 
 /**
- * Shorthand: `[provider[/api]:]model`, e.g. `gpt-4o`, `openai:gpt-4o`,
+ * Shorthand: `[kind[/api]:]model`, e.g. `gpt-4o`, `openai:gpt-4o`,
  * `openai/responses:o3`. Anything the shorthand cannot express (keys, base
  * urls, reasoning knobs) needs the object form.
  */
@@ -55,12 +63,11 @@ const OPENAI_ENV = { apiKeyEnv: 'OPENAI_API_KEY', baseURLEnv: 'OPENAI_BASE_URL' 
  */
 export function createModel(ref: ModelRef): Model {
     const spec = typeof ref === 'string' ? parseRef(ref) : ref;
-    const provider = spec.provider ?? 'openai';
-    switch (provider) {
+    switch (spec.kind ?? 'openai') {
         case 'openai':
             return createOpenAIModel(spec);
         default:
-            throw new TypeError(`unknown model provider: ${provider as string}`);
+            throw new TypeError(`unknown model kind: ${spec.kind as string}`);
     }
 }
 
@@ -95,16 +102,16 @@ function parseRef(ref: string): ModelSpec {
     if (colon < 0) {
         return { model: ref };
     }
-    const [provider, api] = ref.slice(0, colon).split('/');
+    const [kind, api] = ref.slice(0, colon).split('/');
     const model = ref.slice(colon + 1);
     if (!model) {
         throw new TypeError(`missing model id in "${ref}"`);
     }
-    if (provider !== 'openai') {
-        throw new TypeError(`unknown model provider "${provider}" in "${ref}"`);
+    if (kind !== 'openai') {
+        throw new TypeError(`unknown model kind "${kind}" in "${ref}"`);
     }
     if (api !== undefined && api !== 'chat' && api !== 'responses') {
         throw new TypeError(`unknown openai api "${api}" in "${ref}"`);
     }
-    return { provider, api, model };
+    return { kind, api, model };
 }
