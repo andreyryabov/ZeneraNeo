@@ -124,6 +124,13 @@ export interface RunnerOptions<TCtx = unknown> {
     joinPolicy?: JoinPolicy;
     /** use `Model.stream` when the model implements it (default: true) */
     stream?: boolean;
+    /**
+     * Store the exact request behind every `llm_call` node, so a finished run
+     * can be inspected (see `renderRunReport`) instead of guessed at. Off by
+     * default: it re-stores the whole projected transcript once per turn, which
+     * is quadratic in run length and defeats the point of a compact state.
+     */
+    recordRequests?: boolean;
     clock?: IdClock;
 }
 
@@ -161,6 +168,7 @@ export class AgentRunner<TCtx = unknown> {
     readonly #summarizer: Summarizer;
     readonly #joinPolicy: JoinPolicy;
     readonly #stream: boolean;
+    readonly #recordRequests: boolean;
     readonly #clock: IdClock;
 
     constructor(opts: RunnerOptions<TCtx> = {}) {
@@ -177,6 +185,7 @@ export class AgentRunner<TCtx = unknown> {
         this.#summarizer = opts.summarizer ?? structuralSummarizer;
         this.#joinPolicy = opts.joinPolicy ?? defaultJoinPolicy;
         this.#stream = opts.stream ?? true;
+        this.#recordRequests = opts.recordRequests ?? false;
         this.#clock = opts.clock ?? systemClock;
     }
 
@@ -310,14 +319,11 @@ export class AgentRunner<TCtx = unknown> {
                     const res = await call;
 
                     const before = state;
-                    state = await Kernel.applyLlmResponse(
-                        state,
-                        res,
-                        model.id,
-                        env,
+                    state = await Kernel.applyLlmResponse(state, res, model.id, env, {
                         digest,
-                        this.registry,
-                    );
+                        request: this.#recordRequests ? req : undefined,
+                        registry: this.registry,
+                    });
                     const node = appended(before, state).find((n) => n.type === 'llm_call');
                     if (node) {
                         yield tag(state, branch, { type: 'after_llm_call', state, node });

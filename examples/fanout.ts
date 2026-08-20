@@ -12,6 +12,7 @@ import {
     gantt,
     joinTable,
     loadEnv,
+    report,
     secs,
     stats,
     step,
@@ -152,6 +153,9 @@ async function main(): Promise<void> {
     const runner = new AgentRunner<AppCtx>({
         model,
         context: { tenant: 'acme' },
+        // Keep every request behind its `llm_call` node, so the HTML report
+        // written at the end can show exactly what each branch was sent.
+        recordRequests: true,
     });
 
     // The worker. It owns the slow tool and nothing else: no fork option, so it
@@ -264,6 +268,9 @@ async function main(): Promise<void> {
         outputTokens: result.usage.outputTokens,
         reasoningTokens: result.usage.reasoningTokens,
     });
+
+    step(5, 'Inspectable HTML report');
+    await report('fanout', result.state, runner.services.payloads, 'Fan-out · fleet audit');
     console.log();
 }
 

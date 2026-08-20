@@ -451,6 +451,17 @@ export function requestDigest(req: ModelRequest): string {
     );
 }
 
+/**
+ * A request as it goes onto an `llm_call` node: everything that shaped the
+ * call, minus the `signal`, which is machinery rather than content and is not
+ * JSON anyway. Pretty-printed, since the whole point of keeping it is that a
+ * human reads it later.
+ */
+export function serializeRequest(req: ModelRequest): string {
+    const { signal: _signal, ...rest } = req;
+    return JSON.stringify(rest, null, 2);
+}
+
 // ---------------------------------------------------------------------------
 // Advancing the state
 // ---------------------------------------------------------------------------
@@ -527,6 +538,16 @@ function parseForkArgs(raw: string): ForkArgs | string {
     };
 }
 
+/** What the driver knows about a model call that the response itself omits. */
+export interface LlmCallOptions<TCtx = unknown> {
+    /** stable fingerprint of the request, for replay divergence detection */
+    digest?: string;
+    /** the request as sent; stored as a payload on the node when given */
+    request?: ModelRequest;
+    /** needed to validate a `fork` call against the agent's declaration */
+    registry?: AgentRegistry<TCtx>;
+}
+
 /**
  * Appends the `llm_call` node (plus the nodes its tool calls imply) and moves
  * the phase on. Typed runs are resolved here too: `final_output` never reaches
@@ -537,9 +558,9 @@ export async function applyLlmResponse<TCtx>(
     res: ModelResponse,
     model: string,
     env: KernelEnv,
-    digest = '',
-    reg?: AgentRegistry<TCtx>,
+    opts: LlmCallOptions<TCtx> = {},
 ): Promise<AgentState> {
+    const reg = opts.registry;
     const b = begin(state, env);
     const toolCalls = await Promise.all(
         res.toolCalls.map(async (c) => ({
@@ -551,7 +572,8 @@ export async function applyLlmResponse<TCtx>(
     b.add<LlmCallNode>({
         type: 'llm_call',
         model,
-        requestDigest: digest,
+        requestDigest: opts.digest ?? (opts.request ? requestDigest(opts.request) : ''),
+        request: opts.request ? await put(env, serializeRequest(opts.request)) : undefined,
         text: await put(env, res.text),
         thinking: res.thinking ? await put(env, res.thinking) : undefined,
         toolCalls,

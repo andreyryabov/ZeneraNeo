@@ -1,6 +1,7 @@
 export * from './agent.ts';
 export * from './events.ts';
 export * from './ids.ts';
+export * from './inspect.ts';
 export * from './memory.ts';
 export * from './memory-stores/index.ts';
 export * from './model.ts';

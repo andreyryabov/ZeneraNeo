@@ -1,9 +1,10 @@
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import boxen from 'boxen';
 import pc from 'picocolors';
 import type { AgentEvent, RunStream } from '../src/events.ts';
+import { renderRunReport } from '../src/inspect.ts';
 import type { PayloadResolver } from '../src/payload.ts';
-import type { RunResult } from '../src/state.ts';
+import type { AgentState, RunResult } from '../src/state.ts';
 import type { JoinNode } from '../src/trajectory.ts';
 
 // ---------------------------------------------------------------------------
@@ -95,6 +96,32 @@ export const secs = (ms: number): string => `${(ms / 1000).toFixed(1)}s`;
 export async function dataUrl(path: string, mimeType: string): Promise<string> {
     const bytes = await readFile(new URL(path, import.meta.url));
     return `data:${mimeType};base64,${bytes.toString('base64')}`;
+}
+
+// ---------------------------------------------------------------------------
+// Reports
+// ---------------------------------------------------------------------------
+
+/** Scratch output, gitignored: `npm run clean` takes it away. */
+const OUT_DIR = new URL('../.out/', import.meta.url);
+
+/**
+ * Writes the run's HTML report and says where it landed. Every demo ends with
+ * one: the terminal trace shows what happened, the report shows *why* — every
+ * prompt, every payload and, when the runner was built with `recordRequests`,
+ * the exact request behind each model call.
+ */
+export async function report(
+    name: string,
+    state: AgentState,
+    payloads: PayloadResolver,
+    title?: string,
+): Promise<void> {
+    await mkdir(OUT_DIR, { recursive: true });
+    const file = new URL(`${name}.html`, OUT_DIR);
+    const html = await renderRunReport(state, payloads, { title: title ?? name });
+    await writeFile(file, html, 'utf8');
+    line('◈', `report → .out/${name}.html  (${(html.length / 1024).toFixed(0)} KB)`);
 }
 
 // ---------------------------------------------------------------------------

@@ -79,6 +79,7 @@ export interface LlmCallNode extends NodeBase {
     model: string;
     /** sha256 of the projected request, for replay checks */
     requestDigest: string;
+    request?: Payload;
     text: Payload;
     thinking?: Payload;
     toolCalls: { callId: string; name: string; args: Payload }[];

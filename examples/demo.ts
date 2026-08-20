@@ -8,7 +8,7 @@ import { InMemoryPayloadStore } from '../src/payload-stores/in-memory.ts';
 import { turns, type AgentState } from '../src/state.ts';
 import { tool } from '../src/types.ts';
 // Terminal rendering — the harness every example shares. See ./ui.ts.
-import { banner, box, code, dataUrl, loadEnv, stats, step, trace } from './ui.ts';
+import { banner, box, code, dataUrl, loadEnv, report, stats, step, trace } from './ui.ts';
 
 loadEnv();
 
@@ -84,6 +84,9 @@ async function test() {
         payloads,
         memory: [userMemory],
         skills: [travelSkills],
+        // Keep every request behind its `llm_call` node, so the HTML report
+        // written at the end can show exactly what the model was sent.
+        recordRequests: true,
     });
 
     // `runner.agent()` declares an agent: prompt, tools, and which shared
@@ -179,6 +182,11 @@ async function test() {
     const bundle = await exportRun(typed.state, runner.services.payloads);
     const restored = await importRun<AgentState>(bundle, new InMemoryPayloadStore('restored'));
     stats({ blobs: Object.keys(bundle.blobs).length, phase: restored.phase });
+
+    // 6. the same resolution, for a human: one HTML file per run
+    step(6, 'Inspectable HTML report');
+    await report('demo', followUp.state, runner.services.payloads, 'Demo · conversation');
+    await report('demo-typed', typed.state, runner.services.payloads, 'Demo · typed run');
     console.log();
 }
 

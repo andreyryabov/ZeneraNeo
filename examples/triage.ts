@@ -7,7 +7,7 @@ import { tool } from '../src/types.ts';
 // Live one-pane-per-branch board. See ./board.ts.
 import { traceBoard } from './board.ts';
 // Terminal rendering — the harness every example shares. See ./ui.ts.
-import { banner, box, code, gantt, joinTable, loadEnv, secs, stats, step, type Lap } from './ui.ts';
+import { banner, box, code, gantt, joinTable, loadEnv, report, secs, stats, step, type Lap } from './ui.ts';
 
 loadEnv();
 
@@ -254,6 +254,9 @@ async function main(): Promise<void> {
     const runner = new AgentRunner<AppCtx>({
         model,
         context: { incident: 'INC-4417' },
+        // Keep every request behind its `llm_call` node, so the HTML report
+        // written at the end can show exactly what each branch was sent.
+        recordRequests: true,
     });
 
     // The worker. Multi-step by construction: its tools are deliberately narrow,
@@ -368,6 +371,9 @@ async function main(): Promise<void> {
         outputTokens: result.usage.outputTokens,
         reasoningTokens: result.usage.reasoningTokens,
     });
+
+    step(5, 'Inspectable HTML report');
+    await report('triage', result.state, runner.services.payloads, 'Triage · INC-4417');
     console.log();
 }
 

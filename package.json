@@ -32,7 +32,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "clean": "rm -rf dist coverage .dev",
+    "clean": "rm -rf dist coverage .dev .out",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -41,6 +41,7 @@
     "demo:simple": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/demo.ts'",
     "demo:fanout": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/fanout.ts'",
     "demo:triage": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/triage.ts'",
+    "demo:inspect": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/inspect.ts'",
     "prepublishOnly": "npm run clean && npm run build"
   },
   "dependencies": {
