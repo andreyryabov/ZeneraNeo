@@ -325,7 +325,10 @@ Algorithm:
      result carrying the summary. A tool pair, not a user turn: the summary is
      something the *system* did to the history, and putting it in the user
      channel invites the model to answer it.
-   - `final_output` → `AssistantMessage`.
+   - `final_output` → `AssistantMessage`, unless it repeats the assistant
+     message just emitted. An untyped run records its answer twice — once as the
+     `llm_call`'s text, once as the `final_output` node that ends the turn — and
+     without the check every later turn of the conversation re-reads it.
 3. Collect every payload referenced by the surviving nodes and resolve them in
    **one** `getMany` batch before assembling the messages.
 4. Run `repairToolCalls`: drop assistant tool calls whose result did not survive.
@@ -885,8 +888,26 @@ blob of messages. `branchPrefix` takes `projected(parent.trajectory)` up to the
 The branch state records `spec.prefixLength`, which is both where its own
 history begins and, at join time, exactly what to keep: the inherited prefix is
 the parent's own history and is already in the parent's array, so only the slice
-past it is nested. Then a `UserInputNode` carrying the branch instructions. From
-that point the branch is an ordinary run: it may call tools, hand off, use
+past it is nested.
+
+Then the assignment, and how it arrives depends on whether there is a
+conversation to arrive in:
+
+- `inherit` / `compact` — a **`ToolResultNode` answering the `fork` call itself**.
+  The branch inherited the assistant turn that called `fork`, so its assignment
+  is that call coming back: the model reads a result for a tool it can see
+  itself calling, rather than a second user message appearing after its own
+  words. This is also what keeps the fork call in the prompt at all — unanswered,
+  `repairToolCalls` (§6) strips it, and the branch never learns it fanned out.
+  The result restates which branch this run is, and names the siblings running
+  beside it: the assignments themselves are already visible in the inherited
+  call arguments, but *which one is mine*, *who has the rest* and *what becomes
+  of my answer* exist nowhere else. Without them a branch re-derives work a
+  sibling owns and writes an answer shaped for a user rather than for a merge.
+- `none` — a `UserInputNode` carrying the instructions, because there is no call
+  above to answer.
+
+From that point the branch is an ordinary run: it may call tools, hand off, use
 memory, and fork again (`spec.forkDepth` increments; an optional `maxForkDepth`
 guards runaway recursion — a structural bound, not a turn budget).
 

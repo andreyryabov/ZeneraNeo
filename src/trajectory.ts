@@ -400,7 +400,21 @@ export async function projectMessages(
                 break;
             }
             case 'final_output':
-                messages.push({ role: 'assistant', content: get(n.output), agent: n.agent });
+                {
+                    const text = get(n.output);
+                    const prev = messages.at(-1);
+                    // An untyped run ends by simply answering, and the kernel
+                    // records that answer as a node of its own — so the text is
+                    // already in the projection as the assistant's last turn.
+                    // Emitting it again would duplicate a whole turn in every
+                    // later request of a multi-turn conversation, and in every
+                    // branch that inherits one. A typed run has no such twin:
+                    // its answer travelled as tool-call arguments, and the
+                    // assistant message that carried them is gone.
+                    if (prev?.role !== 'assistant' || prev.content !== text) {
+                        messages.push({ role: 'assistant', content: text, agent: n.agent });
+                    }
+                }
                 break;
             default:
                 // handoff / memory_op / fork project through other nodes

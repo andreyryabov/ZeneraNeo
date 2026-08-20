@@ -123,6 +123,10 @@ function put(env: KernelEnv, value: string): Promise<Payload> {
     return env.services.payloads.put(value);
 }
 
+function get(env: KernelEnv, payload: Payload): Promise<string> {
+    return env.services.payloads.get(payload);
+}
+
 async function toPayloadParts(env: KernelEnv, input: Input): Promise<PayloadPart[]> {
     return Promise.all(
         toContent(input).map(async (p): Promise<PayloadPart> =>
@@ -963,12 +967,53 @@ export async function createChildState(
     };
 
     const b = begin(child, env);
-    b.add<UserInputNode>({
-        type: 'user_input',
-        // Reuses the instructions payload already written by the fork node.
-        content: [{ type: 'text', text: plan.instructions }],
-    });
+    if (prefix.length) {
+        // The branch inherited the turn that called `fork`, so the honest way to
+        // hand it its assignment is to answer that call: the model sees a tool
+        // result for a tool it just called, instead of a second user message
+        // appearing after its own. It also keeps the fork call itself in the
+        // prompt — otherwise `repairToolCalls` strips it as unanswered and the
+        // branch never learns that it fanned out at all.
+        b.add<ToolResultNode>({
+            type: 'tool_result',
+            callId: fork.callId,
+            name: FORK_TOOL,
+            result: await put(env, branchBrief(fork, plan, await get(env, plan.instructions))),
+            isError: false,
+        });
+    } else {
+        // Nothing to answer: a `context: 'none'` branch has no history, so its
+        // assignment arrives the only way it can, as the opening message.
+        b.add<UserInputNode>({
+            type: 'user_input',
+            // Reuses the instructions payload already written by the fork node.
+            content: [{ type: 'text', text: plan.instructions }],
+        });
+    }
     return b.commit({ phase: 'awaiting_llm' });
+}
+
+/**
+ * What an inheriting branch is told when its own `fork` call comes back. The
+ * parent's fork arguments are already in the prompt above it, so the siblings'
+ * assignments need no repeating — but which of the branches this run *is*, and
+ * what happens to what it produces, exist nowhere else. Without them a branch
+ * re-derives work a sibling already owns and writes an answer shaped for a user
+ * rather than for a merge.
+ */
+function branchBrief(fork: ForkNode, plan: ForkNode['branches'][number], instructions: string): string {
+    const siblings = fork.branches.filter((b) => b.name !== plan.name).map((b) => `"${b.name}"`);
+    return [
+        `You are branch "${plan.name}" of the fork above. Your assignment, and your only one:`,
+        '',
+        instructions,
+        '',
+        `Running in parallel, on the assignments the call above gave them: ${siblings.join(', ')}. ` +
+            'You cannot see their work and they cannot see yours, so anything you do on their ' +
+            'part is duplicated effort, and anything you leave to them will be there. This branch ' +
+            'ends with your final answer; that answer alone rejoins the conversation above, ' +
+            'merged with theirs.',
+    ].join('\n');
 }
 
 /** The parent history a branch starts from, as decided by `contextMode`. */

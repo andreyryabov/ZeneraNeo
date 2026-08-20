@@ -63,6 +63,12 @@ function hasToolResult(req: ModelRequest, name: string): boolean {
     return req.messages.some((m) => m.role === 'tool' && m.name === name);
 }
 
+/** The tool message a request ends on, if it ends on one. */
+function lastToolResult(req: ModelRequest, name: string): string {
+    const last = req.messages.at(-1);
+    return last?.role === 'tool' && last.name === name ? last.content : '';
+}
+
 function allText(req: ModelRequest): string {
     return JSON.stringify(req.messages) + (req.system ?? '');
 }
@@ -128,6 +134,26 @@ describe('smoke', () => {
         expect(messages.filter((m) => m.role === 'tool')).toHaveLength(2);
     });
 
+    it('says a plain-text answer once, however many turns follow', async () => {
+        const seen: ModelRequest[] = [];
+        const model = new RuleModel((req) => {
+            seen.push(req);
+            return say(`answer ${seen.length}`);
+        });
+        const runner = new AgentRunner({ model });
+        runner.agent({ name: 'chat', instructions: 'CHAT' });
+
+        const first = await runner.run('chat', 'hello');
+        await runner.send(first.state, 'again');
+
+        // An untyped run records its answer twice — as the `llm_call`'s text and
+        // as the `final_output` node that ends it — so the projection has to
+        // collapse them, or every later turn re-reads the same answer.
+        const second = seen[1];
+        expect(second.messages.filter((m) => m.role === 'assistant')).toHaveLength(1);
+        expect(second.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
+    });
+
     it('repairs a typed output that violates the schema', async () => {
         const Plan = z.object({ steps: z.array(z.string()).min(1), cost: z.number() });
 
@@ -150,9 +176,14 @@ describe('smoke', () => {
 
     it('forks branches and joins them in declared order', async () => {
         const model = new RuleModel(
+            // An inheriting branch is handed its assignment as the result of the
+            // `fork` call it can see itself making, so both roles now read a
+            // fork tool message — the branch's names the branch it is.
+            (req) => {
+                const mine = /^You are branch "(\w+)"/.exec(lastToolResult(req, 'fork'));
+                return mine ? say(`done branch: ${mine[1]}`) : undefined;
+            },
             (req) => (hasToolResult(req, 'fork') ? say('combined answer') : undefined),
-            (req) =>
-                lastUser(req).startsWith('branch:') ? say(`done ${lastUser(req)}`) : undefined,
             () =>
                 callTool('fork', {
                     branches: [
@@ -193,6 +224,14 @@ describe('smoke', () => {
         // structurally out of the parent's scope.
         const raw = res.state.trajectory;
         expect(join.branches.map((b) => b.nodes.length).every((n) => n > 0)).toBe(true);
+        // A branch opens on the answer to the fork call it inherited: its own
+        // assignment, plus who else is running, so it does not redo their part.
+        const seed = join.branches[0].nodes[0];
+        const brief =
+            seed.type === 'tool_result' ? await runner.services.payloads.get(seed.result) : '';
+        expect(seed.type === 'tool_result' && seed.name).toBe('fork');
+        expect(brief).toContain('branch: left');
+        expect(brief).toContain('"right"');
         expect(raw.filter((n) => n.type === 'llm_call'), 'parent calls only').toHaveLength(2);
         expect(turns(res.state), 'branch turns are not the parent\u2019s').toBe(2);
         // Accounting is the one thing that crosses the boundary, by recursion.

@@ -68,7 +68,7 @@ const travelSkills = new StaticSkillProvider(
 
 async function test() {
     const model = createModel({
-        model: 'gpt-5.4-mini',
+        model: 'gpt-5.4-nano',
         api: 'responses',
         reasoningEffort: 'medium',
         // Without a summary the responses API emits reasoning *tokens* but no

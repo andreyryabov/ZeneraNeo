@@ -41,6 +41,7 @@
     "demo:simple": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/demo.ts'",
     "demo:fanout": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/fanout.ts'",
     "demo:triage": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/triage.ts'",
+    "demo:review": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/review.ts'",
     "demo:inspect": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/inspect.ts'",
     "prepublishOnly": "npm run clean && npm run build"
   },
