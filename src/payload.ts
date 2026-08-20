@@ -47,44 +47,6 @@ export interface PayloadStore {
 }
 
 /**
- * Default store. Content-addressed and therefore write-once: putting existing
- * content is a no-op returning the same reference, which makes writes
- * idempotent under retry and replay for free.
- */
-export class InMemoryPayloadStore implements PayloadStore {
-    readonly id: string;
-    readonly #blobs = new Map<string, string>();
-
-    constructor(id = 'mem') {
-        this.id = id;
-    }
-
-    async put(value: string): Promise<Payload> {
-        const sha256 = hash(value);
-        if (!this.#blobs.has(sha256)) {
-            this.#blobs.set(sha256, value);
-        }
-        return { store: this.id, sha256, size: Buffer.byteLength(value), preview: previewOf(value) };
-    }
-
-    async get(p: Payload): Promise<string> {
-        const v = this.#blobs.get(p.sha256);
-        if (v === undefined) {
-            throw new Error(`payload not found in store "${this.id}": ${p.sha256}`);
-        }
-        return v;
-    }
-
-    async getMany(ps: Payload[]): Promise<string[]> {
-        return Promise.all(ps.map((p) => this.get(p)));
-    }
-
-    get size(): number {
-        return this.#blobs.size;
-    }
-}
-
-/**
  * Fans a projection out over the stores it references and caches results.
  * Because payloads are content-addressed, a growing trajectory re-projects its
  * unchanged prefix with exact cache hits — repeated projection is cheap.
@@ -96,7 +58,7 @@ export class PayloadResolver {
     #cacheBytes = 0;
     #default: PayloadStore;
 
-    constructor(def: PayloadStore = new InMemoryPayloadStore(), maxCacheBytes = 8 << 20) {
+    constructor(def: PayloadStore, maxCacheBytes = 8 << 20) {
         this.#default = def;
         this.#maxCacheBytes = maxCacheBytes;
         this.register(def);

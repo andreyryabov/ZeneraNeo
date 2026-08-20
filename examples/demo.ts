@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import { AgentRunner } from '../src/runner.ts';
-import { InMemoryMemoryStore } from '../src/memory.ts';
+import { InMemoryMemoryStore } from '../src/memory-stores/in-memory.ts';
 import { createModel } from '../src/models/factory.ts';
-import { StaticSkillProvider } from '../src/skills.ts';
-import { exportRun, InMemoryPayloadStore, importRun } from '../src/payload.ts';
+import { StaticSkillProvider } from '../src/skill-providers/static.ts';
+import { exportRun, importRun } from '../src/payload.ts';
+import { InMemoryPayloadStore } from '../src/payload-stores/in-memory.ts';
 import { turns, type AgentState } from '../src/state.ts';
 import { tool } from '../src/types.ts';
 // Terminal rendering — the harness every example shares. See ./ui.ts.

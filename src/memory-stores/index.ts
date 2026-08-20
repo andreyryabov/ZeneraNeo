@@ -1,5 +1,4 @@
-// Backends for the `MemoryStore` contract in `../memory.ts`. The in-process
-// default (`InMemoryMemoryStore`) lives next to the contract; durable backends
-// live here.
+// Backends for the `MemoryStore` contract in `../memory.ts`.
 export * from './factory.ts';
 export * from './file.ts';
+export * from './in-memory.ts';

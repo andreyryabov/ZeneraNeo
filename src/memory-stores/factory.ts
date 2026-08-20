@@ -1,5 +1,6 @@
-import { InMemoryMemoryStore, type MemoryStore } from '../memory.ts';
+import type { MemoryStore } from '../memory.ts';
 import { FileMemoryStore, type FileMemoryStoreOptions } from './file.ts';
+import { InMemoryMemoryStore } from './in-memory.ts';
 
 // ---------------------------------------------------------------------------
 // Memory store factory

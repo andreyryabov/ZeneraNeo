@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FileMemoryStore, createMemoryStore } from '../src/memory-stores/index.ts';
 import { memoryOpId } from '../src/memory.ts';
 import { FilePayloadStore, createPayloadStore } from '../src/payload-stores/index.ts';
+import { InMemoryPayloadStore } from '../src/payload-stores/in-memory.ts';
 import { FileSkillProvider, createSkillProvider } from '../src/skill-providers/index.ts';
 import { PayloadResolver, exportRun, hash, importRun } from '../src/payload.ts';
 import { tool } from '../src/types.ts';
@@ -61,7 +62,7 @@ describe('FilePayloadStore', () => {
     });
 
     it('receives an imported bundle', async () => {
-        const source = new PayloadResolver();
+        const source = new PayloadResolver(new InMemoryPayloadStore());
         const state = { note: await source.put('exported note') };
         const bundle = await exportRun(state, source);
 

@@ -1,5 +1,6 @@
-import { InMemoryPayloadStore, type PayloadStore } from '../payload.ts';
+import type { PayloadStore } from '../payload.ts';
 import { FilePayloadStore, type FilePayloadStoreOptions } from './file.ts';
+import { InMemoryPayloadStore } from './in-memory.ts';
 
 // ---------------------------------------------------------------------------
 // Payload store factory

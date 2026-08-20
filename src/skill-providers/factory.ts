@@ -1,5 +1,6 @@
-import { StaticSkillProvider, type Skill, type SkillProvider } from '../skills.ts';
+import type { Skill, SkillProvider } from '../skills.ts';
 import { FileSkillProvider, type FileSkillProviderOptions } from './file.ts';
+import { StaticSkillProvider } from './static.ts';
 
 // ---------------------------------------------------------------------------
 // Skill provider factory

@@ -38,8 +38,8 @@
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "check:node": "node -e \"if (+process.versions.node.split('.')[0] < 24) { console.error('Node >=24 required (running ' + process.version + '). Run: nvm use'); process.exit(1); }\"",
-    "demo:simple": "npm run check:node && node examples/demo.ts",
-    "demo:fanout": "npm run check:node && node examples/fanout.ts",
+    "demo:simple": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/demo.ts'",
+    "demo:fanout": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/fanout.ts'",
     "prepublishOnly": "npm run clean && npm run build"
   },
   "dependencies": {
