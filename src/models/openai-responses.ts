@@ -75,6 +75,17 @@ export class OpenAIResponsesModel implements Model {
         const calls = new Map<number, ToolCall>();
 
         for await (const event of stream) {
+            // Some models/gateways emit `response.reasoning.delta`, which the
+            // SDK does not carry in its event union, so it is matched before
+            // the typed switch.
+            if ((event as { type: string }).type === 'response.reasoning.delta') {
+                const delta = readReasoningDelta((event as { delta?: unknown }).delta);
+                if (delta) {
+                    thinking += delta;
+                    onDelta({ type: 'thinking_delta', delta });
+                }
+                continue;
+            }
             switch (event.type) {
                 case 'response.output_text.delta': {
                     text += event.delta;
@@ -94,14 +105,6 @@ export class OpenAIResponsesModel implements Model {
                 case 'response.reasoning_summary_text.delta': {
                     thinking += event.delta;
                     onDelta({ type: 'thinking_delta', delta: event.delta });
-                    break;
-                }
-                case 'response.reasoning.delta': {
-                    const delta = readReasoningDelta(event.delta);
-                    if (delta) {
-                        thinking += delta;
-                        onDelta({ type: 'thinking_delta', delta });
-                    }
                     break;
                 }
                 case 'response.output_item.added': {
