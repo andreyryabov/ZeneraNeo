@@ -194,6 +194,7 @@ aside { border-right: 1px solid var(--line); overflow: auto; background: var(--p
 #timeline .row { display: flex; gap: 6px; align-items: baseline; }
 #timeline .t { color: var(--fg); font: 11px var(--mono); min-width: 38px; text-align: right; }
 #timeline .t.same { color: #3d4453; }
+#timeline .dur { margin-left: auto; color: var(--dim); font: 11px var(--mono); }
 #timeline .idx { color: var(--dim); font: 11px var(--mono); min-width: 22px; }
 #timeline .prev { color: var(--dim); font-size: 11px; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; padding-left: 44px; }
@@ -472,32 +473,65 @@ function kv(key, value) {
 
 // --- timing ---------------------------------------------------------------
 //
-// Wall-clock stamps are the truth in the trajectory, but a reader thinks in
-// "how far into the run". Everything is therefore shown relative to the first
-// node — which also makes branch parallelism visible: ten branches whose first
-// node share one offset really did start together.
+// A node is stamped when it is appended, which is when the work behind it
+// finished. So the interval between a node and the one before it in the same
+// lane *is* that work: an llm_call's interval is the model latency, a
+// tool_result's is the tool. That gives every node a start and a duration
+// without storing either.
+//
+// Offsets are counted from the start of the turn, not of the run: in a
+// follow-up the interesting question is "how long did this answer take", and
+// counting from a conversation that began an hour ago answers nothing. A trunk
+// user_input opens a new turn; a branch inherits the turn that forked it, so
+// ten branches starting at one offset still read as parallel.
 
 function stampOf(node) {
   const t = Date.parse(node.ts);
   return isNaN(t) ? null : t;
 }
 
-const T0 = (function () {
-  let min = null;
-  ENTRIES.forEach(function (e) {
-    const t = stampOf(e.node);
-    if (t !== null && (min === null || t < min)) min = t;
+(function time(level, lanePrev, turnStart) {
+  let prev = lanePrev;
+  let t0 = turnStart;
+  level.forEach(function (e) {
+    const ts = stampOf(e.node);
+    // A real user turn resets the clock and starts at itself: the gap since
+    // the previous run is waiting, not work. Synthetic inputs (a branch seed,
+    // a re-injection) are not turns — same rule the kernel uses.
+    const opensTurn = !e.branch && e.node.type === 'user_input' && !e.node.synthetic;
+    if (opensTurn) t0 = ts;
+    e.turnStart = t0 === null ? ts : t0;
+    e.startMs = opensTurn || prev === null ? ts : prev;
+    e.endMs = ts;
+    // Branches run between the fork and the join, so they start where the
+    // trunk left off — and the join's own duration is the whole parallel
+    // section it waited on.
+    if (e.node.type === 'join') {
+      e.children.forEach(function (br) { time(br.entries, prev, e.turnStart); });
+    }
+    prev = ts;
   });
-  return min;
-})();
+})(ROOT, null, null);
 
-function elapsed(node) {
-  const t = stampOf(node);
-  if (t === null || T0 === null) return '';
-  const s = (t - T0) / 1000;
+function fmtSecs(ms) {
+  const s = ms / 1000;
   if (s < 100) return s.toFixed(1) + 's';
   const m = Math.floor(s / 60);
   return m + 'm' + String(Math.floor(s - m * 60)).padStart(2, '0');
+}
+
+/** Offset of a node's start from the beginning of its turn. */
+function startedAt(e) {
+  if (e.startMs === null || e.turnStart === null) return '';
+  return fmtSecs(e.startMs - e.turnStart);
+}
+
+/** How long the work behind a node took. Blank when it is not worth a number. */
+function took(e) {
+  if (e.startMs === null || e.endMs === null) return '';
+  const ms = e.endMs - e.startMs;
+  if (ms < 10) return '';
+  return ms < 1000 ? ms + 'ms' : fmtSecs(ms);
 }
 
 // One colour per branch, stable for the life of the page. The trunk keeps the
@@ -538,16 +572,18 @@ ENTRIES.forEach(function (e, i) {
   li.dataset.key = e.key;
 
   const row = el('div', 'row');
-  // A node and the node it produced share a stamp (a tool call is recorded the
-  // instant the response carrying it is applied). Repeating the number would
-  // only bury the moments where time actually moved.
-  const at = elapsed(e.node);
+  // Consecutive nodes often start at the same instant (a tool call is recorded
+  // the moment the response carrying it is applied). Repeating the offset
+  // would only bury the moments where time actually moved.
+  const at = startedAt(e);
   row.appendChild(el('span', 't' + (at === lastStamp ? ' same' : ''), at === lastStamp ? '·' : at));
   lastStamp = at;
   row.appendChild(el('span', 'idx', '#' + (i + 1)));
   const badge = el('span', 'type ' + e.node.type
     + (e.node.type === 'tool_result' && e.node.isError ? ' err' : ''), e.node.type.replace(/_/g, ' '));
   row.appendChild(badge);
+  const d = took(e);
+  if (d) row.appendChild(el('span', 'dur', d));
   li.appendChild(row);
   li.appendChild(el('div', 'prev', label(e.node)
     + (preview(e.node) ? ' — ' + preview(e.node).slice(0, 90) : '')));
@@ -652,7 +688,7 @@ function detailFor(e) {
   meta.appendChild(el('span', null, 'id ' + n.id));
   meta.appendChild(el('span', null, 'agent ' + n.agent));
   meta.appendChild(el('span', null, n.ts));
-  meta.appendChild(el('span', null, 't+' + elapsed(n)));
+  meta.appendChild(el('span', null, 'started t+' + startedAt(e) + (took(e) ? ' · took ' + took(e) : '')));
   if (e.branch) {
     const br = el('span', null, 'branch ' + e.branch);
     br.style.color = branchColor(e.branch);
@@ -925,7 +961,12 @@ function safe(text) {
 
 function shape(e, i) {
   const n = e.node;
-  const text = '"' + (i + 1) + '. ' + safe(label(n)) + '"';
+  // The timing is ours, not the run's: digits and a unit, appended after
+  // sanitizing. It stays on one line because Mermaid's strict mode drops the
+  // <br/> that would break it.
+  const d = took(e);
+  const text = '"' + (i + 1) + '. ' + safe(label(n))
+    + '   t+' + startedAt(e) + (d ? ' · ' + d : '') + '"';
   if (n.type === 'fork' || n.type === 'join') return e.key + '{{' + text + '}}';
   if (n.type === 'final_output') return e.key + '([' + text + '])';
   if (n.type === 'user_input' || n.type === 'system_prompt') return e.key + '[/' + text + '/]';
