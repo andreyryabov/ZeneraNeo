@@ -143,6 +143,7 @@ function page(report: RunReport, mermaidUrl: string): string {
     <div class="tabs" id="viewtabs">
       <button data-view="graph" class="on">Graph</button>
       <button data-view="detail">Detail</button>
+      <button data-view="stats">Stats</button>
     </div>
     <div id="graph">
       <div class="gtools" id="gtools">
@@ -156,6 +157,7 @@ function page(report: RunReport, mermaidUrl: string): string {
       <div id="gviewport"><div id="gcanvas"><div class="hint pad">rendering…</div></div></div>
     </div>
     <div id="detail" hidden></div>
+    <div id="stats" hidden></div>
   </section>
 </main>
 <script id="run-data" type="application/json">${embedJson(report)}</script>
@@ -206,6 +208,11 @@ aside { border-right: 1px solid var(--line); overflow: auto; background: var(--p
 #timeline li.sep:hover { background: none; }
 #timeline li.sep .dot { width: 8px; height: 8px; border-radius: 2px;
   background: var(--bc, var(--dim)); }
+/* The group header shouts in uppercase; its elapsed time should not. */
+#timeline li.sep .dur { text-transform: none; letter-spacing: 0; }
+/* The branch the join actually waited for. */
+#timeline li.sep.slow { background: #232a38; color: var(--fg); }
+#timeline li.sep.slow .dur { color: var(--fg); }
 #timeline li.branch { padding-left: 20px; border-left-color: var(--bc, var(--line)); }
 #timeline li.branch.sel { border-left-color: var(--bc, var(--accent)); }
 #middle { display: flex; flex-direction: column; overflow: hidden; }
@@ -214,10 +221,25 @@ aside { border-right: 1px solid var(--line); overflow: auto; background: var(--p
   padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; }
 .tabs button.on { color: var(--fg); background: var(--panel); border-color: var(--line); }
 #detail { overflow: auto; padding: 16px; flex: 1; }
+#stats { overflow: auto; padding: 16px; flex: 1; }
+table.st { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
+table.st th { text-align: right; color: var(--dim); font-weight: 600; padding: 6px 12px;
+  border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.st td { text-align: right; padding: 5px 12px; border-bottom: 1px solid #1d2230;
+  white-space: nowrap; }
+table.st th:first-child, table.st td:first-child { text-align: left; }
+table.st tbody tr:hover { background: #1c2130; }
+table.st tbody tr:last-child td { border-bottom: none; }
+/* The total is a different kind of row, not one more of the same: it gets its
+   own band so nobody reads it as another model or another agent. */
+table.st tfoot td { color: var(--fg); font-weight: 600; background: #191e2a;
+  border-top: 1px solid #2b3346; border-bottom: none; padding: 7px 12px; }
+table.st tfoot td:first-child { color: var(--dim); text-transform: uppercase;
+  letter-spacing: .07em; font-size: 11px; }
 #graph { display: flex; flex-direction: column; overflow: hidden; flex: 1; }
 /* An explicit display on the pane would otherwise beat the hidden attribute
    and both views would show at once. */
-#graph[hidden], #detail[hidden] { display: none; }
+#graph[hidden], #detail[hidden], #stats[hidden] { display: none; }
 #graph svg { max-width: none; display: block; }
 #graph .node { cursor: pointer; }
 .gtools { display: flex; align-items: center; gap: 6px; padding: 6px 10px;
@@ -507,7 +529,22 @@ function stampOf(node) {
     // trunk left off — and the join's own duration is the whole parallel
     // section it waited on.
     if (e.node.type === 'join') {
-      e.children.forEach(function (br) { time(br.entries, prev, e.turnStart); });
+      let slowest = null;
+      e.children.forEach(function (br) {
+        time(br.entries, prev, e.turnStart);
+        // The branch as a whole gets the same shape as a node — start, end,
+        // turn — so a reader sees how long *it* ran instead of having to
+        // subtract two offsets to find out that ten branches were parallel.
+        const last = br.entries[br.entries.length - 1];
+        br.turnStart = e.turnStart;
+        br.startMs = prev;
+        br.endMs = last ? last.endMs : prev;
+        if (br.entries.length) br.entries[0].branchSpan = br;
+        // The join costs exactly its slowest branch, so that branch is the
+        // only one worth optimizing: it gets marked and rendered lighter.
+        if (br.entries.length && (!slowest || br.endMs > slowest.endMs)) slowest = br;
+      });
+      if (slowest) slowest.slowest = true;
     }
     prev = ts;
   });
@@ -531,7 +568,15 @@ function took(e) {
   if (e.startMs === null || e.endMs === null) return '';
   const ms = e.endMs - e.startMs;
   if (ms < 10) return '';
-  return ms < 1000 ? ms + 'ms' : fmtSecs(ms);
+  return fmtDur(ms);
+}
+
+function fmtDur(ms) {
+  return ms < 1000 ? Math.round(ms) + 'ms' : fmtSecs(ms);
+}
+
+function spanMs(e) {
+  return e.startMs === null || e.endMs === null ? 0 : e.endMs - e.startMs;
 }
 
 // One colour per branch, stable for the life of the page. The trunk keeps the
@@ -560,6 +605,14 @@ ENTRIES.forEach(function (e, i) {
     if (color) sep.style.setProperty('--bc', color);
     sep.appendChild(el('span', 'dot'));
     sep.appendChild(el('span', null, e.branch ? 'branch · ' + e.branch : 'trunk'));
+    if (e.branchSpan) {
+      const bd = took(e.branchSpan);
+      if (e.branchSpan.slowest) sep.classList.add('slow');
+      if (bd) {
+        sep.appendChild(el('span', 'dur',
+          't+' + startedAt(e.branchSpan) + ' · ' + bd + (e.branchSpan.slowest ? ' · slowest' : '')));
+      }
+    }
     listEl.appendChild(sep);
     lastBranch = e.branch;
     lastStamp = null;
@@ -787,10 +840,13 @@ function detailFor(e) {
       break;
 
     case 'join':
-      n.branches.forEach(function (b) {
+      n.branches.forEach(function (b, i) {
+        const br = e.children[i];
+        const bd = br ? took(br) : '';
         out.appendChild(textBlock('Branch · ' + b.name,
           b.status === 'ok' ? blob(b.output) : (b.error || blob(b.output)),
-          b.status + ' · ' + b.agent + ' · ' + b.nodes.length + ' nodes · ' + usageTag(b.usage)));
+          b.status + ' · ' + b.agent + ' · ' + b.nodes.length + ' nodes'
+            + (bd ? ' · ' + bd : '') + ' · ' + usageTag(b.usage)));
       });
       break;
 
@@ -822,6 +878,7 @@ function detailFor(e) {
 }
 
 const detailEl = document.getElementById('detail');
+const statsEl = document.getElementById('stats');
 let selected = null;
 
 function select(key, focus) {
@@ -838,11 +895,159 @@ function select(key, focus) {
   detailEl.scrollTop = 0;
 }
 
+// --- stats ----------------------------------------------------------------
+//
+// Tokens are not fungible across models and seconds are not fungible across
+// lanes: a thousand tokens cost a different amount on a different model, and
+// branch time runs in parallel with other branch time. So every number here
+// is broken down by model and by agent, and the wall clock sits next to the
+// sums so the gap between them is visible instead of misleading.
+
+function bucket() {
+  return { calls: 0, errors: 0, ms: 0, in: 0, cached: 0, out: 0, reasoning: 0 };
+}
+
+function bucketOf(map, key) {
+  if (!map.has(key)) map.set(key, bucket());
+  return map.get(key);
+}
+
+function addUsage(into, u) {
+  if (!u) return;
+  into.in += u.inputTokens || 0;
+  into.cached += u.cachedInputTokens || 0;
+  into.out += u.outputTokens || 0;
+  into.reasoning += u.reasoningTokens || 0;
+}
+
+function num(n) { return n.toLocaleString('en-US'); }
+
+function table(cols, rows, foot) {
+  const t = el('table', 'st');
+  const head = document.createElement('thead');
+  const hr = document.createElement('tr');
+  cols.forEach(function (c) { hr.appendChild(el('th', null, c)); });
+  head.appendChild(hr);
+  t.appendChild(head);
+  const body = document.createElement('tbody');
+  rows.forEach(function (r) {
+    const tr = document.createElement('tr');
+    r.forEach(function (v) { tr.appendChild(el('td', null, v)); });
+    body.appendChild(tr);
+  });
+  t.appendChild(body);
+  if (foot) {
+    const tf = document.createElement('tfoot');
+    const fr = document.createElement('tr');
+    foot.forEach(function (v) { fr.appendChild(el('td', null, v)); });
+    tf.appendChild(fr);
+    t.appendChild(tf);
+  }
+  return t;
+}
+
+const TOKEN_COLS = ['calls', 'in', 'cached', 'out', 'reasoning', 'time', 'avg'];
+
+function tokenRow(name, b) {
+  return [name, num(b.calls), num(b.in), num(b.cached), num(b.out), num(b.reasoning),
+    fmtDur(b.ms), b.calls ? fmtDur(b.ms / b.calls) : '—'];
+}
+
+function byTokens(a, b) { return (b[1].in + b[1].out) - (a[1].in + a[1].out); }
+
+function buildStats() {
+  const byModel = new Map(), byAgent = new Map(), byTool = new Map(), byType = new Map();
+  const all = bucket();
+  let llmMs = 0, toolMs = 0, toolCalls = 0, from = null, to = null;
+
+  ENTRIES.forEach(function (e) {
+    const n = e.node;
+    byType.set(n.type, (byType.get(n.type) || 0) + 1);
+    if (e.startMs !== null && (from === null || e.startMs < from)) from = e.startMs;
+    if (e.endMs !== null && (to === null || e.endMs > to)) to = e.endMs;
+
+    // A join's usage is the sum of its branches, whose nodes are already in
+    // this list, so counting it too would double every branch token. A
+    // compaction has no model of its own but did burn a summarizer.
+    if (n.type === 'llm_call' || n.type === 'compaction') {
+      const ms = spanMs(e);
+      const model = n.type === 'compaction' ? 'summarizer' : n.model;
+      [bucketOf(byModel, model), bucketOf(byAgent, n.agent), all].forEach(function (b) {
+        addUsage(b, n.usage);
+        b.calls += 1;
+        b.ms += ms;
+      });
+      llmMs += ms;
+      return;
+    }
+    // The tool's own measurement when the runner took one; the gap to the
+    // previous node otherwise.
+    if (n.type === 'tool_result') {
+      const b = bucketOf(byTool, n.name);
+      const ms = n.durationMs !== undefined ? n.durationMs : spanMs(e);
+      b.calls += 1;
+      b.ms += ms;
+      if (n.isError) b.errors += 1;
+      toolCalls += 1;
+      toolMs += ms;
+    }
+  });
+
+  const pills = el('div', 'stats');
+  pills.appendChild(stat('wall clock', from === null ? '—' : fmtDur(to - from)));
+  pills.appendChild(stat('in llm', fmtDur(llmMs)));
+  pills.appendChild(stat('in tools', fmtDur(toolMs)));
+  pills.appendChild(stat('llm calls', num(all.calls)));
+  pills.appendChild(stat('tool calls', num(toolCalls)));
+  pills.appendChild(stat('tokens', num(all.in) + ' in / ' + num(all.out) + ' out'));
+  pills.appendChild(stat('cached', num(all.cached)));
+  pills.appendChild(stat('nodes', num(ENTRIES.length)));
+  statsEl.replaceChildren(pills);
+
+  const note = el('div', 'hint', 'Branches run in parallel, so llm and tool time are sums '
+    + 'over every lane and add up to more than the wall clock.');
+  note.style.marginBottom = '14px';
+  statsEl.appendChild(note);
+
+  const models = Array.from(byModel.entries()).sort(byTokens);
+  const modelBlock = block('Tokens by model', models.length + (models.length === 1 ? ' model' : ' models'));
+  modelBlock.appendChild(table(['model'].concat(TOKEN_COLS),
+    models.map(function (m) { return tokenRow(m[0], m[1]); }), tokenRow('total', all)));
+  statsEl.appendChild(modelBlock);
+
+  const agents = Array.from(byAgent.entries()).sort(byTokens);
+  const agentBlock = block('Tokens by agent', agents.length + (agents.length === 1 ? ' agent' : ' agents'));
+  agentBlock.appendChild(table(['agent'].concat(TOKEN_COLS),
+    agents.map(function (a) { return tokenRow(a[0], a[1]); }), tokenRow('total', all)));
+  statsEl.appendChild(agentBlock);
+
+  const tools = Array.from(byTool.entries()).sort(function (a, b) { return b[1].ms - a[1].ms; });
+  const toolBlock = block('Tool calls', num(toolCalls) + ' calls · ' + fmtDur(toolMs));
+  if (tools.length) {
+    toolBlock.appendChild(table(['tool', 'calls', 'errors', 'time', 'avg'],
+      tools.map(function (t) {
+        const b = t[1];
+        return [t[0], num(b.calls), b.errors ? num(b.errors) : '', fmtDur(b.ms),
+          b.calls ? fmtDur(b.ms / b.calls) : '—'];
+      })));
+  } else {
+    toolBlock.appendChild(el('div', 'empty', '(none)'));
+  }
+  statsEl.appendChild(toolBlock);
+
+  const types = Array.from(byType.entries()).sort(function (a, b) { return b[1] - a[1]; });
+  const typeBlock = block('Nodes by type', num(ENTRIES.length) + ' nodes');
+  typeBlock.appendChild(table(['type', 'count'],
+    types.map(function (t) { return [t[0].replace(/_/g, ' '), num(t[1])]; })));
+  statsEl.appendChild(typeBlock);
+}
+
 // --- views ----------------------------------------------------------------
 
 function show(view) {
   document.getElementById('graph').hidden = view !== 'graph';
   detailEl.hidden = view !== 'detail';
+  statsEl.hidden = view !== 'stats';
   Array.prototype.forEach.call(document.getElementById('viewtabs').children, function (b) {
     b.classList.toggle('on', b.dataset.view === view);
   });
@@ -990,10 +1195,16 @@ function chain(level, lines) {
       });
       e.children.forEach(function (br, bi) {
         if (!br.entries.length) return;
-        lines.push('  subgraph sg_' + e.key + '_' + bi + '["' + safe(br.name) + '"]');
+        const bd = took(br);
+        const sg = 'sg_' + e.key + '_' + bi;
+        lines.push('  subgraph ' + sg + '["' + safe(br.name)
+          + '   t+' + startedAt(br) + (bd ? ' · ' + bd : '')
+          + (br.slowest ? ' · slowest' : '') + '"]');
         lines.push('  direction TB');
         chain(br.entries, lines);
         lines.push('  end');
+        // The one branch the join actually waited for, lifted out of the pack.
+        if (br.slowest) lines.push('  style ' + sg + ' fill:#5b6070,stroke:#a9b2c6,color:#f2f4f8;');
         if (fork) lines.push('  ' + fork.key + ' -.-> ' + br.entries[0].key);
         lines.push('  ' + br.entries[br.entries.length - 1].key + ' -.-> ' + e.key);
       });
@@ -1060,5 +1271,6 @@ async function drawGraph() {
 }
 
 drawGraph();
+buildStats();
 if (ENTRIES.length) select('n0', false);
 `;

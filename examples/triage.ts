@@ -250,7 +250,7 @@ async function main(): Promise<void> {
     const model_gpt4o = createModel({
         model: 'gpt-4o-mini',
     });
-    const model = model_gpt4o;
+    const model = model_gpt54mini;
 
     const runner = new AgentRunner<AppCtx>({
         model,

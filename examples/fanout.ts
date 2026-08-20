@@ -149,7 +149,7 @@ async function main(): Promise<void> {
     const model_gpt4o = createModel({
         model: 'gpt-4o-mini',
     });
-    const model = model_gpt4o;
+    const model = model_gpt54mini;
 
     // No `joinPolicy` is given: the default summarizes a branch as its final
     // text, which is exactly the one-line report each prober is asked for, and
