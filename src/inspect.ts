@@ -144,7 +144,17 @@ function page(report: RunReport, mermaidUrl: string): string {
       <button data-view="graph" class="on">Graph</button>
       <button data-view="detail">Detail</button>
     </div>
-    <div id="graph"><div class="hint">rendering…</div></div>
+    <div id="graph">
+      <div class="gtools" id="gtools">
+        <button data-zoom="out" title="zoom out">−</button>
+        <button data-zoom="in" title="zoom in">+</button>
+        <button data-zoom="fit" title="fit to window (double-click the canvas)">fit</button>
+        <button data-zoom="reset" title="actual size">1:1</button>
+        <span class="hint">scroll to zoom · drag to pan</span>
+        <span class="hint" id="zoomlvl">100%</span>
+      </div>
+      <div id="gviewport"><div id="gcanvas"><div class="hint pad">rendering…</div></div></div>
+    </div>
     <div id="detail" hidden></div>
   </section>
 </main>
@@ -171,7 +181,7 @@ header { padding: 12px 16px; border-bottom: 1px solid var(--line); background: v
 header h1 { font-size: 15px; margin: 0 12px 0 0; font-weight: 600; }
 header .kv { color: var(--dim); font-size: 12px; }
 header .kv b { color: var(--fg); font-weight: 600; }
-main { display: grid; grid-template-columns: 320px 1fr; height: calc(100vh - 49px); }
+main { display: grid; grid-template-columns: 340px 1fr; height: calc(100vh - 49px); }
 aside { border-right: 1px solid var(--line); overflow: auto; background: var(--panel); }
 .pad { padding: 10px; position: sticky; top: 0; background: var(--panel); border-bottom: 1px solid var(--line); }
 #filter { width: 100%; padding: 6px 8px; background: var(--bg); color: var(--fg);
@@ -182,19 +192,48 @@ aside { border-right: 1px solid var(--line); overflow: auto; background: var(--p
 #timeline li.sel { background: #1f2637; border-left-color: var(--accent); }
 #timeline li.covered { opacity: .45; }
 #timeline .row { display: flex; gap: 6px; align-items: baseline; }
+#timeline .t { color: var(--fg); font: 11px var(--mono); min-width: 38px; text-align: right; }
+#timeline .t.same { color: #3d4453; }
 #timeline .idx { color: var(--dim); font: 11px var(--mono); min-width: 22px; }
 #timeline .prev { color: var(--dim); font-size: 11px; white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis; padding-left: 28px; }
-#timeline li.branch { padding-left: 22px; }
+  overflow: hidden; text-overflow: ellipsis; padding-left: 44px; }
+/* Branch histories are contiguous in this list, so a coloured edge plus a
+   header is enough to stop ten parallel branches reading as one long run. */
+#timeline li.sep { cursor: default; padding: 10px 10px 4px; display: flex; gap: 7px;
+  align-items: center; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--dim); border-left-color: transparent; }
+#timeline li.sep:hover { background: none; }
+#timeline li.sep .dot { width: 8px; height: 8px; border-radius: 2px;
+  background: var(--bc, var(--dim)); }
+#timeline li.branch { padding-left: 20px; border-left-color: var(--bc, var(--line)); }
+#timeline li.branch.sel { border-left-color: var(--bc, var(--accent)); }
 #middle { display: flex; flex-direction: column; overflow: hidden; }
 .tabs { display: flex; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
 .tabs button { background: none; border: 1px solid transparent; color: var(--dim);
   padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; }
 .tabs button.on { color: var(--fg); background: var(--panel); border-color: var(--line); }
-#graph, #detail { overflow: auto; padding: 16px; flex: 1; }
-#graph svg { max-width: none; }
+#detail { overflow: auto; padding: 16px; flex: 1; }
+#graph { display: flex; flex-direction: column; overflow: hidden; flex: 1; }
+/* An explicit display on the pane would otherwise beat the hidden attribute
+   and both views would show at once. */
+#graph[hidden], #detail[hidden] { display: none; }
+#graph svg { max-width: none; display: block; }
 #graph .node { cursor: pointer; }
+.gtools { display: flex; align-items: center; gap: 6px; padding: 6px 10px;
+  border-bottom: 1px solid var(--line); background: var(--panel); }
+.gtools button { background: var(--bg); border: 1px solid var(--line); color: var(--fg);
+  border-radius: 6px; padding: 2px 10px; cursor: pointer; font: 12px var(--mono); }
+.gtools button:hover { border-color: var(--accent); }
+.gtools .hint:first-of-type { margin-left: 8px; }
+.gtools #zoomlvl { margin-left: auto; font-family: var(--mono); }
+/* The canvas is transformed, not scrolled: panning has to work past the edges
+   of the diagram, which overflow:auto would forbid. */
+#gviewport { flex: 1; overflow: hidden; position: relative; cursor: grab; touch-action: none;
+  user-select: none; -webkit-user-select: none; }
+#gviewport.drag { cursor: grabbing; }
+#gcanvas { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
 .hint { color: var(--dim); font-size: 12px; }
+.hint.pad { padding: 16px; }
 .type { font-size: 11px; letter-spacing: .04em; text-transform: uppercase;
   padding: 1px 6px; border-radius: 4px; background: #232a38; color: var(--dim); }
 .type.llm_call { background: #1e3357; color: #9dc1ff; }
@@ -211,19 +250,44 @@ section.blk { border: 1px solid var(--line); border-radius: 8px; margin-bottom: 
 section.blk > h3 { margin: 0; padding: 7px 12px; font-size: 12px; font-weight: 600;
   color: var(--dim); border-bottom: 1px solid var(--line); letter-spacing: .03em; }
 section.blk > h3 .tag { float: right; font-weight: 400; }
+section.blk.sys { border-left: 3px solid var(--warn); }
+/* An LLM call has three things a reader wants to tell apart at a glance: what
+   went in, what came back, and what it cost. Groups carry the first two. */
+.group { border: 1px solid var(--line); border-radius: 10px; margin-bottom: 14px;
+  background: #12151d; overflow: hidden; }
+.group > .ghdr { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  font-size: 11px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
+  background: #1b2130; border-bottom: 1px solid var(--line); }
+.group > .ghdr .tag { margin-left: auto; font: 11px var(--mono); font-weight: 400;
+  letter-spacing: 0; text-transform: none; color: var(--dim); }
+.group > .body { padding: 10px; }
+.group > .body > .blk:last-child { margin-bottom: 0; }
+.group.req { border-left: 3px solid var(--accent); }
+.group.req > .ghdr { color: #9dc1ff; }
+.group.res { border-left: 3px solid var(--ok); }
+.group.res > .ghdr { color: #8ee0c2; }
+.stats { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+  padding: 3px 12px; font: 12px var(--mono); color: var(--dim); }
+.stat b { color: var(--fg); font-weight: 600; }
 pre { margin: 0; padding: 10px 12px; font: 12px/1.55 var(--mono); white-space: pre-wrap;
   word-break: break-word; overflow-wrap: anywhere; }
 pre.text { white-space: pre-wrap; }
-.msg { border-top: 1px solid var(--line); }
+.msg { border-top: 1px solid var(--line); border-left: 3px solid transparent; }
 .msg:first-of-type { border-top: none; }
 .msg > .role { padding: 5px 12px; font-size: 11px; text-transform: uppercase;
   letter-spacing: .05em; color: var(--dim); background: #1b202c;
   display: flex; justify-content: space-between; }
 .msg.user > .role { color: #9dc1ff; }
+.msg.user { border-left-color: #35507f; }
 .msg.assistant > .role { color: #c3a6ff; }
+.msg.assistant { border-left-color: #5a4380; }
 .msg.tool > .role { color: #8ee0c2; }
+.msg.tool { border-left-color: #2f6b58; }
 .msg.system > .role { color: var(--warn); }
+.msg.system { border-left-color: #7a6535; }
 .msg.err > .role { color: var(--err); }
+.msg.err { border-left-color: #8a3a33; }
 .call { border-top: 1px dashed var(--line); }
 .call .name { padding: 5px 12px; font: 12px var(--mono); color: #8ee0c2; }
 details > summary { cursor: pointer; padding: 6px 12px; color: var(--dim); font-size: 12px; }
@@ -273,13 +337,17 @@ function flatten(nodes, depth, branch) {
   const level = [];
   for (const node of nodes) {
     const e = {
-      key: 'n' + ENTRIES.length, node: node, depth: depth, branch: branch,
+      key: '', node: node, depth: depth, branch: branch,
       covered: hidden.has(node.id), children: []
     };
-    ENTRIES.push(e); BY_KEY.set(e.key, e); level.push(e);
+    // A join's branches ran between the fork and the join, so they are
+    // numbered and listed there — which means recursing before this entry
+    // takes its own number.
     if (node.type === 'join') {
       for (const b of node.branches) e.children.push({ name: b.name, entries: flatten(b.nodes, depth + 1, b.name) });
     }
+    e.key = 'n' + ENTRIES.length;
+    ENTRIES.push(e); BY_KEY.set(e.key, e); level.push(e);
   }
   return level;
 }
@@ -360,6 +428,24 @@ function foldBlock(title, body) {
   return s;
 }
 
+// A titled container for several blocks. Returns the element to append and the
+// body to fill, so callers never have to know the internal structure.
+function group(title, kind, tag) {
+  const s = el('section', 'group ' + kind);
+  const h = el('div', 'ghdr', title);
+  if (tag) h.appendChild(el('span', 'tag', tag));
+  s.appendChild(h);
+  const body = el('div', 'body');
+  s.appendChild(body);
+  return { el: s, body: body };
+}
+
+function stat(key, value) {
+  const d = el('span', 'stat', key + ' ');
+  d.appendChild(el('b', null, value));
+  return d;
+}
+
 // --- header ---------------------------------------------------------------
 
 function kv(key, value) {
@@ -384,32 +470,113 @@ function kv(key, value) {
   h.appendChild(kv('generated', DATA.generatedAt));
 })();
 
+// --- timing ---------------------------------------------------------------
+//
+// Wall-clock stamps are the truth in the trajectory, but a reader thinks in
+// "how far into the run". Everything is therefore shown relative to the first
+// node — which also makes branch parallelism visible: ten branches whose first
+// node share one offset really did start together.
+
+function stampOf(node) {
+  const t = Date.parse(node.ts);
+  return isNaN(t) ? null : t;
+}
+
+const T0 = (function () {
+  let min = null;
+  ENTRIES.forEach(function (e) {
+    const t = stampOf(e.node);
+    if (t !== null && (min === null || t < min)) min = t;
+  });
+  return min;
+})();
+
+function elapsed(node) {
+  const t = stampOf(node);
+  if (t === null || T0 === null) return '';
+  const s = (t - T0) / 1000;
+  if (s < 100) return s.toFixed(1) + 's';
+  const m = Math.floor(s / 60);
+  return m + 'm' + String(Math.floor(s - m * 60)).padStart(2, '0');
+}
+
+// One colour per branch, stable for the life of the page. The trunk keeps the
+// neutral accent so branches are the thing that stands out.
+const PALETTE = ['#6ea8fe', '#4ec9a0', '#e2b341', '#d1a6ff', '#f0776c',
+  '#5fd0d8', '#f09a5c', '#a3d160', '#ef8ec0', '#9aa4ff'];
+const BRANCH_COLOR = new Map();
+function branchColor(name) {
+  if (!name) return null;
+  if (!BRANCH_COLOR.has(name)) BRANCH_COLOR.set(name, PALETTE[BRANCH_COLOR.size % PALETTE.length]);
+  return BRANCH_COLOR.get(name);
+}
+
 // --- timeline -------------------------------------------------------------
 
 const listEl = document.getElementById('timeline');
+let lastBranch = false;
+let lastStamp = null;
+
 ENTRIES.forEach(function (e, i) {
+  // Branch histories are contiguous in the flattened order, so a change of
+  // branch is a group boundary: label it and restart the elapsed column.
+  if (e.branch !== lastBranch) {
+    const sep = el('li', 'sep');
+    const color = branchColor(e.branch);
+    if (color) sep.style.setProperty('--bc', color);
+    sep.appendChild(el('span', 'dot'));
+    sep.appendChild(el('span', null, e.branch ? 'branch · ' + e.branch : 'trunk'));
+    listEl.appendChild(sep);
+    lastBranch = e.branch;
+    lastStamp = null;
+  }
+
   const li = el('li', e.branch ? 'branch' : '');
   if (e.covered) li.classList.add('covered');
+  const color = branchColor(e.branch);
+  if (color) li.style.setProperty('--bc', color);
   li.dataset.key = e.key;
+
   const row = el('div', 'row');
+  // A node and the node it produced share a stamp (a tool call is recorded the
+  // instant the response carrying it is applied). Repeating the number would
+  // only bury the moments where time actually moved.
+  const at = elapsed(e.node);
+  row.appendChild(el('span', 't' + (at === lastStamp ? ' same' : ''), at === lastStamp ? '·' : at));
+  lastStamp = at;
   row.appendChild(el('span', 'idx', '#' + (i + 1)));
   const badge = el('span', 'type ' + e.node.type
     + (e.node.type === 'tool_result' && e.node.isError ? ' err' : ''), e.node.type.replace(/_/g, ' '));
   row.appendChild(badge);
   li.appendChild(row);
-  li.appendChild(el('div', 'prev', (e.branch ? '[' + e.branch + '] ' : '')
-    + label(e.node) + (preview(e.node) ? ' — ' + preview(e.node).slice(0, 90) : '')));
+  li.appendChild(el('div', 'prev', label(e.node)
+    + (preview(e.node) ? ' — ' + preview(e.node).slice(0, 90) : '')));
   li.addEventListener('click', function () { select(e.key, true); });
   listEl.appendChild(li);
 });
 
-document.getElementById('filter').addEventListener('input', function (ev) {
-  const q = ev.target.value.toLowerCase();
-  Array.prototype.forEach.call(listEl.children, function (li) {
+// A group header is only worth showing while something in its group is.
+function applyFilter(q) {
+  const rows = Array.prototype.slice.call(listEl.children);
+  rows.forEach(function (li) {
+    if (li.classList.contains('sep')) return;
     const e = BY_KEY.get(li.dataset.key);
-    const hay = (label(e.node) + ' ' + e.node.type + ' ' + preview(e.node)).toLowerCase();
+    const hay = (label(e.node) + ' ' + e.node.type + ' ' + (e.branch || '')
+      + ' ' + preview(e.node)).toLowerCase();
     li.hidden = q.length > 0 && hay.indexOf(q) === -1;
   });
+  let sep = null, kept = false;
+  rows.forEach(function (li) {
+    if (li.classList.contains('sep')) {
+      if (sep) sep.hidden = !kept;
+      sep = li; kept = false;
+    } else if (!li.hidden) kept = true;
+  });
+  if (sep) sep.hidden = !kept;
+}
+
+document.getElementById('filter').addEventListener('input', function (ev) {
+  applyFilter(ev.target.value.toLowerCase());
 });
 
 // --- detail ---------------------------------------------------------------
@@ -448,14 +615,14 @@ function requestBlocks(raw, into) {
     into.appendChild(textBlock('Request (unparsed)', raw));
     return;
   }
-  if (req.system) into.appendChild(textBlock('Request · system prompt', req.system));
+  if (req.system) into.appendChild(textBlock('System prompt', req.system)).classList.add('sys');
 
-  const conv = block('Request · messages', (req.messages || []).length + ' messages');
+  const conv = block('Messages', (req.messages || []).length + ' messages');
   (req.messages || []).forEach(function (m) { conv.appendChild(message(m)); });
   if (!(req.messages || []).length) conv.appendChild(el('div', 'empty', '(none)'));
   into.appendChild(conv);
 
-  const tools = block('Request · tools offered', (req.tools || []).length + ' tools');
+  const tools = block('Tools offered', (req.tools || []).length + ' tools');
   (req.tools || []).forEach(function (t) {
     const d = document.createElement('details');
     d.appendChild(el('summary', null, t.name + (t.description ? ' — ' + t.description : '')));
@@ -485,7 +652,12 @@ function detailFor(e) {
   meta.appendChild(el('span', null, 'id ' + n.id));
   meta.appendChild(el('span', null, 'agent ' + n.agent));
   meta.appendChild(el('span', null, n.ts));
-  if (e.branch) meta.appendChild(el('span', null, 'branch ' + e.branch));
+  meta.appendChild(el('span', null, 't+' + elapsed(n)));
+  if (e.branch) {
+    const br = el('span', null, 'branch ' + e.branch);
+    br.style.color = branchColor(e.branch);
+    meta.appendChild(br);
+  }
   if (e.covered) meta.appendChild(el('span', null, 'hidden by a later compaction'));
   out.appendChild(meta);
 
@@ -526,19 +698,32 @@ function detailFor(e) {
       break;
 
     case 'llm_call': {
-      if (n.request) requestBlocks(blob(n.request), out);
+      const u = n.usage || {};
+      const strip = el('div', 'stats');
+      strip.appendChild(stat('model', n.model));
+      strip.appendChild(stat('in', u.inputTokens || 0));
+      strip.appendChild(stat('cached', u.cachedInputTokens || 0));
+      strip.appendChild(stat('out', u.outputTokens || 0));
+      if (u.reasoningTokens) strip.appendChild(stat('reasoning', u.reasoningTokens));
+      strip.appendChild(stat('stop', n.stopReason || '?'));
+      out.appendChild(strip);
+
+      const req = group('Request', 'req', 'sent to ' + n.model);
+      if (n.request) requestBlocks(blob(n.request), req.body);
       else {
-        const miss = block('Request');
-        miss.appendChild(el('div', 'empty',
+        req.body.appendChild(el('div', 'empty',
           'not recorded — construct the runner with { recordRequests: true } to capture it'));
-        out.appendChild(miss);
       }
-      if (n.thinking) out.appendChild(textBlock('Reasoning', blob(n.thinking)));
-      out.appendChild(textBlock('Response', blob(n.text), n.stopReason));
+      out.appendChild(req.el);
+
+      const res = group('Response', 'res', n.stopReason);
+      if (n.thinking) res.body.appendChild(textBlock('Reasoning', blob(n.thinking)));
+      res.body.appendChild(textBlock('Text', blob(n.text)));
       n.toolCalls.forEach(function (c) {
-        out.appendChild(textBlock('Tool call · ' + c.name, pretty(blob(c.args)), c.callId));
+        res.body.appendChild(textBlock('Tool call · ' + c.name, pretty(blob(c.args)), c.callId));
       });
-      out.appendChild(textBlock('Usage', usageTag(n.usage), n.model));
+      out.appendChild(res.el);
+
       out.appendChild(textBlock('Request digest', n.requestDigest || '(not recorded)'));
       break;
     }
@@ -625,10 +810,104 @@ function show(view) {
   Array.prototype.forEach.call(document.getElementById('viewtabs').children, function (b) {
     b.classList.toggle('on', b.dataset.view === view);
   });
+  if (view === 'graph' && pendingFit) fit();
 }
 Array.prototype.forEach.call(document.getElementById('viewtabs').children, function (b) {
   b.addEventListener('click', function () { show(b.dataset.view); });
 });
+
+// --- graph zoom and pan ---------------------------------------------------
+//
+// The diagram grows with the run, so a fixed scale is useless past a dozen
+// nodes. The canvas is moved with a CSS transform rather than scrolled: that
+// keeps zooming anchored on the pointer and costs no layout.
+
+const viewportEl = document.getElementById('gviewport');
+const canvasEl = document.getElementById('gcanvas');
+const zoomEl = document.getElementById('zoomlvl');
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 4;
+let zoom = 1, panX = 0, panY = 0;
+let natW = 0, natH = 0;
+let pendingFit = false;
+
+function applyView() {
+  canvasEl.style.transform = 'translate(' + panX + 'px,' + panY + 'px) scale(' + zoom + ')';
+  zoomEl.textContent = Math.round(zoom * 100) + '%';
+}
+
+function zoomAt(factor, cx, cy) {
+  const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom * factor));
+  const ratio = next / zoom;
+  // Keep the point under the cursor fixed while the scale changes.
+  panX = cx - (cx - panX) * ratio;
+  panY = cy - (cy - panY) * ratio;
+  zoom = next;
+  applyView();
+}
+
+function zoomCenter(factor) {
+  const r = viewportEl.getBoundingClientRect();
+  zoomAt(factor, r.width / 2, r.height / 2);
+}
+
+function fit() {
+  const r = viewportEl.getBoundingClientRect();
+  if (!r.width || !natW || !natH) { pendingFit = true; return; }
+  pendingFit = false;
+  zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM,
+    Math.min((r.width - 32) / natW, (r.height - 32) / natH)));
+  panX = (r.width - natW * zoom) / 2;
+  panY = Math.max(16, (r.height - natH * zoom) / 2);
+  applyView();
+}
+
+document.getElementById('gtools').addEventListener('click', function (ev) {
+  const what = ev.target.dataset ? ev.target.dataset.zoom : null;
+  if (what === 'in') zoomCenter(1.25);
+  else if (what === 'out') zoomCenter(1 / 1.25);
+  else if (what === 'fit') fit();
+  else if (what === 'reset') { zoom = 1; panX = 16; panY = 16; applyView(); }
+});
+
+viewportEl.addEventListener('wheel', function (ev) {
+  ev.preventDefault();
+  const r = viewportEl.getBoundingClientRect();
+  zoomAt(Math.exp(-ev.deltaY * 0.002), ev.clientX - r.left, ev.clientY - r.top);
+}, { passive: false });
+
+let dragging = false, dragMoved = false, startX = 0, startY = 0, baseX = 0, baseY = 0;
+
+viewportEl.addEventListener('pointerdown', function (ev) {
+  if (ev.button !== 0) return;
+  dragging = true; dragMoved = false;
+  startX = ev.clientX; startY = ev.clientY; baseX = panX; baseY = panY;
+});
+viewportEl.addEventListener('pointermove', function (ev) {
+  if (!dragging) return;
+  const dx = ev.clientX - startX, dy = ev.clientY - startY;
+  if (!dragMoved) {
+    if (Math.abs(dx) + Math.abs(dy) <= 4) return;
+    dragMoved = true;
+    // Captured only once this is a drag: capturing on pointerdown would
+    // retarget the following click to the viewport and no node would ever
+    // receive it.
+    viewportEl.setPointerCapture(ev.pointerId);
+    viewportEl.classList.add('drag');
+  }
+  panX = baseX + dx; panY = baseY + dy;
+  applyView();
+});
+function endDrag(ev) {
+  if (!dragging) return;
+  dragging = false;
+  viewportEl.classList.remove('drag');
+  if (viewportEl.hasPointerCapture(ev.pointerId)) viewportEl.releasePointerCapture(ev.pointerId);
+}
+viewportEl.addEventListener('pointerup', endDrag);
+viewportEl.addEventListener('pointercancel', endDrag);
+viewportEl.addEventListener('dblclick', function () { fit(); });
+window.addEventListener('resize', function () { if (pendingFit) fit(); });
 
 // --- diagram --------------------------------------------------------------
 
@@ -696,12 +975,11 @@ function diagram() {
 }
 
 async function drawGraph() {
-  const host = document.getElementById('graph');
   let mermaid;
   try {
     mermaid = (await import(MERMAID_URL)).default;
   } catch (err) {
-    host.replaceChildren(el('div', 'hint',
+    canvasEl.replaceChildren(el('div', 'hint pad',
       'Mermaid could not be loaded (offline?). The timeline on the left has the same nodes.'));
     show('detail');
     return;
@@ -711,17 +989,32 @@ async function drawGraph() {
     const rendered = await mermaid.render('run-graph', diagram());
     // Mermaid produced this markup from labels we sanitized above; no payload
     // text reaches it.
-    host.innerHTML = rendered.svg;
+    canvasEl.innerHTML = rendered.svg;
   } catch (err) {
-    host.replaceChildren(el('pre', null, 'diagram failed: ' + err.message + '\\n\\n' + diagram()));
+    canvasEl.replaceChildren(el('pre', null, 'diagram failed: ' + err.message + '\\n\\n' + diagram()));
     return;
   }
-  host.querySelectorAll('.node').forEach(function (g) {
+  const svg = canvasEl.querySelector('svg');
+  if (svg) {
+    // Mermaid sizes the SVG to fit its container; we want its natural size so
+    // the transform above is the only thing deciding scale.
+    const box = svg.viewBox && svg.viewBox.baseVal;
+    natW = (box && box.width) || svg.getBoundingClientRect().width;
+    natH = (box && box.height) || svg.getBoundingClientRect().height;
+    svg.removeAttribute('width');
+    svg.removeAttribute('height');
+    svg.style.maxWidth = 'none';
+    svg.style.width = natW + 'px';
+    svg.style.height = natH + 'px';
+  }
+  fit();
+  canvasEl.querySelectorAll('.node').forEach(function (g) {
     // Mermaid ids are '<renderId>-flowchart-<ourKey>-<seq>'; only the key matters.
     const m = /-(n\\d+)-\\d+$/.exec(g.id || '');
     const key = m ? m[1] : null;
     if (!key || !BY_KEY.has(key)) return;
-    g.addEventListener('click', function () { select(key, true); });
+    // A pan that ends on a node must not be read as a click on it.
+    g.addEventListener('click', function () { if (!dragMoved) select(key, true); });
   });
 }
 

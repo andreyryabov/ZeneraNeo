@@ -141,11 +141,15 @@ const FleetReport = z.object({
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-    const model = createModel({
+    const model_gpt54mini = createModel({
         model: 'gpt-5.4-mini',
         api: 'responses',
         reasoningEffort: 'low',
     });
+    const model_gpt4o = createModel({
+        model: 'gpt-4o-mini',
+    });
+    const model = model_gpt4o;
 
     // No `joinPolicy` is given: the default summarizes a branch as its final
     // text, which is exactly the one-line report each prober is asked for, and

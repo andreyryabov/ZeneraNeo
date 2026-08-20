@@ -241,15 +241,16 @@ const TriageReport = z.object({
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-    const model = createModel({
+    const model_gpt54mini = createModel({
         model: 'gpt-5.4-mini',
         api: 'responses',
-        reasoningEffort: 'medium',
-        // Without a summary the responses API emits reasoning *tokens* but no
-        // reasoning *text*, so no `thinking_delta` would reach the board and
-        // the ✻ rows inside each branch pane would stay empty.
+        reasoningEffort: 'low',
         reasoningSummary: 'auto',
     });
+    const model_gpt4o = createModel({
+        model: 'gpt-4o-mini',
+    });
+    const model = model_gpt4o;
 
     const runner = new AgentRunner<AppCtx>({
         model,
