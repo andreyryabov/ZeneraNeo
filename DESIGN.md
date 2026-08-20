@@ -32,16 +32,19 @@ Scope: `experiments/src.js/agent/agent.ts` rewrite
    (input / cached-input / output / reasoning), so total consumption is exactly
    reconstructable from the trajectory alone.
 8. **Trajectory as the context-manipulation tool.** Compaction, handoff-time
-   noise stripping etc. are expressed as trajectory nodes that *mask* earlier
-   nodes for projection purposes while keeping the originals for audit/replay.
+   noise stripping and branch summarizing are all one operation — select nodes,
+   summarize them, append a node that *covers* them for projection purposes
+   while the originals stay for audit and replay.
 9. **Pluggable memory.** Agents search, write, update and delete long-lived
    memories through a `MemoryStore` interface; scopes decide what is private to
    an agent and what is shared between agents.
 10. **On-demand skills.** Instruction bundles are discovered and loaded through a
     `SkillProvider` interface instead of permanently occupying the prompt.
 11. **Fork / join.** An agent can split into parallel branches that really run
-    concurrently (LLM and tool calls alike) and rejoin into one result, while the
-    parent's history stays linear — as if the work had been sequential.
+    concurrently (LLM and tool calls alike) and rejoin into one result. Each
+    branch's history is nested inside the join that reports it, so nothing is
+    lost — while the parent's own log stays linear, as if the work had been
+    sequential.
 
 ## 2. Non-goals
 
@@ -139,8 +142,8 @@ The two things inline bought us are recovered explicitly:
   does zero I/O. Refs are not synonymous with network.
 - *Self-containment* — `exportRun(state, stores)` produces
   `{ state, blobs: Record<sha256, string> }`, a single portable artifact for
-  tests, bug reports and archival; `importRun(bundle, store)` re-registers the
-  blobs. This is better than inline was: it is explicit, it is deduped, and it
+  tests, bug reports and archival; `importRun(bundle, store)` writes the blobs
+  into any `PayloadStore`. This is better than inline was: it is explicit, it is deduped, and it
   covers child runs reachable by ref.
 
 ### 4.2 Rules
@@ -148,7 +151,7 @@ The two things inline bought us are recovered explicitly:
 - The kernel never dereferences payloads except in `buildRequest`, where the
   projection needs actual text. `buildRequest` is therefore `async`, and it is
   the **only** place that resolves. Everything else — appending nodes,
-  `nextAction`, compaction masking, usage summation — works on refs alone.
+  `nextAction`, compaction covering, usage summation — works on refs alone.
 - Resolution goes through `getMany`, so a projection costs one batched round
   trip; a resolver-level LRU cache makes repeated projections of a growing
   trajectory cheap (the prefix is unchanged and content-addressed, so cache hits
@@ -163,20 +166,20 @@ The two things inline bought us are recovered explicitly:
 - Payload fields: `SystemPromptNode.prompt`, `LlmCallNode.text/thinking`,
   `ToolCallNode.args`, `ToolResultNode.result`, `CompactionNode.summary`,
   `LoadSkillsNode.content`, `MemoryRecallNode.content`,
-  `InheritedContextNode.messages`, `JoinNode.results[].output/childStateRef`,
-  `UserInputNode` content parts.
+  `JoinNode.branches[].output`, `UserInputNode` content parts.
 - Degenerate values are not special-cased: the empty string is one well-known
   content address shared by every node that has no text, costing one entry
   globally.
 
 ## 5. Trajectory
 
-Append-only ordered log. Every node:
+Append-only ordered log — the run's single source of truth. Nodes are never
+removed, rewritten or reordered; **position is order**, so there is no index
+field to keep dense. Every node:
 
 ```ts
 export interface NodeBase {
-    id: string;        // ulid — unique, sortable
-    seq: number;       // dense index in the trajectory (0..n-1)
+    id: string;        // ulid — unique within the trajectory
     ts: string;        // ISO timestamp (informational, not used for logic)
     agent: string;     // active agent when the node was created
 }
@@ -196,9 +199,8 @@ export type TrajectoryNode =
     | ToolResultNode       // { type:'tool_result', callId, name, result: Payload,
                            //   isError: boolean, durationMs?: number }
     | HandoffNode          // { type:'handoff', from, to, reason?: string }
-    | ForkNode             // §10.2 — branch plan + child run ids
-    | JoinNode             // §10.2 — per-branch results, usage, child state refs
-    | InheritedContextNode // §10.3 — frozen parent context (child runs only)
+    | ForkNode             // §10.2 — the branch plan
+    | JoinNode             // §10.2 — per-branch outcomes
     | CompactionNode       // see below
     | FinalOutputNode;     // { type:'final_output', output: Payload,
                            //   parsed?: unknown /* when an output schema was set */ }
@@ -226,33 +228,69 @@ export interface LlmCallNode extends NodeBase {
 }
 ```
 
-`sum(trajectory.filter(llm_call).usage) + sum(trajectory.filter(join).usage)`
-reproduces total consumption exactly, including cache hits and tokens spent in
-parallel branches (§10.6) — no separate counters to keep in sync (a cached
-`usage` total on the state is allowed but derived).
+`sum(usage)` over every `llm_call` and `compaction` node reproduces total
+consumption exactly, including cache hits. Tokens spent inside a fork are
+reached by recursing into the branch histories nested in each `JoinNode`
+(§10.6) — the one place anything deliberately crosses the branch boundary. No
+separate counters to keep in sync (a cached `usage` total on the state is
+allowed but derived).
 
-### 5.2 CompactionNode — masking, not deletion
+### 5.2 CompactionNode — covering, not deleting
 
 ```ts
 export interface CompactionNode extends NodeBase {
     type: 'compaction';
-    /** seq range (inclusive) whose nodes are hidden from projection */
-    maskFrom: number;
-    maskTo: number;
-    /** what the model sees instead of the masked range; may be empty */
+    /** the tool call id this compaction projects as */
+    callId: string;
+    /** ids of the nodes this summary stands in for — any set, not a range */
+    covers: string[];
+    /** what the model sees instead; may be empty */
     summary: Payload;
-    reason: 'handoff_noise' | 'token_budget' | 'manual' | string;
+    reason: 'handoff_noise' | 'token_budget' | 'branch_context' | 'manual' | string;
+    usage: TokenUsage;   // what the summarizer itself cost
 }
 ```
 
-- Masked nodes stay in the trajectory untouched — audit and replay always see
-  full history; only `projectMessages` skips them.
-- Later compactions may mask earlier `CompactionNode`s too (re-compaction).
-- Handoff noise stripping = the runner (or a policy hook) appending a
-  `CompactionNode` right after a `HandoffNode` that masks the previous agent's
-  `tool_call`/`tool_result` chatter and summarizes it.
+- Covered nodes stay in the trajectory untouched — audit and replay always see
+  full history; only the projection skips them.
+- `covers` is a **set of ids**, not a range. Selection and summarization are one
+  operation ("collapse"), and the selector is free to skip nodes it wants to
+  keep; `repairToolCalls` restores provider validity afterwards.
+- Later compactions may cover earlier `CompactionNode`s (re-compaction). The
+  covered set is an **unconditional union** over every compaction in the array,
+  so compaction is monotone: covering a summary can never resurrect what that
+  summary was hiding.
+- Handoff noise stripping = the runner appending a `CompactionNode` right after a
+  `HandoffNode` (§7.4), covering the previous agent's chatter.
 
-### 5.3 Projection: trajectory → messages
+### 5.3 One array, one filter
+
+A run's trajectory contains only that run's own nodes. Branch histories are
+nested inside the `JoinNode` that reports them (§10.2), so an ordinary walk of
+the array never encounters them — the fork scope is structural, not a convention
+that every consumer has to remember to honour.
+
+That leaves exactly one filter between the log and the model:
+
+```ts
+/** what survives compaction */
+export function projected(nodes: TrajectoryNode[]): TrajectoryNode[] {
+    const covered = coveredIds(nodes);
+    return covered.size ? nodes.filter((n) => !covered.has(n.id)) : nodes;
+}
+```
+
+| view | who reads it |
+| --- | --- |
+| the array | `nextAction`, `turns`, `lastText`, `lastUserInput`, `HandoffPolicy.select`, export |
+| `projected(array)` | `projectMessages`, `activeSkills`, `applySystemPrompt` — the model's world |
+| recursing into `join.branches[].nodes` | `totalUsage` only |
+
+The nesting also settles compaction scope for free: a branch may compact the
+prefix it inherited, naming ids the parent also has, but those `CompactionNode`s
+live in the branch's own array and `coveredIds` never sees them.
+
+### 5.4 Projection: trajectory → messages
 
 ```ts
 async function projectMessages(
@@ -263,9 +301,8 @@ async function projectMessages(
 
 Algorithm:
 
-1. Compute the mask set: union of `[maskFrom, maskTo]` of every non-masked
-   `CompactionNode`.
-2. Walk nodes in `seq` order, skipping masked ones:
+1. Take `projected(trajectory)`.
+2. Walk the survivors in array order:
    - `system_prompt` → becomes the *current* system prompt (last one wins;
      earlier ones are superseded, not emitted as messages).
    - `user_input` → `UserMessage`.
@@ -281,20 +318,21 @@ Algorithm:
    - `memory_recall` → `UserMessage` with the rendered memories block (§8.4).
    - `memory_op` → nothing (the memory tool's call/result pair already
      projects; the node exists for provenance and idempotency).
-   - `inherited_context` → the frozen parent messages, spliced in verbatim
-     (child runs only, always the first node; §10.3).
    - `fork` → nothing (the `fork` tool call projects from its `llm_call`).
    - `join` → the `tool_result` for the fork call: one labelled list of branch
-     outputs. Child trajectories are never projected into the parent (§10.5).
-   - `compaction` → one synthetic `UserMessage`/`ToolMessage` containing the
-     summary (only if non-empty).
+     outputs (§10.5).
+   - `compaction` → a synthetic assistant `compact` tool call plus its tool
+     result carrying the summary. A tool pair, not a user turn: the summary is
+     something the *system* did to the history, and putting it in the user
+     channel invites the model to answer it.
    - `final_output` → `AssistantMessage`.
 3. Collect every payload referenced by the surviving nodes and resolve them in
    **one** `getMany` batch before assembling the messages.
+4. Run `repairToolCalls`: drop assistant tool calls whose result did not survive.
 
-Invariant: every projected `tool_call` id has a matching `tool` message —
-enforced by the kernel (a tool call without a recorded result blocks the next
-LLM call; see resume semantics).
+Invariant: every projected `tool_call` id has a matching `tool` message — held by
+the kernel during a run (a tool call without a recorded result blocks the next
+LLM call), and restored by step 4 after arbitrary covering.
 
 ## 6. AgentState
 
@@ -317,8 +355,10 @@ export interface RunSpec {
     outputSchema?: JsonSchema;
     /** sha256 of `outputSchema`, for cheap mismatch detection on resume */
     outputSchemaHash?: string;
-    /** set on child runs created by a fork (§10) */
+    /** set on branch states created by a fork (§10) */
     parent?: { runId: string; forkId: string; branch: string };
+    /** where this run's own history begins — an inherited prefix sits before it */
+    prefixLength?: number;
     forkDepth: number;           // 0 for a root run
 }
 
@@ -331,9 +371,9 @@ export interface AgentState {
     trajectory: TrajectoryNode[];
     /** tool calls from the last llm_call still lacking a tool_result, by callId */
     pendingToolCalls: string[];
-    /** branches of an in-flight fork still lacking a result, by branch name */
-    pendingBranches: string[];
-    /** derived cache; always recomputable from trajectory (incl. JoinNode.usage) */
+    /** the in-flight fork, if any, and its branches still lacking a result */
+    pendingFork?: { callId: string; branches: string[] };
+    /** derived cache; always recomputable from the raw trajectory */
     usage: TokenUsage;
     /** serialized user context (must be JSON) */
     context?: unknown;
@@ -728,7 +768,7 @@ property of the agent — it is
 tools(state) = agent.tools
              + handoff tools
              + memory tools (from bindings)
-             + skill tools (from non-masked LoadSkillsNodes of the active agent)
+             + skill tools (from surviving LoadSkillsNodes of the active agent)
              + fork tool (if forkable)
              + final_output (typed runs)
 ```
@@ -739,10 +779,15 @@ set is recoverable even if the provider's catalog changed since — a load whose
 `contentHash` no longer matches the provider is a hard error, not a silent
 substitution.
 
-Masking a `LoadSkillsNode` via compaction therefore also **deactivates its
+Covering a `LoadSkillsNode` via compaction therefore also **deactivates its
 tools**, which is the intended semantics: dropping a skill's instructions while
 leaving its tools callable would leave the model with tools it no longer knows
 how to use.
+
+The converse is the reason §10.3 filters skill loads by agent when seeding a
+branch: `activeSkills` scopes tools to the current agent, but `load_skills`
+projects as an ordinary message, so without the filter a branch would *read*
+another agent's skill text — "call `tool_y`" — while holding none of its tools.
 
 ## 10. Fork / join — parallel sub-agents
 
@@ -769,77 +814,92 @@ Agent opt-in: `AgentOptions.fork?: { agents?: string[]; maxBranches?: number }`.
 
 ### 10.2 Data model
 
-Each branch is a **complete `AgentState` of its own** — not interleaved nodes in
-the parent log. Interleaving parallel work into one trajectory would make `seq`
-nondeterministic, break the "dense index" invariant and destroy prompt caching.
+**Fork is a scope.** A branch executes against a state of its own while it runs
+— that is what makes real parallelism possible — but when it finishes, its
+history is **nested inside the `JoinNode`** that reports it. The parent's array
+holds the parent's own nodes and nothing else:
+
+```
+[ 1, 2, 3, fork, join, 4, 5 ]
+                  └── branches[].nodes: [b1₁, b1₂], [b2₁, b2₂, b2₃]
+```
+
+The scope is structural, so it holds without anyone maintaining it: branch nodes
+never project, never activate skills, never count as turns, because no ordinary
+walk of the parent array can reach them.
+
+Two nodes rather than one, because they record two events at two times and the
+log is append-only. `ForkNode` is written *before* the branches run — the record
+of intent, and the thing a crash-mid-fork resumes from. `JoinNode` is written
+after, and carries the outcomes.
 
 ```ts
 export interface ForkNode extends NodeBase {
     type: 'fork';
-    forkId: string;
-    callId: string;                       // the fork tool call that caused it
+    callId: string;                       // the fork tool call — the fork's identity
     contextMode: 'inherit' | 'compact' | 'none';
-    /** what every child starts from; one blob, shared by all branches */
-    inheritedContext?: Payload;
     branches: { name: string; agent: string; instructions: Payload;
                 childRunId: string }[];
 }
 
 export interface JoinNode extends NodeBase {
     type: 'join';
-    forkId: string;
+    callId: string;                       // same id as the ForkNode
     /** always in declared branch order, never completion order */
-    results: {
+    branches: {
         name: string;
+        agent: string;
         status: 'ok' | 'error' | 'aborted';
         output: Payload;                  // branch answer or summary
         error?: string;
-        usage: TokenUsage;
-        childRunId: string;
-        childStateRef: Payload;           // full child state, offloaded
+        usage: TokenUsage;                // display only
+        nodes: TrajectoryNode[];          // the branch's own history
     }[];
-    usage: TokenUsage;                    // sum over branches
+    usage: TokenUsage;                    // sum over branches — display only
 }
 ```
 
-`childStateRef` is a `Payload`, so a child's entire trajectory is one ref in the
-parent (typically offloaded to S3) and the parent state stays small while full
-history remains reachable. Children created with `context: 'inherit'` all point
-at the same `inheritedContext` payload — no special handling needed, since every
-payload is content-addressed, so N branches cost one blob rather than N copies.
+There is no `childStateRef`: the branch history is right there in the join, so
+branch `AgentState`s are pure execution scaffolding, discarded once the join
+lands. `collectPayloads` is a generic deep JSON walk, so `exportRun` descends
+into the nested nodes without knowing forks exist.
 
-### 10.3 Child seeding
+Nested forks need no extra machinery either — a branch's `nodes` may contain its
+own `JoinNode`, and the only traversal that crosses the boundary (`totalUsage`)
+is already recursive.
 
-The child's trajectory begins with:
+### 10.3 Branch seeding
 
-```ts
-export interface InheritedContextNode extends NodeBase {
-    type: 'inherited_context';
-    parent: { runId: string; seq: number };   // provenance pointer
-    messages: Payload;                        // frozen projection of the parent
-}
-```
+A branch starts from a **prefix of the parent's own nodes**, not from a frozen
+blob of messages. `branchPrefix` takes `projected(parent.trajectory)` up to the
+`ForkNode` and filters it by `contextMode`:
 
-- `inherit` — the parent's projected messages up to the fork point are frozen
-  into that payload. Copy, not reference: the child is self-contained (it can be
-  executed in another process or Temporal child workflow), and the snapshot
-  records exactly what the branch saw.
-- `compact` — same, but the parent's compaction policy runs first, so branches
-  start from a summary instead of raw tool noise. This is the default
-  recommendation for wide fans-out.
-- `none` — the child starts from its agent's system prompt plus its branch
+- `inherit` — the prefix as-is, minus `load_skills` nodes belonging to a
+  different agent (§9).
+- `compact` — the same, additionally dropping `tool_call`, `tool_result` and
+  `memory_recall`: the branch inherits *what was decided*, not the raw tool
+  noise that got there. The recommended default for wide fan-outs.
+- `none` — empty. The branch starts from its agent's system prompt plus its
   instructions only. Cheapest; good for independent lookups.
 
-Then a `UserInputNode` carrying the branch instructions. From that point the
-child is an ordinary run: it may call tools, hand off, use memory, and even fork
-again (`spec.forkDepth` increments; an optional `maxForkDepth` guards runaway
-recursion — a structural bound, not a turn budget).
+The branch state records `spec.prefixLength`, which is both where its own
+history begins and, at join time, exactly what to keep: the inherited prefix is
+the parent's own history and is already in the parent's array, so only the slice
+past it is nested. Then a `UserInputNode` carrying the branch instructions. From
+that point the branch is an ordinary run: it may call tools, hand off, use
+memory, and fork again (`spec.forkDepth` increments; an optional `maxForkDepth`
+guards runaway recursion — a structural bound, not a turn budget).
+
+**Fork erases the branch's memory; only its result survives.** Everything a
+branch inherits is a copy it may compact, hand off or discard freely, because
+nothing it does can reach back into the parent's projection.
 
 ### 10.4 Execution and state machine
 
 `RunPhase` gains `'awaiting_branches'`; `AgentState` gains
-`pendingBranches: string[]` (branch names without a result), mirroring
-`pendingToolCalls`. `NextAction` gains:
+`pendingFork?: { callId, branches }`, mirroring `pendingToolCalls` but naming the
+fork explicitly so a run with two forks resolves the right one. `NextAction`
+gains:
 
 ```ts
 | { kind: 'fork'; forkId: string; branches: BranchPlan[] }
@@ -851,7 +911,7 @@ Runner behaviour:
 case 'fork':
     emit before_fork(state)                          // ← persistence point
     results = await Promise.all(branches.map(b =>
-        runChild(b)))                                // real parallelism:
+        runBranch(b)))                               // real parallelism:
                                                      // concurrent LLM + tool calls
     state = await Kernel.applyJoin(state, forkId, results)
     emit after_join(state)
@@ -859,30 +919,23 @@ case 'fork':
 
 - Branches run truly concurrently — each has its own model client call and its
   own tool executions. Nothing serializes them.
-- `applyJoin` sorts results by **declared branch order** before appending, so the
+- `applyJoin` nests branch histories in **declared branch order**, so the
   trajectory is identical regardless of completion order. This is what keeps
   replay deterministic and the parent's prompt cacheable.
 - Partial failure is data, not an exception: a failed branch is recorded with
   `status: 'error'`, and the fork `ToolResultNode` reports it so the model can
   retry or route around it. The run itself only fails if the join policy says so.
 - Resume: a crash mid-fork leaves `phase: 'awaiting_branches'` with
-  `pendingBranches` naming the unfinished ones. Their child states were
-  checkpointed independently, so restart re-runs **only** the incomplete
-  branches, each from its own last checkpoint.
+  `pendingFork.branches` naming the unfinished ones; a second `applyJoin` for the
+  same `callId` clears the rest.
 
-### 10.5 Compacting parallel history
+### 10.5 Collapsing parallel history
 
-Two levels, and this is where the trajectory-as-context-tool idea pays off:
-
-1. **Inside the child, at completion.** A `JoinPolicy.summarize(childState)`
-   produces the branch `output` — either the child's own final answer, or an
-   LLM-generated summary of its trajectory. Implemented as an ordinary
-   `CompactionNode` appended to the child before extraction, so the child's own
-   record shows what was condensed and why (`reason: 'branch_summary'`).
-2. **In the parent, at join.** The parent never ingests child trajectories. Its
-   projection of the whole episode is exactly two messages: the `fork` assistant
-   tool call, and one tool result containing the per-branch summaries. N parallel
-   agents cost the parent O(N × summary), not O(N × full history).
+**Collapse = select + summarize**, and it is the same operation everywhere —
+handoff noise, token budget, branch results. The parent's projection of a whole
+fork episode is exactly two messages: the `fork` assistant tool call, and one
+tool result listing the per-branch outputs. N parallel agents cost the parent
+O(N × summary), not O(N × full history).
 
 ```ts
 export interface JoinPolicy {
@@ -891,24 +944,36 @@ export interface JoinPolicy {
     /** whether one branch's failure aborts the others */
     onBranchError?: 'continue' | 'abort_siblings';
 }
+
+/** the selector half — pure, so it is trivially testable */
+export interface HandoffPolicy {
+    select(state: AgentState, handoff: HandoffNode): TrajectoryNode[] | null;
+}
+
+/** the summarizing half — the only half that needs I/O */
+export interface Summarizer {
+    summarize(nodes: TrajectoryNode[], reason: string,
+              services: Services): Promise<Summary>;
+}
 ```
 
-Projection rules for the new nodes:
-
-- `fork` → nothing on its own (the tool call already projects).
-- `join` → the `ToolResultNode` for the fork call, rendered as a labelled list
-  of branch outputs.
-- `inherited_context` → the frozen messages, spliced in verbatim (child only).
-- Full child history is reachable through `childStateRef` for debugging,
-  evaluation and token accounting — never for prompting.
+The default `Summarizer` is structural (it counts node types and costs nothing);
+`modelSummarizer(model)` projects the selected nodes and asks a model, returning
+its own token usage so the compaction pays for itself in the accounting.
 
 ### 10.6 Accounting across branches
 
-`state.usage` is defined as "derived from the trajectory". The derivation now
-includes `JoinNode.usage`, which is the sum of the branches' own derived totals.
-Recursion terminates at leaf runs, so total consumption of a fork tree —
-including cached tokens — is still exactly reconstructable from the root state
-plus reachable child refs.
+`totalUsage` sums `llm_call` and `compaction` nodes and recurses into
+`join.branches[].nodes`, so one call covers the whole fork tree at any nesting
+depth. This is the **only** traversal in the system that crosses a branch
+boundary, and it says so explicitly — which is the point of nesting: the common
+case (stay in this run's scope) is free and the rare case is opt-in.
+`JoinNode.usage` and `branches[].usage` are display only; adding them would
+double-count the nodes they summarize.
+
+A branch's own `state.usage`, by contrast, is computed over
+`trajectory.slice(prefixLength)`: the inherited prefix was paid for by the
+parent, so a branch is never billed for the context it was handed.
 
 ## 11. Termination and typed results (no maxTurns)
 

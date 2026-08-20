@@ -14,18 +14,25 @@ import { systemClock, type IdClock } from './ids.ts';
 import * as Kernel from './kernel.ts';
 import type { MemoryStore } from './memory.ts';
 import { renderMemories } from './memory.ts';
-import type { Model } from './model.ts';
+import type { Model, ModelRequest } from './model.ts';
 import { PayloadResolver, type PayloadStore } from './payload.ts';
 import { Services } from './services.ts';
 import type { SkillProvider } from './skills.ts';
 import { lastText, type AgentState, type RunResult } from './state.ts';
-import { lastOfType, type ForkNode, type HandoffNode, type JoinNode } from './trajectory.ts';
+import {
+    lastOfType,
+    projectMessages,
+    type ForkNode,
+    type HandoffNode,
+    type TrajectoryNode,
+} from './trajectory.ts';
 import {
     isToolReturn,
     stringify,
     zeroUsage,
     type AnyTool,
     type Input,
+    type TokenUsage,
     type ToolEffect,
     type ToolOutcome,
 } from './types.ts';
@@ -34,9 +41,20 @@ import {
 // Policies
 // ---------------------------------------------------------------------------
 
+/**
+ * Collapsing history is two decisions, and they belong on different sides of
+ * the I/O line: *which* nodes go (pure, so the kernel can stay pure) and *how*
+ * they are rendered (a model call, so the driver owns it).
+ */
 export interface HandoffPolicy {
-    /** a compaction covering the outgoing agent's noise, or null */
-    compact(state: AgentState, handoff: HandoffNode): Kernel.CompactionSpec | null;
+    /** nodes the outgoing agent leaves behind, or null to keep everything */
+    select(state: AgentState, handoff: HandoffNode): TrajectoryNode[] | null;
+}
+
+export type Summary = string | { text: string; usage?: TokenUsage };
+
+export interface Summarizer {
+    summarize(nodes: TrajectoryNode[], reason: string, services: Services): Promise<Summary>;
 }
 
 export interface JoinPolicy {
@@ -51,6 +69,47 @@ const defaultJoinPolicy: JoinPolicy = {
     onBranchError: 'continue',
 };
 
+/** Used when no summarizer is configured: says what went, spends no tokens. */
+const structuralSummarizer: Summarizer = {
+    summarize(nodes, reason) {
+        const counts = new Map<string, number>();
+        for (const n of nodes) {
+            counts.set(n.type, (counts.get(n.type) ?? 0) + 1);
+        }
+        const what = [...counts].map(([type, n]) => `${n}\u00d7 ${type}`).join(', ');
+        return Promise.resolve(`[${reason}] ${nodes.length} earlier steps were dropped: ${what}.`);
+    },
+};
+
+const SUMMARY_INSTRUCTIONS =
+    'You compress an agent transcript. Rewrite the excerpt below as a short plain-text ' +
+    'briefing that preserves every decision, fact and open question a successor would ' +
+    'need. Do not add commentary and do not invent detail.';
+
+/** A summarizer that asks a model, so the compaction node holds real prose. */
+export function modelSummarizer(model: Model, instructions = SUMMARY_INSTRUCTIONS): Summarizer {
+    return {
+        async summarize(nodes, reason, services): Promise<Summary> {
+            // The summarizer reads exactly what the model read.
+            const { messages } = await projectMessages(nodes, services.payloads);
+            const req: ModelRequest = {
+                system: instructions,
+                messages: [
+                    ...messages,
+                    {
+                        role: 'user',
+                        content: [{ type: 'text', text: `Summarize the above (${reason}).` }],
+                    },
+                ],
+                tools: [],
+                toolChoice: 'auto',
+            };
+            const res = await model.generate(req);
+            return { text: res.text, usage: res.usage };
+        },
+    };
+}
+
 export interface RunnerOptions<TCtx = unknown> {
     /** default model for agents that do not pin their own */
     model?: Model;
@@ -60,6 +119,8 @@ export interface RunnerOptions<TCtx = unknown> {
     memory?: MemoryStore[];
     skills?: SkillProvider[];
     handoffPolicy?: HandoffPolicy;
+    /** renders the nodes a policy selected; defaults to a structural note */
+    summarizer?: Summarizer;
     joinPolicy?: JoinPolicy;
     /** use `Model.stream` when the model implements it (default: true) */
     stream?: boolean;
@@ -97,6 +158,7 @@ export class AgentRunner<TCtx = unknown> {
     readonly #model?: Model;
     readonly #context?: TCtx;
     readonly #handoffPolicy?: HandoffPolicy;
+    readonly #summarizer: Summarizer;
     readonly #joinPolicy: JoinPolicy;
     readonly #stream: boolean;
     readonly #clock: IdClock;
@@ -112,6 +174,7 @@ export class AgentRunner<TCtx = unknown> {
                 skills: opts.skills,
             });
         this.#handoffPolicy = opts.handoffPolicy;
+        this.#summarizer = opts.summarizer ?? structuralSummarizer;
         this.#joinPolicy = opts.joinPolicy ?? defaultJoinPolicy;
         this.#stream = opts.stream ?? true;
         this.#clock = opts.clock ?? systemClock;
@@ -246,6 +309,7 @@ export class AgentRunner<TCtx = unknown> {
                     yield* deltas.drain();
                     const res = await call;
 
+                    const before = state;
                     state = await Kernel.applyLlmResponse(
                         state,
                         res,
@@ -254,7 +318,7 @@ export class AgentRunner<TCtx = unknown> {
                         digest,
                         this.registry,
                     );
-                    const node = lastOfType(state.trajectory, 'llm_call');
+                    const node = appended(before, state).find((n) => n.type === 'llm_call');
                     if (node) {
                         yield tag(state, branch, { type: 'after_llm_call', state, node });
                     }
@@ -265,24 +329,22 @@ export class AgentRunner<TCtx = unknown> {
                     const tools = await Kernel.resolveTools(state, this.registry, env);
                     for (const call of action.calls) {
                         yield tag(state, branch, { type: 'before_tool_call', state, call });
-                        const before = state.agentName;
+                        const was = state;
                         const outcome = await this.#runTool(state, tools, call, opts);
                         state = await Kernel.applyToolResult(state, call.callId, outcome, env);
-                        const node = lastOfType(state.trajectory, 'tool_result');
+                        const added = appended(was, state);
+                        const node = added.find((n) => n.type === 'tool_result');
                         if (node) {
                             yield tag(state, branch, { type: 'after_tool_call', state, node });
                         }
-                        if (state.agentName !== before) {
-                            const handoff = lastOfType(state.trajectory, 'handoff');
-                            const spec = handoff && this.#handoffPolicy?.compact(state, handoff);
-                            if (spec) {
-                                state = await Kernel.applyCompaction(state, spec, env);
-                            }
+                        const handoff = added.find((n) => n.type === 'handoff');
+                        if (handoff) {
+                            state = await this.#compactHandoff(state, handoff, env);
                             yield tag(state, branch, {
                                 type: 'handoff',
                                 state,
-                                from: before,
-                                to: state.agentName,
+                                from: handoff.from,
+                                to: handoff.to,
                             });
                         }
                     }
@@ -291,14 +353,15 @@ export class AgentRunner<TCtx = unknown> {
 
                 case 'fork': {
                     const fork = state.trajectory.find(
-                        (n): n is ForkNode => n.type === 'fork' && n.forkId === action.forkId,
+                        (n): n is ForkNode => n.type === 'fork' && n.callId === action.forkId,
                     );
                     if (fork) {
                         yield tag(state, branch, { type: 'before_fork', state, node: fork });
                     }
                     const results = yield* this.#runBranches(state, action, opts);
+                    const before = state;
                     state = await Kernel.applyJoin(state, action.forkId, results, env);
-                    const node = lastOfType(state.trajectory, 'join') as JoinNode | undefined;
+                    const node = appended(before, state).find((n) => n.type === 'join');
                     if (node) {
                         yield tag(state, branch, { type: 'after_join', state, node });
                     }
@@ -402,6 +465,28 @@ export class AgentRunner<TCtx = unknown> {
         const all = Promise.all(tasks).finally(() => queue.close());
         yield* queue.drain();
         return await all;
+    }
+
+    /**
+     * Collapses what the outgoing agent left behind. The nodes stay in the
+     * trajectory; only the projection replaces them with the summary.
+     */
+    async #compactHandoff(
+        state: AgentState,
+        handoff: HandoffNode,
+        env: Kernel.KernelEnv,
+    ): Promise<AgentState> {
+        const nodes = this.#handoffPolicy?.select(state, handoff);
+        if (!nodes?.length) {
+            return state;
+        }
+        const summary = await this.#summarizer.summarize(nodes, 'handoff_noise', this.services);
+        const { text, usage } = typeof summary === 'string' ? { text: summary, usage: undefined } : summary;
+        return Kernel.applyCompaction(
+            state,
+            { covers: nodes.map((n) => n.id), summary: text, reason: 'handoff_noise', usage },
+            env,
+        );
     }
 
     /**
@@ -557,10 +642,19 @@ function tag<E extends StreamDelta | Omit<CheckpointEvent, keyof EventBase>>(
     return { runId: state.runId, agent: state.agentName, branch, ...event } as AgentEvent;
 }
 
+/**
+ * What a kernel call just appended. The trajectory is append-only and `apply*`
+ * only ever appends, so the tail is exactly the new nodes — no backwards scan.
+ */
+function appended(before: AgentState, after: AgentState): TrajectoryNode[] {
+    return after.trajectory.slice(before.trajectory.length);
+}
+
 /** Recall after new user input or a hand-off, and never twice in a row. */
 function shouldRecall(state: AgentState): boolean {
-    for (let i = state.trajectory.length - 1; i >= 0; i--) {
-        const n = state.trajectory[i];
+    const nodes = state.trajectory;
+    for (let i = nodes.length - 1; i >= 0; i--) {
+        const n = nodes[i];
         if (n.type === 'system_prompt') {
             continue;
         }

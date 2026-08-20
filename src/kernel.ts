@@ -20,13 +20,12 @@ import {
     lastOfType,
     nodePayloads,
     projectMessages,
+    projected,
     totalUsage,
-    visibleNodes,
     type CompactionNode,
     type FinalOutputNode,
     type ForkNode,
     type HandoffNode,
-    type InheritedContextNode,
     type JoinNode,
     type LlmCallNode,
     type LoadSkillsNode,
@@ -43,13 +42,13 @@ import {
 import {
     FINAL_OUTPUT_TOOL,
     FORK_TOOL,
+    addUsage,
     parseArgs,
     toContent,
     zeroUsage,
     type AnyTool,
     type Input,
     type JsonSchema,
-    type Message,
     type TokenUsage,
     type ToolOutcome,
     type ToolSchema,
@@ -88,8 +87,8 @@ interface Draft {
 
 /**
  * Every `apply*` returns a *new* state object; old snapshots stay valid, which
- * is exactly what a checkpointing caller needs. `seq` stays dense because it is
- * derived from the trajectory length as nodes are drafted.
+ * is exactly what a checkpointing caller needs. Nodes carry no index: the array
+ * *is* the order.
  */
 function begin(state: AgentState, env: KernelEnv): Draft {
     const clock = env.clock ?? systemClock;
@@ -98,7 +97,6 @@ function begin(state: AgentState, env: KernelEnv): Draft {
         add<T extends TrajectoryNode>(body: NodeBody<T>, agent = state.agentName): T {
             const node = {
                 id: clock.newId(),
-                seq: state.trajectory.length + nodes.length,
                 ts: clock.now(),
                 agent,
                 ...body,
@@ -108,9 +106,17 @@ function begin(state: AgentState, env: KernelEnv): Draft {
         },
         commit(patch: Partial<AgentState>): AgentState {
             const trajectory = [...state.trajectory, ...nodes];
-            return { ...state, ...patch, trajectory, usage: totalUsage(trajectory) };
+            return { ...state, ...patch, trajectory, usage: ownUsage(state, trajectory) };
         },
     };
+}
+
+/**
+ * What *this* run consumed. A branch starts from a copy of the parent's prefix,
+ * whose `llm_call` nodes were paid for by the parent, so they are excluded.
+ */
+function ownUsage(state: AgentState, trajectory: TrajectoryNode[]): TokenUsage {
+    return totalUsage(trajectory.slice(state.spec.prefixLength ?? 0));
 }
 
 function put(env: KernelEnv, value: string): Promise<Payload> {
@@ -175,7 +181,6 @@ export async function createState<T = string, TCtx = unknown>(
         phase: 'created',
         trajectory: [],
         pendingToolCalls: [],
-        pendingBranches: [],
         usage: zeroUsage(),
         context: opts.context,
     };
@@ -282,13 +287,18 @@ export function nextAction(state: AgentState): NextAction {
             return { kind: 'tools', calls };
         }
     }
-    if (state.pendingBranches.length) {
-        const fork = lastOfType(state.trajectory, 'fork');
+    const pendingFork = state.pendingFork;
+    if (pendingFork?.branches.length) {
+        // Looked up by call id, not by "the last fork node": with two forks in
+        // one run the most recent one is not necessarily the pending one.
+        const fork = state.trajectory.find(
+            (n): n is ForkNode => n.type === 'fork' && n.callId === pendingFork.callId,
+        );
         if (fork) {
             const branches = fork.branches
-                .filter((b) => state.pendingBranches.includes(b.name))
+                .filter((b) => pendingFork.branches.includes(b.name))
                 .map(({ name, agent, childRunId }) => ({ name, agent, childRunId }));
-            return { kind: 'fork', forkId: fork.forkId, branches };
+            return { kind: 'fork', forkId: fork.callId, branches };
         }
     }
     return { kind: 'llm' };
@@ -321,9 +331,9 @@ const FORK_PARAMETERS: JsonSchema = {
     additionalProperties: false,
 };
 
-/** Skills activated by non-masked `load_skills` nodes of the active agent. */
+/** Skills activated by still-projected `load_skills` nodes of the active agent. */
 async function activeSkills(state: AgentState, env: KernelEnv): Promise<Skill[]> {
-    const nodes = visibleNodes(state.trajectory).filter(
+    const nodes = projected(state.trajectory).filter(
         (n): n is LoadSkillsNode => n.type === 'load_skills' && n.agent === state.agentName,
     );
     const out: Skill[] = [];
@@ -475,7 +485,7 @@ export async function applySystemPrompt<TCtx>(
     if (prompt === undefined) {
         return state;
     }
-    const current = lastOfType(visibleNodes(state.trajectory), 'system_prompt');
+    const current = lastOfType(projected(state.trajectory), 'system_prompt');
     if (current && current.agent === state.agentName && current.prompt.sha256 === hash(prompt)) {
         return state;
     }
@@ -572,7 +582,7 @@ export async function applyLlmResponse<TCtx>(
     }
 
     const pending: string[] = [];
-    let pendingBranches: string[] = state.pendingBranches;
+    let pendingFork = state.pendingFork;
     let done = false;
 
     for (let i = 0; i < res.toolCalls.length; i++) {
@@ -626,12 +636,11 @@ export async function applyLlmResponse<TCtx>(
             );
             b.add<ForkNode>({
                 type: 'fork',
-                forkId: call.id,
                 callId: call.id,
                 contextMode: args.context ?? 'inherit',
                 branches,
             });
-            pendingBranches = branches.map((br) => br.name);
+            pendingFork = { callId: call.id, branches: branches.map((br) => br.name) };
             continue;
         }
 
@@ -645,14 +654,14 @@ export async function applyLlmResponse<TCtx>(
     }
 
     if (done) {
-        return b.commit({ phase: 'done', pendingToolCalls: [], pendingBranches: [] });
+        return b.commit({ phase: 'done', pendingToolCalls: [], pendingFork: undefined });
     }
     const phase: RunPhase = pending.length
         ? 'awaiting_tools'
-        : pendingBranches.length
+        : pendingFork?.branches.length
           ? 'awaiting_branches'
           : 'awaiting_llm';
-    return b.commit({ phase, pendingToolCalls: pending, pendingBranches });
+    return b.commit({ phase, pendingToolCalls: pending, pendingFork });
 }
 
 function forkProblem<TCtx>(
@@ -770,7 +779,7 @@ export async function applyToolResult(
     const pendingToolCalls = state.pendingToolCalls.filter((id) => id !== callId);
     const phase: RunPhase = pendingToolCalls.length
         ? 'awaiting_tools'
-        : state.pendingBranches.length
+        : state.pendingFork?.branches.length
           ? 'awaiting_branches'
           : 'awaiting_llm';
     return b.commit({ phase, pendingToolCalls, agentName });
@@ -850,28 +859,34 @@ export async function applySkillLoad(
 }
 
 export interface CompactionSpec {
-    maskFrom: number;
-    maskTo: number;
+    /** ids of the nodes this summary replaces; need not be contiguous */
+    covers: string[];
     summary: string;
     reason: CompactionNode['reason'];
+    /** the model's call id when it compacted itself; synthesized otherwise */
+    callId?: string;
+    /** tokens the summarizer burned */
+    usage?: TokenUsage;
 }
 
 /**
- * Masking, not deletion: the masked nodes stay in the trajectory for audit and
- * replay, and only the projection skips them.
+ * Containment, not deletion: the covered nodes stay in the trajectory for audit
+ * and replay, and only the projection skips them. The log stays append-only.
  */
 export async function applyCompaction(
     state: AgentState,
     spec: CompactionSpec,
     env: KernelEnv,
 ): Promise<AgentState> {
+    const clock = env.clock ?? systemClock;
     const b = begin(state, env);
     b.add<CompactionNode>({
         type: 'compaction',
-        maskFrom: spec.maskFrom,
-        maskTo: spec.maskTo,
+        callId: spec.callId ?? `compact_${clock.newId()}`,
+        covers: spec.covers,
         summary: await put(env, spec.summary),
         reason: spec.reason,
+        usage: spec.usage ?? zeroUsage(),
     });
     return b.commit({});
 }
@@ -885,9 +900,10 @@ export function applyFailure(state: AgentState, error: string): AgentState {
 // ---------------------------------------------------------------------------
 
 /**
- * Derives a self-contained child state. The inherited context is a *copy*, not
- * a reference: the branch can execute in another process (or as a Temporal
- * child workflow), and the snapshot records exactly what it saw.
+ * Derives a child state seeded with *real nodes* copied from the parent, not a
+ * frozen `Message[]` blob: the branch can compact its own inherited context,
+ * and at join those nodes splice back into one trajectory. The copy is a
+ * snapshot, so the branch can execute in another process.
  */
 export async function createChildState(
     state: AgentState,
@@ -896,13 +912,14 @@ export async function createChildState(
     env: KernelEnv,
 ): Promise<AgentState> {
     const fork = state.trajectory.find(
-        (n): n is ForkNode => n.type === 'fork' && n.forkId === forkId,
+        (n): n is ForkNode => n.type === 'fork' && n.callId === forkId,
     );
     const plan = fork?.branches.find((b) => b.name === branch);
     if (!fork || !plan) {
         throw new Error(`unknown branch ${branch} of fork ${forkId}`);
     }
 
+    const prefix = branchPrefix(state, fork, plan.agent);
     const child: AgentState = {
         version: 1,
         runId: plan.childRunId,
@@ -911,31 +928,19 @@ export async function createChildState(
             parent: { runId: state.runId, forkId, branch },
             forkDepth: state.spec.forkDepth + 1,
             maxForkDepth: state.spec.maxForkDepth,
+            // Where the branch's own history begins: the parent already holds
+            // the prefix, so only what follows is spliced back at join.
+            prefixLength: prefix.length,
         },
         agentName: plan.agent,
         phase: 'created',
-        trajectory: [],
+        trajectory: prefix,
         pendingToolCalls: [],
-        pendingBranches: [],
         usage: zeroUsage(),
         context: state.context,
     };
 
     const b = begin(child, env);
-    if (fork.contextMode !== 'none') {
-        const before = state.trajectory.filter((n) => n.seq < fork.seq);
-        const { messages } = await projectMessages(before, env.services.payloads);
-        const inherited = fork.contextMode === 'compact' ? stripToolNoise(messages) : messages;
-        if (inherited.length) {
-            b.add<InheritedContextNode>({
-                type: 'inherited_context',
-                parent: { runId: state.runId, seq: fork.seq },
-                // Content-addressed, so N branches inheriting the same context
-                // cost one blob rather than N copies.
-                messages: await put(env, JSON.stringify(inherited)),
-            });
-        }
-    }
     b.add<UserInputNode>({
         type: 'user_input',
         // Reuses the instructions payload already written by the fork node.
@@ -944,19 +949,27 @@ export async function createChildState(
     return b.commit({ phase: 'awaiting_llm' });
 }
 
-/**
- * Cheap structural compaction for `context: 'compact'`: branches start from the
- * conversation, not from the parent's tool chatter.
- */
-function stripToolNoise(messages: Message[]): Message[] {
-    return messages.flatMap((m): Message[] => {
-        if (m.role === 'tool') {
-            return [];
+/** The parent history a branch starts from, as decided by `contextMode`. */
+function branchPrefix(state: AgentState, fork: ForkNode, agent: string): TrajectoryNode[] {
+    if (fork.contextMode === 'none') {
+        return [];
+    }
+    const visible = projected(state.trajectory);
+    const at = visible.findIndex((n) => n.id === fork.id);
+    const before = at === -1 ? visible : visible.slice(0, at);
+    return before.filter((n) => {
+        // Skills are agent-scoped. Carrying the instructions text across an
+        // agent change would leave the branch reading about tools it cannot
+        // call, so text and tools have to disappear together.
+        if (n.type === 'load_skills') {
+            return n.agent === agent;
         }
-        if (m.role === 'assistant') {
-            return m.content ? [{ ...m, toolCalls: undefined }] : [];
+        // 'compact': start from the conversation, not the parent's tool chatter.
+        // The now-unanswered tool calls are dropped by `repairToolCalls`.
+        if (fork.contextMode === 'compact') {
+            return n.type !== 'tool_call' && n.type !== 'tool_result' && n.type !== 'memory_recall';
         }
-        return [m];
+        return true;
     });
 }
 
@@ -972,9 +985,10 @@ export interface BranchResult {
 }
 
 /**
- * Folds branch results back into the parent. Results are sorted into declared
- * branch order first, so the trajectory (and therefore the prompt cache and any
- * replay) is identical regardless of completion order.
+ * Folds branches back into the parent. Each branch's history is nested inside
+ * its row of the join, in *declared* branch order — so the result is identical
+ * regardless of completion order, and a walk of the parent array never trips
+ * over someone else's nodes.
  */
 export async function applyJoin(
     state: AgentState,
@@ -983,44 +997,39 @@ export async function applyJoin(
     env: KernelEnv,
 ): Promise<AgentState> {
     const fork = state.trajectory.find(
-        (n): n is ForkNode => n.type === 'fork' && n.forkId === forkId,
+        (n): n is ForkNode => n.type === 'fork' && n.callId === forkId,
     );
     if (!fork) {
         throw new Error(`unknown fork ${forkId} in run ${state.runId}`);
     }
     const byName = new Map(results.map((r) => [r.name, r]));
-    const ordered = fork.branches.flatMap((b) => {
-        const r = byName.get(b.name);
-        return r ? [r] : [];
-    });
 
-    const rows: JoinNode['results'] = [];
+    const b = begin(state, env);
+    const rows: JoinNode['branches'] = [];
     let usage = zeroUsage();
-    for (const r of ordered) {
+    for (const plan of fork.branches) {
+        const r = byName.get(plan.name);
+        if (!r) {
+            continue;
+        }
         rows.push({
-            name: r.name,
+            name: plan.name,
+            agent: plan.agent,
             status: r.status,
             output: await put(env, r.output),
             error: r.error,
             usage: r.usage,
-            childRunId: r.childRunId,
-            // The whole child trajectory becomes one ref: the parent stays small
-            // while full history remains reachable for debugging and accounting.
-            childStateRef: await put(env, JSON.stringify(r.childState)),
+            // Only what the branch itself did: the inherited prefix is the
+            // parent's own history and is already right there in the array.
+            nodes: r.childState.trajectory.slice(r.childState.spec.prefixLength ?? 0),
         });
-        usage = {
-            inputTokens: usage.inputTokens + r.usage.inputTokens,
-            cachedInputTokens: usage.cachedInputTokens + r.usage.cachedInputTokens,
-            outputTokens: usage.outputTokens + r.usage.outputTokens,
-            reasoningTokens: usage.reasoningTokens + r.usage.reasoningTokens,
-        };
+        usage = addUsage(usage, r.usage);
     }
 
-    const b = begin(state, env);
-    b.add<JoinNode>({ type: 'join', forkId, results: rows, usage });
-    const remaining = state.pendingBranches.filter((n) => !byName.has(n));
+    b.add<JoinNode>({ type: 'join', callId: forkId, branches: rows, usage });
+    const remaining = (state.pendingFork?.branches ?? []).filter((n) => !byName.has(n));
     return b.commit({
-        pendingBranches: remaining,
+        pendingFork: remaining.length ? { callId: forkId, branches: remaining } : undefined,
         phase: remaining.length
             ? 'awaiting_branches'
             : state.pendingToolCalls.length
@@ -1033,17 +1042,10 @@ export async function applyJoin(
 // Small read helpers used by drivers
 // ---------------------------------------------------------------------------
 
-export function payloadsOf(state: AgentState): Payload[] {
-    return state.trajectory.flatMap(nodePayloads);
-}
-
-export function lastLlmCall(state: AgentState): LlmCallNode | undefined {
-    return lastOfType(state.trajectory, 'llm_call');
-}
-
 export function lastUserInput(state: AgentState): UserInputNode | undefined {
-    for (let i = state.trajectory.length - 1; i >= 0; i--) {
-        const n = state.trajectory[i];
+    const nodes = state.trajectory;
+    for (let i = nodes.length - 1; i >= 0; i--) {
+        const n = nodes[i];
         if (n.type === 'user_input' && !n.synthetic) {
             return n;
         }

@@ -6,7 +6,7 @@ import type { Model, ModelRequest, ModelResponse } from '../src/model.ts';
 import { exportRun, importRun, InMemoryPayloadStore } from '../src/payload.ts';
 import { StaticSkillProvider } from '../src/skills.ts';
 import { assertState, turns, type AgentState } from '../src/state.ts';
-import { projectMessages, type TrajectoryNode } from '../src/trajectory.ts';
+import { projectMessages, totalUsage, type TrajectoryNode } from '../src/trajectory.ts';
 import { tool, zeroUsage, type ToolCall } from '../src/types.ts';
 
 // ---------------------------------------------------------------------------
@@ -176,8 +176,8 @@ describe('smoke', () => {
         expect(res.output).toBe('combined answer');
         const join = findNode(res.state, 'join');
         // Declared order, not completion order.
-        expect(join.results.map((r) => r.name)).toEqual(['left', 'right']);
-        expect(join.results.every((r) => r.status === 'ok')).toBe(true);
+        expect(join.branches.map((b) => b.name)).toEqual(['left', 'right']);
+        expect(join.branches.every((b) => b.status === 'ok')).toBe(true);
         // Branch tokens are folded into the parent's total.
         expect(res.usage.inputTokens).toBe(10 + join.usage.inputTokens + 10);
         expect(branchEvents.some((e) => e.startsWith('left:'))).toBe(true);
@@ -187,6 +187,57 @@ describe('smoke', () => {
         expect(forkResults).toHaveLength(1);
         const [forkResult] = forkResults;
         expect(forkResult.role === 'tool' && forkResult.content).toContain('done branch: left');
+
+        // The branches' own history hangs off the join — there for audit, and
+        // structurally out of the parent's scope.
+        const raw = res.state.trajectory;
+        expect(join.branches.map((b) => b.nodes.length).every((n) => n > 0)).toBe(true);
+        expect(raw.filter((n) => n.type === 'llm_call'), 'parent calls only').toHaveLength(2);
+        expect(turns(res.state), 'branch turns are not the parent\u2019s').toBe(2);
+        // Accounting is the one thing that crosses the boundary, by recursion.
+        expect(totalUsage(raw).inputTokens).toBe(40);
+
+        // Export reaches branch payloads through the generic deep walk.
+        const bundle = await exportRun(res.state, runner.services.payloads);
+        expect(Object.values(bundle.blobs)).toContain('done branch: left');
+    });
+
+    it('keeps a branch agent out of the parent after the join', async () => {
+        const model = new RuleModel(
+            (req) => (hasToolResult(req, 'fork') ? say('merged') : undefined),
+            (req) => (req.system === 'SCOUT' ? say('scouted') : undefined),
+            () =>
+                callTool('fork', {
+                    branches: [
+                        { name: 'a', instructions: 'go a', agent: 'scout' },
+                        { name: 'b', instructions: 'go b', agent: 'scout' },
+                    ],
+                    context: 'none',
+                }),
+        );
+        const runner = new AgentRunner({ model });
+        runner.agent({ name: 'scout', instructions: 'SCOUT' });
+        runner.agent({
+            name: 'lead',
+            instructions: 'LEAD',
+            fork: { agents: ['scout'], maxBranches: 4 },
+        });
+
+        const res = await runner.run('lead', 'delegate');
+        expect(res.output).toBe('merged');
+        expect(res.agent).toBe('lead');
+
+        // The prompt in force after the join is the one from before the fork.
+        const { system } = await projectMessages(res.state.trajectory, runner.services.payloads);
+        expect(system).toBe('LEAD');
+        expect(res.state.trajectory.some((n) => n.agent === 'scout')).toBe(false);
+        // … while the branch's own prompt is still on record, one level down.
+        const join = findNode(res.state, 'join');
+        expect(
+            join.branches.every((b) =>
+                b.nodes.some((n) => n.type === 'system_prompt' && n.agent === 'scout'),
+            ),
+        ).toBe(true);
     });
 
     it('writes memory and recalls it on a later run', async () => {
@@ -301,12 +352,12 @@ describe('smoke', () => {
 
         // Portability: state + blobs travel as one artifact.
         const bundle = await exportRun(resumed.state, runner.services.payloads);
-        const restored = importRun<AgentState>(bundle, new InMemoryPayloadStore('mem'));
+        const restored = await importRun<AgentState>(bundle, new InMemoryPayloadStore('mem'));
         expect(restored.runId).toBe(resumed.state.runId);
         expect(Object.keys(bundle.blobs).length).toBeGreaterThan(3);
     });
 
-    it('masks a compacted node without deleting it', async () => {
+    it('hides a compacted node without deleting it', async () => {
         const model = new RuleModel(
             (req) => (hasToolResult(req, 'noisy') ? say('final') : undefined),
             () => callTool('noisy', {}),
@@ -324,26 +375,83 @@ describe('smoke', () => {
         const toolResult = findNode(res.state, 'tool_result');
 
         const { Kernel } = await import('../src/index.ts');
+        const env = { services: runner.services };
         const compacted = await Kernel.applyCompaction(
             res.state,
             {
-                maskFrom: toolResult.seq,
-                maskTo: toolResult.seq,
+                covers: [toolResult.id],
                 summary: 'the tool returned a long blob',
                 reason: 'token_budget',
             },
-            { services: runner.services },
+            env,
         );
         const { messages } = await projectMessages(
             compacted.trajectory,
             runner.services.payloads,
         );
         const text = JSON.stringify(messages);
-        expect(text, 'masked node is hidden from the projection').not.toContain('xxxxx');
+        expect(text, 'covered node is hidden from the projection').not.toContain('xxxxx');
         expect(text).toContain('the tool returned a long blob');
         // The orphaned tool call was dropped, so the request stays provider-valid.
         expect(!text.includes('"noisy"') || !text.includes('tool_call')).toBe(true);
-        // The original node is still there for audit.
-        expect(compacted.trajectory.some((n) => n.seq === toolResult.seq)).toBe(true);
+        // The original node is still there for audit — the log is append-only.
+        expect(compacted.trajectory.some((n) => n.id === toolResult.id)).toBe(true);
+        expect(compacted.trajectory.length).toBe(res.state.trajectory.length + 1);
+
+        // A second compaction covering the first must not resurrect what the
+        // first one hid: the covered set is a union, so compaction is monotone.
+        const first = compacted.trajectory[compacted.trajectory.length - 1];
+        const twice = await Kernel.applyCompaction(
+            compacted,
+            { covers: [first.id], summary: 'even shorter', reason: 'token_budget' },
+            env,
+        );
+        const again = JSON.stringify(
+            (await projectMessages(twice.trajectory, runner.services.payloads)).messages,
+        );
+        expect(again).toContain('even shorter');
+        expect(again).not.toContain('the tool returned a long blob');
+        expect(again, 'a covered node stays covered').not.toContain('xxxxx');
+    });
+
+    it('compacts a hand-off through a policy and an async summarizer', async () => {
+        const model = new RuleModel(
+            (req) => (req.system === 'B' ? say('done by b') : undefined),
+            () => callTool('transfer_to_b', {}),
+        );
+        const runner = new AgentRunner({
+            model,
+            handoffPolicy: {
+                // Everything the outgoing agent produced, by node identity.
+                select: (state) =>
+                    state.trajectory.filter(
+                        (n) => n.agent === 'a' && n.type !== 'user_input',
+                    ),
+            },
+            summarizer: {
+                summarize: (nodes, reason) =>
+                    Promise.resolve(`[${reason}] a did ${nodes.length} things`),
+            },
+        });
+        runner.agent({ name: 'b', instructions: 'B' });
+        runner.agent({ name: 'a', instructions: 'A', handoffs: ['b'] });
+
+        const res = await runner.run('a', 'start');
+        expect(res.output).toBe('done by b');
+        const compaction = findNode(res.state, 'compaction');
+        expect(compaction.reason).toBe('handoff_noise');
+        expect(compaction.covers.length).toBeGreaterThan(0);
+
+        const { system, messages } = await projectMessages(
+            res.state.trajectory,
+            runner.services.payloads,
+        );
+        expect(system).toBe('B');
+        // The summary reaches the model as a tool result, not as a user turn.
+        const summary = messages.find((m) => m.role === 'tool' && m.name === 'compact');
+        expect(summary && summary.role === 'tool' && summary.content).toContain('handoff_noise');
+        expect(messages.some((m) => m.role === 'user' && JSON.stringify(m).includes('a did'))).toBe(
+            false,
+        );
     });
 });

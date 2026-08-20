@@ -6,7 +6,7 @@ import { FileMemoryStore, createMemoryStore } from '../src/memory-stores/index.t
 import { memoryOpId } from '../src/memory.ts';
 import { FilePayloadStore, createPayloadStore } from '../src/payload-stores/index.ts';
 import { FileSkillProvider, createSkillProvider } from '../src/skill-providers/index.ts';
-import { hash } from '../src/payload.ts';
+import { PayloadResolver, exportRun, hash, importRun } from '../src/payload.ts';
 import { tool } from '../src/types.ts';
 
 let dir: string;
@@ -58,6 +58,17 @@ describe('FilePayloadStore', () => {
     it('builds from a ref', () => {
         expect(createPayloadStore(`file:${dir}`)).toBeInstanceOf(FilePayloadStore);
         expect(createPayloadStore('mem').id).toBe('mem');
+    });
+
+    it('receives an imported bundle', async () => {
+        const source = new PayloadResolver();
+        const state = { note: await source.put('exported note') };
+        const bundle = await exportRun(state, source);
+
+        const target = new FilePayloadStore({ dir, id: 'restored' });
+        const restored = await importRun<typeof state>(bundle, target);
+        expect(restored.note.store).toBe('restored');
+        expect(await target.get(restored.note)).toBe('exported note');
     });
 });
 

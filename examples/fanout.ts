@@ -238,14 +238,16 @@ async function main(): Promise<void> {
 
     step(3, 'The join, as the parent sees it');
     // The parent's history contains one fork tool call and one tool result —
-    // sequential semantics, parallel execution. Full child trajectories stay
-    // reachable through `childStateRef` but never enter the parent's prompt.
+    // sequential semantics, parallel execution. Each branch's own nodes hang
+    // off its row of the join: there for audit, structurally out of the
+    // parent's scope and out of its prompt.
     if (joined) {
         await joinTable(joined, runner.services.payloads);
         stats({
             branchInputTokens: joined.usage.inputTokens,
             branchOutputTokens: joined.usage.outputTokens,
             parentMessagesAdded: 2,
+            branchNodesOnRecord: joined.branches.reduce((n, b) => n + b.nodes.length, 0),
         });
     }
 
@@ -253,9 +255,10 @@ async function main(): Promise<void> {
     code('fleet report (parsed JSON)', JSON.stringify(result.output, null, 2));
     box('summary', result.output.summary);
     stats({
+        // `turns` counts the parent's own calls; the branches' are their own.
         modelCalls: turns(result.state),
-        // `state.usage` is derived from the trajectory, and the derivation
-        // includes `JoinNode.usage` — so this covers the whole fork tree.
+        // `state.usage` is a flat sum over the whole trajectory, so it already
+        // covers every token spent inside the fork.
         inputTokens: result.usage.inputTokens,
         cachedInputTokens: result.usage.cachedInputTokens,
         outputTokens: result.usage.outputTokens,

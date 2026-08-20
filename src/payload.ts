@@ -79,11 +79,6 @@ export class InMemoryPayloadStore implements PayloadStore {
         return Promise.all(ps.map((p) => this.get(p)));
     }
 
-    /** For `importRun` — registers a blob whose address is already known. */
-    register(sha256: string, value: string): void {
-        this.#blobs.set(sha256, value);
-    }
-
     get size(): number {
         return this.#blobs.size;
     }
@@ -226,43 +221,36 @@ export interface RunBundle {
 
 /**
  * Self-containment on demand: one portable artifact for tests, bug reports and
- * archival. Child runs reachable through `childStateRef` are pulled in too, so
- * a whole fork tree exports as a single bundle.
+ * archival. A fork tree needs no special handling — branch nodes live in the
+ * one trajectory, so their payloads are already reachable.
  */
 export async function exportRun(state: unknown, payloads: PayloadResolver): Promise<RunBundle> {
+    const refs = collectPayloads(state);
+    const values = await payloads.getMany(refs);
     const blobs: Record<string, string> = {};
-    const pending = collectPayloads(state);
-    const seen = new Set<string>();
-    while (pending.length) {
-        const batch = pending.splice(0, pending.length).filter((p) => !seen.has(p.sha256));
-        batch.forEach((p) => seen.add(p.sha256));
-        if (!batch.length) {
-            continue;
-        }
-        const values = await payloads.getMany(batch);
-        for (const p of batch) {
-            const value = values.get(p.sha256) ?? '';
-            blobs[p.sha256] = value;
-            // A child state is itself JSON full of payload refs; follow it.
-            if (value.startsWith('{') && value.includes('"trajectory"')) {
-                try {
-                    pending.push(...collectPayloads(JSON.parse(value)));
-                } catch {
-                    // not a state after all — nothing to follow
-                }
-            }
-        }
+    for (const p of refs) {
+        blobs[p.sha256] = values.get(p.sha256) ?? '';
     }
     return { state, blobs };
 }
 
+/** Bounded fan-out: a bundle can hold thousands of blobs, a store has limits. */
+const IMPORT_CONCURRENCY = 32;
+
 /**
- * Re-registers a bundle's blobs and rewrites every reference to point at the
- * target store, so an imported run resolves locally.
+ * Writes a bundle's blobs into the target store and rewrites every reference
+ * to point at it, so an imported run resolves locally.
+ *
+ * It re-`put`s rather than inserting under the bundle's keys, which keeps the
+ * contract at `PayloadStore` (any backend works, not just the in-memory one)
+ * and means nothing has to trust those keys: the store re-derives the address
+ * from the bytes, so a tampered blob lands under its true address and leaves a
+ * dangling reference that fails loudly instead of poisoning the store.
  */
-export function importRun<T>(bundle: RunBundle, store: InMemoryPayloadStore): T {
-    for (const [sha256, value] of Object.entries(bundle.blobs)) {
-        store.register(sha256, value);
+export async function importRun<T>(bundle: RunBundle, store: PayloadStore): Promise<T> {
+    const values = Object.values(bundle.blobs);
+    for (let i = 0; i < values.length; i += IMPORT_CONCURRENCY) {
+        await Promise.all(values.slice(i, i + IMPORT_CONCURRENCY).map((v) => store.put(v)));
     }
     return rewriteStore(structuredClone(bundle.state), store.id) as T;
 }

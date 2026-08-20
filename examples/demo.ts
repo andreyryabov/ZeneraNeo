@@ -176,7 +176,7 @@ async function test() {
     // cache, a different machine).
     step(5, 'Export / import the whole run');
     const bundle = await exportRun(typed.state, runner.services.payloads);
-    const restored = importRun<AgentState>(bundle, new InMemoryPayloadStore('restored'));
+    const restored = await importRun<AgentState>(bundle, new InMemoryPayloadStore('restored'));
     stats({ blobs: Object.keys(bundle.blobs).length, phase: restored.phase });
     console.log();
 }

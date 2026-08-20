@@ -158,16 +158,16 @@ export function gantt(laps: Lap[], total: number): void {
 
 /**
  * What the parent actually sees for a fork: one row per branch, in declared
- * order. Full child trajectories stay reachable through `childStateRef`, but
+ * order. The full branch histories stay in the trajectory as tagged nodes, but
  * never enter the parent's prompt.
  */
 export async function joinTable(node: JoinNode, payloads: PayloadResolver): Promise<void> {
-    const label = Math.max(...node.results.map((r) => r.name.length));
+    const label = Math.max(...node.branches.map((b) => b.name.length));
     console.log();
-    for (const r of node.results) {
-        const text = (await payloads.get(r.output)).trim().split('\n')[0] ?? '';
-        const mark = r.status === 'ok' ? pc.green('✓') : pc.red('✕');
-        console.log(`  ${mark} ${lane(r.name)(r.name.padEnd(label))}  ${text}`);
+    for (const b of node.branches) {
+        const text = (await payloads.get(b.output)).trim().split('\n')[0] ?? '';
+        const mark = b.status === 'ok' ? pc.green('✓') : pc.red('✕');
+        console.log(`  ${mark} ${lane(b.name)(b.name.padEnd(label))}  ${text}`);
     }
 }
 
@@ -386,7 +386,7 @@ export async function trace<T>(
             }
             case 'after_join':
                 onJoin?.(event.node);
-                line('⑃', `${tag}join ${event.node.results.length} branches`);
+                line('⑃', `${tag}join ${event.node.branches.length} branches`);
                 break;
             case 'run_finished':
                 line('●', `${tag}run finished`);

@@ -15,10 +15,8 @@ import {
 // ---------------------------------------------------------------------------
 
 export interface NodeBase {
-    /** ulid — unique, sortable */
+    /** ulid — unique within a trajectory */
     id: string;
-    /** dense index in the trajectory (0..n-1) */
-    seq: number;
     /** ISO timestamp (informational, not used for logic) */
     ts: string;
     /** active agent when the node was created */
@@ -113,8 +111,7 @@ export interface HandoffNode extends NodeBase {
 
 export interface ForkNode extends NodeBase {
     type: 'fork';
-    forkId: string;
-    /** the fork tool call that caused it */
+    /** the fork tool call that caused it — also the fork's identity */
     callId: string;
     contextMode: 'inherit' | 'compact' | 'none';
     branches: {
@@ -125,39 +122,49 @@ export interface ForkNode extends NodeBase {
     }[];
 }
 
+/**
+ * The outcome of a fork. Each branch's own history hangs off its row: fork is a
+ * scope, and nesting makes that structural rather than conventional — a walk of
+ * the parent array simply never encounters a branch node.
+ */
 export interface JoinNode extends NodeBase {
     type: 'join';
-    forkId: string;
+    /** the fork tool call this answers */
+    callId: string;
     /** always in declared branch order, never completion order */
-    results: {
+    branches: {
         name: string;
+        agent: string;
         status: 'ok' | 'error' | 'aborted';
         output: Payload;
         error?: string;
+        /** display only — the branch's own `llm_call` nodes carry the tokens */
         usage: TokenUsage;
-        childRunId: string;
-        /** the full child state, offloaded */
-        childStateRef: Payload;
+        /**
+         * What the branch did. Never projected into the parent's prompt; kept
+         * for audit, accounting and export. A nested fork's history hangs off
+         * a `join` in here, so depth costs nothing but recursion.
+         */
+        nodes: TrajectoryNode[];
     }[];
-    /** sum over branches */
+    /** display only; `totalUsage` recurses into the branches instead */
     usage: TokenUsage;
 }
 
-export interface InheritedContextNode extends NodeBase {
-    type: 'inherited_context';
-    parent: { runId: string; seq: number };
-    /** frozen projection of the parent, as JSON `Message[]` */
-    messages: Payload;
-}
-
+/**
+ * Collapses a set of nodes into one summary. The covered nodes stay in the
+ * trajectory — the log is append-only — and only the projection skips them.
+ */
 export interface CompactionNode extends NodeBase {
     type: 'compaction';
-    /** seq range (inclusive) whose nodes are hidden from projection */
-    maskFrom: number;
-    maskTo: number;
-    /** what the model sees instead of the masked range; may be empty */
+    /** real when the model called `compact`, synthesized when policy-driven */
+    callId: string;
+    /** ids of the nodes this summary replaces */
+    covers: string[];
     summary: Payload;
-    reason: 'handoff_noise' | 'token_budget' | 'branch_summary' | 'manual' | string;
+    reason: 'handoff_noise' | 'token_budget' | 'branch_context' | 'manual' | string;
+    /** what the summarizer itself burned */
+    usage: TokenUsage;
 }
 
 export interface FinalOutputNode extends NodeBase {
@@ -179,7 +186,6 @@ export type TrajectoryNode =
     | HandoffNode
     | ForkNode
     | JoinNode
-    | InheritedContextNode
     | CompactionNode
     | FinalOutputNode;
 
@@ -190,36 +196,51 @@ export type NodeBody<T extends TrajectoryNode> = Omit<T, keyof NodeBase>;
 // ---------------------------------------------------------------------------
 
 /**
- * Compaction hides nodes, it never deletes them: audit and replay always see
- * the full history. A later compaction may cover an earlier one, so masks are
- * applied from the end — a compaction that is itself masked has no effect.
+ * Ids replaced by a compaction. A branch's compactions live inside its own
+ * `nodes` array, so they are structurally out of reach here — a branch can
+ * never collapse the parent's history, even though it may compact the prefix
+ * it inherited and name ids the parent also has.
+ *
+ * The union is unconditional, so compaction is monotone: once a node has been
+ * summarized it stays hidden, even if a later compaction covers the summary.
  */
-export function maskedSeqs(trajectory: TrajectoryNode[]): Set<number> {
-    const masked = new Set<number>();
-    for (let i = trajectory.length - 1; i >= 0; i--) {
-        const n = trajectory[i];
-        if (n.type !== 'compaction' || masked.has(n.seq)) {
-            continue;
-        }
-        for (let s = n.maskFrom; s <= n.maskTo; s++) {
-            masked.add(s);
+export function coveredIds(nodes: TrajectoryNode[]): Set<string> {
+    const out = new Set<string>();
+    for (const n of nodes) {
+        if (n.type === 'compaction') {
+            for (const id of n.covers) {
+                out.add(id);
+            }
         }
     }
-    return masked;
+    return out;
 }
 
-export function visibleNodes(trajectory: TrajectoryNode[]): TrajectoryNode[] {
-    const masked = maskedSeqs(trajectory);
-    return trajectory.filter((n) => !masked.has(n.seq));
+/**
+ * What the model sees. Compaction hides nodes, it never deletes them: the
+ * trajectory is append-only, and audit and replay always see the full history.
+ */
+export function projected(nodes: TrajectoryNode[]): TrajectoryNode[] {
+    const covered = coveredIds(nodes);
+    return covered.size ? nodes.filter((n) => !covered.has(n.id)) : nodes;
 }
 
-/** Total consumption, including tokens spent inside parallel branches. */
+/**
+ * Total consumption, including every token spent inside a fork at any depth.
+ * This is the one place that deliberately crosses the branch boundary, so the
+ * recursion is the explicit opt-in; `JoinNode.usage` is display only and is not
+ * added, since counting it too would double every branch.
+ */
 export function totalUsage(trajectory: TrajectoryNode[]): TokenUsage {
-    return trajectory.reduce(
-        (acc, n) =>
-            n.type === 'llm_call' || n.type === 'join' ? addUsage(acc, n.usage) : acc,
-        zeroUsage(),
-    );
+    return trajectory.reduce((acc, n) => {
+        if (n.type === 'llm_call' || n.type === 'compaction') {
+            return addUsage(acc, n.usage);
+        }
+        if (n.type === 'join') {
+            return n.branches.reduce((sum, b) => addUsage(sum, totalUsage(b.nodes)), acc);
+        }
+        return acc;
+    }, zeroUsage());
 }
 
 export function lastOfType<T extends TrajectoryNode['type']>(
@@ -234,6 +255,7 @@ export function lastOfType<T extends TrajectoryNode['type']>(
     return undefined;
 }
 
+/** What a node contributes to the *projection* — not everything it references. */
 export function nodePayloads(n: TrajectoryNode): Payload[] {
     switch (n.type) {
         case 'user_input':
@@ -251,9 +273,8 @@ export function nodePayloads(n: TrajectoryNode): Payload[] {
         case 'tool_result':
             return [n.result];
         case 'join':
-            return n.results.map((r) => r.output);
-        case 'inherited_context':
-            return [n.messages];
+            // Branch histories are not projected; only their outputs are.
+            return n.branches.map((b) => b.output);
         case 'compaction':
             return [n.summary];
         case 'final_output':
@@ -277,14 +298,9 @@ export async function projectMessages(
     trajectory: TrajectoryNode[],
     payloads: PayloadResolver,
 ): Promise<Projection> {
-    const visible = visibleNodes(trajectory);
+    const visible = projected(trajectory);
     const blobs = await payloads.getMany(visible.flatMap(nodePayloads));
     const get = (p: Payload): string => blobs.get(p.sha256) ?? '';
-    // Fork nodes may be masked while their join survives, so index the whole
-    // trajectory rather than the visible slice.
-    const forks = new Map(
-        trajectory.flatMap((n) => (n.type === 'fork' ? [[n.forkId, n] as const] : [])),
-    );
 
     let system: string | undefined;
     const messages: Message[] = [];
@@ -341,38 +357,45 @@ export async function projectMessages(
                 });
                 break;
             case 'join': {
-                const fork = forks.get(n.forkId);
-                const rendered = n.results
+                const rendered = n.branches
                     .map(
-                        (r) =>
-                            `### ${r.name} (${r.status})\n` +
-                            (r.status === 'ok' ? get(r.output) : (r.error ?? get(r.output))),
+                        (b) =>
+                            `### ${b.name} (${b.status})\n` +
+                            (b.status === 'ok' ? get(b.output) : (b.error ?? get(b.output))),
                     )
                     .join('\n\n');
                 messages.push({
                     role: 'tool',
-                    callId: fork?.callId ?? n.forkId,
+                    callId: n.callId,
                     name: 'fork',
                     content: rendered,
-                    isError: n.results.some((r) => r.status !== 'ok') || undefined,
+                    isError: n.branches.some((b) => b.status !== 'ok') || undefined,
                 });
                 break;
             }
-            case 'inherited_context': {
-                const parsed: unknown = JSON.parse(get(n.messages) || '[]');
-                if (Array.isArray(parsed)) {
-                    messages.push(...(parsed as Message[]));
-                }
-                break;
-            }
             case 'compaction': {
-                const summary = get(n.summary);
-                if (summary) {
-                    messages.push({
-                        role: 'user',
-                        content: [{ type: 'text', text: `[earlier context, summarized]\n${summary}` }],
-                    });
-                }
+                // A tool-call pair, not a user message: the summary is the
+                // runtime's, and putting it in the user's mouth misattributes
+                // it. Both halves come from this one node, so a later
+                // compaction removes them together and cannot orphan either.
+                messages.push({
+                    role: 'assistant',
+                    content: '',
+                    agent: n.agent,
+                    toolCalls: [
+                        {
+                            id: n.callId,
+                            name: 'compact',
+                            args: JSON.stringify({ reason: n.reason, nodes: n.covers.length }),
+                        },
+                    ],
+                });
+                messages.push({
+                    role: 'tool',
+                    callId: n.callId,
+                    name: 'compact',
+                    content: get(n.summary),
+                });
                 break;
             }
             case 'final_output':
@@ -389,8 +412,10 @@ export async function projectMessages(
 
 /**
  * Providers reject a thread whose assistant tool call has no matching tool
- * message — and vice versa. Compaction can mask either side of a pair, so the
+ * message — and vice versa. Compaction can cover either side of a pair, so the
  * projection drops the orphaned half instead of producing an invalid request.
+ * This is also what makes non-contiguous compaction safe, and what keeps an
+ * unanswered `fork` call out of an inheriting branch's prompt.
  */
 function repairToolCalls(messages: Message[]): Message[] {
     const called = new Set(
