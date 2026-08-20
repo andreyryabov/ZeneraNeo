@@ -175,7 +175,26 @@ export function collectPayloads(value: unknown, into = new Map<string, Payload>(
     return [...into.values()];
 }
 
+/**
+ * A run made whole: a state plus every blob it points at.
+ *
+ * On its own an `AgentState` is a graph of references — meaningless without
+ * the stores those references name, which may be a bucket the reader cannot
+ * reach or an in-memory store that died with its process. A bundle closes
+ * that gap, so it is the unit for anything crossing a machine, a process or a
+ * trust boundary: test fixtures, bug reports, archival, handing a run to
+ * another service.
+ *
+ * Plain JSON by design — `JSON.stringify` it, and `importRun` rehydrates it
+ * against whatever store the reader has. Note the two halves are indexed
+ * differently on purpose: `state` keeps full `Payload` refs (store id, size,
+ * preview) because it is still a working state, while `blobs` is keyed by
+ * content address alone, which both drops the origin store (an imported run
+ * belongs to its new one) and dedupes for free — content repeated across
+ * steps or fork branches is carried once.
+ */
 export interface RunBundle {
+    /** typically an `AgentState`, but any payload-bearing JSON works */
     state: unknown;
     /** sha256 → content; deduped by construction */
     blobs: Record<string, string>;
