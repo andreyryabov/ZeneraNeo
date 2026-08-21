@@ -211,4 +211,42 @@ describe('FileSkillProvider', () => {
         provider.refresh();
         expect(await provider.list()).toHaveLength(3);
     });
+
+    it('exposes the absolute file path on the loaded skill', async () => {
+        const provider = new FileSkillProvider({ dir, tools: [cheapHotels] });
+
+        const flat = await provider.load('quick_note');
+        expect(flat.file).toBe(join(dir, 'quick_note.md'));
+
+        const folder = await provider.load('budget_travel');
+        expect(folder.file).toBe(join(dir, 'budget_travel', 'SKILL.md'));
+    });
+
+    it('merges skills from multiple directories, later dirs win on name collision', async () => {
+        const dir2 = await mkdtemp(join(tmpdir(), 'zenera-stores2-'));
+        try {
+            // unique skill only in dir2
+            await writeFile(join(dir2, 'extra.md'), 'extra skill\n', 'utf8');
+            // override quick_note from dir
+            await writeFile(join(dir2, 'quick_note.md'), '# Overridden note\n\nNew body.\n', 'utf8');
+
+            const provider = new FileSkillProvider({ dir: [dir, dir2], tools: [cheapHotels] });
+
+            const names = (await provider.list()).map((s) => s.name);
+            expect(names).toEqual(['budget_travel', 'extra', 'quick_note']);
+
+            // skill from dir2 takes precedence
+            const skill = await provider.load('quick_note');
+            expect(skill.description).toBe('Overridden note');
+            expect(skill.file).toBe(join(dir2, 'quick_note.md'));
+        } finally {
+            await rm(dir2, { recursive: true, force: true });
+        }
+    });
+
+    it('silently ignores a missing directory in the list', async () => {
+        const provider = new FileSkillProvider({ dir: ['/nonexistent/path', dir] });
+        const names = (await provider.list()).map((s) => s.name);
+        expect(names).toEqual(['budget_travel', 'quick_note']);
+    });
 });

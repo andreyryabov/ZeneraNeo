@@ -10,8 +10,8 @@ import type { AnyTool } from '../types.ts';
 const SKILL_FILE = 'SKILL.md';
 
 export interface FileSkillProviderOptions {
-    /** root directory holding `<name>.md` files and/or `<name>/SKILL.md` folders */
-    dir: string;
+    /** one or more root directories holding `<name>.md` files and/or `<name>/SKILL.md` folders */
+    dir: string | string[];
     /** logical provider id agents bind to; defaults to `file` */
     id?: string;
     /**
@@ -47,21 +47,28 @@ interface Entry {
  */
 export class FileSkillProvider implements SkillProvider {
     readonly id: string;
-    readonly #dir: string;
+    readonly #dirs: string[];
     readonly #tools = new Map<string, AnyTool<any>>();
     #index?: Promise<Map<string, Entry>>;
 
     constructor(opts: FileSkillProviderOptions | string) {
         const o = typeof opts === 'string' ? { dir: opts } : opts;
-        this.#dir = resolve(o.dir);
+        const raw = Array.isArray(o.dir) ? o.dir : [o.dir];
+        this.#dirs = raw.map((d) => resolve(d));
         this.id = o.id ?? 'file';
         for (const t of o.tools ?? []) {
             this.#tools.set(t.name, t);
         }
     }
 
+    /** The first configured directory (kept for backwards compatibility). */
     get dir(): string {
-        return this.#dir;
+        return this.#dirs[0];
+    }
+
+    /** All configured directories. */
+    get dirs(): string[] {
+        return [...this.#dirs];
     }
 
     /** Drops the cached scan; call after editing skills on disk. */
@@ -111,6 +118,7 @@ export class FileSkillProvider implements SkillProvider {
         return {
             ...entry.summary,
             content: entry.content,
+            file: entry.file,
             ...(tools.length ? { tools } : {}),
             ...(entry.folder ? { resources: await readResources(entry.folder) } : {}),
         };
@@ -124,28 +132,30 @@ export class FileSkillProvider implements SkillProvider {
 
     async #read(): Promise<Map<string, Entry>> {
         const index = new Map<string, Entry>();
-        let items;
-        try {
-            items = await readdir(this.#dir, { withFileTypes: true });
-        } catch (err) {
-            if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-                return index;
+        for (const dir of this.#dirs) {
+            let items;
+            try {
+                items = await readdir(dir, { withFileTypes: true });
+            } catch (err) {
+                if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+                    continue;
+                }
+                throw err;
             }
-            throw err;
-        }
-        for (const item of items) {
-            const folder = item.isDirectory() ? join(this.#dir, item.name) : undefined;
-            const file = folder ? join(folder, SKILL_FILE) : join(this.#dir, item.name);
-            if (!folder && !(item.isFile() && item.name.endsWith('.md'))) {
-                continue;
+            for (const item of items) {
+                const folder = item.isDirectory() ? join(dir, item.name) : undefined;
+                const file = folder ? join(folder, SKILL_FILE) : join(dir, item.name);
+                if (!folder && !(item.isFile() && item.name.endsWith('.md'))) {
+                    continue;
+                }
+                const raw = await readOptional(file);
+                if (raw === undefined) {
+                    continue;
+                }
+                const base = folder ? item.name : item.name.slice(0, -'.md'.length);
+                const entry = parse(raw, base, file, folder);
+                index.set(entry.summary.name, entry);
             }
-            const raw = await readOptional(file);
-            if (raw === undefined) {
-                continue;
-            }
-            const base = folder ? item.name : item.name.slice(0, -'.md'.length);
-            const entry = parse(raw, base, file, folder);
-            index.set(entry.summary.name, entry);
         }
         return index;
     }

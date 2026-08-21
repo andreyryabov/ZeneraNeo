@@ -23,6 +23,8 @@ export interface Skill extends SkillSummary {
     /** tools unlocked while the skill is active; the context type is the host agent's */
     tools?: AnyTool<any>[];
     resources?: Record<string, string>;
+    /** absolute path of the source file, if known (set by file-backed providers) */
+    file?: string;
 }
 
 export interface SkillProvider {
