@@ -12,12 +12,25 @@
       "skipFiles": ["<node_internals>/**"]
     },
     {
-      "name": "Current TS file",
+      "name": "Current TS file (Vitest)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/vitest/vitest.mjs",
+      "args": ["run", "${file}"],
+      "runtimeVersion": "24",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Current TS file (Node)",
       "type": "node",
       "request": "launch",
       "program": "${file}",
       "runtimeVersion": "24",
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "console": "integratedTerminal",
       "skipFiles": ["<node_internals>/**"]
     }

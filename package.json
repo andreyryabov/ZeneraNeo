@@ -33,9 +33,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "clean": "rm -rf dist coverage .dev .out",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
+    "test": "node --env-file=.env ./node_modules/vitest/vitest.mjs run",
+    "test:watch": "node --env-file=.env ./node_modules/vitest/vitest.mjs",
+    "test:coverage": "node --env-file=.env ./node_modules/vitest/vitest.mjs run --coverage",
     "typecheck": "tsc --noEmit",
     "check:node": "node -e \"if (+process.versions.node.split('.')[0] < 24) { console.error('Node >=24 required (running ' + process.version + '). Run: nvm use'); process.exit(1); }\"",
     "demo:simple": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/demo.ts'",
