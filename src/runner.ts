@@ -487,7 +487,8 @@ export class AgentRunner<TCtx = unknown> {
             return state;
         }
         const summary = await this.#summarizer.summarize(nodes, 'handoff_noise', this.services);
-        const { text, usage } = typeof summary === 'string' ? { text: summary, usage: undefined } : summary;
+        const { text, usage } =
+            typeof summary === 'string' ? { text: summary, usage: undefined } : summary;
         return Kernel.applyCompaction(
             state,
             { covers: nodes.map((n) => n.id), summary: text, reason: 'handoff_noise', usage },
