@@ -1,0 +1,6 @@
+dist
+coverage
+.dev
+.out
+node_modules
+package-lock.json

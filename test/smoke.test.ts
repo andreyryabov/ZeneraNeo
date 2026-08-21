@@ -232,7 +232,10 @@ describe('smoke', () => {
         expect(seed.type === 'tool_result' && seed.name).toBe('fork');
         expect(brief).toContain('branch: left');
         expect(brief).toContain('"right"');
-        expect(raw.filter((n) => n.type === 'llm_call'), 'parent calls only').toHaveLength(2);
+        expect(
+            raw.filter((n) => n.type === 'llm_call'),
+            'parent calls only',
+        ).toHaveLength(2);
         expect(turns(res.state), 'branch turns are not the parent\u2019s').toBe(2);
         // Accounting is the one thing that crosses the boundary, by recursion.
         expect(totalUsage(raw).inputTokens).toBe(40);
@@ -425,10 +428,7 @@ describe('smoke', () => {
             },
             env,
         );
-        const { messages } = await projectMessages(
-            compacted.trajectory,
-            runner.services.payloads,
-        );
+        const { messages } = await projectMessages(compacted.trajectory, runner.services.payloads);
         const text = JSON.stringify(messages);
         expect(text, 'covered node is hidden from the projection').not.toContain('xxxxx');
         expect(text).toContain('the tool returned a long blob');
@@ -464,9 +464,7 @@ describe('smoke', () => {
             handoffPolicy: {
                 // Everything the outgoing agent produced, by node identity.
                 select: (state) =>
-                    state.trajectory.filter(
-                        (n) => n.agent === 'a' && n.type !== 'user_input',
-                    ),
+                    state.trajectory.filter((n) => n.agent === 'a' && n.type !== 'user_input'),
             },
             summarizer: {
                 summarize: (nodes, reason) =>

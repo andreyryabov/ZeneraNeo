@@ -8,22 +8,22 @@ Scope: `experiments/src.js/agent/agent.ts` rewrite
 1. **No turn budget.** Remove `maxTurns` everywhere; the loop ends only on a final
    answer, an abort signal, or an unrecoverable error.
 2. **Two-tier event model.**
-   - *Stream events* — ephemeral, fine-grained progress (thinking deltas, text
-     deltas, partial tool-argument JSON with the tool name). Never required for
-     correctness; safe to drop.
-   - *Checkpoint events* — coarse-grained state transitions emitted **before
-     every LLM call** and **before every tool call** (and after each, and on
-     handoff / finish). Each carries the full serializable state so the run can
-     be persisted and resumed from exactly that point (Temporal-ready).
+    - _Stream events_ — ephemeral, fine-grained progress (thinking deltas, text
+      deltas, partial tool-argument JSON with the tool name). Never required for
+      correctness; safe to drop.
+    - _Checkpoint events_ — coarse-grained state transitions emitted **before
+      every LLM call** and **before every tool call** (and after each, and on
+      handoff / finish). Each carries the full serializable state so the run can
+      be persisted and resumed from exactly that point (Temporal-ready).
 3. **Explicit state creation.** Starting a run is a separate, explicit step that
-   produces an `AgentState`; the loop only ever *advances* an existing state.
+   produces an `AgentState`; the loop only ever _advances_ an existing state.
 4. **Typed result.** The caller passes a **Zod** schema and receives a parsed,
    validated `z.infer<typeof schema>` as `RunResult<T>.output` — the TypeScript
    type comes from the same declaration that drives validation.
 5. **Trajectory instead of raw messages.** The state stores a typed, append-only
    log of everything that happened (`UserInput`, `SystemPrompt`, `LoadSkills`,
    `LlmCall`, `ToolCall`, `ToolResult`, `Handoff`, `Compaction`, …). Messages
-   for the provider are a *projection* of the trajectory, computed on demand.
+   for the provider are a _projection_ of the trajectory, computed on demand.
 6. **Large-value offloading.** Every non-trivial string (system prompts,
    thinking chains, tool outputs, skill content) lives behind a `Payload`
    reference — uniformly, never inline — so the state has a small, predictable
@@ -33,7 +33,7 @@ Scope: `experiments/src.js/agent/agent.ts` rewrite
    reconstructable from the trajectory alone.
 8. **Trajectory as the context-manipulation tool.** Compaction, handoff-time
    noise stripping and branch summarizing are all one operation — select nodes,
-   summarize them, append a node that *covers* them for projection purposes
+   summarize them, append a node that _covers_ them for projection purposes
    while the originals stay for audit and replay.
 9. **Pluggable memory.** Agents search, write, update and delete long-lived
    memories through a `MemoryStore` interface; scopes decide what is private to
@@ -56,7 +56,7 @@ Scope: `experiments/src.js/agent/agent.ts` rewrite
   this document specifies the interfaces and how they touch the trajectory; a
   trivial in-memory implementation is the only one shipped initially.
 - Cross-run orchestration. One `AgentState` is still one logical run; a fork
-  creates *child runs* (§10) that are linked by reference, not merged.
+  creates _child runs_ (§10) that are linked by reference, not merged.
 
 ## 3. Architecture overview
 
@@ -101,10 +101,10 @@ always a **reference**, never an inline value:
 
 ```ts
 export interface Payload {
-    store: string;      // store id, e.g. 's3://bucket' or 'mem'
-    sha256: string;     // content address — also the key
-    size: number;       // bytes, for budgeting without fetching
-    preview?: string;   // first ~200 chars, for logs, UIs and debugging
+    store: string; // store id, e.g. 's3://bucket' or 'mem'
+    sha256: string; // content address — also the key
+    size: number; // bytes, for budgeting without fetching
+    preview?: string; // first ~200 chars, for logs, UIs and debugging
 }
 
 export interface PayloadStore {
@@ -122,12 +122,12 @@ An `inline | ref` union was considered and rejected:
 
 - **Predictable state size.** With inline values, a long run of many
   individually-small tool results grows the state without bound — and that state
-  is re-serialized at *every* checkpoint, making write amplification quadratic in
+  is re-serialized at _every_ checkpoint, making write amplification quadratic in
   trajectory length. Temporal would reject it outright (payload limits ~2 MB).
   With uniform refs the state is O(number of nodes), full stop.
 - **One code path.** No discriminant to switch on, no "is it here or not"
   question at every use site, no threshold to tune per deployment.
-- **Free deduplication.** The key *is* the content hash, so an identical value
+- **Free deduplication.** The key _is_ the content hash, so an identical value
   is stored once no matter how often it recurs — system prompts repeated after
   each handoff, inherited fork context shared by N branches, identical tool
   results from retries. With a size threshold, dedup silently stopped applying
@@ -138,9 +138,9 @@ An `inline | ref` union was considered and rejected:
 
 The two things inline bought us are recovered explicitly:
 
-- *Locality* — the default `InMemoryStore` resolves from a `Map`, so a local run
+- _Locality_ — the default `InMemoryStore` resolves from a `Map`, so a local run
   does zero I/O. Refs are not synonymous with network.
-- *Self-containment* — `exportRun(state, stores)` produces
+- _Self-containment_ — `exportRun(state, stores)` produces
   `{ state, blobs: Record<sha256, string> }`, a single portable artifact for
   tests, bug reports and archival; `importRun(bundle, store)` writes the blobs
   into any `PayloadStore`. This is better than inline was: it is explicit, it is deduped, and it
@@ -179,9 +179,9 @@ field to keep dense. Every node:
 
 ```ts
 export interface NodeBase {
-    id: string;        // ulid — unique within the trajectory
-    ts: string;        // ISO timestamp (informational, not used for logic)
-    agent: string;     // active agent when the node was created
+    id: string; // ulid — unique within the trajectory
+    ts: string; // ISO timestamp (informational, not used for logic)
+    agent: string; // active agent when the node was created
 }
 ```
 
@@ -189,21 +189,21 @@ Node types (`type` is the discriminant):
 
 ```ts
 export type TrajectoryNode =
-    | UserInputNode        // { type:'user_input',  content: PayloadPart[] }
-    | SystemPromptNode     // { type:'system_prompt', prompt: Payload }
-    | LoadSkillsNode       // §9.3 — skill activation (content + unlocked tools)
-    | MemoryRecallNode     // §8.4 — memories injected before an LLM call
-    | MemoryOpNode         // §8.4 — memory write/update/delete effect record
-    | LlmCallNode          // see below
-    | ToolCallNode         // { type:'tool_call', callId, name, args: Payload }
-    | ToolResultNode       // { type:'tool_result', callId, name, result: Payload,
-                           //   isError: boolean, durationMs?: number }
-    | HandoffNode          // { type:'handoff', from, to, reason?: string }
-    | ForkNode             // §10.2 — the branch plan
-    | JoinNode             // §10.2 — per-branch outcomes
-    | CompactionNode       // see below
-    | FinalOutputNode;     // { type:'final_output', output: Payload,
-                           //   parsed?: unknown /* when an output schema was set */ }
+    | UserInputNode // { type:'user_input',  content: PayloadPart[] }
+    | SystemPromptNode // { type:'system_prompt', prompt: Payload }
+    | LoadSkillsNode // §9.3 — skill activation (content + unlocked tools)
+    | MemoryRecallNode // §8.4 — memories injected before an LLM call
+    | MemoryOpNode // §8.4 — memory write/update/delete effect record
+    | LlmCallNode // see below
+    | ToolCallNode // { type:'tool_call', callId, name, args: Payload }
+    | ToolResultNode // { type:'tool_result', callId, name, result: Payload,
+    //   isError: boolean, durationMs?: number }
+    | HandoffNode // { type:'handoff', from, to, reason?: string }
+    | ForkNode // §10.2 — the branch plan
+    | JoinNode // §10.2 — per-branch outcomes
+    | CompactionNode // see below
+    | FinalOutputNode; // { type:'final_output', output: Payload,
+//   parsed?: unknown /* when an output schema was set */ }
 ```
 
 ### 5.1 LlmCallNode — the accounting record
@@ -211,17 +211,17 @@ export type TrajectoryNode =
 ```ts
 export interface TokenUsage {
     inputTokens: number;
-    cachedInputTokens: number;   // subset of inputTokens served from cache
+    cachedInputTokens: number; // subset of inputTokens served from cache
     outputTokens: number;
-    reasoningTokens: number;     // subset of outputTokens (thinking)
+    reasoningTokens: number; // subset of outputTokens (thinking)
 }
 
 export interface LlmCallNode extends NodeBase {
     type: 'llm_call';
-    model: string;               // exact model id used
-    requestDigest: string;       // sha256 of the projected request, for replay checks
-    text: Payload;               // assistant prose ('' allowed)
-    thinking?: Payload;          // reasoning chain if the provider returns it
+    model: string; // exact model id used
+    requestDigest: string; // sha256 of the projected request, for replay checks
+    text: Payload; // assistant prose ('' allowed)
+    thinking?: Payload; // reasoning chain if the provider returns it
     toolCalls: { callId: string; name: string; args: Payload }[];
     usage: TokenUsage;
     stopReason: 'stop' | 'tool_calls' | 'length' | 'content_filter';
@@ -247,7 +247,7 @@ export interface CompactionNode extends NodeBase {
     /** what the model sees instead; may be empty */
     summary: Payload;
     reason: 'handoff_noise' | 'token_budget' | 'branch_context' | 'manual' | string;
-    usage: TokenUsage;   // what the summarizer itself cost
+    usage: TokenUsage; // what the summarizer itself cost
 }
 ```
 
@@ -280,11 +280,11 @@ export function projected(nodes: TrajectoryNode[]): TrajectoryNode[] {
 }
 ```
 
-| view | who reads it |
-| --- | --- |
-| the array | `nextAction`, `turns`, `lastText`, `lastUserInput`, `HandoffPolicy.select`, export |
-| `projected(array)` | `projectMessages`, `activeSkills`, `applySystemPrompt` — the model's world |
-| recursing into `join.branches[].nodes` | `totalUsage` only |
+| view                                   | who reads it                                                                       |
+| -------------------------------------- | ---------------------------------------------------------------------------------- |
+| the array                              | `nextAction`, `turns`, `lastText`, `lastUserInput`, `HandoffPolicy.select`, export |
+| `projected(array)`                     | `projectMessages`, `activeSkills`, `applySystemPrompt` — the model's world         |
+| recursing into `join.branches[].nodes` | `totalUsage` only                                                                  |
 
 The nesting also settles compaction scope for free: a branch may compact the
 prefix it inherited, naming ids the parent also has, but those `CompactionNode`s
@@ -303,32 +303,32 @@ Algorithm:
 
 1. Take `projected(trajectory)`.
 2. Walk the survivors in array order:
-   - `system_prompt` → becomes the *current* system prompt (last one wins;
-     earlier ones are superseded, not emitted as messages).
-   - `user_input` → `UserMessage`.
-   - `load_skills` → `UserMessage` (or system append — provider-dependent).
-   - `llm_call` → `AssistantMessage` (text + toolCalls). Thinking is **not**
-     projected (provider-specific; kept for audit only).
-   - `tool_call` → folded into the owning `AssistantMessage` (they share the
-     `llm_call` node in practice; standalone `ToolCallNode` exists so a
-     checkpoint can be cut *between* LLM response and tool execution).
-   - `tool_result` → `ToolMessage`.
-   - `handoff` → nothing by itself (the transfer tool call/result pair already
-     projects); the *effect* is that subsequent `system_prompt` differs.
-   - `memory_recall` → `UserMessage` with the rendered memories block (§8.4).
-   - `memory_op` → nothing (the memory tool's call/result pair already
-     projects; the node exists for provenance and idempotency).
-   - `fork` → nothing (the `fork` tool call projects from its `llm_call`).
-   - `join` → the `tool_result` for the fork call: one labelled list of branch
-     outputs (§10.5).
-   - `compaction` → a synthetic assistant `compact` tool call plus its tool
-     result carrying the summary. A tool pair, not a user turn: the summary is
-     something the *system* did to the history, and putting it in the user
-     channel invites the model to answer it.
-   - `final_output` → `AssistantMessage`, unless it repeats the assistant
-     message just emitted. An untyped run records its answer twice — once as the
-     `llm_call`'s text, once as the `final_output` node that ends the turn — and
-     without the check every later turn of the conversation re-reads it.
+    - `system_prompt` → becomes the _current_ system prompt (last one wins;
+      earlier ones are superseded, not emitted as messages).
+    - `user_input` → `UserMessage`.
+    - `load_skills` → `UserMessage` (or system append — provider-dependent).
+    - `llm_call` → `AssistantMessage` (text + toolCalls). Thinking is **not**
+      projected (provider-specific; kept for audit only).
+    - `tool_call` → folded into the owning `AssistantMessage` (they share the
+      `llm_call` node in practice; standalone `ToolCallNode` exists so a
+      checkpoint can be cut _between_ LLM response and tool execution).
+    - `tool_result` → `ToolMessage`.
+    - `handoff` → nothing by itself (the transfer tool call/result pair already
+      projects); the _effect_ is that subsequent `system_prompt` differs.
+    - `memory_recall` → `UserMessage` with the rendered memories block (§8.4).
+    - `memory_op` → nothing (the memory tool's call/result pair already
+      projects; the node exists for provenance and idempotency).
+    - `fork` → nothing (the `fork` tool call projects from its `llm_call`).
+    - `join` → the `tool_result` for the fork call: one labelled list of branch
+      outputs (§10.5).
+    - `compaction` → a synthetic assistant `compact` tool call plus its tool
+      result carrying the summary. A tool pair, not a user turn: the summary is
+      something the _system_ did to the history, and putting it in the user
+      channel invites the model to answer it.
+    - `final_output` → `AssistantMessage`, unless it repeats the assistant
+      message just emitted. An untyped run records its answer twice — once as the
+      `llm_call`'s text, once as the `final_output` node that ends the turn — and
+      without the check every later turn of the conversation re-reads it.
 3. Collect every payload referenced by the surviving nodes and resolve them in
    **one** `getMany` batch before assembling the messages.
 4. Run `repairToolCalls`: drop assistant tool calls whose result did not survive.
@@ -341,9 +341,9 @@ LLM call), and restored by step 4 after arbitrary covering.
 
 ```ts
 export type RunPhase =
-    | 'created'           // initial context built, nothing executed
-    | 'awaiting_llm'      // next step is a model call
-    | 'awaiting_tools'    // model returned tool calls; some results missing
+    | 'created' // initial context built, nothing executed
+    | 'awaiting_llm' // next step is a model call
+    | 'awaiting_tools' // model returned tool calls; some results missing
     | 'awaiting_branches' // a fork is in flight; some branches unfinished
     | 'done'
     | 'failed';
@@ -362,14 +362,14 @@ export interface RunSpec {
     parent?: { runId: string; forkId: string; branch: string };
     /** where this run's own history begins — an inherited prefix sits before it */
     prefixLength?: number;
-    forkDepth: number;           // 0 for a root run
+    forkDepth: number; // 0 for a root run
 }
 
 export interface AgentState {
-    version: 1;                  // schema version for forward migration
+    version: 1; // schema version for forward migration
     runId: string;
-    spec: RunSpec;               // immutable config
-    agentName: string;           // active agent (mutable — changes on handoff)
+    spec: RunSpec; // immutable config
+    agentName: string; // active agent (mutable — changes on handoff)
     phase: RunPhase;
     trajectory: TrajectoryNode[];
     /** tool calls from the last llm_call still lacking a tool_result, by callId */
@@ -395,12 +395,12 @@ import { z } from 'zod';
 import * as Kernel from './kernel.js';
 
 export interface CreateStateOptions<T = string> {
-    runId?: string;             // default: ulid()
-    agent: string;              // starting agent name
-    input?: Input;              // optional first user message
-    context?: unknown;          // app context — must be serializable
-    output?: z.ZodType<T>;      // typed-result request (see §6.1)
-    systemPrompt?: string;      // pre-rendered; else rendered on first step
+    runId?: string; // default: ulid()
+    agent: string; // starting agent name
+    input?: Input; // optional first user message
+    context?: unknown; // app context — must be serializable
+    output?: z.ZodType<T>; // typed-result request (see §6.1)
+    systemPrompt?: string; // pre-rendered; else rendered on first step
 }
 
 const state = Kernel.createState({
@@ -423,11 +423,11 @@ const state = Kernel.createState({
 A Zod schema is a live object with functions — it cannot live inside a
 JSON-serializable state. The split:
 
-| Where                  | What                                                   |
-|------------------------|--------------------------------------------------------|
-| `CreateStateOptions.output` | the Zod schema — source of both `T` and validation |
+| Where                       | What                                                                                     |
+| --------------------------- | ---------------------------------------------------------------------------------------- |
+| `CreateStateOptions.output` | the Zod schema — source of both `T` and validation                                       |
 | `state.spec.outputSchema`   | `z.toJSONSchema(output, { target: 'draft-2020-12' })` — plain JSON, sent to the provider |
-| Runner / kernel call site   | the Zod schema again, supplied at run/resume time  |
+| Runner / kernel call site   | the Zod schema again, supplied at run/resume time                                        |
 
 Why the JSON Schema is stored at all instead of being a pure run argument:
 
@@ -466,9 +466,9 @@ tree-shaking and invites hidden state.)
 
 ```ts
 export type NextAction =
-    | { kind: 'llm' }                                  // call the model
-    | { kind: 'tools'; calls: PendingToolCall[] }      // execute these
-    | { kind: 'fork'; forkId: string; branches: BranchPlan[] }   // §10
+    | { kind: 'llm' } // call the model
+    | { kind: 'tools'; calls: PendingToolCall[] } // execute these
+    | { kind: 'fork'; forkId: string; branches: BranchPlan[] } // §10
     | { kind: 'done'; output: FinalOutputNode };
 
 export function createState<T = string>(opts: CreateStateOptions<T>): AgentState;
@@ -561,26 +561,26 @@ backend (pgvector, SQLite, Redis, plain in-memory map) is a deployment choice.
 ```ts
 export interface MemoryRecord {
     id: string;
-    scope: string;              // memory space this record belongs to
-    kind: string;               // app-defined: 'fact' | 'preference' | 'episode' | …
-    text: string;               // the retrievable content
-    metadata?: Record<string, unknown>;   // filterable attributes
+    scope: string; // memory space this record belongs to
+    kind: string; // app-defined: 'fact' | 'preference' | 'episode' | …
+    text: string; // the retrievable content
+    metadata?: Record<string, unknown>; // filterable attributes
     createdAt: string;
     updatedAt: string;
-    revision: number;           // optimistic-concurrency token
+    revision: number; // optimistic-concurrency token
 }
 
 export interface MemoryQuery {
-    text?: string;              // semantic query; omitted ⇒ pure filter listing
-    filter?: Record<string, unknown>;     // exact-match metadata constraints
+    text?: string; // semantic query; omitted ⇒ pure filter listing
+    filter?: Record<string, unknown>; // exact-match metadata constraints
     kind?: string;
-    limit?: number;             // default 8
+    limit?: number; // default 8
     minScore?: number;
 }
 
 export interface MemoryHit {
     record: MemoryRecord;
-    score: number;              // 0..1, backend-normalized
+    score: number; // 0..1, backend-normalized
 }
 
 export interface MemoryStore {
@@ -589,8 +589,7 @@ export interface MemoryStore {
     get(scope: string, id: string): Promise<MemoryRecord | undefined>;
     /** `opId` makes writes idempotent under retry/replay (see §8.4) */
     write(scope: string, rec: MemoryDraft, opId: string): Promise<MemoryRecord>;
-    update(scope: string, id: string, patch: MemoryPatch, opId: string):
-        Promise<MemoryRecord>;
+    update(scope: string, id: string, patch: MemoryPatch, opId: string): Promise<MemoryRecord>;
     delete(scope: string, id: string, opId: string): Promise<void>;
 }
 ```
@@ -607,8 +606,8 @@ declared, so a reader agent cannot corrupt a writer's space:
 
 ```ts
 export interface MemoryBinding {
-    store: string;              // MemoryStore id
-    scope: string;              // namespace; default: `agent:${agent.name}`
+    store: string; // MemoryStore id
+    scope: string; // namespace; default: `agent:${agent.name}`
     access: 'read' | 'read-write';
     /** inject top-k matches before each LLM call (see §8.3) */
     autoRecall?: { query: 'last_user_input' | 'none'; limit: number };
@@ -627,7 +626,7 @@ Patterns this covers:
 - **Read-only common knowledge**: bind `scope: 'org:policies'` with
   `access: 'read'`; a separate curator agent has `read-write`.
 - **Per-user memory**: scope built from run context, e.g.
-  `scope: \`user:${ctx.userId}\`` — resolved at `buildRequest` time, and the
+  `scope: \`user:${ctx.userId}\``— resolved at`buildRequest` time, and the
   resolved value is recorded in the trajectory so a resumed run cannot drift to
   another user's space.
 
@@ -652,8 +651,8 @@ export interface MemoryRecallNode extends NodeBase {
     store: string;
     scope: string;
     query: MemoryQuery;
-    hits: { id: string; score: number; revision: number }[];  // ids, not bodies
-    content: Payload;           // the rendered block the model actually saw
+    hits: { id: string; score: number; revision: number }[]; // ids, not bodies
+    content: Payload; // the rendered block the model actually saw
 }
 
 export interface MemoryOpNode extends NodeBase {
@@ -661,10 +660,10 @@ export interface MemoryOpNode extends NodeBase {
     op: 'write' | 'update' | 'delete';
     store: string;
     scope: string;
-    opId: string;               // sha256(runId, callId) — deterministic
+    opId: string; // sha256(runId, callId) — deterministic
     recordId: string;
-    revision: number;           // post-op revision, or the deleted one
-    before?: Payload;           // prior content, for audit/undo
+    revision: number; // post-op revision, or the deleted one
+    before?: Payload; // prior content, for audit/undo
     after?: Payload;
 }
 ```
@@ -672,7 +671,7 @@ export interface MemoryOpNode extends NodeBase {
 Why a separate node when the tool call is already recorded:
 
 - **Idempotency.** `opId` is derived from `runId + callId`, not generated
-  randomly, so a retried or replayed step re-issues the *same* write and the
+  randomly, so a retried or replayed step re-issues the _same_ write and the
   store deduplicates. Without this, Temporal retries would duplicate memories.
 - **Compaction survivability.** A `memory_search` `ToolResultNode` can be bulky
   and is a prime compaction target; the `MemoryOpNode`/`MemoryRecallNode` stays
@@ -698,22 +697,22 @@ agent).
 ```ts
 export interface SkillSummary {
     name: string;
-    description: string;        // one line — this is what search/index sees
+    description: string; // one line — this is what search/index sees
     tags?: string[];
     version?: string;
 }
 
 export interface Skill extends SkillSummary {
-    content: Payload;           // full instructions (offloadable — often large)
+    content: Payload; // full instructions (offloadable — often large)
     tools?: AnyTool<unknown>[]; // tools unlocked while the skill is active
-    resources?: Record<string, Payload>;   // templates, examples, schemas
+    resources?: Record<string, Payload>; // templates, examples, schemas
 }
 
 export interface SkillProvider {
     readonly id: string;
-    list(): Promise<SkillSummary[]>;                       // cheap index
+    list(): Promise<SkillSummary[]>; // cheap index
     search(query: string, limit?: number): Promise<SkillSummary[]>;
-    load(name: string, version?: string): Promise<Skill>;  // full content
+    load(name: string, version?: string): Promise<Skill>; // full content
 }
 ```
 
@@ -725,13 +724,13 @@ sharing infrastructure with `MemoryStore`.
 
 ```ts
 export interface SkillBinding {
-    provider: string;           // SkillProvider id
+    provider: string; // SkillProvider id
     /** how the agent discovers skills */
     discovery: 'index' | 'search' | 'none';
     /** always loaded at run start, before the first LLM call */
     preload?: string[];
     /** cap on the index rendered into the system prompt */
-    maxIndexEntries?: number;   // default 50
+    maxIndexEntries?: number; // default 50
     /** restrict what this agent may load at all */
     allow?: string[] | ((s: SkillSummary) => boolean);
 }
@@ -759,8 +758,8 @@ export interface LoadSkillsNode extends NodeBase {
     type: 'load_skills';
     provider: string;
     skills: { name: string; version?: string; contentHash: string }[];
-    content: Payload;           // concatenated instructions the model saw
-    toolNames: string[];        // tools this activation unlocked
+    content: Payload; // concatenated instructions the model saw
+    toolNames: string[]; // tools this activation unlocked
 }
 ```
 
@@ -789,7 +788,7 @@ how to use.
 
 The converse is the reason §10.3 filters skill loads by agent when seeding a
 branch: `activeSkills` scopes tools to the current agent, but `load_skills`
-projects as an ordinary message, so without the filter a branch would *read*
+projects as an ordinary message, so without the filter a branch would _read_
 another agent's skill text — "call `tool_y`" — while holding none of its tools.
 
 ## 10. Fork / join — parallel sub-agents
@@ -804,11 +803,15 @@ tool result** — sequential semantics, parallel execution.
 ```ts
 // parameters (Zod, projected to JSON Schema like any other tool)
 z.object({
-    branches: z.array(z.object({
-        name: z.string(),                 // stable branch label
-        instructions: z.string(),         // what this branch must do
-        agent: z.string().optional(),     // defaults to the forking agent
-    })).min(2),
+    branches: z
+        .array(
+            z.object({
+                name: z.string(), // stable branch label
+                instructions: z.string(), // what this branch must do
+                agent: z.string().optional(), // defaults to the forking agent
+            }),
+        )
+        .min(2),
     context: z.enum(['inherit', 'compact', 'none']).default('inherit'),
 });
 ```
@@ -832,33 +835,32 @@ never project, never activate skills, never count as turns, because no ordinary
 walk of the parent array can reach them.
 
 Two nodes rather than one, because they record two events at two times and the
-log is append-only. `ForkNode` is written *before* the branches run — the record
+log is append-only. `ForkNode` is written _before_ the branches run — the record
 of intent, and the thing a crash-mid-fork resumes from. `JoinNode` is written
 after, and carries the outcomes.
 
 ```ts
 export interface ForkNode extends NodeBase {
     type: 'fork';
-    callId: string;                       // the fork tool call — the fork's identity
+    callId: string; // the fork tool call — the fork's identity
     contextMode: 'inherit' | 'compact' | 'none';
-    branches: { name: string; agent: string; instructions: Payload;
-                childRunId: string }[];
+    branches: { name: string; agent: string; instructions: Payload; childRunId: string }[];
 }
 
 export interface JoinNode extends NodeBase {
     type: 'join';
-    callId: string;                       // same id as the ForkNode
+    callId: string; // same id as the ForkNode
     /** always in declared branch order, never completion order */
     branches: {
         name: string;
         agent: string;
         status: 'ok' | 'error' | 'aborted';
-        output: Payload;                  // branch answer or summary
+        output: Payload; // branch answer or summary
         error?: string;
-        usage: TokenUsage;                // display only
-        nodes: TrajectoryNode[];          // the branch's own history
+        usage: TokenUsage; // display only
+        nodes: TrajectoryNode[]; // the branch's own history
     }[];
-    usage: TokenUsage;                    // sum over branches — display only
+    usage: TokenUsage; // sum over branches — display only
 }
 ```
 
@@ -880,7 +882,7 @@ blob of messages. `branchPrefix` takes `projected(parent.trajectory)` up to the
 - `inherit` — the prefix as-is, minus `load_skills` nodes belonging to a
   different agent (§9).
 - `compact` — the same, additionally dropping `tool_call`, `tool_result` and
-  `memory_recall`: the branch inherits *what was decided*, not the raw tool
+  `memory_recall`: the branch inherits _what was decided_, not the raw tool
   noise that got there. The recommended default for wide fan-outs.
 - `none` — empty. The branch starts from its agent's system prompt plus its
   instructions only. Cheapest; good for independent lookups.
@@ -901,8 +903,8 @@ conversation to arrive in:
   `repairToolCalls` (§6) strips it, and the branch never learns it fanned out.
   The result restates which branch this run is, and names the siblings running
   beside it: the assignments themselves are already visible in the inherited
-  call arguments, but *which one is mine*, *who has the rest* and *what becomes
-  of my answer* exist nowhere else. Without them a branch re-derives work a
+  call arguments, but _which one is mine_, _who has the rest_ and _what becomes
+  of my answer_ exist nowhere else. Without them a branch re-derives work a
   sibling owns and writes an answer shaped for a user rather than for a merge.
 - `none` — a `UserInputNode` carrying the instructions, because there is no call
   above to answer.
@@ -973,8 +975,7 @@ export interface HandoffPolicy {
 
 /** the summarizing half — the only half that needs I/O */
 export interface Summarizer {
-    summarize(nodes: TrajectoryNode[], reason: string,
-              services: Services): Promise<Summary>;
+    summarize(nodes: TrajectoryNode[], reason: string, services: Services): Promise<Summary>;
 }
 ```
 
@@ -1007,20 +1008,20 @@ loop. Termination conditions:
    with `parameters = state.spec.outputSchema` (the JSON Schema projection) is
    added, and the request uses `toolChoice: 'auto'` with instructions that the
    run must end by calling it.
-   - When the model calls `final_output`, args go through `schema.safeParse`.
-     Success → `FinalOutputNode { parsed: result.data }` (post-transform,
-     post-default value), done. Failure → an error `ToolResultNode` carrying
-     `z.prettifyError(result.error)` is appended and the loop continues, letting
-     the model repair its output.
-   - A plain no-tool-call text response in typed mode gets a nudge
-     `ToolResultNode`-style user message ("respond via final_output") rather
-     than terminating with an unparseable answer.
+    - When the model calls `final_output`, args go through `schema.safeParse`.
+      Success → `FinalOutputNode { parsed: result.data }` (post-transform,
+      post-default value), done. Failure → an error `ToolResultNode` carrying
+      `z.prettifyError(result.error)` is appended and the loop continues, letting
+      the model repair its output.
+    - A plain no-tool-call text response in typed mode gets a nudge
+      `ToolResultNode`-style user message ("respond via final_output") rather
+      than terminating with an unparseable answer.
 3. **Abort**: `signal` aborts propagate as before; state remains resumable
    (`phase` stays `awaiting_llm`/`awaiting_tools`).
 
 ```ts
 export interface RunResult<T = string> {
-    output: T;                   // z.infer of the output schema when given
+    output: T; // z.infer of the output schema when given
     agent: string;
     state: AgentState;
     usage: TokenUsage;
@@ -1029,7 +1030,7 @@ export interface RunResult<T = string> {
 
 // T flows from the Zod schema, no manual assertion at the call site:
 const res = await runner.run('planner', 'Plan a trip.', { output: TripSchema });
-res.output.totalCostEur;   // number
+res.output.totalCostEur; // number
 ```
 
 The same `z.ZodType` inference can later be reused for tool arguments
@@ -1042,27 +1043,27 @@ added later as policies, not as a hardcoded turn counter).
 
 ## 12. Events
 
-Every event — stream *and* checkpoint — carries the same origin tag, so a
+Every event — stream _and_ checkpoint — carries the same origin tag, so a
 consumer can always tell which run in a fork tree produced it:
 
 ```ts
 export interface BranchRef {
-    forkId: string;      // the fork that created this branch
-    name: string;        // declared branch name
-    runId: string;       // the child run's id
-    depth: number;       // spec.forkDepth of the emitting run
+    forkId: string; // the fork that created this branch
+    name: string; // declared branch name
+    runId: string; // the child run's id
+    depth: number; // spec.forkDepth of the emitting run
 }
 
 export interface EventBase {
-    runId: string;       // emitting run (root run id on the trunk)
-    agent: string;       // active agent in that run
+    runId: string; // emitting run (root run id on the trunk)
+    agent: string; // active agent in that run
     /** absent on the trunk; set on every event emitted by a branch */
     branch?: BranchRef;
 }
 ```
 
 - `runId` is the primary key: an event belongs to exactly one `AgentState`.
-- `branch` is the *lineage* of that run — present on nested forks too, where
+- `branch` is the _lineage_ of that run — present on nested forks too, where
   `depth > 1`. A UI groups by `branch.forkId` to build lanes, and by `runId` to
   attach the right state snapshot.
 - On the trunk, `branch` is `undefined` and `runId === state.runId` of the root.
@@ -1074,13 +1075,19 @@ them as best-effort UI feed. `argsSoFar` allows rendering partial tool args
 without the consumer buffering deltas.
 
 ```ts
-export type StreamEvent = EventBase & (
-    | { type: 'thinking_delta'; delta: string }
-    | { type: 'text_delta'; delta: string }
-    | { type: 'tool_args_delta'; callId: string;
-        name: string; delta: string; argsSoFar: string }
-    | { type: 'tool_call_detected'; callId: string; name: string }
-);
+export type StreamEvent = EventBase &
+    (
+        | { type: 'thinking_delta'; delta: string }
+        | { type: 'text_delta'; delta: string }
+        | {
+              type: 'tool_args_delta';
+              callId: string;
+              name: string;
+              delta: string;
+              argsSoFar: string;
+          }
+        | { type: 'tool_call_detected'; callId: string; name: string }
+    );
 ```
 
 Branch stream events interleave freely (the branches really do run at the same
@@ -1105,22 +1112,26 @@ export interface Model {
 ### 12.2 Checkpoint events (each carries the full state)
 
 ```ts
-export type CheckpointEvent = EventBase & (
-    | { type: 'run_created';      state: AgentState }
-    | { type: 'before_llm_call';  state: AgentState }
-    | { type: 'after_llm_call';   state: AgentState; node: LlmCallNode }
-    | { type: 'before_tool_call'; state: AgentState; call: PendingToolCall }
-    | { type: 'after_tool_call';  state: AgentState; node: ToolResultNode }
-    | { type: 'handoff';          state: AgentState; from: string; to: string }
-    | { type: 'before_fork';      state: AgentState; node: ForkNode }
-    | { type: 'branch_started';   state: AgentState; child: BranchRef;
-                                  childState: AgentState }
-    | { type: 'branch_finished';  state: AgentState; child: BranchRef;
-                                  childState: AgentState;
-                                  status: 'ok' | 'error' | 'aborted' }
-    | { type: 'after_join';       state: AgentState; node: JoinNode }
-    | { type: 'run_finished';     state: AgentState; result: RunResult }
-);
+export type CheckpointEvent = EventBase &
+    (
+        | { type: 'run_created'; state: AgentState }
+        | { type: 'before_llm_call'; state: AgentState }
+        | { type: 'after_llm_call'; state: AgentState; node: LlmCallNode }
+        | { type: 'before_tool_call'; state: AgentState; call: PendingToolCall }
+        | { type: 'after_tool_call'; state: AgentState; node: ToolResultNode }
+        | { type: 'handoff'; state: AgentState; from: string; to: string }
+        | { type: 'before_fork'; state: AgentState; node: ForkNode }
+        | { type: 'branch_started'; state: AgentState; child: BranchRef; childState: AgentState }
+        | {
+              type: 'branch_finished';
+              state: AgentState;
+              child: BranchRef;
+              childState: AgentState;
+              status: 'ok' | 'error' | 'aborted';
+          }
+        | { type: 'after_join'; state: AgentState; node: JoinNode }
+        | { type: 'run_finished'; state: AgentState; result: RunResult }
+    );
 
 export type AgentEvent = StreamEvent | CheckpointEvent;
 ```
@@ -1128,10 +1139,10 @@ export type AgentEvent = StreamEvent | CheckpointEvent;
 Tagging rules, which are what make persistence unambiguous:
 
 - `state` always belongs to the **emitting** run, i.e. the one named by
-  `runId`/`branch`. A `before_llm_call` from a branch carries the *child's*
+  `runId`/`branch`. A `before_llm_call` from a branch carries the _child's_
   state — persist it under `branch.runId` and resume that branch alone.
 - `before_fork` / `branch_started` / `branch_finished` / `after_join` are emitted
-  by the **parent**, so their `branch` field describes the *parent's* own lineage
+  by the **parent**, so their `branch` field describes the _parent's_ own lineage
   (absent on the trunk). The branch they talk about is the separate `child`
   field — two different things that must not be conflated.
 - `branch_started`/`branch_finished` therefore carry two states: `state` (parent,
@@ -1215,18 +1226,18 @@ export interface HandoffPolicy {
 
 ## 14. Temporal mapping (informative)
 
-| Concept        | Temporal construct                                     |
-|----------------|--------------------------------------------------------|
-| `AgentState`   | workflow-local variable (checkpointed via event history)|
-| LLM call       | activity `llmGenerate(req) → ModelResponse` (retryable) |
-| Tool execution | activity `runTool(name, args) → ToolOutcome`            |
-| Kernel `apply*`| inside the workflow (deterministic, uses `IdClock`)     |
-| `PayloadStore.put/get` | inside activities only (I/O)                    |
-| Memory op      | activity, keyed by `MemoryOpNode.opId` (idempotent §8.4)|
-| Skill load     | activity `loadSkill(name, version) → Skill`             |
-| Fork branch    | child workflow, one per branch                          |
-| Join           | `Promise.all` over child workflow handles, then `applyJoin` |
-| checkpoint events | implicit — every activity boundary is a checkpoint   |
+| Concept                | Temporal construct                                          |
+| ---------------------- | ----------------------------------------------------------- |
+| `AgentState`           | workflow-local variable (checkpointed via event history)    |
+| LLM call               | activity `llmGenerate(req) → ModelResponse` (retryable)     |
+| Tool execution         | activity `runTool(name, args) → ToolOutcome`                |
+| Kernel `apply*`        | inside the workflow (deterministic, uses `IdClock`)         |
+| `PayloadStore.put/get` | inside activities only (I/O)                                |
+| Memory op              | activity, keyed by `MemoryOpNode.opId` (idempotent §8.4)    |
+| Skill load             | activity `loadSkill(name, version) → Skill`                 |
+| Fork branch            | child workflow, one per branch                              |
+| Join                   | `Promise.all` over child workflow handles, then `applyJoin` |
+| checkpoint events      | implicit — every activity boundary is a checkpoint          |
 
 Because `buildRequest` needs payload resolution (I/O), Temporal deployments
 either (a) run projection inside the `llmGenerate` activity by passing the
@@ -1244,22 +1255,22 @@ changes) and fail loudly instead of silently diverging.
 
 ## 15. What is deleted / migrated
 
-| v1                                   | v2                                        |
-|--------------------------------------|-------------------------------------------|
-| `AgentState` class with `messages[]` | plain-JSON `AgentState` with `trajectory` |
-| `AgentState.from(json)`              | not needed (no prototype); `validateState(json)` type guard instead |
-| `maxTurns` (agent/runner/run opts), `stopReason: 'max_turns'` | removed |
-| `Usage {input,output}`               | `TokenUsage {input,cachedInput,output,reasoning}` |
-| implicit state creation in `run()`   | `Kernel.createState` (runner `run()` calls it, `resume()` requires it) |
-| `AgentEvent` (flat)                  | `StreamEvent \| CheckpointEvent`          |
-| `state.turns`                        | derived: count of `llm_call` nodes        |
-| `Message[]` as source of truth       | projection output only (`projectMessages`)|
-| untyped `RunResult.output: string`   | `RunResult<T>` with `T = z.infer<schema>`  |
-| —                                    | immutable `state.spec` (`RunSpec`) separated from mutable progress |
-| —                                    | `MemoryStore` bindings + memory tools (§8) |
-| —                                    | `SkillProvider` bindings + skill tools (§9) |
-| —                                    | `fork`/join with child `AgentState`s (§10) |
-| static per-agent tool list           | tool set derived from state (agent + handoffs + memory + skills + fork + `final_output`) |
+| v1                                                            | v2                                                                                       |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `AgentState` class with `messages[]`                          | plain-JSON `AgentState` with `trajectory`                                                |
+| `AgentState.from(json)`                                       | not needed (no prototype); `validateState(json)` type guard instead                      |
+| `maxTurns` (agent/runner/run opts), `stopReason: 'max_turns'` | removed                                                                                  |
+| `Usage {input,output}`                                        | `TokenUsage {input,cachedInput,output,reasoning}`                                        |
+| implicit state creation in `run()`                            | `Kernel.createState` (runner `run()` calls it, `resume()` requires it)                   |
+| `AgentEvent` (flat)                                           | `StreamEvent \| CheckpointEvent`                                                         |
+| `state.turns`                                                 | derived: count of `llm_call` nodes                                                       |
+| `Message[]` as source of truth                                | projection output only (`projectMessages`)                                               |
+| untyped `RunResult.output: string`                            | `RunResult<T>` with `T = z.infer<schema>`                                                |
+| —                                                             | immutable `state.spec` (`RunSpec`) separated from mutable progress                       |
+| —                                                             | `MemoryStore` bindings + memory tools (§8)                                               |
+| —                                                             | `SkillProvider` bindings + skill tools (§9)                                              |
+| —                                                             | `fork`/join with child `AgentState`s (§10)                                               |
+| static per-agent tool list                                    | tool set derived from state (agent + handoffs + memory + skills + fork + `final_output`) |
 
 `Message`, `ContentPart`, `Tool`, `tool()`, `Agent`, `handoffTool`,
 `RunStream`, `runTool` survive with minimal changes (`ToolContext.state` is now

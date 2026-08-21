@@ -185,8 +185,7 @@ export interface ToolOutcome {
 }
 
 export type ToolEffect =
-    | { kind: 'memory_op'; spec: MemoryOpSpec }
-    | { kind: 'skill_load'; spec: SkillLoadSpec };
+    { kind: 'memory_op'; spec: MemoryOpSpec } | { kind: 'skill_load'; spec: SkillLoadSpec };
 
 const TOOL_RETURN = Symbol('agent.toolReturn');
 

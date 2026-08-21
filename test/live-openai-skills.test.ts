@@ -60,10 +60,7 @@ function findNode<T extends TrajectoryNode['type']>(
     return node as Extract<TrajectoryNode, { type: T }>;
 }
 
-async function firstRecordedRequest(
-    state: AgentState,
-    runner: AgentRunner,
-): Promise<ModelRequest> {
+async function firstRecordedRequest(state: AgentState, runner: AgentRunner): Promise<ModelRequest> {
     const llm = findNode(state, 'llm_call');
     if (!llm.request) {
         throw new Error('llm request was not recorded; set recordRequests=true');
@@ -73,9 +70,11 @@ async function firstRecordedRequest(
 }
 
 async function recordedRequests(state: AgentState, runner: AgentRunner): Promise<ModelRequest[]> {
-    const llmCalls = state.trajectory.filter((n): n is Extract<TrajectoryNode, { type: 'llm_call' }> => {
-        return n.type === 'llm_call';
-    });
+    const llmCalls = state.trajectory.filter(
+        (n): n is Extract<TrajectoryNode, { type: 'llm_call' }> => {
+            return n.type === 'llm_call';
+        },
+    );
     const out: ModelRequest[] = [];
     for (const llm of llmCalls) {
         if (!llm.request) {

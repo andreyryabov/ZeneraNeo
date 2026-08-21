@@ -35,7 +35,9 @@ export function isPayload(v: unknown): v is Payload {
         return false;
     }
     const p = v as Partial<Payload>;
-    return typeof p.store === 'string' && typeof p.sha256 === 'string' && typeof p.size === 'number';
+    return (
+        typeof p.store === 'string' && typeof p.sha256 === 'string' && typeof p.size === 'number'
+    );
 }
 
 export interface PayloadStore {

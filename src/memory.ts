@@ -123,7 +123,8 @@ export function renderMemories(hits: MemoryHit[]): string {
         return '';
     }
     const lines = hits.map(
-        (h) => `- [${h.record.id}] (${h.record.kind}, score ${h.score.toFixed(2)}) ${h.record.text}`,
+        (h) =>
+            `- [${h.record.id}] (${h.record.kind}, score ${h.score.toFixed(2)}) ${h.record.text}`,
     );
     return `Relevant memories:\n${lines.join('\n')}`;
 }
@@ -240,7 +241,8 @@ export function memoryTools<TCtx>(bindings: ResolvedBinding[]): AnyTool<TCtx>[] 
         return tools;
     }
     const wSpace = spaceParam(writable);
-    const withWSpace = (props: Record<string, unknown>) => (wSpace ? { ...props, space: wSpace } : props);
+    const withWSpace = (props: Record<string, unknown>) =>
+        wSpace ? { ...props, space: wSpace } : props;
     tools.push(
         tool<{ text: string; kind?: string; space?: string }, TCtx>({
             name: MEMORY_WRITE_TOOL,

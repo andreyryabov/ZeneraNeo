@@ -51,9 +51,9 @@ describe('FilePayloadStore', () => {
 
     it('reports a missing blob instead of an fs error', async () => {
         const store = new FilePayloadStore({ dir, id: 'blobs' });
-        await expect(store.get({ store: 'blobs', sha256: hash('absent'), size: 6 })).rejects.toThrow(
-            /payload not found/,
-        );
+        await expect(
+            store.get({ store: 'blobs', sha256: hash('absent'), size: 6 }),
+        ).rejects.toThrow(/payload not found/);
     });
 
     it('builds from a ref', () => {
@@ -168,10 +168,7 @@ describe('FileSkillProvider', () => {
 
     it('indexes both layouts', async () => {
         const provider = new FileSkillProvider({ dir, tools: [cheapHotels] });
-        expect((await provider.list()).map((s) => s.name)).toEqual([
-            'budget_travel',
-            'quick_note',
-        ]);
+        expect((await provider.list()).map((s) => s.name)).toEqual(['budget_travel', 'quick_note']);
     });
 
     it('loads frontmatter, body, tools and resources', async () => {
@@ -228,7 +225,11 @@ describe('FileSkillProvider', () => {
             // unique skill only in dir2
             await writeFile(join(dir2, 'extra.md'), 'extra skill\n', 'utf8');
             // override quick_note from dir
-            await writeFile(join(dir2, 'quick_note.md'), '# Overridden note\n\nNew body.\n', 'utf8');
+            await writeFile(
+                join(dir2, 'quick_note.md'),
+                '# Overridden note\n\nNew body.\n',
+                'utf8',
+            );
 
             const provider = new FileSkillProvider({ dir: [dir, dir2], tools: [cheapHotels] });
 

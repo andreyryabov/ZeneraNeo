@@ -25,8 +25,7 @@ export interface NodeBase {
 
 /** A content part whose text lives behind a payload reference. */
 export type PayloadPart =
-    | { type: 'text'; text: Payload }
-    | { type: MediaKind; url: string; mimeType?: string };
+    { type: 'text'; text: Payload } | { type: MediaKind; url: string; mimeType?: string };
 
 export interface UserInputNode extends NodeBase {
     type: 'user_input';

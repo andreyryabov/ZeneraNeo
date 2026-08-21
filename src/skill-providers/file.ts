@@ -247,5 +247,11 @@ function unquote(value: string): string {
 }
 
 function firstLine(body: string): string {
-    return body.split(/\r?\n/).find((l) => l.trim())?.replace(/^#+\s*/, '').trim() ?? '';
+    return (
+        body
+            .split(/\r?\n/)
+            .find((l) => l.trim())
+            ?.replace(/^#+\s*/, '')
+            .trim() ?? ''
+    );
 }

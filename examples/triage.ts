@@ -7,7 +7,19 @@ import { tool } from '../src/types.ts';
 // Live one-pane-per-branch board. See ./board.ts.
 import { traceBoard } from './board.ts';
 // Terminal rendering — the harness every example shares. See ./ui.ts.
-import { banner, box, code, gantt, joinTable, loadEnv, report, secs, stats, step, type Lap } from './ui.ts';
+import {
+    banner,
+    box,
+    code,
+    gantt,
+    joinTable,
+    loadEnv,
+    report,
+    secs,
+    stats,
+    step,
+    type Lap,
+} from './ui.ts';
 
 loadEnv();
 

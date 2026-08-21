@@ -67,7 +67,12 @@ export class FilePayloadStore implements PayloadStore {
                 throw err;
             }
         }
-        return { store: this.id, sha256, size: Buffer.byteLength(value), preview: previewOf(value) };
+        return {
+            store: this.id,
+            sha256,
+            size: Buffer.byteLength(value),
+            preview: previewOf(value),
+        };
     }
 
     async get(p: Payload): Promise<string> {
@@ -116,11 +121,7 @@ async function exists(path: string): Promise<boolean> {
     }
 }
 
-async function mapPool<T, R>(
-    items: T[],
-    limit: number,
-    fn: (item: T) => Promise<R>,
-): Promise<R[]> {
+async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
     const out = new Array<R>(items.length);
     let next = 0;
     const worker = async () => {

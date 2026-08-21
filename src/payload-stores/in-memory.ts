@@ -19,7 +19,12 @@ export class InMemoryPayloadStore implements PayloadStore {
         if (!this.#blobs.has(sha256)) {
             this.#blobs.set(sha256, value);
         }
-        return { store: this.id, sha256, size: Buffer.byteLength(value), preview: previewOf(value) };
+        return {
+            store: this.id,
+            sha256,
+            size: Buffer.byteLength(value),
+            preview: previewOf(value),
+        };
     }
 
     async get(p: Payload): Promise<string> {

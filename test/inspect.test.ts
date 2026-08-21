@@ -62,7 +62,11 @@ describe('run inspector', () => {
 
     it('renders a self-contained page whose payloads are all resolved', async () => {
         const payloads = new PayloadResolver(new InMemoryPayloadStore('blobs'));
-        const runner = new AgentRunner({ model: new ScriptModel(), payloads, recordRequests: true });
+        const runner = new AgentRunner({
+            model: new ScriptModel(),
+            payloads,
+            recordRequests: true,
+        });
         runner.agent({ name: 'worker', instructions: 'WORKER', tools: [echo] });
         const res = await runner.run('worker', 'say hi').final();
 

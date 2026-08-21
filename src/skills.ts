@@ -83,9 +83,7 @@ export function allows(binding: SkillBinding, s: SkillSummary): boolean {
     if (!binding.allow) {
         return true;
     }
-    return typeof binding.allow === 'function'
-        ? binding.allow(s)
-        : binding.allow.includes(s.name);
+    return typeof binding.allow === 'function' ? binding.allow(s) : binding.allow.includes(s.name);
 }
 
 // ---------------------------------------------------------------------------
@@ -125,7 +123,10 @@ export function skillTools<TCtx>(binding: SkillBinding): AnyTool<TCtx>[] {
                 return withEffects(
                     `loaded: ${loaded.map((s) => s.name).join(', ')}` +
                         (unlocked.length ? `; tools unlocked: ${unlocked.join(', ')}` : ''),
-                    { kind: 'skill_load', spec: { kind: 'skill_load', provider: provider.id, skills: loaded } },
+                    {
+                        kind: 'skill_load',
+                        spec: { kind: 'skill_load', provider: provider.id, skills: loaded },
+                    },
                 );
             },
         }),

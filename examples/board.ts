@@ -167,7 +167,13 @@ function paneBox(p: Pane, width: number, spin: string, now: number, rows = ROWS)
         const shown = e.live && body.length > max ? `…${body.slice(-(max - 1))}` : body;
         lines.push(
             pc.dim('│ ') +
-                row([{ t: `${e.icon} `, c: e.tint ?? pc.dim }, { t: shown, c: e.tint }], iw) +
+                row(
+                    [
+                        { t: `${e.icon} `, c: e.tint ?? pc.dim },
+                        { t: shown, c: e.tint },
+                    ],
+                    iw,
+                ) +
                 pc.dim(' │'),
         );
     }

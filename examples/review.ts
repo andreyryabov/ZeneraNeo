@@ -201,7 +201,8 @@ async function slow<T>(ms: number, signal: AbortSignal | undefined, body: () => 
 
 const fetchSpec = tool<{ id: string }, AppCtx>({
     name: 'fetch_spec',
-    description: 'Fetch the full text of ONE RFC. Slow; the document does not change during a review.',
+    description:
+        'Fetch the full text of ONE RFC. Slow; the document does not change during a review.',
     parameters: {
         type: 'object',
         properties: { id: { type: 'string', description: 'e.g. "RFC-118"' } },
@@ -226,7 +227,9 @@ const lookupStandard = tool<{ topic: string }, AppCtx>({
         slow(COST_MS.standard, signal, () => {
             const text = STANDARDS[topic];
             if (!text) {
-                throw new Error(`no standard for "${topic}" — one of: ${Object.keys(STANDARDS).join(', ')}`);
+                throw new Error(
+                    `no standard for "${topic}" — one of: ${Object.keys(STANDARDS).join(', ')}`,
+                );
             }
             return { topic, standard: text };
         }),

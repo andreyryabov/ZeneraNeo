@@ -121,7 +121,9 @@ export class AgentRegistry<TCtx = unknown> {
     get(name: string): Agent<TCtx> {
         const a = this.agents.get(name);
         if (!a) {
-            throw new Error(`unknown agent: ${name} (known: ${[...this.agents.keys()].join(', ')})`);
+            throw new Error(
+                `unknown agent: ${name} (known: ${[...this.agents.keys()].join(', ')})`,
+            );
         }
         return a;
     }

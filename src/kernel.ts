@@ -18,7 +18,6 @@ import {
 import type { AgentState, RunPhase, RunSpec } from './state.ts';
 import {
     lastOfType,
-    nodePayloads,
     projectMessages,
     projected,
     totalUsage,
@@ -191,10 +190,16 @@ export async function createState<T = string, TCtx = unknown>(
 
     const b = begin(state, env);
     if (opts.systemPrompt !== undefined) {
-        b.add<SystemPromptNode>({ type: 'system_prompt', prompt: await put(env, opts.systemPrompt) });
+        b.add<SystemPromptNode>({
+            type: 'system_prompt',
+            prompt: await put(env, opts.systemPrompt),
+        });
     }
     if (opts.input !== undefined) {
-        b.add<UserInputNode>({ type: 'user_input', content: await toPayloadParts(env, opts.input) });
+        b.add<UserInputNode>({
+            type: 'user_input',
+            content: await toPayloadParts(env, opts.input),
+        });
     }
     return b.commit({ phase: opts.input === undefined ? 'created' : 'awaiting_llm' });
 }
@@ -281,7 +286,9 @@ export function nextAction(state: AgentState): NextAction {
     // when a fork is also pending.
     if (state.pendingToolCalls.length) {
         const byId = new Map(
-            state.trajectory.flatMap((n) => (n.type === 'tool_call' ? [[n.callId, n] as const] : [])),
+            state.trajectory.flatMap((n) =>
+                n.type === 'tool_call' ? [[n.callId, n] as const] : [],
+            ),
         );
         const calls = state.pendingToolCalls.flatMap((id): PendingToolCall[] => {
             const n = byId.get(id);
@@ -537,8 +544,7 @@ function parseForkArgs(raw: string): ForkArgs | string {
     const mode = args.context;
     return {
         branches: parsed,
-        context:
-            mode === 'inherit' || mode === 'compact' || mode === 'none' ? mode : 'inherit',
+        context: mode === 'inherit' || mode === 'compact' || mode === 'none' ? mode : 'inherit',
     };
 }
 
@@ -639,8 +645,7 @@ export async function applyLlmResponse<TCtx>(
 
         if (call.name === FORK_TOOL) {
             const args = parseForkArgs(call.args);
-            const problem =
-                typeof args === 'string' ? args : forkProblem(state, args, reg);
+            const problem = typeof args === 'string' ? args : forkProblem(state, args, reg);
             if (typeof args === 'string' || problem) {
                 b.add<ToolResultNode>({
                     type: 'tool_result',
@@ -735,15 +740,16 @@ function validateOutput(
     } catch (e) {
         return { ok: false, message: `error: arguments are not valid JSON: ${String(e)}` };
     }
-    const payload = state.spec.outputWrapped
-        ? (args as Record<string, unknown>)?.value
-        : args;
+    const payload = state.spec.outputWrapped ? (args as Record<string, unknown>)?.value : args;
 
     if (env.output) {
         const parsed = env.output.safeParse(payload);
         return parsed.success
             ? { ok: true, value: parsed.data }
-            : { ok: false, message: `error: output does not match the schema:\n${z.prettifyError(parsed.error)}` };
+            : {
+                  ok: false,
+                  message: `error: output does not match the schema:\n${z.prettifyError(parsed.error)}`,
+              };
     }
     const schema = state.spec.outputSchema;
     if (!state.spec.outputWrapped && schema?.required?.length) {
@@ -1001,7 +1007,11 @@ export async function createChildState(
  * re-derives work a sibling already owns and writes an answer shaped for a user
  * rather than for a merge.
  */
-function branchBrief(fork: ForkNode, plan: ForkNode['branches'][number], instructions: string): string {
+function branchBrief(
+    fork: ForkNode,
+    plan: ForkNode['branches'][number],
+    instructions: string,
+): string {
     const siblings = fork.branches.filter((b) => b.name !== plan.name).map((b) => `"${b.name}"`);
     return [
         `You are branch "${plan.name}" of the fork above. Your assignment, and your only one:`,

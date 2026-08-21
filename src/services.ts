@@ -16,11 +16,13 @@ export class Services {
     readonly #memory = new Map<string, MemoryStore>();
     readonly #skills = new Map<string, SkillProvider>();
 
-    constructor(opts: {
-        payloads?: PayloadResolver | PayloadStore;
-        memory?: MemoryStore[];
-        skills?: SkillProvider[];
-    } = {}) {
+    constructor(
+        opts: {
+            payloads?: PayloadResolver | PayloadStore;
+            memory?: MemoryStore[];
+            skills?: SkillProvider[];
+        } = {},
+    ) {
         const p = opts.payloads ?? new InMemoryPayloadStore();
         this.payloads = p instanceof PayloadResolver ? p : new PayloadResolver(p);
         for (const m of opts.memory ?? []) {
