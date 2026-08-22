@@ -1,8 +1,8 @@
 import { PayloadResolver, type PayloadStore } from './payload.ts';
 // The composition root is the one place in the core allowed to name a backend:
 // it has to fall back to something when the caller supplies no store.
-import { InMemoryPayloadStore } from './payload-stores/in-memory.ts';
 import type { MemoryStore } from './memory.ts';
+import { InMemoryPayloadStore } from './payload-stores/in-memory.ts';
 import type { SkillProvider } from './skills.ts';
 
 /**

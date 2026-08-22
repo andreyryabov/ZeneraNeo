@@ -342,8 +342,8 @@ async function main(): Promise<void> {
     const reviewer = runner.agent({
         name: 'reviewer',
         description: 'Reviews an RFC, either as the trunk of a conversation or as one lens of it.',
-        instructions: (ctx, state) =>
-            state.spec.forkDepth === 0 ? trunkPrompt(ctx.rfc) : branchPrompt(ctx.rfc),
+        instructions: (ctx, spec) =>
+            spec.forkDepth === 0 ? trunkPrompt(ctx.rfc) : branchPrompt(ctx.rfc),
         tools: [fetchSpec, lookupStandard, incidentHistory],
         fork: { agents: ['reviewer'], maxBranches: LENSES.length },
     });

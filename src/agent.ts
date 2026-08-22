@@ -1,14 +1,12 @@
 import type { MemoryBinding, ResolvedBinding } from './memory.ts';
 import type { Model } from './model.ts';
+import type { Instructions } from './prompt.ts';
 import type { SkillBinding } from './skills.ts';
-import type { AgentState } from './state.ts';
 import { HANDOFF_PREFIX, type AnyTool } from './types.ts';
 
 // ---------------------------------------------------------------------------
 // Agent
 // ---------------------------------------------------------------------------
-
-export type Instructions<TCtx> = string | ((ctx: TCtx, state: AgentState) => string);
 
 export interface ForkOptions {
     /** agents a branch may run; defaults to any registered agent */
@@ -19,6 +17,12 @@ export interface ForkOptions {
 export interface AgentOptions<TCtx = unknown> {
     name: string;
     description?: string;
+    /**
+     * A string, a function of the run's immutable config, or an ordered list of
+     * both plus files. Composed into one prompt — and the files it names are
+     * recorded on the `system_prompt` node, so the trajectory says which
+     * document to edit.
+     */
     instructions?: Instructions<TCtx>;
     model?: Model;
     tools?: AnyTool<TCtx>[];
@@ -57,12 +61,6 @@ export class Agent<TCtx = unknown> {
         this.memory = opts.memory ?? [];
         this.skills = opts.skills;
         this.fork = opts.fork;
-    }
-
-    systemPrompt(ctx: TCtx, state: AgentState): string | undefined {
-        return typeof this.instructions === 'function'
-            ? this.instructions(ctx, state)
-            : this.instructions;
     }
 
     /**

@@ -2,17 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Demo",
-            "type": "node",
-            "request": "launch",
-            "program": "${workspaceFolder}/examples/demo.ts",
-            "runtimeVersion": "24",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "skipFiles": ["<node_internals>/**"]
-        },
-        {
-            "name": "Current TS file (Vitest)",
+            "name": "🧪 Run Test",
             "type": "node",
             "request": "launch",
             "program": "${workspaceFolder}/node_modules/vitest/vitest.mjs",
@@ -24,7 +14,7 @@
             "skipFiles": ["<node_internals>/**"]
         },
         {
-            "name": "Current TS file (Node)",
+            "name": "▶️ Run Current File",
             "type": "node",
             "request": "launch",
             "program": "${file}",

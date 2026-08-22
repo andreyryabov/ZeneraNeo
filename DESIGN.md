@@ -1274,7 +1274,8 @@ changes) and fail loudly instead of silently diverging.
 
 `Message`, `ContentPart`, `Tool`, `tool()`, `Agent`, `handoffTool`,
 `RunStream`, `runTool` survive with minimal changes (`ToolContext.state` is now
-the plain state; `Instructions<TCtx>` receives `(ctx, state)` unchanged).
+the plain state; `Instructions<TCtx>` receives `(ctx, spec)` — narrowed from the
+full state, §17.2).
 
 ## 16. Open questions
 
@@ -1305,3 +1306,195 @@ the plain state; `Instructions<TCtx>` receives `(ctx, state)` unchanged).
    branches cooperate, at the cost of nondeterministic interleaving — deferred.
 8. Join policies beyond "collect all": first-success, quorum, and cancellation of
    siblings are natural extensions of `JoinPolicy` but are not specified here.
+
+## 17. System prompt composition — a prompt is a list of sources
+
+A real system prompt is never one string: it is an agent-specific file, a shared
+`AGENTS.md`, a house style block, a skill index, and a couple of runtime notes,
+concatenated. Today all of that collapses into a single `SystemPromptNode.prompt`
+blob (plus fragments appended inside `buildRequest`), so the trajectory can say
+_what the model read_ but not _which file to edit to change it_. This section
+makes the composition itself first-class.
+
+### 17.1 Record the bytes, and the files that can change them
+
+The node already holds the one thing replay needs: `prompt`, the exact string the
+provider received. The single thing it is missing is _which files went into it_,
+and that is all this section adds.
+
+Everything else that could be recorded is either not editable or already known:
+
+- **Inline text** lives in the code that declared it. Recording it as a "part"
+  answers no question a reader can act on — there is no path to open — and the
+  bytes are already inside `prompt`.
+- **The skill index** is a rendering of the provider's catalog, not a document.
+  What to edit is the skill file, which `SkillProvider` already knows
+  (`Skill.file`) and `LoadSkillsNode` already records.
+- **Runtime notes** are kernel source. Nobody edits them per-agent.
+
+So a resolved part is a file, and a file is `{ path, content }`.
+
+### 17.2 Authoring
+
+`instructions` gains an array form; an element is a string, a function, or a
+block of text that knows where it came from:
+
+```ts
+export interface PromptText {
+    text: string;
+    /** the editable document this text came from, if any */
+    path?: string;
+    section?: string;
+}
+
+export type PromptPart<TCtx = unknown> =
+    | string // literal text
+    | ((ctx: TCtx, spec: RunSpec) => string) // computed from immutable run config
+    | PromptText;
+
+/** reads the file once, at construction, and remembers the path */
+export function promptFile(path: string, section?: string): PromptText;
+
+export type Instructions<TCtx> =
+    string | ((ctx: TCtx, spec: RunSpec) => string) | PromptPart<TCtx>[];
+```
+
+**A file is not a part kind — it is text plus a path.** An earlier draft had a
+`{ file }` part that the composer resolved during the run, which meant the
+runtime needed a file-reader interface, the composer had to be async and
+I/O-doing, every part needed an `optional` flag for the missing-file case, and a
+typo in a path surfaced on the first LLM call in production. Reading at
+construction deletes all four: `promptFile` throws at startup with a stack trace
+pointing at the agent, `optional` has no reason to exist (do not include the
+part), and `path` becomes what it always was — metadata.
+
+It also makes the prompt genuinely constant for the life of the agent, which is
+what the provider's cache assumes anyway. A prompt that must change without a
+restart is a different feature: rebuild the agent, or use the function form.
+
+The scalar forms are the one-element case of the array, so nothing existing has
+to move. Composition is array spreading:
+
+```ts
+const HOUSE = [promptFile('prompts/AGENT.md'), "Answer in the user's language."];
+
+runner.agent({ name: 'triage', instructions: [...HOUSE, promptFile('prompts/intent1.md')] });
+runner.agent({ name: 'resolve', instructions: [...HOUSE, promptFile('prompts/intent2.md')] });
+```
+
+No `id`, no `label`: a file is named by its path, and inline text needs no name
+because nothing refers back to it. Ordering is array order; the derived text
+(§17.5) is always appended after, which keeps the volatile part at the end
+without anyone having to remember to put it there.
+
+**The function form takes `RunSpec`, not `AgentState`** — narrowed from v1. The
+system prompt is the provider's cache prefix; a prompt that varies with mutable
+state invalidates that prefix on every single turn, and since a changed prompt
+appends a node (§17.4), it also writes one `system_prompt` node per turn. It is
+circular besides: the prompt is composed from a trajectory it is about to be
+appended to. `RunSpec` is fixed at `createState` (§6), so the useful cases —
+`forkDepth` to tell a branch prompt from a trunk one, the run's output contract,
+anything derived from `ctx` — still work, while "prompt that grows with the
+conversation" stops being expressible. Per-turn content belongs where the
+projection already puts it: at the tail, as recalls, tool results and input.
+
+### 17.3 The node
+
+```ts
+export interface SystemPromptNode extends NodeBase {
+    type: 'system_prompt';
+    /** exactly what the provider received — unchanged field, unchanged meaning */
+    prompt: Payload;
+    /** file-backed contributors, in the order they were rendered */
+    sources?: { path: string; content: Payload }[];
+}
+```
+
+Two fields, and each earns its place:
+
+- `content` is a `Payload` because everything is (§4): `AGENTS.md` shared by ten
+  agents, by both sides of a handoff and by every fork branch is stored once, and
+  the content address doubles as the drift hash — no parallel hash field.
+- Offsets into `prompt` are deliberately absent. They would be a third
+  representation of the same bytes, invalidated by any change to an earlier
+  part, and an inspector that wants to highlight a region can find it by content.
+
+`projectMessages` is untouched: the projection still emits one system string,
+last-one-wins, and `sources` is metadata the model never sees.
+
+### 17.4 Idempotency — the bytes are the identity
+
+`applySystemPrompt` keeps comparing `prompt.sha256` against the freshly rendered
+string, exactly as it does today. There is no composition hash, because two
+compositions that render to the same bytes _are_ the same prompt as far as the
+model, the provider cache and replay are concerned; appending a node to record
+that a boundary moved would be noise in an append-only log. By the same argument
+there is no renderer version: a renderer change that matters changes the bytes,
+and one that does not, does not.
+
+What follows from that:
+
+- a re-entered loop or a resumed run renders identical bytes and appends nothing;
+- a handoff renders the new agent's prompt, and the old node stays in the history
+  where it belongs;
+- an agent rebuilt from edited files renders different bytes, so the next run
+  records the new revision — the change is dated in the log rather than inferred.
+
+A prompt file that cannot be read is an error at construction (§17.2), not a run
+that starts without it: silently dropping instructions would leave the model
+holding a prompt nobody wrote, the same reason a drifted skill hash is fatal
+(§9.3).
+
+### 17.5 Derived text — no more hidden appends
+
+`buildRequest` currently appends the skill index and the `final_output`
+instruction _after_ projection, so part of the system prompt exists in no node at
+all. Both move into the composer, appended after the authored parts in a fixed
+order: the skill index (only when `discovery: 'index'`), then the runtime notes
+(today only `final_output`, for typed runs).
+
+They are not listed in `sources` — neither is a file anyone edits — but they are
+now inside `prompt`, which is what the audit needed. That restores the invariant:
+**the system prompt the model saw is exactly `SystemPromptNode.prompt`**, nothing
+is added downstream, and `requestDigest` becomes a meaningful replay check for
+the prompt.
+
+### 17.6 Section markers
+
+Markers such as `<intent> … </intent>` are opt-in per part (`section`), because a
+marker is tokens the model reads and therefore changes behaviour — a wrapper that
+"doesn't influence the content" does not exist for an LLM. Rendering is
+deterministic: `<section>\n…\n</section>`, parts joined by a blank line. Nothing
+needs to be versioned or hashed, because a change to any of it changes `prompt`
+and therefore appends a new node on its own.
+
+### 17.7 Derived view: what to edit
+
+This is the feature the whole section exists for: "this instruction is wrong"
+resolves to a path instead of a search, per agent, including the agents a handoff
+passed through. It needs no API, because it is a fold over a public field:
+
+```ts
+const files = trajectory
+    .filter((n) => n.type === 'system_prompt')
+    .flatMap((n) => (n.sources ?? []).map((s) => ({ agent: n.agent, path: s.path })));
+```
+
+A shipped helper would have to guess the caller's question — newest-first or
+oldest-first, deduped by path or by path and content, current agent or all of
+them — and every guess is one line for the caller to write differently. The
+provenance is the data; the query is not the core's business.
+
+Skills answer through their own node for the same reason, plus a stronger one.
+`LoadSkillsNode` gains `file` per skill where the provider knows it (`file.ts`
+already tracks it), which is strictly more informative — it names the activation
+that pulled the file in, not just the file. Merging the two into one list would
+also mean one `sha256` field with two meanings, since a skill's hash covers its
+body after frontmatter is stripped rather than the file's bytes.
+
+### 17.8 Compatibility
+
+`sources` is optional, so every node recorded before this section stays valid and
+simply reports no files. No new node type, no migration of stored runs, and the
+authoring change is additive — a string instruction keeps working and becomes the
+one-element case.

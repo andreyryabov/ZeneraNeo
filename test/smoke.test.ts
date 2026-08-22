@@ -1,10 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { AgentRunner } from '../src/runner.ts';
 import { InMemoryMemoryStore } from '../src/memory-stores/in-memory.ts';
 import type { Model, ModelRequest, ModelResponse } from '../src/model.ts';
-import { exportRun, importRun } from '../src/payload.ts';
 import { InMemoryPayloadStore } from '../src/payload-stores/in-memory.ts';
+import { exportRun, importRun } from '../src/payload.ts';
+import { promptFile } from '../src/prompt.ts';
+import { AgentRunner } from '../src/runner.ts';
 import { StaticSkillProvider } from '../src/skill-providers/static.ts';
 import { assertState, turns, type AgentState } from '../src/state.ts';
 import { projectMessages, totalUsage, type TrajectoryNode } from '../src/trajectory.ts';
@@ -491,5 +495,104 @@ describe('smoke', () => {
         expect(messages.some((m) => m.role === 'user' && JSON.stringify(m).includes('a did'))).toBe(
             false,
         );
+    });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('system prompt composition', () => {
+    /** A real file, because `promptFile` reads one — there is nothing to fake. */
+    function writePrompt(name: string, body: string): string {
+        const path = join(dir, name);
+        writeFileSync(path, body);
+        return path;
+    }
+
+    let dir: string;
+
+    beforeAll(() => {
+        dir = mkdtempSync(join(tmpdir(), 'zn-prompt-'));
+    });
+
+    afterAll(() => {
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('composes files and text, and records which files to edit', async () => {
+        const house = writePrompt('AGENT.md', 'HOUSE RULES');
+        const intent = writePrompt('triage.md', 'TRIAGE');
+
+        const model = new RuleModel(() => say('ok'));
+        const runner = new AgentRunner({ model });
+        runner.agent({
+            name: 'triage',
+            instructions: [
+                promptFile(house),
+                "Answer in the user's language.",
+                promptFile(intent, 'intent'),
+            ],
+        });
+
+        const res = await runner.run('triage', 'hi');
+        const { system } = await projectMessages(res.state.trajectory, runner.services.payloads);
+        expect(system).toBe(
+            "HOUSE RULES\n\nAnswer in the user's language.\n\n<intent>\nTRIAGE\n</intent>",
+        );
+
+        // The point of the whole exercise: which file do I edit?
+        const node = findNode(res.state, 'system_prompt');
+        const sources = node.sources ?? [];
+        expect(sources.map((s) => s.path)).toEqual([house, intent]);
+        // …and the bytes that file contributed, so a later edit is detectable.
+        expect(
+            await Promise.all(sources.map((s) => runner.services.payloads.get(s.content))),
+        ).toEqual(['HOUSE RULES', 'TRIAGE']);
+    });
+
+    it('fails at construction, not on the first llm call, when a file is missing', () => {
+        // Setup-time I/O buys a stack trace pointing at the agent instead of a
+        // run that dies in production on its first turn.
+        expect(() => promptFile(join(dir, 'gone.md'))).toThrow('gone.md');
+    });
+
+    it('appends one node for a prompt that does not change', async () => {
+        const model = new RuleModel(() => say('ok'));
+        const runner = new AgentRunner({ model });
+        runner.agent({ name: 'a', instructions: [promptFile(writePrompt('p.md', 'V1'))] });
+
+        const first = await runner.run('a', 'one');
+        const second = await runner.send(first.state, 'two');
+        expect(
+            second.state.trajectory.filter((n) => n.type === 'system_prompt'),
+            'identical bytes append nothing',
+        ).toHaveLength(1);
+    });
+
+    it('puts the skill index and the final_output instruction in the node', async () => {
+        const skills = new StaticSkillProvider(
+            [{ name: 'refunds', description: 'how to refund', content: 'REFUND STEPS' }],
+            'kb',
+        );
+        const model = new RuleModel(() => callTool('final_output', { ok: true }));
+        const runner = new AgentRunner({ model, skills: [skills] });
+        runner.agent({
+            name: 'a',
+            instructions: 'BASE',
+            skills: { provider: 'kb', discovery: 'index' },
+        });
+
+        const res = await runner.run('a', 'go', { output: z.object({ ok: z.boolean() }) });
+
+        // Both used to be appended after projection, so part of the prompt lived
+        // in no node at all. The invariant now: what the model saw *is* the node.
+        const node = findNode(res.state, 'system_prompt');
+        const recorded = await runner.services.payloads.get(node.prompt);
+        expect(recorded).toContain('BASE');
+        expect(recorded).toContain('refunds');
+        expect(recorded).toContain('final_output');
+        expect(node.sources, 'neither is a file anyone edits').toBeUndefined();
+
+        const { system } = await projectMessages(res.state.trajectory, runner.services.payloads);
+        expect(system).toBe(recorded);
     });
 });

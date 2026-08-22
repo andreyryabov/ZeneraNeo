@@ -380,10 +380,13 @@ const ROOT = flatten(STATE.trajectory, 0, null);
 
 function names(list) { return list.join(', '); }
 
+function base(path) { return path.split('/').pop() || path; }
+
 function label(n) {
   switch (n.type) {
     case 'user_input': return n.synthetic ? 'user input (synthetic)' : 'user input';
-    case 'system_prompt': return 'system prompt';
+    case 'system_prompt': return 'system prompt'
+      + (n.sources && n.sources.length ? ': ' + names(n.sources.map(function (s) { return base(s.path); })) : '');
     case 'load_skills': return 'skills: ' + names(n.skills.map(function (s) { return s.name; }));
     case 'memory_recall': return 'memory recall: ' + n.scope;
     case 'memory_op': return 'memory ' + n.op;
@@ -753,6 +756,10 @@ function detailFor(e) {
   switch (n.type) {
     case 'system_prompt':
       out.appendChild(textBlock('Prompt', blob(n.prompt)));
+      // The editable half: which file to open when the instruction is wrong.
+      (n.sources || []).forEach(function (s) {
+        out.appendChild(textBlock(s.path, blob(s.content), 'prompt file'));
+      });
       break;
 
     case 'user_input':
@@ -765,7 +772,8 @@ function detailFor(e) {
 
     case 'load_skills':
       out.appendChild(textBlock('Skills', n.skills.map(function (s) {
-        return s.name + (s.version ? '@' + s.version : '') + '  ' + s.contentHash.slice(0, 12);
+        return s.name + (s.version ? '@' + s.version : '') + '  ' + s.contentHash.slice(0, 12)
+          + (s.file ? '  ' + s.file : '');
       }).join('\\n'), n.provider));
       out.appendChild(textBlock('Injected instructions', blob(n.content)));
       out.appendChild(textBlock('Tools unlocked', n.toolNames.join('\\n')));

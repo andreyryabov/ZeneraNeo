@@ -5,6 +5,7 @@ import { systemClock, type IdClock } from './ids.ts';
 import { memoryTools, type MemoryOpSpec, type MemoryRecallSpec } from './memory.ts';
 import type { ModelRequest, ModelResponse } from './model.ts';
 import { hash, type Payload } from './payload.ts';
+import { composePrompt } from './prompt.ts';
 import type { Services } from './services.ts';
 import {
     allows,
@@ -417,34 +418,52 @@ function toSchema(t: ToolSchema): ToolSchema {
 }
 
 /**
+ * Prompt text the runtime owns rather than the author: the skill index and the
+ * `final_output` instruction. Both used to be appended inside `buildRequest`,
+ * which meant part of the system prompt existed in no node and showed up in no
+ * audit. Composed in now, always last, so the volatile tail never invalidates
+ * the cacheable prefix.
+ */
+async function derivedPrompt<TCtx>(
+    agent: Agent<TCtx>,
+    state: AgentState,
+    env: KernelEnv,
+): Promise<string[]> {
+    const out: string[] = [];
+    if (agent.skills?.discovery === 'index') {
+        const binding = agent.skills;
+        const provider = env.services.skillProvider(binding.provider);
+        const index = (await provider.list()).filter((s) => allows(binding, s));
+        const rendered = renderSkillIndex(index, binding.maxIndexEntries ?? 50);
+        if (rendered) {
+            out.push(rendered);
+        }
+    }
+    if (state.spec.outputSchema) {
+        out.push(FINAL_OUTPUT_INSTRUCTIONS);
+    }
+    return out;
+}
+
+/**
  * Projection + tool schemas + system prompt for the active agent. The only
  * place in the kernel that dereferences payloads — everything else works on
  * refs alone.
+ *
+ * Nothing is appended to the system prompt here: what the model reads is
+ * exactly the `system_prompt` node `applySystemPrompt` recorded, which is what
+ * makes `requestDigest` a meaningful replay check for the prompt.
  */
 export async function buildRequest<TCtx>(
     state: AgentState,
     reg: AgentRegistry<TCtx>,
     env: KernelEnv,
 ): Promise<ModelRequest> {
-    const agent = reg.get(state.agentName);
     const { system, messages } = await projectMessages(state.trajectory, env.services.payloads);
     const tools = await resolveTools(state, reg, env);
 
-    const extras: string[] = [];
-    if (agent.skills?.discovery === 'index') {
-        const provider = env.services.skillProvider(agent.skills.provider);
-        const index = (await provider.list()).filter((s) => allows(agent.skills as never, s));
-        const rendered = renderSkillIndex(index, agent.skills.maxIndexEntries ?? 50);
-        if (rendered) {
-            extras.push(rendered);
-        }
-    }
-    if (state.spec.outputSchema) {
-        extras.push(FINAL_OUTPUT_INSTRUCTIONS);
-    }
-
     return {
-        system: [system, ...extras].filter(Boolean).join('\n\n') || undefined,
+        system,
         messages,
         tools: tools.map(toSchema),
         toolChoice: 'auto',
@@ -496,6 +515,11 @@ export async function applyUserInput(
  * Renders the active agent's instructions into the trajectory. Idempotent: a
  * matching prompt already in force produces no node, so re-entering the loop
  * (or resuming) does not litter the history.
+ *
+ * The rendered bytes are the identity. Two compositions that render the same
+ * string *are* the same prompt to the model, the provider cache and replay, so
+ * there is nothing else to hash and no renderer version to pin: a change that
+ * matters changes the bytes, and one that does not, does not.
  */
 export async function applySystemPrompt<TCtx>(
     state: AgentState,
@@ -503,16 +527,26 @@ export async function applySystemPrompt<TCtx>(
     env: KernelEnv,
 ): Promise<AgentState> {
     const agent = reg.get(state.agentName);
-    const prompt = agent.systemPrompt(state.context as TCtx, state);
-    if (prompt === undefined) {
+    const { text, sources } = await composePrompt(
+        agent.instructions,
+        state.context as TCtx,
+        state.spec,
+        (value) => put(env, value),
+        await derivedPrompt(agent, state, env),
+    );
+    if (!text) {
         return state;
     }
     const current = lastOfType(projected(state.trajectory), 'system_prompt');
-    if (current && current.agent === state.agentName && current.prompt.sha256 === hash(prompt)) {
+    if (current && current.agent === state.agentName && current.prompt.sha256 === hash(text)) {
         return state;
     }
     const b = begin(state, env);
-    b.add<SystemPromptNode>({ type: 'system_prompt', prompt: await put(env, prompt) });
+    b.add<SystemPromptNode>({
+        type: 'system_prompt',
+        prompt: await put(env, text),
+        ...(sources.length ? { sources } : {}),
+    });
     return b.commit({});
 }
 
@@ -850,6 +884,7 @@ async function addSkillLoad(b: Draft, env: KernelEnv, spec: SkillLoadSpec): Prom
             name: s.name,
             version: s.version,
             contentHash: skillContentHash(s),
+            file: s.file,
         })),
         content: await put(env, renderSkills(spec.skills)),
         toolNames: spec.skills.flatMap((s) => (s.tools ?? []).map((t) => t.name)),

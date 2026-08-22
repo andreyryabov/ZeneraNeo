@@ -1,13 +1,14 @@
-import type { Payload, PayloadResolver } from './payload.ts';
 import type { MemoryQuery } from './memory.ts';
+import type { Payload, PayloadResolver } from './payload.ts';
+import type { PromptSource } from './prompt.ts';
 import {
     addUsage,
     zeroUsage,
+    type AssistantMessage,
     type MediaKind,
     type Message,
     type TokenUsage,
     type ToolCall,
-    type AssistantMessage,
 } from './types.ts';
 
 // ---------------------------------------------------------------------------
@@ -36,13 +37,21 @@ export interface UserInputNode extends NodeBase {
 
 export interface SystemPromptNode extends NodeBase {
     type: 'system_prompt';
+    /** exactly what the provider received */
     prompt: Payload;
+    /**
+     * The file-backed contributors, in the order they were rendered — the
+     * answer to "which file do I edit to change this?". Inline text, the skill
+     * index and runtime notes are inside `prompt` but not listed here: none of
+     * them is a document anyone opens.
+     */
+    sources?: PromptSource[];
 }
 
 export interface LoadSkillsNode extends NodeBase {
     type: 'load_skills';
     provider: string;
-    skills: { name: string; version?: string; contentHash: string }[];
+    skills: { name: string; version?: string; contentHash: string; file?: string }[];
     /** concatenated instructions the model saw */
     content: Payload;
     /** tools this activation unlocked */
