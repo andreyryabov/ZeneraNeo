@@ -1,0 +1,4 @@
+min_days,max_days,outcome,fee_pct
+0,30,refund,0
+31,90,credit,10
+91,,repair,

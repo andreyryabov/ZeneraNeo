@@ -38,13 +38,15 @@
         "test": "node --env-file=.env ./node_modules/vitest/vitest.mjs run",
         "test:watch": "node --env-file=.env ./node_modules/vitest/vitest.mjs",
         "test:coverage": "node --env-file=.env ./node_modules/vitest/vitest.mjs run --coverage",
-        "typecheck": "tsc --noEmit",
+        "typecheck": "tsc -p tsconfig.json --noEmit",
+        "typecheck:watch": "tsc -p tsconfig.json --noEmit --watch",
         "check:node": "node -e \"if (+process.versions.node.split('.')[0] < 24) { console.error('Node >=24 required (running ' + process.version + '). Run: nvm use'); process.exit(1); }\"",
         "demo:simple": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/demo.ts'",
         "demo:fanout": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/fanout.ts'",
         "demo:triage": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/triage.ts'",
         "demo:review": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/review.ts'",
         "demo:inspect": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/inspect.ts'",
+        "demo:handbook": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/handbook.ts'",
         "prepublishOnly": "npm run clean && npm run build"
     },
     "dependencies": {
