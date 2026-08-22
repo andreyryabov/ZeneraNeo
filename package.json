@@ -47,6 +47,7 @@
         "demo:review": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/review.ts'",
         "demo:inspect": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/inspect.ts'",
         "demo:handbook": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/handbook.ts'",
+        "demo:locked": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/locked.ts'",
         "prepublishOnly": "npm run clean && npm run build"
     },
     "dependencies": {

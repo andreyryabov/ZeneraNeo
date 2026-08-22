@@ -323,7 +323,7 @@ describe('smoke', () => {
         expect(second.output).toBe('I remember you like trains');
     });
 
-    it('loads a skill on demand and unlocks its tools', async () => {
+    it('declares a skill tool up front and unlocks it on load', async () => {
         const cheapHotels = tool<Record<string, never>>({
             name: 'cheap_hotels',
             description: 'lists cheap hotels',
@@ -340,12 +340,22 @@ describe('smoke', () => {
         ]);
 
         const model = new RuleModel(
-            (req) => (hasToolResult(req, 'cheap_hotels') ? say('stay at hostel one') : undefined),
             (req) =>
-                req.tools.some((t) => t.name === 'cheap_hotels')
-                    ? callTool('cheap_hotels', {})
+                req.messages.some(
+                    (m) =>
+                        m.role === 'tool' &&
+                        m.name === 'cheap_hotels' &&
+                        m.content.includes('hostel'),
+                )
+                    ? say('stay at hostel one')
                     : undefined,
-            () => callTool('skill_load', { names: ['budget_travel'] }),
+            (req) =>
+                allText(req).includes('PREREQUISITE_MISSING') && !hasToolResult(req, 'skill_load')
+                    ? callTool('skill_load', { names: ['budget_travel'] })
+                    : undefined,
+            // The tool is offered from turn 0, so the model reaches for it first
+            // and is told which skill to load.
+            () => callTool('cheap_hotels', {}),
         );
         const runner = new AgentRunner({ model, skills: [provider] });
         runner.agent({
@@ -357,10 +367,18 @@ describe('smoke', () => {
         const res = await runner.run('guide', 'cheap trip please');
         const load = findNode(res.state, 'load_skills');
         expect(load.toolNames).toEqual(['cheap_hotels']);
+
+        const results = res.state.trajectory.filter((n) => n.type === 'tool_result');
+        expect(results.map((n) => `${n.name}:${n.isError}`)).toEqual([
+            'cheap_hotels:true',
+            'skill_load:false',
+            'cheap_hotels:false',
+        ]);
         expect(res.output).toBe('stay at hostel one');
         // The instructions reached the model through the node, not the tool result.
         const { messages } = await projectMessages(res.state.trajectory, runner.services.payloads);
         expect(JSON.stringify(messages)).toContain('Prefer trains');
+        expect(JSON.stringify(messages)).toContain('PREREQUISITE_MISSING');
     });
 
     it('resumes from a checkpoint and exports the run', async () => {

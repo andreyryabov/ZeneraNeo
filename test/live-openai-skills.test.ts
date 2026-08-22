@@ -1,13 +1,14 @@
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createModel } from '../src/models/factory.ts';
 import type { ModelRequest } from '../src/model.ts';
+import { createModel } from '../src/models/factory.ts';
 import { AgentRunner } from '../src/runner.ts';
 import { FileSkillProvider } from '../src/skill-providers/file.ts';
 import type { AgentState } from '../src/state.ts';
 import type { TrajectoryNode } from '../src/trajectory.ts';
+import { tool } from '../src/types.ts';
 
 const live = process.env.OPENAI_API_KEY ? describe : describe.skip;
 
@@ -247,5 +248,156 @@ live('openai live skill loading', () => {
         expect(reqText).toContain('Say OK.');
         expect(reqText).not.toContain('## Skill:');
         expect(reqText).not.toContain('BETA_SKILL_ACTIVE');
+    }, 120000);
+});
+
+// ---------------------------------------------------------------------------
+// Locked tools
+//
+// The declared tool set is fixed for the whole run; a skill-owned tool refuses
+// to execute until its skill is loaded. What is under test here is that a real
+// model reads that refusal, works out which skill to load, loads it, and retries
+// on its own — with no orchestration and no change to the tools array.
+// ---------------------------------------------------------------------------
+
+async function createLockedToolDir() {
+    const dir = await mkdtemp(join(tmpdir(), 'zenera-live-openai-locked-'));
+    const skillDir = join(dir, 'skills');
+
+    const gemDir = join(skillDir, 'gemstone_pricing');
+    await mkdir(gemDir, { recursive: true });
+    await writeFile(
+        join(gemDir, 'SKILL.md'),
+        [
+            '---',
+            'description: how to quote the price of a cut gemstone',
+            'tools: [gem_quote]',
+            '---',
+            '',
+            'Quote stones with gem_quote and report the priceEur it returns verbatim.',
+            'End every answer with the marker GEM_SKILL_ACTIVE.',
+            '',
+        ].join('\n'),
+        'utf8',
+    );
+
+    const shipDir = join(skillDir, 'shipping_rates');
+    await mkdir(shipDir, { recursive: true });
+    await writeFile(
+        join(shipDir, 'SKILL.md'),
+        [
+            '---',
+            'description: parcel shipping rates and delivery windows',
+            '---',
+            '',
+            'Never mention gemstones. Marker SHIP_SKILL_ACTIVE.',
+            '',
+        ].join('\n'),
+        'utf8',
+    );
+
+    return skillDir;
+}
+
+async function toolResults(state: AgentState, runner: AgentRunner) {
+    const nodes = state.trajectory.filter(
+        (n): n is Extract<TrajectoryNode, { type: 'tool_result' }> => n.type === 'tool_result',
+    );
+    const out: { name: string; isError: boolean; text: string }[] = [];
+    for (const n of nodes) {
+        out.push({
+            name: n.name,
+            isError: n.isError === true,
+            text: await runner.services.payloads.get(n.result),
+        });
+    }
+    return out;
+}
+
+live('openai live locked skill tools', () => {
+    it('recovers from a locked tool by loading the skill it names', async () => {
+        const skillDir = await createLockedToolDir();
+        const gemQuote = tool<{ carats: number }>({
+            name: 'gem_quote',
+            description: 'Returns the price in EUR of a cut stone of the given weight.',
+            parameters: {
+                type: 'object',
+                properties: { carats: { type: 'number' } },
+                required: ['carats'],
+                additionalProperties: false,
+            },
+            execute: ({ carats }) => ({ priceEur: carats * 1234 }),
+        });
+
+        const skills = new FileSkillProvider({
+            dir: skillDir,
+            id: 'gems-locked',
+            tools: [gemQuote],
+        });
+
+        const runner = new AgentRunner({
+            model: createModel({
+                model: 'gpt-5-nano',
+                api: 'responses',
+                reasoningEffort: 'minimal',
+            }),
+            skills: [skills],
+            stream: false,
+            recordRequests: true,
+        });
+
+        runner.agent({
+            name: 'appraiser',
+            instructions: [
+                'You price gemstones.',
+                'Your very first action must be to call gem_quote with the weight the user gives.',
+                'Do not call skill_load before that first gem_quote call.',
+                'If a tool result tells you a skill is missing, load exactly the skills it',
+                'names and then call gem_quote again — never answer from the refusal alone.',
+                'Report the priceEur value the tool returned, unchanged.',
+            ].join(' '),
+            // No index and no search: the only route to the skill name is the
+            // tool description and the refusal itself.
+            skills: { provider: skills.id, discovery: 'none' },
+        });
+
+        const result = await runner.run('appraiser', 'What is a 3 carat stone worth?');
+        expect(result.stopReason).toBe('final');
+
+        const requests = await recordedRequests(result.state, runner);
+        expect(requests.length).toBeGreaterThanOrEqual(3);
+
+        // 1. The tool is on the wire from the very first turn, before any load.
+        expect((requests[0].tools ?? []).map((t) => t.name)).toContain('gem_quote');
+
+        // 2. And it is byte-identical on every later turn. This is the property
+        //    the whole locking mechanism exists to preserve: a growing tools
+        //    array would move the first differing token to offset ~0 and throw
+        //    away the provider's prompt cache exactly when the context is largest.
+        const wire = requests.map((r) => JSON.stringify(r.tools ?? []));
+        for (const w of wire) {
+            expect(w).toBe(wire[0]);
+        }
+
+        const results = await toolResults(result.state, runner);
+
+        // 3. The first attempt was refused, and the refusal named the skill.
+        const refused = results.find((r) => r.name === 'gem_quote' && r.isError);
+        expect(refused).toBeDefined();
+        expect(refused!.text).toContain('PREREQUISITE_MISSING');
+        expect(refused!.text).toContain('gemstone_pricing');
+
+        // 4. The model chose the right skill on its own.
+        const load = findNode(result.state, 'load_skills');
+        expect(load.skills.map((s) => s.name)).toEqual(['gemstone_pricing']);
+        expect(load.toolNames).toEqual(['gem_quote']);
+
+        // 5. The retry went through and the skill's instructions took effect.
+        const priced = results.find((r) => r.name === 'gem_quote' && !r.isError);
+        expect(priced).toBeDefined();
+        expect(priced!.text).toContain('3702');
+        // The model is free to write 3,702 or 3 702.
+        expect(result.output.replace(/[,\s]/g, '')).toContain('3702');
+        expect(result.output).toContain('GEM_SKILL_ACTIVE');
     }, 120000);
 });

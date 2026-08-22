@@ -9,6 +9,7 @@ import { composePrompt } from './prompt.ts';
 import type { Services } from './services.ts';
 import {
     allows,
+    lockedSkillTools,
     renderSkillIndex,
     renderSkills,
     skillContentHash,
@@ -343,33 +344,15 @@ const FORK_PARAMETERS: JsonSchema = {
     additionalProperties: false,
 };
 
-/** Skills activated by still-projected `load_skills` nodes of the active agent. */
-async function activeSkills(state: AgentState, env: KernelEnv): Promise<Skill[]> {
-    const nodes = projected(state.trajectory).filter(
-        (n): n is LoadSkillsNode => n.type === 'load_skills' && n.agent === state.agentName,
-    );
-    const out: Skill[] = [];
-    for (const node of nodes) {
-        const provider = env.services.skillProvider(node.provider);
-        for (const ref of node.skills) {
-            const skill = await provider.load(ref.name, ref.version);
-            // A silent substitution would leave the model with instructions it
-            // never saw, so a drifted catalog is a hard error.
-            if (skillContentHash(skill) !== ref.contentHash) {
-                throw new Error(
-                    `skill "${ref.name}" changed since it was loaded in run ${state.runId}`,
-                );
-            }
-            out.push(skill);
-        }
-    }
-    return out;
-}
-
 /**
- * tools(state) = agent tools + handoffs + memory + active skills + fork +
+ * tools(state) = agent tools + handoffs + memory + skills + fork +
  * final_output. Computed from the state so a rehydrated run offers exactly the
  * tools it had before the crash.
+ *
+ * Skill-owned tools are declared here whether or not their skill is active: the
+ * gate `lockedSkillTools` installs reads the trajectory when the tool is called,
+ * not when it is declared, so the array the model is sent never mutates
+ * mid-conversation and the provider's prompt cache survives a `skill_load`.
  */
 export async function resolveTools<TCtx>(
     state: AgentState,
@@ -385,10 +368,12 @@ export async function resolveTools<TCtx>(
     }
     tools.push(...memoryTools<TCtx>(agent.memoryBindings(ctx)));
     if (agent.skills) {
-        tools.push(...skillTools<TCtx>(agent.skills));
-        for (const skill of await activeSkills(state, env)) {
-            tools.push(...(skill.tools ?? []));
-        }
+        const binding = agent.skills;
+        tools.push(...skillTools<TCtx>(binding));
+        const provider = env.services.skillProvider(binding.provider);
+        // An agent-level tool of the same name wins, and is never gated.
+        const own = new Set(agent.tools.map((t) => t.name));
+        tools.push(...(await lockedSkillTools<TCtx>(binding, provider, own)));
     }
     if (agent.fork && state.spec.forkDepth < state.spec.maxForkDepth) {
         tools.push({
@@ -887,7 +872,7 @@ async function addSkillLoad(b: Draft, env: KernelEnv, spec: SkillLoadSpec): Prom
             file: s.file,
         })),
         content: await put(env, renderSkills(spec.skills)),
-        toolNames: spec.skills.flatMap((s) => (s.tools ?? []).map((t) => t.name)),
+        toolNames: [...new Set(spec.skills.flatMap((s) => (s.tools ?? []).map((t) => t.name)))],
     });
 }
 

@@ -1165,6 +1165,13 @@ const CLASSES = {
   fork: 'fork', join: 'fork', final_output: 'final', handoff: 'hand'
 };
 
+// A failed call is the one thing in a trace people look for, so it is coloured
+// by outcome rather than by type — the same red the sidebar badge uses.
+function nodeClass(n) {
+  if (n.type === 'tool_result' && n.isError) return 'err';
+  return CLASSES[n.type];
+}
+
 // Diagram labels are built from node types and identifiers only, and are
 // stripped to a conservative character set: nothing a model wrote can reach
 // the Mermaid parser, let alone the SVG.
@@ -1191,7 +1198,7 @@ function chain(level, lines) {
   level.forEach(function (e) {
     const i = ENTRIES.indexOf(e);
     lines.push('  ' + shape(e, i));
-    const cls = CLASSES[e.node.type];
+    const cls = nodeClass(e.node);
     if (cls) lines.push('  class ' + e.key + ' ' + cls + ';');
     if (e.covered) lines.push('  class ' + e.key + ' covered;');
     if (prev) lines.push('  ' + prev.key + ' --> ' + e.key);
@@ -1229,6 +1236,7 @@ function diagram() {
   lines.push('  classDef fork fill:#3a2450,stroke:#6b4b90,color:#e6d3ff;');
   lines.push('  classDef final fill:#14392c,stroke:#2f7a5c,color:#c6f5e0;');
   lines.push('  classDef hand fill:#3d2a1b,stroke:#7a5535,color:#f2d9c2;');
+  lines.push('  classDef err fill:#4a1f1c,stroke:#8a3a33,color:#f0776c;');
   lines.push('  classDef covered opacity:0.45,stroke-dasharray:4 3;');
   chain(ROOT, lines);
   return lines.join('\\n');

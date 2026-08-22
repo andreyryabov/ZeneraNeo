@@ -29,7 +29,6 @@ interface Entry {
     /** the folder to scan for resources, or undefined for a flat `<name>.md` */
     folder?: string;
     content: string;
-    toolNames: string[];
 }
 
 /**
@@ -105,7 +104,7 @@ export class FileSkillProvider implements SkillProvider {
         if (version && found && found !== version) {
             throw new Error(`skill ${name} is at ${found}, ${version} was requested`);
         }
-        const tools = entry.toolNames.map((n) => {
+        const tools = (entry.summary.toolNames ?? []).map((n) => {
             const t = this.#tools.get(n);
             if (!t) {
                 throw new Error(
@@ -122,6 +121,10 @@ export class FileSkillProvider implements SkillProvider {
             ...(tools.length ? { tools } : {}),
             ...(entry.folder ? { resources: await readResources(entry.folder) } : {}),
         };
+    }
+
+    tool(name: string): AnyTool<any> | undefined {
+        return this.#tools.get(name);
     }
 
     /** One scan, memoized: `list` runs on every `skill_load`. */
@@ -164,16 +167,17 @@ export class FileSkillProvider implements SkillProvider {
 function parse(raw: string, base: string, file: string, folder?: string): Entry {
     const { data, body } = frontmatter(raw);
     const tags = toList(data.tags);
+    const tools = toList(data.tools);
     return {
         file,
         folder,
         content: body,
-        toolNames: toList(data.tools),
         summary: {
             name: data.name || base,
             description: data.description || firstLine(body),
             ...(tags.length ? { tags } : {}),
             ...(data.version ? { version: data.version } : {}),
+            ...(tools.length ? { toolNames: tools } : {}),
         },
     };
 }
