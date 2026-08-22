@@ -9,6 +9,7 @@ export * from './model.ts';
 export * from './models/index.ts';
 export * from './payload-stores/index.ts';
 export * from './payload.ts';
+export * from './project/index.ts';
 export * from './prompt.ts';
 export * from './runner.ts';
 export * from './services.ts';
@@ -17,3 +18,4 @@ export * from './skills.ts';
 export * from './state.ts';
 export * from './trajectory.ts';
 export * from './types.ts';
+

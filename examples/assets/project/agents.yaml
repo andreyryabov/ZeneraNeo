@@ -1,0 +1,32 @@
+version: 1
+
+# The agent a conversation starts with. Without this the first entry wins,
+# which makes file order load-bearing — better to say it.
+default: intake
+
+# Fallback for agents that do not pin their own. `openai/responses:` is the
+# shorthand `createModel` already understands.
+model: openai/responses:gpt-5.4-mini
+
+# One catalog, scanned once. `.agents/skills` is the default, written out here
+# so the layout is visible from the config alone.
+skills: .agents/skills
+
+agents:
+    - name: intake
+      description: Takes the first message, gets the claim reference, routes the case.
+      system: .agents/prompts/intake.md
+      tools: [policy_lookup]
+      handoffs: [adjuster]
+
+    - name: adjuster
+      description: Applies the written peril policies to a claim and explains the outcome.
+      system: .agents/prompts/adjuster.md
+      skills:
+          # Names and descriptions go into the system prompt, so the agent can
+          # see what exists and pull the one the case needs.
+          discovery: index
+          # Active before the first call, every turn this agent owns. It is
+          # tone, not knowledge: there is no case where the model would decide
+          # it does not need it, so making it choose is a wasted round trip.
+          preload: [house_style]

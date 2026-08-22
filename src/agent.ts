@@ -76,15 +76,6 @@ export class Agent<TCtx = unknown> {
             autoRecall: b.autoRecall,
         }));
     }
-
-    /**
-     * Copy with fields overridden. `...this` works because every option maps to
-     * a same-named own property; `handoffs` round-trips as `string[]`, which the
-     * constructor accepts.
-     */
-    with(patch: Partial<AgentOptions<TCtx>>): Agent<TCtx> {
-        return new Agent<TCtx>({ ...this, ...patch });
-    }
 }
 
 // ---------------------------------------------------------------------------

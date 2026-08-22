@@ -17,7 +17,7 @@ import { renderMemories } from './memory.ts';
 import type { Model, ModelRequest } from './model.ts';
 import { PayloadResolver, type PayloadStore } from './payload.ts';
 import { Services } from './services.ts';
-import type { SkillProvider } from './skills.ts';
+import { activeSkillNames, type SkillProvider } from './skills.ts';
 import { lastText, type AgentState, type RunResult } from './state.ts';
 import {
     lastOfType,
@@ -297,6 +297,7 @@ export class AgentRunner<TCtx = unknown> {
 
                 case 'llm': {
                     state = await Kernel.applySystemPrompt(state, this.registry, env);
+                    state = await this.#preload(state, env);
                     state = await this.#autoRecall(state, env);
                     yield tag(state, branch, { type: 'before_llm_call', state });
 
@@ -494,6 +495,47 @@ export class AgentRunner<TCtx = unknown> {
             { covers: nodes.map((n) => n.id), summary: text, reason: 'handoff_noise', usage },
             env,
         );
+    }
+
+    /**
+     * Activates the current agent's `preload` skills, if they are not active
+     * already.
+     *
+     * Preloading is not a second mechanism: it appends the same `load_skills`
+     * node the `skill_load` tool does, so a preloaded skill and a
+     * model-loaded one are indistinguishable downstream — same projection,
+     * same unlocked tools.
+     *
+     * Checked before every call rather than once at `createState`, because
+     * `activeSkillNames` is scoped to the *current* agent. That one placement
+     * buys four behaviours: loaded before the first call; skipped with no I/O
+     * on every later turn; applied afresh when a hand-off makes another agent
+     * current, without inheriting the outgoing agent's set; and re-applied if
+     * compaction drops the activation. Self-healing for the same reason the
+     * tool gate is — both read the projected trajectory rather than a snapshot
+     * taken once.
+     *
+     * The node lands at the head of the transcript and never moves, so it sits
+     * inside the cached prefix from turn 0 — strictly cheaper than the model
+     * reaching for `skill_load` after its first reply.
+     *
+     * A name the catalog does not know throws. That is a configuration error,
+     * and callers that build agents from a file are expected to have validated
+     * it at load time rather than discovering it mid-run.
+     */
+    async #preload(state: AgentState, env: Kernel.KernelEnv): Promise<AgentState> {
+        const binding = this.registry.get(state.agentName).skills;
+        if (!binding?.preload?.length) {
+            return state;
+        }
+        const active = activeSkillNames(state);
+        const missing = binding.preload.filter((n) => !active.has(n));
+        if (!missing.length) {
+            return state;
+        }
+        const provider = this.services.skillProvider(binding.provider);
+        const skills = await Promise.all(missing.map((n) => provider.load(n)));
+        return Kernel.applySkillLoad(state, binding.provider, skills, env);
     }
 
     /**

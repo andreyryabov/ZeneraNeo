@@ -22,6 +22,10 @@
         "./skill-providers": {
             "types": "./dist/skill-providers/index.d.ts",
             "default": "./dist/skill-providers/index.js"
+        },
+        "./project": {
+            "types": "./dist/project/index.d.ts",
+            "default": "./dist/project/index.js"
         }
     },
     "files": [
@@ -48,10 +52,12 @@
         "demo:inspect": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/inspect.ts'",
         "demo:handbook": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/handbook.ts'",
         "demo:locked": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/locked.ts'",
+        "demo:project": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/project.ts'",
         "prepublishOnly": "npm run clean && npm run build"
     },
     "dependencies": {
         "openai": "^6.0.0",
+        "yaml": "^2.9.0",
         "zod": "^4.4.3"
     },
     "devDependencies": {

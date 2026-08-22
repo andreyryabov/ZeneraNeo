@@ -134,8 +134,12 @@ export function allows(binding: SkillBinding, s: SkillSummary): boolean {
  * Reads the names straight off the nodes rather than re-loading the skills: an
  * activation records what it activated, so the provider has nothing left to
  * say, and a gate that did I/O could not be a plain predicate.
+ *
+ * Exported because `preload` needs exactly the same answer: "what is active for
+ * this agent, right now?" One derivation, so a preloaded skill and a
+ * model-loaded one are indistinguishable to the gate.
  */
-function activeSkillNames(state: AgentState): Set<string> {
+export function activeSkillNames(state: AgentState): Set<string> {
     const out = new Set<string>();
     for (const n of projected(state.trajectory)) {
         if (n.type === 'load_skills' && n.agent === state.agentName) {

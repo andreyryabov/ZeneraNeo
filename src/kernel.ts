@@ -418,7 +418,15 @@ async function derivedPrompt<TCtx>(
     if (agent.skills?.discovery === 'index') {
         const binding = agent.skills;
         const provider = env.services.skillProvider(binding.provider);
-        const index = (await provider.list()).filter((s) => allows(binding, s));
+        // Preloaded skills are left out: the index is a menu of what can be
+        // fetched, and offering something the agent already has invites a
+        // wasted `skill_load`. Filtering on the binding rather than on the
+        // trajectory keeps the prompt a function of config, so it stays
+        // byte-stable across turns.
+        const preloaded = new Set(binding.preload ?? []);
+        const index = (await provider.list()).filter(
+            (s) => allows(binding, s) && !preloaded.has(s.name),
+        );
         const rendered = renderSkillIndex(index, binding.maxIndexEntries ?? 50);
         if (rendered) {
             out.push(rendered);

@@ -313,3 +313,204 @@ describe('locked tool recovery loop', () => {
         }
     });
 });
+
+// ---------------------------------------------------------------------------
+// Preload
+// ---------------------------------------------------------------------------
+
+/** Answers immediately, recording what it was shown. */
+class RecordingModel implements Model {
+    readonly id = 'recording';
+    readonly systems: (string | undefined)[] = [];
+    /** whole transcripts, flattened — user content is parts, not a string */
+    readonly transcripts: string[] = [];
+    #turns: number;
+
+    constructor(turns = 1) {
+        this.#turns = turns;
+    }
+
+    generate(req: ModelRequest): Promise<ModelResponse> {
+        this.systems.push(req.system);
+        this.transcripts.push(JSON.stringify(req.messages));
+        if (--this.#turns > 0) {
+            const c: ToolCall = { id: 'c1', name: 'noop', args: '{}' };
+            return Promise.resolve({
+                text: '',
+                toolCalls: [c],
+                stopReason: 'tool_calls',
+                usage: zeroUsage(),
+            });
+        }
+        return Promise.resolve({
+            text: 'done',
+            toolCalls: [],
+            stopReason: 'stop',
+            usage: zeroUsage(),
+        });
+    }
+}
+
+const noop = tool({
+    name: 'noop',
+    description: 'Does nothing.',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+    execute: () => 'ok',
+});
+
+function loadNodes(state: AgentState, agent?: string) {
+    return state.trajectory.filter(
+        (n) => n.type === 'load_skills' && (!agent || n.agent === agent),
+    ) as Extract<TrajectoryNode, { type: 'load_skills' }>[];
+}
+
+describe('skill preload', () => {
+    it('activates the skill before the first model call', async () => {
+        const skills = provider();
+        const model = new RecordingModel();
+        const runner = new AgentRunner({ model, skills: [skills], stream: false });
+        runner.agent({
+            name: 'appraiser',
+            skills: { provider: skills.id, discovery: 'none', preload: ['gem_pricing'] },
+        });
+
+        const res = await runner.run('appraiser', 'hello');
+
+        // The activation exists, and its content reached the very first call.
+        expect(loadNodes(res.state)).toHaveLength(1);
+        expect(model.transcripts[0]).toContain('Quote every stone with gem_quote');
+    });
+
+    it('unlocks the skill s tools without the model asking for them', async () => {
+        const skills = provider();
+        const h = await harness(skills, { binding: { preload: ['gem_pricing'] } });
+        const runner = new AgentRunner({
+            model: new RecordingModel(),
+            skills: [skills],
+            stream: false,
+        });
+        runner.add(h.agent);
+
+        const res = await runner.run('appraiser', 'hello');
+        const gem = await find(h, res.state, 'gem_quote');
+        expect(call(h, gem, res.state, { carats: 2 })).toEqual({ priceEur: 200 });
+    });
+
+    it('keeps a preloaded skill out of the index it is offered', async () => {
+        const skills = provider();
+        const model = new RecordingModel();
+        const runner = new AgentRunner({ model, skills: [skills], stream: false });
+        runner.agent({
+            name: 'appraiser',
+            skills: { provider: skills.id, discovery: 'index', preload: ['gem_pricing'] },
+        });
+
+        await runner.run('appraiser', 'hello');
+
+        // Offering something already active is an invitation to spend a turn
+        // re-fetching it.
+        const system = model.systems[0] ?? '';
+        expect(system).toContain('plain:');
+        expect(system).not.toContain('gem_pricing:');
+    });
+
+    it('does not repeat the activation on later turns', async () => {
+        const skills = provider();
+        const runner = new AgentRunner({
+            model: new RecordingModel(3),
+            skills: [skills],
+            stream: false,
+        });
+        runner.agent({
+            name: 'appraiser',
+            tools: [noop],
+            skills: { provider: skills.id, discovery: 'none', preload: ['gem_pricing'] },
+        });
+
+        const res = await runner.run('appraiser', 'hello');
+        expect(res.state.trajectory.filter((n) => n.type === 'llm_call').length).toBe(3);
+        expect(loadNodes(res.state)).toHaveLength(1);
+    });
+
+    it('applies the incoming agent s own set after a hand-off', async () => {
+        const skills = provider();
+        const model = new HandingOffModel();
+        const runner = new AgentRunner({ model, skills: [skills], stream: false });
+        runner.agent({
+            name: 'front',
+            handoffs: ['appraiser'],
+            skills: { provider: skills.id, discovery: 'none', preload: ['plain'] },
+        });
+        runner.agent({
+            name: 'appraiser',
+            skills: { provider: skills.id, discovery: 'none', preload: ['gem_pricing'] },
+        });
+
+        const res = await runner.run('front', 'hello');
+
+        // Each agent got its own, and neither inherited the other's.
+        expect(loadNodes(res.state, 'front').flatMap((n) => n.skills.map((s) => s.name))).toEqual([
+            'plain',
+        ]);
+        expect(
+            loadNodes(res.state, 'appraiser').flatMap((n) => n.skills.map((s) => s.name)),
+        ).toEqual(['gem_pricing']);
+    });
+
+    it('re-activates when a compaction covers the activation', async () => {
+        const skills = provider();
+        const h = await harness(skills, { binding: { preload: ['gem_pricing'] } });
+        const runner = new AgentRunner({
+            model: new RecordingModel(),
+            skills: [skills],
+            stream: false,
+        });
+        runner.add(h.agent);
+        // The compaction has to write into the store the runner will read from.
+        const env: Kernel.KernelEnv = { services: runner.services };
+
+        const first = await runner.run('appraiser', 'hello');
+        const compacted = await Kernel.applyCompaction(
+            first.state,
+            {
+                covers: loadNodes(first.state).map((n) => n.id),
+                summary: 'earlier steps',
+                reason: 'budget',
+            },
+            env,
+        );
+
+        // The preload is not a one-off: dropping the node makes the skill
+        // inactive, so continuing the run puts it back.
+        const gem = await find(h, compacted, 'gem_quote');
+        expect(() => call(h, gem, compacted, { carats: 2 })).toThrow(SkillRequiredError);
+
+        const resumed = await runner.send(compacted, 'and again?').final();
+        expect(call(h, gem, resumed.state, { carats: 2 })).toEqual({ priceEur: 200 });
+    });
+});
+
+/** Hands off once, then answers. */
+class HandingOffModel implements Model {
+    readonly id = 'handing-off';
+    #done = false;
+
+    generate(): Promise<ModelResponse> {
+        if (this.#done) {
+            return Promise.resolve({
+                text: 'done',
+                toolCalls: [],
+                stopReason: 'stop',
+                usage: zeroUsage(),
+            });
+        }
+        this.#done = true;
+        const c: ToolCall = { id: 'h1', name: 'transfer_to_appraiser', args: '{}' };
+        return Promise.resolve({
+            text: '',
+            toolCalls: [c],
+            stopReason: 'tool_calls',
+            usage: zeroUsage(),
+        });
+    }
+}
