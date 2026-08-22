@@ -401,3 +401,193 @@ live('openai live locked skill tools', () => {
         expect(result.output).toContain('GEM_SKILL_ACTIVE');
     }, 120000);
 });
+
+// ---------------------------------------------------------------------------
+// Preloaded skills
+//
+// `preload` moves an activation from something the model decides to do into
+// something the runner did before the model was asked anything. The evidence
+// has to be circumstantial, which is the point of the fixture below: the marker
+// and the tool exist *only* inside the preloaded skill, so if the answer carries
+// the marker and the tool ran on the first attempt, the skill text was genuinely
+// in context — and the trajectory shows nothing asked for it.
+// ---------------------------------------------------------------------------
+
+async function createPreloadDir() {
+    const dir = await mkdtemp(join(tmpdir(), 'zenera-live-openai-preload-'));
+    const skillDir = join(dir, 'skills');
+
+    const protocolDir = join(skillDir, 'court_protocol');
+    await mkdir(protocolDir, { recursive: true });
+    await writeFile(
+        join(protocolDir, 'SKILL.md'),
+        [
+            '---',
+            'description: how the clerk of court addresses filings and hearings',
+            'tools: [docket_lookup]',
+            '---',
+            '',
+            'Look every case number up with docket_lookup and quote the hearing date it',
+            'returns verbatim. Never guess a date.',
+            '',
+            'End every answer, without exception, with the marker PROTOCOL_ACTIVE.',
+            '',
+        ].join('\n'),
+        'utf8',
+    );
+
+    const feesDir = join(skillDir, 'filing_fees');
+    await mkdir(feesDir, { recursive: true });
+    await writeFile(
+        join(feesDir, 'SKILL.md'),
+        [
+            '---',
+            'description: what it costs to file a motion and who may waive the fee',
+            '---',
+            '',
+            'A motion costs 85 EUR. Marker FEES_ACTIVE.',
+            '',
+        ].join('\n'),
+        'utf8',
+    );
+
+    return skillDir;
+}
+
+const docketLookup = tool<{ caseNumber: string }>({
+    name: 'docket_lookup',
+    description: 'Returns the next hearing date for a case number.',
+    parameters: {
+        type: 'object',
+        properties: { caseNumber: { type: 'string' } },
+        required: ['caseNumber'],
+        additionalProperties: false,
+    },
+    execute: ({ caseNumber }) => ({ caseNumber, hearingDate: '2031-04-17', room: 'C-9' }),
+});
+
+live('openai live preloaded skills', () => {
+    it('puts the skill in context before the first call, unasked', async () => {
+        const skillDir = await createPreloadDir();
+        const skills = new FileSkillProvider({
+            dir: skillDir,
+            id: 'court-preload',
+            tools: [docketLookup],
+        });
+
+        const runner = new AgentRunner({
+            model: createModel({
+                model: 'gpt-5-nano',
+                api: 'responses',
+                reasoningEffort: 'minimal',
+            }),
+            skills: [skills],
+            stream: false,
+            recordRequests: true,
+        });
+
+        runner.agent({
+            name: 'clerk',
+            // Deliberately says nothing about markers, dates or tools. Every
+            // instruction the model follows below can only have come from the
+            // preloaded skill. The one thing it is told is not to reach for
+            // the index, so that any activation in the trajectory must be the
+            // runner's rather than the model's.
+            instructions:
+                'You are a clerk of court. Answer in one short sentence. ' +
+                'Do not call skill_load: you already have everything you need.',
+            skills: {
+                provider: skills.id,
+                discovery: 'index',
+                preload: ['court_protocol'],
+            },
+        });
+
+        const result = await runner.run('clerk', 'When is the next hearing for case 44-118-B?');
+        expect(result.stopReason).toBe('final');
+
+        // 1. The activation is in the trajectory and attributed to this agent.
+        const loads = result.state.trajectory.filter((n) => n.type === 'load_skills');
+        expect(loads.length).toBeGreaterThanOrEqual(1);
+        expect(loads[0].agent).toBe('clerk');
+        expect(loads[0].provider).toBe(skills.id);
+        expect(loads[0].skills.map((s) => s.name)).toEqual(['court_protocol']);
+        expect(loads[0].toolNames).toEqual(['docket_lookup']);
+
+        // 2. It lands before the first model call — that is what makes it a
+        //    preload rather than an early `skill_load`.
+        const order = result.state.trajectory.map((n) => n.type);
+        expect(order.indexOf('load_skills')).toBeLessThan(order.indexOf('llm_call'));
+
+        // 3. Nothing asked for it. No `skill_load` call appears anywhere.
+        const results = await toolResults(result.state, runner);
+        expect(results.map((r) => r.name)).not.toContain('skill_load');
+
+        // 4. The text really was on the wire, in the very first request.
+        const first = await firstRecordedRequest(result.state, runner);
+        const firstText = requestMessageText(first);
+        expect(firstText).toContain('## Skill: court_protocol');
+        expect(firstText).toContain('PROTOCOL_ACTIVE');
+
+        // 5. A preloaded skill is not advertised in the index — offering
+        //    something already active only invites a wasted round trip. The
+        //    other skill still is.
+        expect(first.system ?? '').toContain('Available skills');
+        expect(first.system ?? '').toContain('filing_fees');
+        expect(first.system ?? '').not.toContain('court_protocol');
+
+        // 6. And it changed the answer. The marker exists nowhere else.
+        expect(result.output).toContain('PROTOCOL_ACTIVE');
+        expect(result.output).not.toContain('FEES_ACTIVE');
+    }, 120000);
+
+    it('unlocks the preloaded skill s tool without a refusal first', async () => {
+        const skillDir = await createPreloadDir();
+        const skills = new FileSkillProvider({
+            dir: skillDir,
+            id: 'court-preload-tools',
+            tools: [docketLookup],
+        });
+
+        const runner = new AgentRunner({
+            model: createModel({
+                model: 'gpt-5-nano',
+                api: 'responses',
+                reasoningEffort: 'minimal',
+            }),
+            skills: [skills],
+            stream: false,
+            recordRequests: true,
+        });
+
+        runner.agent({
+            name: 'clerk',
+            instructions:
+                'You are a clerk of court. Use the tools you have and answer in one short sentence.',
+            // No index and no search: if the preload did not happen, the model
+            // has no way to learn the skill's name and the run cannot recover.
+            skills: {
+                provider: skills.id,
+                discovery: 'none',
+                preload: ['court_protocol'],
+            },
+        });
+
+        const result = await runner.run('clerk', 'When is the next hearing for case 44-118-B?');
+        expect(result.stopReason).toBe('final');
+
+        const results = await toolResults(result.state, runner);
+
+        // The gate never fired: the skill was already active when the very
+        // first call came in.
+        expect(results.some((r) => r.text.includes('PREREQUISITE_MISSING'))).toBe(false);
+        expect(results.some((r) => r.isError)).toBe(false);
+
+        const looked = results.find((r) => r.name === 'docket_lookup');
+        expect(looked).toBeDefined();
+        expect(looked!.text).toContain('2031-04-17');
+
+        expect(result.output).toContain('2031-04-17');
+        expect(result.output).toContain('PROTOCOL_ACTIVE');
+    }, 120000);
+});
