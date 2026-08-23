@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { AgentRunner } from '../src/runner.ts';
-import { buildRunReport, renderRunReport } from '../src/inspect.ts';
+import { buildRunReport, renderRunReport } from '../src/inspect/index.ts';
 import type { Model, ModelRequest, ModelResponse } from '../src/model.ts';
 import { InMemoryPayloadStore } from '../src/payload-stores/in-memory.ts';
 import { PayloadResolver } from '../src/payload.ts';
+import { AgentRunner } from '../src/runner.ts';
 import type { AgentState } from '../src/state.ts';
 import { tool, zeroUsage, type ToolCall } from '../src/types.ts';
 

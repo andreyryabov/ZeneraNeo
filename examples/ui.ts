@@ -1,8 +1,8 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import boxen from 'boxen';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import pc from 'picocolors';
 import type { AgentEvent, RunStream } from '../src/events.ts';
-import { renderRunReport } from '../src/inspect.ts';
+import { renderRunReport } from '../src/inspect/index.ts';
 import type { PayloadResolver } from '../src/payload.ts';
 import type { AgentState, RunResult } from '../src/state.ts';
 import type { JoinNode } from '../src/trajectory.ts';

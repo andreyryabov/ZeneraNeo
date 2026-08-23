@@ -1,7 +1,7 @@
 export * from './agent.ts';
 export * from './events.ts';
 export * from './ids.ts';
-export * from './inspect.ts';
+export * from './inspect/index.ts';
 export * as Kernel from './kernel.ts';
 export * from './memory-stores/index.ts';
 export * from './memory.ts';
@@ -18,3 +18,4 @@ export * from './skills.ts';
 export * from './state.ts';
 export * from './trajectory.ts';
 export * from './types.ts';
+
