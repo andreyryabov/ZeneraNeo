@@ -1,0 +1,17 @@
+# A name that is not a name.
+#
+# Agent names, provider names and model alias keys share one pattern:
+# lower-case words joined by `-` or `_`. Agent names reach the model as
+# `transfer_to_<name>` and the file system as skill directory names, and should
+# be unambiguous in both — so the rule is enforced everywhere rather than
+# argued about per key.
+version: 1
+
+models:
+    careful:
+        provider: openai
+        model: o3
+
+agents:
+    - name: Intake
+      model: careful

@@ -1,0 +1,38 @@
+# Named model configurations, and how an agent picks one.
+#
+# The point of naming a model is that the name is the thing agents refer to.
+# Swapping what `careful` means is then one edit, not five.
+version: 1
+
+models:
+    # A name may hold a shorthand string...
+    fast: openai:gpt-4o-mini
+    # ...or the object form, which is the only way to reach the knobs.
+    careful:
+        provider: openai
+        api: responses
+        model: o3
+        reasoningEffort: high
+
+# Fallback for agents that do not pin their own.
+model: fast
+
+agents:
+    # Says nothing about a model, so it gets `fast`. `default: true` makes it
+    # the entry point in the absence of a top-level `default:`.
+    - name: intake
+      default: true
+
+    # Pins a name from the map above.
+    - name: analyst
+      model: careful
+
+    # The same name. Resolution is memoized, so these two agents hold one
+    # `Model` over one client, not two of each.
+    - name: reviewer
+      model: careful
+
+    # A name is looked up in `models:` first and only then read as a shorthand,
+    # so an agent can still bypass the map entirely.
+    - name: scratch
+      model: openai:gpt-4o

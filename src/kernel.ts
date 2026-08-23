@@ -604,6 +604,7 @@ export async function applyLlmResponse<TCtx>(
             callId: c.id,
             name: c.name,
             args: await put(env, c.args),
+            signature: c.signature,
         })),
     );
     b.add<LlmCallNode>({

@@ -87,6 +87,19 @@ export interface ToolCall {
     name: string;
     /** raw JSON string as produced by the model */
     args: string;
+    /**
+     * Opaque provider state that has to be handed back verbatim when the call
+     * is replayed. Gemini 3 puts an encrypted thought signature here and
+     * rejects a function call that comes back without one; every other vendor
+     * ignores the field.
+     *
+     * It is vendor-specific and so arguably does not belong in a neutral type
+     * — but the alternative is an adapter-side cache, and the identity that
+     * would key it does not survive a handoff to an agent on a different model
+     * or a run resumed in another process. The call is the only thing that
+     * lives exactly as long as the signature is needed.
+     */
+    signature?: string;
 }
 
 export interface SystemMessage {

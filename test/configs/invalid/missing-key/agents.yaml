@@ -1,0 +1,14 @@
+# A provider with no key, reached by an agent.
+#
+# The complement of ../../env/agents.yaml: declaring a provider reads nothing,
+# but *using* one resolves its credentials, and the failure names the variable
+# to set rather than the SDK's own complaint about an empty header.
+version: 1
+
+providers:
+    needs-key:
+        apiKeyEnv: ZN_NO_SUCH_KEY
+
+agents:
+    - name: solo
+      model: needs-key:gpt-4o

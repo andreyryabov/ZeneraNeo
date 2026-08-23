@@ -1,0 +1,80 @@
+# Every vendor knob the schema accepts, on the vendor it belongs to.
+#
+# The option interfaces are unioned rather than discriminated: vendor
+# differences live in the *provider*, so there is nothing here to switch on and
+# a knob that does not apply to the chosen vendor is ignored, not rejected.
+# Writing one where it means nothing is therefore silent — hence this file.
+version: 1
+
+models:
+    # --- openai -----------------------------------------------------------
+    openai-reasoning:
+        provider: openai
+        api: responses
+        model: o3
+        # A free string on purpose. The vendor's accepted set changes faster
+        # than a schema would, and the request that carries a bad value is the
+        # authority on rejecting it — an enum here would mean a config the API
+        # accepts failing to load.
+        reasoningEffort: high
+        reasoningSummary: detailed
+        # Whether the provider retains the response.
+        store: false
+
+    # --- gemini 2.5 -------------------------------------------------------
+    gemini-budgeted:
+        provider: vertex
+        model: gemini-2.5-pro
+        # 2.5 takes a token budget: 0 turns thinking off, -1 hands the model
+        # the decision.
+        thinkingBudget: 4096
+        includeThoughts: false
+
+    gemini-thinking-off:
+        provider: vertex
+        model: gemini-2.5-flash
+        thinkingBudget: 0
+
+    # --- gemini 3 ---------------------------------------------------------
+    gemini-levelled:
+        provider: vertex
+        model: gemini-3-pro-preview
+        # 3 dials the same thing by level instead.
+        thinkingLevel: high
+        maxTokens: 8192
+
+    gemini-cheap:
+        provider: vertex
+        model: gemini-3.5-flash-lite
+        thinkingLevel: minimal
+
+    # --- anthropic --------------------------------------------------------
+    claude-plain:
+        provider: anthropic
+        model: claude-haiku-4-5
+        # Their API requires an output cap; 8192 is assumed when none is given.
+        maxTokens: 4096
+
+    claude-thinking:
+        provider: anthropic
+        model: claude-sonnet-4-5
+        # Extended thinking is billed against maxTokens, so the cap has to
+        # leave room for both the reasoning and the answer.
+        maxTokens: 16000
+        thinkingBudgetTokens: 8000
+
+agents:
+    - name: a
+      model: openai-reasoning
+    - name: b
+      model: gemini-budgeted
+    - name: c
+      model: gemini-thinking-off
+    - name: d
+      model: gemini-levelled
+    - name: e
+      model: gemini-cheap
+    - name: f
+      model: claude-plain
+    - name: g
+      model: claude-thinking

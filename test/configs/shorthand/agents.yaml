@@ -1,0 +1,39 @@
+# The `[provider[/api]:]model` shorthand, in every form it takes.
+#
+# A shorthand is what you write when the only thing to say is *which model*.
+# Anything it cannot express — a key, a base url, a reasoning knob — needs the
+# object form; see ../named-models/agents.yaml.
+version: 1
+default: bare
+
+providers:
+    openai-eu:
+        baseURL: https://eu.api.openai.com/v1
+        apiKey: ${ZN_OPENAI_EU_KEY}
+
+agents:
+    # No prefix at all. The id belongs to the registry's default provider,
+    # which is `openai` unless a top-level `provider:` says otherwise.
+    - name: bare
+      model: gpt-4o
+
+    # A provider name, then the id. `openai` needs no `providers:` entry: the
+    # five built-in kinds are usable as names with nothing declared.
+    - name: prefixed
+      model: openai:gpt-4o
+
+    # `provider/api:model`. Only the openai protocol speaks more than one API,
+    # and its default is `chat` — so this is the way to reach Responses.
+    - name: with-api
+      model: openai/responses:o3
+
+    # Only the FIRST colon separates, so an id carrying its own colons survives
+    # intact. The price is that it must name its provider explicitly: a bare
+    # `ft:gpt-4o:...` would be read as provider "ft".
+    - name: fine-tuned
+      model: openai:ft:gpt-4o:acme::a1b2
+
+    # The prefix is a provider *name*, not a vendor. This one is the EU
+    # connection declared above, so the same id reaches a different endpoint.
+    - name: declared
+      model: openai-eu:o3

@@ -1,0 +1,9 @@
+# An API the openai protocol does not speak.
+#
+# `chat` and `responses` are the two. The shorthand parser rejects anything
+# else before a client is ever built.
+version: 1
+
+agents:
+    - name: solo
+      model: openai/completions:gpt-4o

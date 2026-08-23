@@ -59,9 +59,9 @@ export function liveModelSuite({ label, ref, enabled }: LiveModelSuite): void {
     const live = enabled ? describe : describe.skip;
 
     live(`${label} live model`, () => {
-        // One instance for the whole suite: the Gemini adapter caches thought
-        // signatures on the model, so rebuilding it between turns of a tool
-        // round trip would quietly change what is being tested.
+        // One instance for the whole suite, only to avoid rebuilding a client per
+        // test. Nothing about a conversation may live on a `Model` — the tool
+        // round trip below replays through a second instance to prove it.
         let model: Model;
 
         function get(): Model {
@@ -148,7 +148,15 @@ export function liveModelSuite({ label, ref, enabled }: LiveModelSuite): void {
                     },
                 );
 
-                const second = await get().generate(
+                // A *different* instance answers the second turn, and the only
+                // thing carrying the first turn forward is `messages`. Gemini 3
+                // rejects a replayed function call whose thought signature is
+                // missing, so this fails outright unless the signature travels
+                // on the `ToolCall` — which is what a hand-off to an agent on
+                // another model, or a run resumed in another process, relies
+                // on. An adapter-local cache passes only while one instance
+                // serves both turns.
+                const second = await createModel(ref).generate(
                     request({ system, messages, tools: [WEATHER_TOOL] }),
                 );
 

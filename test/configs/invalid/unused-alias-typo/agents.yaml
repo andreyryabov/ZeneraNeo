@@ -1,0 +1,20 @@
+# A typo in a model alias that no agent uses.
+#
+# Still caught. Provider *names* are checkable without credentials, so the
+# cross-reference pass can verify every entry in `models:` whether or not
+# anything reaches for it — unlike the key that entry would need.
+version: 1
+
+providers:
+    openai-eu:
+        baseURL: https://eu.api.openai.com/v1
+        apiKey: ${ZN_KEY_ONE}
+
+models:
+    careful:
+        provider: openai-ue # transposed
+        model: o3
+
+agents:
+    - name: solo
+      model: gpt-4o

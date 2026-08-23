@@ -90,7 +90,8 @@ export interface LlmCallNode extends NodeBase {
     request?: Payload;
     text: Payload;
     thinking?: Payload;
-    toolCalls: { callId: string; name: string; args: Payload }[];
+    /** `signature` is opaque provider state — see `ToolCall.signature` */
+    toolCalls: { callId: string; name: string; args: Payload; signature?: string }[];
     usage: TokenUsage;
     stopReason: 'stop' | 'tool_calls' | 'length' | 'content_filter';
 }
@@ -343,6 +344,7 @@ export async function projectMessages(
                     id: c.callId,
                     name: c.name,
                     args: get(c.args),
+                    signature: c.signature,
                 }));
                 messages.push({
                     role: 'assistant',

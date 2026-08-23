@@ -1,0 +1,20 @@
+# An unknown key inside a `models:` entry.
+#
+# The same rule as ../unknown-key, but a blunter message. A model entry is a
+# union — a shorthand string *or* the object form — and when both branches fail
+# the report is `models.hot — Invalid input` rather than the name of the key at
+# fault. Worth knowing before staring at a line that looks fine.
+#
+# `temperature` is the usual culprit: universally supported elsewhere, and not
+# a field here.
+version: 1
+
+models:
+    hot:
+        provider: openai
+        model: gpt-4o
+        temperature: 0.9
+
+agents:
+    - name: solo
+      model: hot

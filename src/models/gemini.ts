@@ -65,43 +65,19 @@ const THINKING_LEVELS: Record<GeminiThinkingLevel, ThinkingLevel> = {
 const SYNTHETIC_ID = 'gemini-call-';
 
 /**
- * How many thought signatures to keep. Signatures are only ever needed for
- * calls still live in the trajectory, so this is a leak guard rather than a
- * tuning knob — see `#signatures`.
- */
-const SIGNATURE_LIMIT = 512;
-
-/**
  * The `Model` contract over `generateContent`.
  *
  * Google publishes an OpenAI-compatible endpoint, and reaching Gemini through
  * it costs nothing but a base url. What it costs *afterwards* is everything
  * this file exists for: thinking budgets and thought summaries, thought
- * signatures (without which Gemini 3 function calling degrades), cached-content
- * accounting, and the block reasons that come back when a safety filter fires.
- * None of those have an OpenAI field to be carried in.
+ * signatures (without which Gemini 3 function calling is rejected outright),
+ * cached-content accounting, and the block reasons that come back when a safety
+ * filter fires. None of those have an OpenAI field to be carried in.
  */
 export class GeminiModel implements Model {
     readonly id: string;
     readonly #client: GoogleGenAI;
     readonly #options: GeminiModelOptions;
-
-    /**
-     * Thought signatures, by call id.
-     *
-     * Gemini 3 returns an opaque signature alongside each function call and
-     * requires it back on the next request; dropping it makes the model
-     * re-derive its reasoning and answer worse. The signature is meaningless to
-     * every other provider, so it does not belong in the trajectory — which
-     * leaves the adapter holding it, keyed by the one identifier that does
-     * survive the round trip.
-     *
-     * The consequence is that a `GeminiModel` should outlive a run. The
-     * registry memoizes one per model spec, so it does; a caller who rebuilds
-     * the model between turns loses the signatures and gets the 2.5-era
-     * behaviour back, which is a quality regression rather than an error.
-     */
-    readonly #signatures = new Map<string, string>();
     #nextId = 0;
 
     constructor(id: string, client: GoogleGenAI, options: GeminiModelOptions = {}) {
@@ -159,10 +135,10 @@ export class GeminiModel implements Model {
         const id = this.#callId(call.id);
         const name = call.name ?? '';
         const args = JSON.stringify(call.args ?? {});
-        into.toolCalls.push({ id, name, args });
-        if (part.thoughtSignature) {
-            into.signatures.set(id, part.thoughtSignature);
-        }
+        // Gemini 3 requires the signature back on the replayed call and fails
+        // the request without it, so it rides along on the call rather than in
+        // an adapter-side cache that a handoff or a restart would lose.
+        into.toolCalls.push({ id, name, args, signature: part.thoughtSignature });
         // Arguments are not streamed incrementally by this API: a call arrives
         // whole, so detection and the arguments are one event apart and
         // `argsSoFar` is complete the moment it is first seen.
@@ -171,7 +147,6 @@ export class GeminiModel implements Model {
     }
 
     #finish(read: Read, res: GenerateContentResponse | undefined): ModelResponse {
-        this.#remember(read.signatures);
         return {
             text: read.text,
             thinking: read.thinking || undefined,
@@ -184,7 +159,7 @@ export class GeminiModel implements Model {
     #params(req: ModelRequest): GenerateContentParameters {
         return {
             model: this.id,
-            contents: toContents(req.messages, this.#signatures),
+            contents: toContents(req.messages),
             config: this.#config(req),
         };
     }
@@ -232,37 +207,21 @@ export class GeminiModel implements Model {
     #callId(id: string | undefined): string {
         return id ?? `${SYNTHETIC_ID}${this.#nextId++}`;
     }
-
-    #remember(signatures: SignatureMap): void {
-        for (const [id, signature] of signatures) {
-            this.#signatures.set(id, signature);
-        }
-        // Insertion order is oldest-first, so the excess is at the front.
-        const excess = this.#signatures.size - SIGNATURE_LIMIT;
-        if (excess > 0) {
-            for (const id of [...this.#signatures.keys()].slice(0, excess)) {
-                this.#signatures.delete(id);
-            }
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
 // Wire translation
 // ---------------------------------------------------------------------------
 
-type SignatureMap = Map<string, string>;
-
 /** What a response amounts to, once its parts have been sorted by channel. */
 interface Read {
     text: string;
     thinking: string;
     toolCalls: ToolCall[];
-    signatures: SignatureMap;
 }
 
 function emptyRead(): Read {
-    return { text: '', thinking: '', toolCalls: [], signatures: new Map() };
+    return { text: '', thinking: '', toolCalls: [] };
 }
 
 function candidateParts(res: GenerateContentResponse): Part[] {
@@ -277,7 +236,7 @@ function candidateParts(res: GenerateContentResponse): Part[] {
  * adjacent turns of the same role are merged rather than emitted one per
  * message.
  */
-function toContents(messages: Message[], signatures: SignatureMap): Content[] {
+function toContents(messages: Message[]): Content[] {
     const out: Content[] = [];
 
     const push = (role: 'user' | 'model', parts: Part[]): void => {
@@ -315,7 +274,11 @@ function toContents(messages: Message[], signatures: SignatureMap): Content[] {
                             name: c.name,
                             args: parseArgs(c.args),
                         },
-                        thoughtSignature: signatures.get(c.id),
+                        // Gemini 3 rejects a replayed call whose signature is
+                        // missing. One produced by a different Gemini model is
+                        // still accepted — the backend handles compatibility —
+                        // so a handoff between two of them replays cleanly.
+                        thoughtSignature: c.signature,
                     });
                 }
                 push('model', parts);

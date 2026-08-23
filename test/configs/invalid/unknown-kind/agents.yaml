@@ -1,0 +1,14 @@
+# A vendor this runtime has no adapter for.
+#
+# `kind` chooses an SDK and a wire adapter, so it is a closed set — five
+# entries, not a free string.
+version: 1
+
+providers:
+    mistral:
+        kind: mistral
+        apiKey: ${ZN_KEY_ONE}
+
+agents:
+    - name: solo
+      model: mistral:mistral-large

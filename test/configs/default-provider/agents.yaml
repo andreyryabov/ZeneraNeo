@@ -1,0 +1,30 @@
+# Moving the default provider.
+#
+# A bare model id has to belong to someone. Out of the box that is `openai`;
+# `provider:` repoints it — which is what a deployment that talks only to its
+# own gateway wants, so its agents can write plain model ids.
+version: 1
+
+providers:
+    house:
+        kind: openai-compatible
+        baseURL: https://house.example/v1
+        apiKey: ${ZN_KEY_ONE}
+
+provider: house
+
+# The fallback for agents that pin nothing. Bare here too, so it is the
+# gateway's as well.
+model: llama-3.1-8b
+
+agents:
+    # No prefix, so: the house gateway.
+    - name: one
+      model: llama-3.3-70b
+
+    # An explicit prefix still wins, and reaches openai proper.
+    - name: two
+      model: openai:gpt-4o
+
+    # Pins nothing, so it inherits the top-level `model:` above.
+    - name: three

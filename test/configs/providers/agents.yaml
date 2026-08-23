@@ -1,0 +1,45 @@
+# Providers are connections, and a connection is a name.
+#
+# Two keys for the same vendor are two *names*, not two copies of the
+# credentials on every model that uses them. One client is built per name and
+# shared, so five agents on one key open one connection pool.
+version: 1
+
+providers:
+    primary:
+        apiKey: ${ZN_KEY_ONE}
+
+    # Same vendor, different key and endpoint. Nothing about `primary` changes.
+    secondary:
+        apiKey: ${ZN_KEY_TWO}
+        baseURL: https://eu.example/v1
+
+    # The shim kind: vLLM, OpenRouter, a corporate gateway. It speaks the
+    # OpenAI format, so the OpenAI client is exactly right for it.
+    gateway:
+        kind: openai-compatible
+        baseURL: https://gateway.example/v1
+        # Name the variable instead of embedding a `${...}` reference — same
+        # effect, and it keeps the indirection in one field.
+        apiKeyEnv: ZN_GATEWAY_KEY
+        # Transport settings belong to the connection, so every model on this
+        # name inherits them.
+        headers:
+            x-tenant: acme
+        timeoutMs: 30000
+        maxRetries: 5
+
+agents:
+    - name: one
+      model: primary:gpt-4o
+
+    # Same model id, different connection.
+    - name: two
+      model: secondary:gpt-4o
+
+    # Same connection as `one`, different model id: one client, two models.
+    - name: three
+      model: primary:gpt-4o-mini
+
+    - name: four
+      model: gateway:llama-3.3-70b

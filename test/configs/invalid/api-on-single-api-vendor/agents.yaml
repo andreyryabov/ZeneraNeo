@@ -1,0 +1,20 @@
+# `api:` on a vendor that has only one.
+#
+# Every protocol but OpenAI's speaks a single API, so naming one is a
+# misunderstanding worth reporting rather than a field to quietly ignore.
+version: 1
+
+providers:
+    claude:
+        kind: anthropic
+        apiKey: ${ZN_KEY_ONE}
+
+models:
+    wrong:
+        provider: claude
+        api: chat
+        model: claude-sonnet-4-5
+
+agents:
+    - name: solo
+      model: wrong

@@ -4,59 +4,34 @@ version: 1
 # which makes file order load-bearing — better to say it.
 default: intake
 
-# Named connections. A second key for the same vendor is a second *name*, not a
-# second copy of the credentials on every model that uses it — and one client is
-# built per name and shared, so five agents on one key open one connection pool.
+# No `providers:` block at all.
 #
-# `${VAR}` reads the environment; `${VAR:-fallback}` supplies a default. None of
-# it is resolved until an agent actually reaches for the provider, so this file
-# may name a vendor a given deployment has no key for.
+# `openai`, `google`, `vertex`, `anthropic` and `openai-compatible` are built-in
+# names as well as kinds, so `vertex` resolves with nothing declared — and
+# vertex is the one kind that needs no api key: the GenAI SDK resolves and
+# refreshes Application Default Credentials itself. Here that is the service
+# account key file named by GOOGLE_APPLICATION_CREDENTIALS, which also supplies
+# the project id, so GOOGLE_CLOUD_PROJECT need not be set.
 #
-# `openai`, `google`, `vertex`, `anthropic` and `openai-compatible` work with no
-# entry at all; these exist because they say something the defaults do not.
-providers:
-    openai-eu:
-        baseURL: https://eu.api.openai.com/v1
-        apiKey: ${OPENAI_API_KEY_EU}
-    gemini:
-        # The Gemini API, reached with Google's own SDK rather than their
-        # OpenAI-compatible shim — which is what makes thinking budgets,
-        # thought summaries and cached-content accounting reachable at all.
-        kind: google
-        apiKey: ${GEMINI_API_KEY}
-    vertex-eu:
-        # The same models billed through a GCP project. No key: the SDK
-        # resolves Application Default Credentials and refreshes them itself.
-        kind: vertex
-        project: ${GOOGLE_CLOUD_PROJECT}
-        location: europe-west4
-    claude:
-        kind: anthropic
-        apiKey: ${ANTHROPIC_API_KEY}
+# A block would only be needed to pin a region, name a second project, or hold
+# a key — none of which applies when the ambient credentials are the whole
+# story. One client is built for the name and shared by every model below.
 
 # Named model configurations. `model:` below takes one of these names, or falls
 # through to the `[provider[/api]:]model` shorthand.
 models:
-    fast: openai/responses:gpt-5.4-mini
-    careful:
-        provider: openai
-        api: responses
-        model: gpt-5.4
-        reasoningEffort: high
-    second-opinion: gemini:gemini-2.5-pro
-    # Gemini 3 dials thinking by level where 2.5 took a token budget.
-    grounded:
-        provider: vertex-eu
-        model: gemini-3-pro-preview
+    router:
+        provider: vertex
+        model: gemini-3.5-flash-lite
+        thinkingLevel: minimal
+    # A step up for work that has to weigh written policy against a case.
+    balanced:
+        provider: vertex
+        model: gemini-3.5-flash
         thinkingLevel: high
-    deliberate:
-        provider: claude
-        model: claude-sonnet-4-5
-        # Anthropic requires an output cap, and bills thinking against it.
-        maxTokens: 16000
 
 # Fallback for agents that do not pin their own.
-model: fast
+model: router
 
 # One catalog, scanned once. `.agents/skills` is the default, written out here
 # so the layout is visible from the config alone.
@@ -66,12 +41,14 @@ agents:
     - name: intake
       description: Takes the first message, gets the claim reference, routes the case.
       system: .agents/prompts/intake.md
+      model: router
       tools: [policy_lookup]
       handoffs: [adjuster]
 
     - name: adjuster
       description: Applies the written peril policies to a claim and explains the outcome.
       system: .agents/prompts/adjuster.md
+      model: balanced
       skills:
           # Names and descriptions go into the system prompt, so the agent can
           # see what exists and pull the one the case needs.

@@ -1,0 +1,15 @@
+# A key that does not exist.
+#
+# The schema is strict everywhere, so an unknown key is an error rather than a
+# value the author believes is in effect. `retries` is the classic shape of the
+# mistake: plausible, nearly right, and silently ignored by a lenient parser.
+version: 1
+
+providers:
+    house:
+        apiKey: ${ZN_KEY_ONE}
+        retries: 5 # `maxRetries`
+
+agents:
+    - name: solo
+      model: house:gpt-4o

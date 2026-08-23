@@ -1,0 +1,14 @@
+# A model entry with no `model:`.
+#
+# The object form says which provider and which knobs; the id is the one field
+# it cannot infer.
+version: 1
+
+models:
+    broken:
+        provider: openai
+        reasoningEffort: high
+
+agents:
+    - name: solo
+      model: broken

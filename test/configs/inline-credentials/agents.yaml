@@ -1,0 +1,41 @@
+# Credentials on the model itself.
+#
+# The escape hatch for a one-off that does not warrant a declared provider.
+# Using it opts the model out of the shared client: inline credentials describe
+# a *different* connection, and handing back the memoized one would silently
+# ignore them.
+#
+# Transport settings are not part of the bargain — `headers`, `timeoutMs` and
+# `maxRetries` still come from the provider, because an override of the key is
+# not a licence to reinvent the connection.
+version: 1
+
+providers:
+    shared:
+        apiKey: ${ZN_KEY_ONE}
+        headers:
+            x-tenant: acme
+
+models:
+    on-the-shared-client:
+        provider: shared
+        model: gpt-4o
+
+    with-own-key:
+        provider: shared
+        model: gpt-4o
+        # A second key, used by this model alone. `shared` is untouched.
+        apiKey: ${ZN_KEY_TWO}
+
+    with-own-endpoint:
+        provider: shared
+        model: gpt-4o
+        baseURL: https://one-off.example/v1
+
+agents:
+    - name: one
+      model: on-the-shared-client
+    - name: two
+      model: with-own-key
+    - name: three
+      model: with-own-endpoint

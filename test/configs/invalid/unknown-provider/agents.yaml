@@ -1,0 +1,10 @@
+# An agent names a provider nobody declared.
+#
+# Fails at load with `agents.solo.model: unknown provider "openai-eu"` and a
+# list of the names that do exist. The five built-in kinds are always among
+# them, which is why the list is never empty.
+version: 1
+
+agents:
+    - name: solo
+      model: openai-eu:gpt-4o

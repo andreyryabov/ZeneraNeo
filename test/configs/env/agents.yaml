@@ -1,0 +1,35 @@
+# `${VAR}` references, and how late they are read.
+#
+# Chosen over a bare `env.VAR` token because no literal secret contains `${`,
+# so there is no rule to remember about which strings are magic — and because
+# it composes inside a longer value, which a whole-value token cannot.
+version: 1
+
+providers:
+    from-env:
+        apiKey: ${ZN_ENV_KEY}
+
+    with-default:
+        # `:-` supplies a fallback, so an optional variable does not force
+        # every deployment to set it.
+        apiKey: ${ZN_UNSET_KEY:-sk-fallback}
+
+    composed:
+        apiKey: ${ZN_ENV_KEY}
+        # The reference is part of the value, not the whole of it.
+        baseURL: https://${ZN_HOST}/v1
+
+    never-used:
+        # Declaring a provider contacts nothing and reads no environment. This
+        # one names a variable that is not set anywhere, and the project still
+        # loads — because no agent reaches for it. Asking for its client is
+        # what fails, and it says which variable to set.
+        apiKey: ${ZN_DEFINITELY_UNSET}
+
+agents:
+    - name: one
+      model: from-env:gpt-4o
+    - name: two
+      model: with-default:gpt-4o
+    - name: three
+      model: composed:gpt-4o

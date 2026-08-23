@@ -1,0 +1,51 @@
+# One agent per protocol.
+#
+# `kind` picks the SDK and the adapter, not just a base url. Each vendor's own
+# SDK is used rather than its OpenAI-compatible endpoint, because those
+# endpoints are porting aids: Google's drops thinking budgets, thought
+# signatures and cached-content accounting, Anthropic's drops cache accounting
+# and extended thinking.
+version: 1
+
+providers:
+    gemini:
+        kind: google
+        apiKey: ${ZN_GEMINI_KEY}
+
+    vertex-eu:
+        # The same models billed through a GCP project, pinned to a region.
+        kind: vertex
+        project: ${ZN_GCP_PROJECT}
+        location: europe-west4
+
+    claude:
+        kind: anthropic
+        apiKey: ${ZN_ANTHROPIC_KEY}
+
+agents:
+    # openai protocol, Chat Completions — the default of the two.
+    - name: chat
+      model: openai/chat:gpt-4o
+
+    # openai protocol, Responses.
+    - name: responses
+      model: openai/responses:o3
+
+    # gemini protocol, Gemini API, authenticated by key.
+    - name: google-api
+      model: gemini:gemini-2.5-pro
+
+    # gemini protocol, Vertex backend, authenticated by Application Default
+    # Credentials — the SDK resolves and refreshes them itself.
+    - name: vertex-regional
+      model: vertex-eu:gemini-3-pro-preview
+
+    # `vertex` is a built-in name as well as a kind, and the one kind that
+    # needs no api key at all. With GOOGLE_CLOUD_PROJECT set, this line is a
+    # complete configuration; `location` defaults to `global`.
+    - name: vertex-default
+      model: vertex:gemini-3.5-flash
+
+    # anthropic protocol.
+    - name: anthropic
+      model: claude:claude-sonnet-4-5
