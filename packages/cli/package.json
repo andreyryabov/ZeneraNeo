@@ -1,0 +1,40 @@
+{
+    "name": "zenera-cli",
+    "version": "0.1.0",
+    "description": "Command-line front end for zenera-neo.",
+    "license": "MIT",
+    "private": true,
+    "type": "module",
+    "bin": {
+        "zenera": "./dist/main.js"
+    },
+    "files": [
+        "dist"
+    ],
+    "engines": {
+        "node": ">=24"
+    },
+    "scripts": {
+        "build": "tsc -b",
+        "clean": "tsc -b --clean && rm -rf dist"
+    },
+    "dependencies": {
+        "zenera-neo": "0.1.0"
+    },
+    "peerDependencies": {
+        "@anthropic-ai/sdk": "^0.120.0",
+        "@google/genai": "^2.18.0",
+        "openai": "^6.0.0"
+    },
+    "peerDependenciesMeta": {
+        "@anthropic-ai/sdk": {
+            "optional": true
+        },
+        "@google/genai": {
+            "optional": true
+        },
+        "openai": {
+            "optional": true
+        }
+    }
+}

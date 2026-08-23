@@ -1,25 +1,17 @@
+// The editor / typecheck project: one program over everything in the repo,
+// including the parts that are never emitted (tests, examples, this config).
+// Emitting is `tsconfig.build.json`, which drives the two packages through
+// project references instead.
 {
+    "extends": "./tsconfig.base.json",
     "compilerOptions": {
-        "target": "ES2023",
-        "lib": ["ES2023"],
-        "module": "NodeNext",
-        "moduleResolution": "NodeNext",
-        "rootDir": ".",
-        "outDir": "dist",
-        "allowImportingTsExtensions": true,
-        "rewriteRelativeImportExtensions": true,
-        "declaration": true,
-        "declarationMap": true,
-        "sourceMap": true,
-        "strict": true,
-        "noImplicitOverride": true,
-        "noFallthroughCasesInSwitch": true,
-        "isolatedModules": true,
-        "verbatimModuleSyntax": true,
-        "esModuleInterop": true,
-        "forceConsistentCasingInFileNames": true,
-        "skipLibCheck": true,
-        "types": ["node"]
+        "composite": false,
+        "noEmit": true
     },
-    "include": ["src/**/*.ts", "test/**/*.ts", "examples/**/*.ts", "vitest.config.ts"]
+    "include": [
+        "packages/*/src/**/*.ts",
+        "packages/*/test/**/*.ts",
+        "examples/**/*.ts",
+        "vitest.config.ts"
+    ]
 }

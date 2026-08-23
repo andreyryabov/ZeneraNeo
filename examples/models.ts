@@ -1,5 +1,5 @@
-import type { Model } from '../src/model.ts';
-import { createModel, type ModelSpec } from '../src/models/factory.ts';
+import type { Model } from '../packages/neo/src/model.ts';
+import { createModel, type ModelSpec } from '../packages/neo/src/models/factory.ts';
 
 // ---------------------------------------------------------------------------
 // One place where the demos pick a model

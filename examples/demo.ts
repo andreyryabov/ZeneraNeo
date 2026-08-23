@@ -1,11 +1,11 @@
 import { z } from 'zod';
-import { InMemoryMemoryStore } from '../src/memory-stores/in-memory.ts';
-import { InMemoryPayloadStore } from '../src/payload-stores/in-memory.ts';
-import { exportRun, importRun } from '../src/payload.ts';
-import { AgentRunner } from '../src/runner.ts';
-import { StaticSkillProvider } from '../src/skill-providers/static.ts';
-import { turns, type AgentState } from '../src/state.ts';
-import { tool } from '../src/types.ts';
+import { InMemoryMemoryStore } from '../packages/neo/src/memory-stores/in-memory.ts';
+import { InMemoryPayloadStore } from '../packages/neo/src/payload-stores/in-memory.ts';
+import { exportRun, importRun } from '../packages/neo/src/payload.ts';
+import { AgentRunner } from '../packages/neo/src/runner.ts';
+import { StaticSkillProvider } from '../packages/neo/src/skill-providers/static.ts';
+import { turns, type AgentState } from '../packages/neo/src/state.ts';
+import { tool } from '../packages/neo/src/types.ts';
 // Which vendor and how much thinking — shared by every demo. See ./models.ts.
 import { model as pick } from './models.ts';
 // Terminal rendering — the harness every example shares. See ./ui.ts.
