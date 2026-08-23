@@ -177,7 +177,7 @@ export class GeminiModel implements Model {
             thinking: read.thinking || undefined,
             toolCalls: read.toolCalls,
             usage: toUsage(res?.usageMetadata),
-            stopReason: toStopReason(res?.candidates?.[0]?.finishReason),
+            stopReason: toStopReason(res?.candidates?.[0]?.finishReason, read.toolCalls.length > 0),
         };
     }
 
@@ -419,7 +419,13 @@ function toUsage(u: GenerateContentResponse['usageMetadata']): TokenUsage | unde
     };
 }
 
-function toStopReason(reason: FinishReason | undefined): StopReason {
+/**
+ * Gemini has no finish reason for "stopped to call a tool" — a turn ending in
+ * function calls still reports `STOP`. The presence of calls is therefore the
+ * only signal, and it has to be applied here rather than left to the kernel's
+ * fallback, which only fires when a stop reason is missing entirely.
+ */
+function toStopReason(reason: FinishReason | undefined, toolCalls: boolean): StopReason {
     switch (reason) {
         case FinishReason.MAX_TOKENS:
             return 'length';
@@ -430,6 +436,6 @@ function toStopReason(reason: FinishReason | undefined): StopReason {
         case FinishReason.SPII:
             return 'content_filter';
         default:
-            return 'stop';
+            return toolCalls ? 'tool_calls' : 'stop';
     }
 }

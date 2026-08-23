@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenAI } from '@google/genai';
+import { readFileSync } from 'node:fs';
 import OpenAI from 'openai';
 import type { Model } from '../model.ts';
 import { AnthropicModel, type AnthropicModelOptions } from './anthropic.ts';
@@ -54,7 +55,11 @@ export interface Credentials {
 export interface ProviderSpec extends Credentials {
     /** which vendor this speaks; defaults to `openai` */
     kind?: ProviderKind;
-    /** vertex only: GCP project id (env: `GOOGLE_CLOUD_PROJECT`) */
+    /**
+     * vertex only: GCP project id. Falls back to `GOOGLE_CLOUD_PROJECT`, then
+     * to the `project_id` inside the service-account key file named by
+     * `GOOGLE_APPLICATION_CREDENTIALS`.
+     */
     project?: string;
     /** vertex only: a region, or `global` (env: `GOOGLE_CLOUD_LOCATION`, default `global`) */
     location?: string;
@@ -94,8 +99,6 @@ export interface ModelSpec
      * the registry's default provider.
      */
     provider?: string;
-    /** @deprecated alias for `provider`, kept so older specs keep parsing */
-    kind?: string;
     /** which API to speak; defaults to the vendor's usual one */
     api?: OpenAIApi;
     model: string;
@@ -293,7 +296,7 @@ export class ModelRegistry {
     /** Turns a shorthand or a spec into a `Model`. */
     model(ref: ModelRef): Model {
         const spec = typeof ref === 'string' ? this.parse(ref) : ref;
-        const name = spec.provider ?? spec.kind ?? this.#default;
+        const name = spec.provider ?? this.#default;
         const provider = this.#spec(name);
         const kind = this.#kind(name);
         const defaults = KINDS[kind];
@@ -445,7 +448,10 @@ function buildGenAI(
     if (kind !== 'vertex') {
         return new GoogleGenAI({ apiKey, httpOptions });
     }
-    const project = expand(opts.project, `${where}: project`) ?? fromEnv('GOOGLE_CLOUD_PROJECT');
+    const project =
+        expand(opts.project, `${where}: project`) ??
+        fromEnv('GOOGLE_CLOUD_PROJECT') ??
+        projectFromKeyFile();
     if (!project && !apiKey) {
         throw new Error(
             `${where}: vertex needs \`project\`, or GOOGLE_CLOUD_PROJECT ` +
@@ -462,6 +468,36 @@ function buildGenAI(
             'global',
         httpOptions,
     });
+}
+
+/**
+ * `project_id` out of a service-account key file, when one is named.
+ *
+ * The GenAI SDK resolves Application Default Credentials itself but takes the
+ * project only from its constructor or `GOOGLE_CLOUD_PROJECT` — so a key file
+ * that already states which project it belongs to still has to have that
+ * repeated in the environment. Reading it here removes the second variable for
+ * the common case.
+ *
+ * Only that one route carries a project id: credentials from `gcloud auth
+ * application-default login` do not, and a metadata server answers a different
+ * endpoint entirely. Both still need the project named, which is why a
+ * failure to read anything here is not an error — the caller's own check is.
+ */
+function projectFromKeyFile(): string | undefined {
+    const path = fromEnv('GOOGLE_APPLICATION_CREDENTIALS');
+    if (!path) {
+        return undefined;
+    }
+    try {
+        const key: unknown = JSON.parse(readFileSync(path, 'utf8'));
+        const id = (key as { project_id?: unknown }).project_id;
+        return typeof id === 'string' && id.trim() ? id : undefined;
+    } catch {
+        // An unreadable or malformed file is the SDK's to report, at the point
+        // where it tries to authenticate with it and can say so precisely.
+        return undefined;
+    }
 }
 
 // Both SDKs refuse to construct without a key. When a token callback owns the

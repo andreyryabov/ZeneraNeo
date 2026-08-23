@@ -7,6 +7,9 @@ import {
     type GoogleGenAI,
     type Part,
 } from '@google/genai';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { StreamDelta } from '../src/events.ts';
 import type { ModelRequest } from '../src/model.ts';
@@ -221,9 +224,25 @@ describe('vertex', () => {
         expect(client.location).toBe('europe-west4');
     });
 
+    it('falls back to the project id inside the service-account key file', async () => {
+        const dir = await mkdtemp(join(tmpdir(), 'zenera-adc-'));
+        const keyFile = join(dir, 'key.json');
+        await writeFile(
+            keyFile,
+            JSON.stringify({ type: 'service_account', project_id: 'from-key-file' }),
+            'utf8',
+        );
+        vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
+        vi.stubEnv('VERTEX_API_KEY', '');
+        vi.stubEnv('GOOGLE_APPLICATION_CREDENTIALS', keyFile);
+
+        expect(conn(new ModelRegistry().client('vertex')).project).toBe('from-key-file');
+    });
+
     it('says which knob is missing rather than failing at the first request', () => {
         vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
         vi.stubEnv('VERTEX_API_KEY', '');
+        vi.stubEnv('GOOGLE_APPLICATION_CREDENTIALS', '');
         expect(() => new ModelRegistry().client('vertex')).toThrow(
             'provider "vertex": vertex needs `project`, or GOOGLE_CLOUD_PROJECT',
         );
