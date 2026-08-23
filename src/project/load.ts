@@ -4,7 +4,7 @@ import { Agent, AgentRegistry } from '../agent.ts';
 import { RunStream } from '../events.ts';
 import type { MemoryStore } from '../memory.ts';
 import type { Model } from '../model.ts';
-import { createModel, type ModelRef } from '../models/factory.ts';
+import { ModelRegistry, type ModelRef, type ProviderSpec } from '../models/factory.ts';
 import type { PayloadStore } from '../payload.ts';
 import { promptFile, type PromptPart } from '../prompt.ts';
 import { AgentRunner, type RunOptions, type RunnerOptions } from '../runner.ts';
@@ -43,11 +43,24 @@ export interface ProjectOptions<TCtx = unknown> {
      */
     tools?: AnyTool<TCtx>[];
     /**
+     * Credentials for the names the config declares — or names it does not, so
+     * a deployment can add a provider the repository never mentions. Merged
+     * over `providers:`, host last, which is how ops repoints a key without a
+     * commit.
+     */
+    providers?: Record<string, ProviderSpec>;
+    /**
      * Aliases for `model:` values, so a project can say `model: fast` and the
-     * host decides what fast means this week. A name with no entry here falls
-     * through to `createModel`'s shorthand.
+     * host decides what fast means this week. Merged over the config's
+     * `models:` map; a name in neither falls through to the shorthand.
      */
     models?: Record<string, ModelRef>;
+    /**
+     * A registry to populate and use instead of a fresh one. Share it across
+     * projects and they share clients; pre-load it with a stub provider and the
+     * project never reaches the network.
+     */
+    registry?: ModelRegistry;
     memory?: MemoryStore[];
     payloads?: PayloadStore;
     /** extra providers merged with the ones the project declares */
@@ -80,21 +93,23 @@ export async function loadProject<TCtx = unknown>(
 
     const providers = [...skillProviders(root, config, opts), ...(opts.skills ?? [])];
     const catalogs = await indexOf(providers);
+    const models = modelRegistry(config, opts);
 
     const registry = new AgentRegistry<TCtx>();
+    const resolve = modelResolver(config, opts, models);
     for (const spec of config.agents) {
         registry.agent({
             name: spec.name,
             description: spec.description,
             instructions: instructionsFor(root, spec, houseRules),
-            model: modelFor(spec.model ?? config.model, opts.models),
+            model: resolve(spec.model ?? config.model, `agents.${spec.name}.model`),
             tools: toolsFor(spec, opts.tools ?? []),
             handoffs: spec.handoffs,
             skills: bindingFor(spec, providers),
         });
     }
 
-    validate(config, registry, providers, catalogs);
+    validate(config, registry, providers, catalogs, models);
 
     return new AgentProject<TCtx>({
         root,
@@ -103,6 +118,7 @@ export async function loadProject<TCtx = unknown>(
         entry: entrypoint(config),
         registry,
         skillProviders: providers,
+        models,
         options: opts,
     });
 }
@@ -114,6 +130,7 @@ interface ProjectParts<TCtx> {
     entry: string;
     registry: AgentRegistry<TCtx>;
     skillProviders: SkillProvider[];
+    models: ModelRegistry;
     options: ProjectOptions<TCtx>;
 }
 
@@ -139,6 +156,8 @@ export class AgentProject<TCtx = unknown> {
     readonly entry: string;
     readonly registry: AgentRegistry<TCtx>;
     readonly skillProviders: readonly SkillProvider[];
+    /** the providers this project declared, and the clients behind them */
+    readonly models: ModelRegistry;
     readonly #options: ProjectOptions<TCtx>;
     #runner?: AgentRunner<TCtx>;
 
@@ -149,6 +168,7 @@ export class AgentProject<TCtx = unknown> {
         this.entry = parts.entry;
         this.registry = parts.registry;
         this.skillProviders = parts.skillProviders;
+        this.models = parts.models;
         this.#options = parts.options;
     }
 
@@ -235,11 +255,60 @@ function instructionsFor(
     return parts;
 }
 
-function modelFor(ref: string | undefined, aliases?: Record<string, ModelRef>): Model | undefined {
-    if (!ref) {
-        return undefined;
+/**
+ * Assembles the project's providers. Declaring one contacts nothing and reads
+ * no environment: a project may name a vendor a given deployment has no key
+ * for, and only pay for it if an agent actually reaches for it.
+ */
+function modelRegistry<TCtx>(config: ProjectConfig, opts: ProjectOptions<TCtx>): ModelRegistry {
+    const models = opts.registry ?? new ModelRegistry();
+    for (const [name, spec] of Object.entries(config.providers ?? {})) {
+        models.provider(name, spec);
     }
-    return createModel(aliases?.[ref] ?? ref);
+    // Host last: a deployment overrides the repository, never the other way.
+    for (const [name, spec] of Object.entries(opts.providers ?? {})) {
+        models.provider(name, spec);
+    }
+    if (config.provider) {
+        models.setDefault(config.provider);
+    }
+    return models;
+}
+
+/**
+ * `model:` values, resolved through the alias tables and memoized.
+ *
+ * Memoized because two agents naming `fast` should be two references to one
+ * model over one client, not two of each — and because the error a bad ref
+ * raises should be raised once, at the agent that wrote it.
+ */
+function modelResolver<TCtx>(
+    config: ProjectConfig,
+    opts: ProjectOptions<TCtx>,
+    models: ModelRegistry,
+): (ref: string | undefined, where: string) => Model | undefined {
+    const cache = new Map<string, Model>();
+    return (ref, where) => {
+        if (!ref) {
+            return undefined;
+        }
+        const cached = cache.get(ref);
+        if (cached) {
+            return cached;
+        }
+        const resolved = opts.models?.[ref] ?? config.models?.[ref] ?? ref;
+        try {
+            // `reasoningEffort` is widened to `string` by the schema on purpose
+            // (see config.ts); the request is the authority on rejecting a bad
+            // one, so this cast hands it over rather than guessing the vendor's
+            // current set.
+            const model = models.model(resolved as ModelRef);
+            cache.set(ref, model);
+            return model;
+        } catch (e) {
+            throw new Error(`${where}: ${(e as Error).message}`);
+        }
+    };
 }
 
 function toolsFor<TCtx>(spec: AgentConfig, available: AnyTool<TCtx>[]): AnyTool<TCtx>[] {
@@ -331,8 +400,21 @@ function validate<TCtx>(
     registry: AgentRegistry<TCtx>,
     providers: SkillProvider[],
     catalogs: Map<string, Set<string>>,
+    models: ModelRegistry,
 ): void {
     const ids = new Set(providers.map((p) => p.id));
+
+    // Provider *names* are checkable without credentials, so a typo in an entry
+    // no agent happens to use is still caught — unlike the key it would need.
+    for (const [alias, spec] of Object.entries(config.models ?? {})) {
+        const named = typeof spec === 'string' ? undefined : spec.provider;
+        if (named && !models.has(named)) {
+            throw new Error(
+                `models.${alias}.provider: unknown provider "${named}" ` +
+                    `(known: ${models.names().join(', ')})`,
+            );
+        }
+    }
 
     for (const spec of config.agents) {
         for (const target of spec.handoffs ?? []) {

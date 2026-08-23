@@ -15,13 +15,69 @@ const name = z
     .regex(NAME, 'must be lower-case words separated by "-" or "_", e.g. "order-triage"');
 
 /**
- * A model is either the shorthand string `createModel` already parses
- * (`gpt-4o`, `openai/responses:o3`) or a key into `ProjectOptions.models`.
- * Which one it is cannot be decided here — the loader resolves aliases first
- * and falls through to the shorthand — so the schema only asks for a non-empty
- * string.
+ * A model reference is either the shorthand `ModelRegistry.parse` understands
+ * (`gpt-4o`, `openai/responses:o3`, `openai-eu:o3`) or a key into the
+ * project's `models:` map. Which one it is cannot be decided here — the loader
+ * resolves aliases first and falls through to the shorthand — so the schema
+ * only asks for a non-empty string.
  */
 const modelRef = z.string().min(1);
+
+/**
+ * Credentials, shared by providers and by the one-off model that overrides
+ * them. Values may embed `${VAR}` references; the substitution happens in the
+ * registry, not here, so a config that is never used never demands a key.
+ */
+const credentials = {
+    apiKey: z.string().min(1).optional(),
+    apiKeyEnv: z.string().min(1).optional(),
+    baseURL: z.string().min(1).optional(),
+    baseURLEnv: z.string().min(1).optional(),
+};
+
+/**
+ * A named connection. Splitting this out of the model is what lets one project
+ * hold two keys for the same vendor: the key is declared once, under a name,
+ * and models point at the name.
+ */
+const provider = z
+    .object({
+        ...credentials,
+        kind: z.enum(['openai', 'google', 'vertex', 'anthropic', 'openai-compatible']).optional(),
+        /** vertex only: the GCP project and region the endpoint is addressed by */
+        project: z.string().min(1).optional(),
+        location: z.string().min(1).optional(),
+        headers: z.record(z.string().min(1), z.string()).optional(),
+        timeoutMs: z.number().positive().optional(),
+        maxRetries: z.int().nonnegative().optional(),
+    })
+    .strict();
+
+/**
+ * `reasoningEffort` is a plain string rather than an enum on purpose: the
+ * vendor's accepted set changes faster than this file would, and the request
+ * that carries a bad value is the authority on rejecting it. An enum here would
+ * mean a config that the API accepts failing to load.
+ */
+const modelSpec = z
+    .object({
+        ...credentials,
+        /** a name from `providers:`, or a built-in kind */
+        provider: z.string().min(1).optional(),
+        api: z.enum(['chat', 'responses']).optional(),
+        model: z.string().min(1),
+        reasoningEffort: z.string().min(1).optional(),
+        reasoningSummary: z.enum(['auto', 'concise', 'detailed']).optional(),
+        store: z.boolean().optional(),
+        /** anthropic only: the output cap its API requires, and the thinking budget */
+        maxTokens: z.int().positive().optional(),
+        thinkingBudgetTokens: z.int().positive().optional(),
+        /** gemini only: 2.5 takes a token budget, 3 takes a level */
+        thinkingBudget: z.int().optional(),
+        thinkingLevel: z.enum(['minimal', 'low', 'medium', 'high']).optional(),
+        includeThoughts: z.boolean().optional(),
+    })
+    .strict();
 
 const skillsBinding = z
     .object({
@@ -63,6 +119,12 @@ export const projectSchema = z
         version: z.literal(1).default(1),
         /** entrypoint agent name; wins over any `default: true` */
         default: name.optional(),
+        /** named connections; the built-in kinds work without being declared */
+        providers: z.record(name, provider).optional(),
+        /** the provider a bare model id belongs to */
+        provider: name.optional(),
+        /** named model configurations, referenced by `model:` anywhere below */
+        models: z.record(name, z.union([modelRef, modelSpec])).optional(),
         /** fallback for agents that do not pin their own */
         model: modelRef.optional(),
         /** one directory, or several merged into one catalog */
@@ -73,6 +135,8 @@ export const projectSchema = z
 
 export type ProjectConfig = z.infer<typeof projectSchema>;
 export type AgentConfig = ProjectConfig['agents'][number];
+export type ProviderConfig = z.infer<typeof provider>;
+export type ModelConfig = z.infer<typeof modelSpec>;
 
 /**
  * Re-renders a zod failure as `agents.yaml: agents[1].skills.discovery — …`.

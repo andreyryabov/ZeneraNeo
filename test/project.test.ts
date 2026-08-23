@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Model, ModelResponse } from '../src/model.ts';
 import { loadProject, parseConfig, projectPath } from '../src/project/index.ts';
 import { tool, zeroUsage } from '../src/types.ts';
@@ -284,6 +284,128 @@ describe('validation', () => {
         await expect(loadProject(project({ 'AGENTS.md': 'x' }))).rejects.toThrow(
             /no project configuration/,
         );
+    });
+});
+
+describe('model configuration', () => {
+    afterEach(() => {
+        vi.unstubAllEnvs();
+    });
+
+    // Every provider in this suite is an OpenAI one; `ProviderClient` is a
+    // union across three SDKs, so the assertions say which.
+    const openai = (client: unknown): { apiKey?: string; baseURL?: string } =>
+        client as { apiKey?: string; baseURL?: string };
+
+    const YAML = `
+providers:
+  house:
+    apiKey: \${ZN_HOUSE_KEY}
+  house-eu:
+    apiKey: \${ZN_EU_KEY}
+    baseURL: https://eu.example/v1
+models:
+  fast: house:gpt-4o-mini
+  local:
+    provider: house-eu
+    api: responses
+    model: o3
+provider: house
+model: fast
+agents:
+  - name: solo
+  - name: eu
+    model: local
+`;
+
+    it('declares providers, resolves aliases, and shares one client per name', async () => {
+        vi.stubEnv('ZN_HOUSE_KEY', 'sk-house');
+        vi.stubEnv('ZN_EU_KEY', 'sk-eu');
+
+        const p = await loadProject(project({ 'agents.yaml': YAML }));
+
+        expect(p.registry.get('solo').model?.id).toBe('gpt-4o-mini');
+        expect(p.registry.get('eu').model?.id).toBe('o3');
+        expect(openai(p.models.client('house')).apiKey).toBe('sk-house');
+        expect(openai(p.models.client('house-eu')).apiKey).toBe('sk-eu');
+        expect(openai(p.models.client('house-eu')).baseURL).toBe('https://eu.example/v1');
+        expect(p.models.defaultProvider).toBe('house');
+    });
+
+    it('hands two agents naming one alias the same model object', async () => {
+        vi.stubEnv('ZN_HOUSE_KEY', 'sk-house');
+        vi.stubEnv('ZN_EU_KEY', 'sk-eu');
+
+        const p = await loadProject(
+            project({ 'agents.yaml': `${YAML}  - name: twin\n    model: fast\n` }),
+        );
+        expect(p.registry.get('twin').model).toBe(p.registry.get('solo').model);
+    });
+
+    it('never touches a provider no agent reaches for', async () => {
+        vi.stubEnv('ZN_HOUSE_KEY', 'sk-house');
+        vi.stubEnv('ZN_UNUSED_KEY', '');
+
+        // `gemini` has no resolvable key, and loading does not care: nothing
+        // points at it. A project may name a vendor this deployment lacks.
+        const p = await loadProject(
+            project({
+                'agents.yaml':
+                    'providers:\n  house:\n    apiKey: ${ZN_HOUSE_KEY}\n' +
+                    '  gemini:\n    kind: google\n    apiKey: ${ZN_UNUSED_KEY}\n' +
+                    'provider: house\nmodel: gpt-4o\nagents:\n  - name: solo\n',
+            }),
+        );
+        expect(p.registry.get('solo').model?.id).toBe('gpt-4o');
+        expect(() => p.models.client('gemini')).toThrow('${ZN_UNUSED_KEY} is not set');
+    });
+
+    it('lets ProjectOptions override a declared provider', async () => {
+        vi.stubEnv('ZN_HOUSE_KEY', 'sk-house');
+        vi.stubEnv('ZN_EU_KEY', 'sk-eu');
+
+        const p = await loadProject(project({ 'agents.yaml': YAML }), {
+            providers: { house: { apiKey: 'sk-from-host' } },
+        });
+        expect(openai(p.models.client('house')).apiKey).toBe('sk-from-host');
+    });
+
+    it('lets ProjectOptions.models win over the config alias', async () => {
+        vi.stubEnv('ZN_HOUSE_KEY', 'sk-house');
+        vi.stubEnv('ZN_EU_KEY', 'sk-eu');
+
+        const p = await loadProject(project({ 'agents.yaml': YAML }), {
+            models: { fast: 'house:gpt-5-nano' },
+        });
+        expect(p.registry.get('solo').model?.id).toBe('gpt-5-nano');
+    });
+
+    it('names the agent whose model ref does not resolve', async () => {
+        await expect(
+            loadProject(
+                project({
+                    'agents.yaml': 'agents:\n  - name: solo\n    model: ghost:gpt-4o\n',
+                }),
+            ),
+        ).rejects.toThrow(/agents\.solo\.model: unknown provider "ghost"/);
+    });
+
+    it('catches a bad provider name in an alias nothing uses', async () => {
+        await expect(
+            loadProject(
+                project({
+                    'agents.yaml':
+                        'models:\n  spare:\n    provider: ghost\n    model: gpt-4o\n' +
+                        'agents:\n  - name: solo\n',
+                }),
+            ),
+        ).rejects.toThrow(/models\.spare\.provider: unknown provider "ghost"/);
+    });
+
+    it('rejects a default provider that is not declared', async () => {
+        await expect(
+            loadProject(project({ 'agents.yaml': 'provider: ghost\nagents:\n  - name: solo\n' })),
+        ).rejects.toThrow(/default provider "ghost" is not declared/);
     });
 });
 

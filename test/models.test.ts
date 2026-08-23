@@ -1,0 +1,543 @@
+import {
+    FinishReason,
+    FunctionCallingConfigMode,
+    type Content,
+    type GenerateContentParameters,
+    type GenerateContentResponse,
+    type GoogleGenAI,
+    type Part,
+} from '@google/genai';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { StreamDelta } from '../src/events.ts';
+import type { ModelRequest } from '../src/model.ts';
+import { expandEnv, ModelRegistry } from '../src/models/factory.ts';
+import { GeminiModel } from '../src/models/gemini.ts';
+import { text, type Message } from '../src/types.ts';
+
+// ---------------------------------------------------------------------------
+// Model configuration
+//
+// A provider is a connection and a model is a request shape; almost everything
+// worth asserting here is about that seam holding — that credentials belong to
+// a name, that the name owns exactly one client, and that a model naming it
+// gets that client rather than one of its own.
+// ---------------------------------------------------------------------------
+
+/**
+ * The three SDKs describe a connection with three different shapes, and the
+ * GenAI one does not declare its fields publicly at all. Reaching through a
+ * cast is the price of asserting on what was actually built rather than on
+ * what we asked for.
+ */
+interface Conn {
+    apiKey?: string | null;
+    baseURL?: string;
+    vertexai?: boolean;
+    project?: string;
+    location?: string;
+}
+
+const conn = (client: unknown): Conn => client as Conn;
+
+afterEach(() => {
+    vi.unstubAllEnvs();
+});
+
+describe('environment references', () => {
+    it('substitutes ${VAR}', () => {
+        vi.stubEnv('ZN_HOST', 'gateway.example');
+        expect(expandEnv('https://${ZN_HOST}/v1', 'where')).toBe('https://gateway.example/v1');
+    });
+
+    it('falls back to ${VAR:-default}', () => {
+        vi.stubEnv('ZN_HOST', '');
+        expect(expandEnv('${ZN_HOST:-localhost}', 'where')).toBe('localhost');
+    });
+
+    it('names the variable and the place when it is unset', () => {
+        vi.stubEnv('ZN_MISSING', '');
+        expect(() => expandEnv('${ZN_MISSING}', 'provider "eu": apiKey')).toThrow(
+            'provider "eu": apiKey: ${ZN_MISSING} is not set',
+        );
+    });
+
+    it('leaves a literal alone', () => {
+        expect(expandEnv('sk-literal-key', 'where')).toBe('sk-literal-key');
+    });
+});
+
+describe('shorthand', () => {
+    const models = new ModelRegistry();
+
+    it('reads [provider[/api]:]model', () => {
+        expect(models.parse('gpt-4o')).toEqual({ model: 'gpt-4o' });
+        expect(models.parse('openai:gpt-4o')).toEqual({
+            provider: 'openai',
+            api: undefined,
+            model: 'gpt-4o',
+        });
+        expect(models.parse('openai/responses:o3')).toEqual({
+            provider: 'openai',
+            api: 'responses',
+            model: 'o3',
+        });
+    });
+
+    it('splits on the first colon only, so a fine-tuned id survives', () => {
+        expect(models.parse('openai:ft:gpt-4o:acme::a1b2')).toEqual({
+            provider: 'openai',
+            api: undefined,
+            model: 'ft:gpt-4o:acme::a1b2',
+        });
+    });
+
+    it('rejects an unknown provider and says how to spell a colon-bearing id', () => {
+        expect(() => models.parse('ft:gpt-4o:acme::a1b2')).toThrow(/unknown provider "ft"/);
+        expect(() => models.parse('ft:gpt-4o:acme::a1b2')).toThrow(/must name its provider/);
+    });
+
+    it('rejects an unknown api', () => {
+        expect(() => models.parse('openai/completions:gpt-4o')).toThrow(/unknown api/);
+    });
+
+    it('resolves a declared provider name in the prefix', () => {
+        const reg = new ModelRegistry().provider('openai-eu', { baseURL: 'https://eu/v1' });
+        expect(reg.parse('openai-eu:o3').provider).toBe('openai-eu');
+    });
+});
+
+describe('providers', () => {
+    it('gives two names for one vendor two keys and two clients', () => {
+        const models = new ModelRegistry()
+            .provider('primary', { apiKey: 'sk-one' })
+            .provider('secondary', { apiKey: 'sk-two', baseURL: 'https://eu.example/v1' });
+
+        expect(conn(models.client('primary')).apiKey).toBe('sk-one');
+        expect(conn(models.client('secondary')).apiKey).toBe('sk-two');
+        expect(conn(models.client('secondary')).baseURL).toBe('https://eu.example/v1');
+    });
+
+    it('builds one client per name and shares it', () => {
+        const models = new ModelRegistry().provider('shared', { apiKey: 'sk-one' });
+        expect(models.client('shared')).toBe(models.client('shared'));
+    });
+
+    it('reads ${VAR} in credentials, but not before the provider is used', () => {
+        const models = new ModelRegistry().provider('lazy', { apiKey: '${ZN_UNSET_KEY}' });
+        // Declaring it read nothing; only reaching for the client does.
+        vi.stubEnv('ZN_UNSET_KEY', '');
+        expect(() => models.client('lazy')).toThrow('${ZN_UNSET_KEY} is not set');
+
+        vi.stubEnv('ZN_UNSET_KEY', 'sk-late');
+        expect(
+            conn(new ModelRegistry().provider('lazy', { apiKey: '${ZN_UNSET_KEY}' }).client('lazy'))
+                .apiKey,
+        ).toBe('sk-late');
+    });
+
+    it('drops the memoized client when a name is re-declared', () => {
+        const models = new ModelRegistry().provider('p', { apiKey: 'sk-one' });
+        const first = models.client('p');
+        models.provider('p', { apiKey: 'sk-two' });
+        expect(models.client('p')).not.toBe(first);
+        expect(conn(models.client('p')).apiKey).toBe('sk-two');
+    });
+
+    it('works with no declaration at all for the built-in kinds', () => {
+        vi.stubEnv('OPENAI_API_KEY', 'sk-env');
+        expect(conn(new ModelRegistry().client('openai')).apiKey).toBe('sk-env');
+    });
+
+    it('names the env var it looked in when there is no key', () => {
+        vi.stubEnv('GEMINI_API_KEY', '');
+        expect(() => new ModelRegistry().client('google')).toThrow(
+            'provider "google": no api key — set `apiKey`, or set GEMINI_API_KEY',
+        );
+    });
+
+    it('rejects an unknown kind at declaration time', () => {
+        expect(() => new ModelRegistry().provider('x', { kind: 'cohere' as never })).toThrow(
+            /unknown kind "cohere"/,
+        );
+    });
+});
+
+describe('google', () => {
+    it('builds a GenAI client on the Gemini backend', () => {
+        vi.stubEnv('GEMINI_API_KEY', 'g-key');
+        const client = conn(new ModelRegistry().client('google'));
+        expect(client.apiKey).toBe('g-key');
+        expect(client.vertexai).toBeFalsy();
+    });
+
+    it('returns the native adapter, not an OpenAI one', () => {
+        vi.stubEnv('GEMINI_API_KEY', 'g-key');
+        const model = new ModelRegistry().model('google:gemini-3-pro-preview');
+        expect(model).toBeInstanceOf(GeminiModel);
+        expect(model.id).toBe('gemini-3-pro-preview');
+    });
+
+    it('has one api, so naming one is a mistake worth reporting', () => {
+        vi.stubEnv('GEMINI_API_KEY', 'g-key');
+        expect(() => new ModelRegistry().model('google/responses:gemini-2.5-pro')).toThrow(
+            /has one api, so "responses" means nothing here/,
+        );
+    });
+
+    it('takes a name of its own, so two Google keys are two providers', () => {
+        const models = new ModelRegistry()
+            .provider('gemini-dev', { kind: 'google', apiKey: 'g-dev' })
+            .provider('gemini-prod', { kind: 'google', apiKey: 'g-prod' });
+        expect(models.model('gemini-dev:gemini-2.5-flash').id).toBe('gemini-2.5-flash');
+        expect(conn(models.client('gemini-prod')).apiKey).toBe('g-prod');
+        expect(conn(models.client('gemini-dev')).apiKey).toBe('g-dev');
+    });
+});
+
+describe('vertex', () => {
+    it('selects the Vertex backend and addresses it by project', () => {
+        const client = conn(
+            new ModelRegistry()
+                .provider('vx', { kind: 'vertex', project: 'acme-prod' })
+                .client('vx'),
+        );
+        expect(client.vertexai).toBe(true);
+        expect(client.project).toBe('acme-prod');
+        // No region named, so the multi-region endpoint.
+        expect(client.location).toBe('global');
+    });
+
+    it('needs no api key, because the SDK resolves ambient credentials', () => {
+        vi.stubEnv('VERTEX_API_KEY', '');
+        const models = new ModelRegistry().provider('vx', { kind: 'vertex', project: 'p' });
+        expect(conn(models.client('vx')).apiKey).toBeFalsy();
+    });
+
+    it('reads the project and location from the environment', () => {
+        vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'from-env');
+        vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'europe-west4');
+        const client = conn(new ModelRegistry().client('vertex'));
+        expect(client.project).toBe('from-env');
+        expect(client.location).toBe('europe-west4');
+    });
+
+    it('says which knob is missing rather than failing at the first request', () => {
+        vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
+        vi.stubEnv('VERTEX_API_KEY', '');
+        expect(() => new ModelRegistry().client('vertex')).toThrow(
+            'provider "vertex": vertex needs `project`, or GOOGLE_CLOUD_PROJECT',
+        );
+    });
+
+    it('takes an express-mode key in place of a project', () => {
+        vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
+        vi.stubEnv('VERTEX_API_KEY', 'vx-express');
+        expect(conn(new ModelRegistry().client('vertex')).apiKey).toBe('vx-express');
+    });
+
+    it('passes model ids through untouched — no publisher prefix to add', () => {
+        const models = new ModelRegistry().provider('vx', { kind: 'vertex', project: 'p' });
+        expect(models.model('vx:gemini-2.5-pro').id).toBe('gemini-2.5-pro');
+        expect(models.model('vx:gemini-3-pro-preview')).toBeInstanceOf(GeminiModel);
+    });
+});
+
+describe('anthropic', () => {
+    it('builds an Anthropic client, not an OpenAI one', () => {
+        const models = new ModelRegistry().provider('claude', {
+            kind: 'anthropic',
+            apiKey: 'sk-ant-x',
+        });
+        const client = models.client('claude');
+        expect(conn(client).apiKey).toBe('sk-ant-x');
+        // The Anthropic SDK exposes `messages`; the OpenAI one does not.
+        expect(client).toHaveProperty('messages');
+        expect(client).not.toHaveProperty('chat');
+    });
+
+    it('works undeclared, off ANTHROPIC_API_KEY', () => {
+        vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-env');
+        expect(new ModelRegistry().model('anthropic:claude-sonnet-4-5').id).toBe(
+            'claude-sonnet-4-5',
+        );
+    });
+
+    it('has one api, so naming one is a mistake worth reporting', () => {
+        vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-env');
+        expect(() => new ModelRegistry().model('anthropic/chat:claude-sonnet-4-5')).toThrow(
+            /has one api, so "chat" means nothing here/,
+        );
+    });
+
+    it('names ANTHROPIC_API_KEY when there is no key', () => {
+        vi.stubEnv('ANTHROPIC_API_KEY', '');
+        expect(() => new ModelRegistry().client('anthropic')).toThrow(
+            'provider "anthropic": no api key — set `apiKey`, or set ANTHROPIC_API_KEY',
+        );
+    });
+});
+
+describe('models', () => {
+    it('uses the provider client, not one of its own', () => {
+        const models = new ModelRegistry().provider('p', { apiKey: 'sk-one' });
+        models.model('p:gpt-4o');
+        // Nothing was built behind the registry's back: the memoized client is
+        // still the one a later caller gets.
+        expect(conn(models.client('p')).apiKey).toBe('sk-one');
+    });
+
+    it('lets inline credentials override without poisoning the shared client', () => {
+        const models = new ModelRegistry().provider('p', { apiKey: 'sk-one' });
+        expect(models.model({ provider: 'p', model: 'gpt-4o', apiKey: 'sk-other' }).id).toBe(
+            'gpt-4o',
+        );
+        expect(conn(models.client('p')).apiKey).toBe('sk-one');
+    });
+
+    it('honours the default provider for a bare id', () => {
+        const models = new ModelRegistry().provider('house', { apiKey: 'sk-house' });
+        models.setDefault('house');
+        expect(models.defaultProvider).toBe('house');
+        expect(models.model('gpt-4o').id).toBe('gpt-4o');
+        expect(conn(models.client('house')).apiKey).toBe('sk-house');
+    });
+
+    it('refuses a default that is not declared', () => {
+        expect(() => new ModelRegistry().setDefault('nope')).toThrow(/is not declared/);
+    });
+
+    it('takes a pre-built client, which is the seam for exotic auth', () => {
+        const stub = { chat: {} } as never;
+        const models = new ModelRegistry().provider('vertex', { kind: 'google', client: stub });
+        expect(models.client('vertex')).toBe(stub);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// The Gemini wire
+//
+// Google's shape differs from OpenAI's in ways that are easy to get subtly
+// wrong and expensive to discover live: there is no system role in the
+// transcript, tool results come back as *user* turns, thinking arrives as
+// ordinary text parts wearing a flag, and reasoning tokens are billed on top
+// of the output count rather than inside it.
+// ---------------------------------------------------------------------------
+
+describe('gemini wire', () => {
+    /** A client that records what it was asked and replies with what it is told. */
+    function stubGenAI(...replies: Partial<GenerateContentResponse>[]) {
+        const sent: GenerateContentParameters[] = [];
+        const client = {
+            models: {
+                generateContent: async (params: GenerateContentParameters) => {
+                    sent.push(params);
+                    return (replies[sent.length - 1] ?? {}) as GenerateContentResponse;
+                },
+            },
+        };
+        return { client: client as unknown as GoogleGenAI, sent };
+    }
+
+    const said = (...parts: Part[]): Partial<GenerateContentResponse> => ({
+        candidates: [{ content: { role: 'model', parts } }],
+    });
+
+    const turns = (sent: GenerateContentParameters) => sent.contents as Content[];
+
+    const ask = (messages: Message[], rest: Partial<ModelRequest> = {}): ModelRequest => ({
+        messages,
+        tools: [],
+        ...rest,
+    });
+
+    it('lifts the system prompt out of the transcript', async () => {
+        const { client, sent } = stubGenAI();
+        await new GeminiModel('gemini-2.5-flash', client).generate(
+            ask([{ role: 'user', content: [text('hi')] }], { system: 'be brief' }),
+        );
+        expect(sent[0].config?.systemInstruction).toBe('be brief');
+        expect(turns(sent[0])).toHaveLength(1);
+    });
+
+    it('keeps a mid-conversation system note where it was said', async () => {
+        const { client, sent } = stubGenAI();
+        await new GeminiModel('gemini-2.5-flash', client).generate(
+            ask([
+                { role: 'user', content: [text('hi')] },
+                { role: 'assistant', content: 'hello' },
+                { role: 'system', content: 'the user prefers metric' },
+                { role: 'user', content: [text('how far?')] },
+            ]),
+        );
+        // There is no system role on this wire, so the note becomes a user part
+        // — and, being adjacent to a user turn, merges into it rather than
+        // splitting the conversation in two.
+        const [first, second, third] = turns(sent[0]);
+        expect([first.role, second.role, third.role]).toEqual(['user', 'model', 'user']);
+        expect(third.parts).toHaveLength(2);
+        expect(third.parts?.[0].text).toBe('the user prefers metric');
+    });
+
+    it('sends tool results back as a user turn, addressed by name', async () => {
+        const { client, sent } = stubGenAI();
+        await new GeminiModel('gemini-2.5-flash', client).generate(
+            ask([
+                { role: 'user', content: [text('weather?')] },
+                {
+                    role: 'assistant',
+                    content: '',
+                    toolCalls: [{ id: 'c1', name: 'forecast', args: '{"city":"Oslo"}' }],
+                },
+                { role: 'tool', callId: 'c1', name: 'forecast', content: 'rain' },
+            ]),
+        );
+        const [, model, result] = turns(sent[0]);
+        expect(model.parts?.[0].functionCall).toMatchObject({
+            name: 'forecast',
+            args: { city: 'Oslo' },
+        });
+        expect(result.role).toBe('user');
+        expect(result.parts?.[0].functionResponse).toMatchObject({
+            name: 'forecast',
+            response: { output: 'rain' },
+        });
+    });
+
+    it('separates thinking from the answer', async () => {
+        const { client } = stubGenAI(
+            said({ text: 'the user means nautical miles', thought: true }, { text: '3 nm' }),
+        );
+        const res = await new GeminiModel('gemini-2.5-flash', client).generate(
+            ask([{ role: 'user', content: [text('how far?')] }]),
+        );
+        expect(res.text).toBe('3 nm');
+        expect(res.thinking).toBe('the user means nautical miles');
+    });
+
+    it('bills reasoning on top of the output count, and cache inside the input', async () => {
+        const { client } = stubGenAI({
+            ...said({ text: 'ok' }),
+            usageMetadata: {
+                promptTokenCount: 100,
+                cachedContentTokenCount: 40,
+                candidatesTokenCount: 10,
+                thoughtsTokenCount: 5,
+            },
+        });
+        const res = await new GeminiModel('gemini-2.5-flash', client).generate(
+            ask([{ role: 'user', content: [text('hi')] }]),
+        );
+        // promptTokenCount already contains the cached tokens; thoughts are
+        // charged as output but reported separately.
+        expect(res.usage).toMatchObject({
+            inputTokens: 100,
+            cachedInputTokens: 40,
+            outputTokens: 15,
+            reasoningTokens: 5,
+        });
+    });
+
+    it('reports a truncated answer as a length stop', async () => {
+        const { client } = stubGenAI({
+            candidates: [
+                { content: { parts: [{ text: 'ok' }] }, finishReason: FinishReason.MAX_TOKENS },
+            ],
+        });
+        const res = await new GeminiModel('gemini-2.5-flash', client).generate(
+            ask([{ role: 'user', content: [text('hi')] }]),
+        );
+        expect(res.stopReason).toBe('length');
+    });
+
+    it('gives an unidentified call an id, and takes it off again on the way back', async () => {
+        const { client, sent } = stubGenAI(
+            said({ functionCall: { name: 'forecast', args: { city: 'Oslo' } } }),
+        );
+        const model = new GeminiModel('gemini-2.5-flash', client);
+        const res = await model.generate(ask([{ role: 'user', content: [text('?')] }]));
+
+        // The runner pairs results to calls by id, so one is minted.
+        const [call] = res.toolCalls;
+        expect(call.id).toMatch(/^gemini-call-/);
+
+        await model.generate(
+            ask([
+                { role: 'user', content: [text('?')] },
+                { role: 'assistant', content: '', toolCalls: [call] },
+                { role: 'tool', callId: call.id, name: 'forecast', content: 'rain' },
+            ]),
+        );
+        // It was ours, not theirs: sending it back would pair against nothing.
+        const [, , result] = turns(sent[1]);
+        expect(result.parts?.[0].functionResponse?.id).toBeUndefined();
+    });
+
+    it('returns the thought signature it was given with the call it belongs to', async () => {
+        const { client, sent } = stubGenAI(
+            said({
+                functionCall: { id: 'c1', name: 'forecast', args: {} },
+                thoughtSignature: 'sig-abc',
+            }),
+        );
+        const model = new GeminiModel('gemini-3-pro-preview', client);
+        const res = await model.generate(ask([{ role: 'user', content: [text('?')] }]));
+
+        await model.generate(
+            ask([
+                { role: 'user', content: [text('?')] },
+                { role: 'assistant', content: '', toolCalls: res.toolCalls },
+                { role: 'tool', callId: 'c1', name: 'forecast', content: 'rain' },
+            ]),
+        );
+        // Gemini 3 answers worse without it, and it means nothing to any other
+        // vendor — so the adapter carries it rather than the trajectory.
+        expect(turns(sent[1])[1].parts?.[0].thoughtSignature).toBe('sig-abc');
+    });
+
+    it('streams the same reading it would have made in one piece', async () => {
+        const chunks: Partial<GenerateContentResponse>[] = [
+            said({ text: 'weigh', thought: true }),
+            said({ text: '3 ' }),
+            said({ text: 'nm' }),
+        ];
+        const client = {
+            models: {
+                generateContentStream: async () =>
+                    (async function* () {
+                        yield* chunks as GenerateContentResponse[];
+                    })(),
+            },
+        } as unknown as GoogleGenAI;
+
+        const seen: StreamDelta[] = [];
+        const res = await new GeminiModel('gemini-2.5-flash', client).stream(
+            ask([{ role: 'user', content: [text('how far?')] }]),
+            (d) => seen.push(d),
+        );
+        expect(res.text).toBe('3 nm');
+        expect(res.thinking).toBe('weigh');
+        expect(seen.map((d) => d.type)).toEqual(['thinking_delta', 'text_delta', 'text_delta']);
+    });
+
+    it('declares tools with plain JSON Schema and honours a forced choice', async () => {
+        const { client, sent } = stubGenAI();
+        await new GeminiModel('gemini-2.5-flash', client).generate(
+            ask([{ role: 'user', content: [text('?')] }], {
+                tools: [
+                    {
+                        name: 'forecast',
+                        description: 'look up the weather',
+                        parameters: { type: 'object', properties: { city: { type: 'string' } } },
+                    },
+                ],
+                toolChoice: 'required',
+            }),
+        );
+        expect(sent[0].config?.tools?.[0]).toMatchObject({
+            functionDeclarations: [{ name: 'forecast', parametersJsonSchema: { type: 'object' } }],
+        });
+        expect(sent[0].config?.toolConfig?.functionCallingConfig?.mode).toBe(
+            FunctionCallingConfigMode.ANY,
+        );
+    });
+});
