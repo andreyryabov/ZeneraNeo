@@ -321,28 +321,97 @@ export function nextAction(state: AgentState): NextAction {
 // Tool set — derived from the state, not a static agent property
 // ---------------------------------------------------------------------------
 
-const FORK_PARAMETERS: JsonSchema = {
-    type: 'object',
-    properties: {
-        branches: {
-            type: 'array',
-            minItems: 2,
-            items: {
-                type: 'object',
-                properties: {
-                    name: { type: 'string', description: 'stable branch label' },
-                    instructions: { type: 'string', description: 'what this branch must do' },
-                    agent: { type: 'string', description: 'agent to run the branch' },
+/** Agents a branch of this fork may run, in registration order. */
+function forkAgents<TCtx>(state: AgentState, reg: AgentRegistry<TCtx>): string[] {
+    const allowed = reg.find(state.agentName)?.fork?.agents;
+    if (!allowed) {
+        return reg.names();
+    }
+    const known = allowed.filter((n) => reg.find(n));
+    return known.length ? known : [state.agentName];
+}
+
+/**
+ * Derived from the state rather than a constant, because the one thing a weak
+ * model reliably gets wrong here is inventing an agent name. An `enum` of the
+ * agents that actually exist is a constraint the provider enforces during
+ * decoding, which no amount of prose in the description can match.
+ *
+ * `minItems`/`maxItems` are stated too, but they are advisory — most providers
+ * ignore them under strict decoding — so `parseForkArgs` and `forkProblem`
+ * still check both, and their messages are written to be read by the model.
+ */
+function forkParameters(agents: string[], self: string, maxBranches?: number): JsonSchema {
+    const max = maxBranches ?? 0;
+    // When the author's list excludes the current agent there is no sane
+    // default, so the model has to name one.
+    const selfAllowed = agents.includes(self);
+    return {
+        type: 'object',
+        properties: {
+            branches: {
+                type: 'array',
+                minItems: 2,
+                ...(max >= 2 ? { maxItems: max } : {}),
+                description:
+                    `At least two branches${max >= 2 ? `, at most ${max}` : ''}. ` +
+                    'One branch is never valid: if the work does not split, do it yourself ' +
+                    'instead of calling this tool.',
+                items: {
+                    type: 'object',
+                    properties: {
+                        name: {
+                            type: 'string',
+                            description: 'Short, unique label for this branch, e.g. "eu-tariffs".',
+                        },
+                        instructions: {
+                            type: 'string',
+                            description:
+                                'The complete assignment for this branch. It runs in a separate ' +
+                                'conversation and cannot ask questions, so state everything it ' +
+                                'needs and exactly what it must return.',
+                        },
+                        agent: {
+                            type: 'string',
+                            enum: agents,
+                            description:
+                                'Which agent runs this branch. Must be one of: ' +
+                                agents.join(', ') +
+                                (selfAllowed ? `. Omit to use "${self}".` : '.'),
+                        },
+                    },
+                    required: selfAllowed
+                        ? ['name', 'instructions']
+                        : ['name', 'instructions', 'agent'],
+                    additionalProperties: false,
                 },
-                required: ['name', 'instructions'],
-                additionalProperties: false,
+            },
+            context: {
+                type: 'string',
+                enum: ['inherit', 'compact', 'none'],
+                description:
+                    'How much of this conversation each branch starts with: "inherit" (all of ' +
+                    'it, the default), "compact" (messages only, no tool traffic), "none" ' +
+                    '(nothing but its own instructions).',
             },
         },
-        context: { type: 'string', enum: ['inherit', 'compact', 'none'] },
-    },
-    required: ['branches'],
-    additionalProperties: false,
-};
+        required: ['branches'],
+        additionalProperties: false,
+    };
+}
+
+const FORK_DESCRIPTION = [
+    'Split the work into independent branches that run in parallel and rejoin into one result.',
+    '',
+    'Call it when two or more parts of the task can be worked on without seeing each ' +
+        "other's findings — separate documents, regions, candidates, hypotheses. Do not call it " +
+        'to break one line of reasoning into steps: branches cannot talk to each other, and a ' +
+        "step that needs the previous step's answer must stay in this conversation.",
+    '',
+    'Every call needs at least two branches, each with a unique name and self-contained ' +
+        'instructions. Their answers come back to you as the result of this call, and you ' +
+        'decide what the final answer is.',
+].join('\n');
 
 /**
  * tools(state) = agent tools + handoffs + memory + skills + fork +
@@ -378,10 +447,12 @@ export async function resolveTools<TCtx>(
     if (agent.fork && state.spec.forkDepth < state.spec.maxForkDepth) {
         tools.push({
             name: FORK_TOOL,
-            description:
-                'Split the work into independent branches that run in parallel and ' +
-                'rejoin into one result. Use it for genuinely independent sub-tasks.',
-            parameters: FORK_PARAMETERS,
+            description: FORK_DESCRIPTION,
+            parameters: forkParameters(
+                forkAgents(state, reg),
+                state.agentName,
+                agent.fork.maxBranches,
+            ),
             // Never executed as a tool: the runner drives branches and the join
             // becomes the tool result.
             execute: () => 'fork scheduled',
@@ -551,13 +622,26 @@ interface ForkArgs {
 function parseForkArgs(raw: string): ForkArgs | string {
     const args = parseArgs(raw);
     const branches = args.branches;
-    if (!Array.isArray(branches) || branches.length < 2) {
-        return 'fork requires at least two branches';
+    // Spelled out rather than "invalid arguments": this string is fed back to
+    // the model as the tool result, and it is the only chance it gets to work
+    // out what to do differently.
+    if (!Array.isArray(branches) || branches.length === 0) {
+        return 'the "branches" argument is missing or empty; it must be an array of at least two branches';
+    }
+    if (branches.length < 2) {
+        return (
+            'a fork needs at least two branches, and this call has one. Either add the other ' +
+            'independent branches, or do not fork at all and carry out the work in this ' +
+            'conversation.'
+        );
     }
     const parsed: ForkArgs['branches'] = [];
     for (const b of branches as Record<string, unknown>[]) {
-        if (typeof b?.name !== 'string' || typeof b?.instructions !== 'string') {
-            return 'every branch needs a "name" and "instructions"';
+        if (typeof b?.name !== 'string' || !b.name.trim()) {
+            return 'every branch needs a non-empty "name"';
+        }
+        if (typeof b?.instructions !== 'string' || !b.instructions.trim()) {
+            return `branch "${b.name}" needs non-empty "instructions" saying what it must do`;
         }
         parsed.push({
             name: b.name,
@@ -734,15 +818,18 @@ function forkProblem<TCtx>(
     }
     const max = agent?.fork?.maxBranches;
     if (max && args.branches.length > max) {
-        return `at most ${max} branches are allowed`;
+        return `at most ${max} branches are allowed, and this call has ${args.branches.length}`;
     }
+    // Hallucinated agent names are the common failure, so the answer always
+    // carries the list of real ones — a retry then has nothing left to guess.
+    const allowed = reg ? forkAgents(state, reg) : undefined;
     for (const b of args.branches) {
         const name = b.agent ?? state.agentName;
-        if (reg && !reg.find(name)) {
-            return `unknown agent for branch "${b.name}": ${name}`;
-        }
-        if (agent?.fork?.agents && !agent.fork.agents.includes(name)) {
-            return `agent "${name}" may not run a branch of this fork`;
+        if (allowed && !allowed.includes(name)) {
+            return (
+                `branch "${b.name}" names an agent that cannot run it: "${name}". ` +
+                `Use one of: ${allowed.join(', ')} — or omit "agent" to use ${state.agentName}.`
+            );
         }
     }
     return undefined;
