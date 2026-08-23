@@ -57,16 +57,32 @@
         "prepublishOnly": "npm run clean && npm run build"
     },
     "dependencies": {
-        "@anthropic-ai/sdk": "^0.120.0",
-        "@google/genai": "^2.18.0",
-        "openai": "^6.0.0",
         "yaml": "^2.9.0",
         "zod": "^4.4.3"
     },
+    "peerDependencies": {
+        "@anthropic-ai/sdk": "^0.120.0",
+        "@google/genai": "^2.18.0",
+        "openai": "^6.0.0"
+    },
+    "peerDependenciesMeta": {
+        "@anthropic-ai/sdk": {
+            "optional": true
+        },
+        "@google/genai": {
+            "optional": true
+        },
+        "openai": {
+            "optional": true
+        }
+    },
     "devDependencies": {
+        "@anthropic-ai/sdk": "^0.120.0",
+        "@google/genai": "^2.18.0",
         "@types/node": "^24.0.0",
         "@vitest/coverage-v8": "^4.1.11",
         "boxen": "^8.0.1",
+        "openai": "^6.0.0",
         "picocolors": "^1.1.1",
         "prettier": "^3.9.6",
         "typescript": "^5.9.3",

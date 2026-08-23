@@ -1,12 +1,63 @@
-import Anthropic from '@anthropic-ai/sdk';
-import { GoogleGenAI } from '@google/genai';
+import type Anthropic from '@anthropic-ai/sdk';
+import type { ClientOptions as AnthropicOptions } from '@anthropic-ai/sdk';
+import type { GoogleGenAI, GoogleGenAIOptions } from '@google/genai';
 import { readFileSync } from 'node:fs';
-import OpenAI from 'openai';
+import { createRequire } from 'node:module';
+import type OpenAI from 'openai';
+import type { ClientOptions as OpenAIOptions } from 'openai';
 import type { Model } from '../model.ts';
 import { AnthropicModel, type AnthropicModelOptions } from './anthropic.ts';
 import { GeminiModel, type GeminiModelOptions } from './gemini.ts';
 import { OpenAIModel } from './openai-chat.ts';
 import { OpenAIResponsesModel, type OpenAIResponsesModelOptions } from './openai-responses.ts';
+
+// ---------------------------------------------------------------------------
+// The vendor SDKs
+//
+// All three are *optional peer dependencies*: an application installs the one
+// vendor it talks to and pays for nothing else — which matters most for
+// `@google/genai`, whose own tree carries google-auth-library and protobufjs.
+//
+// That only holds if importing this library does not reach for all three, so
+// nothing above is a value import: the SDKs are pulled in here, when a client
+// of that protocol is first built, and never at module scope.
+//
+// `createRequire` rather than `await import()` because it is synchronous, and
+// so `createModel()` and `ModelRegistry.client()` keep handing back a usable
+// object instead of a promise — which is also what keeps a bad credential
+// throwing at the call that named it rather than at some later request. Every
+// one of the three publishes a CommonJS build, so it costs nothing.
+// ---------------------------------------------------------------------------
+
+const requirePeer = createRequire(import.meta.url);
+
+interface OpenAIModule {
+    OpenAI: new (options: OpenAIOptions) => OpenAI;
+}
+interface AnthropicModule {
+    Anthropic: new (options: AnthropicOptions) => Anthropic;
+}
+interface GenAIModule {
+    GoogleGenAI: new (options: GoogleGenAIOptions) => GoogleGenAI;
+}
+
+/**
+ * An uninstalled optional peer is a setup mistake, not a bug, so it is reported
+ * as the one-line fix rather than as a resolution failure from inside Node.
+ */
+function sdk<T>(pkg: string, kind: ProviderKind): T {
+    try {
+        return requirePeer(pkg) as T;
+    } catch (cause) {
+        if ((cause as NodeJS.ErrnoException).code !== 'MODULE_NOT_FOUND') {
+            throw cause;
+        }
+        throw new Error(
+            `provider kind "${kind}" needs ${pkg}, which is not installed — run: npm i ${pkg}`,
+            { cause },
+        );
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Providers and models
@@ -421,7 +472,12 @@ function buildClient(
         maxRetries: opts.maxRetries,
         ...(opts.token ? { fetch: bearerFetch(opts.token) } : {}),
     };
-    return defaults.protocol === 'anthropic' ? new Anthropic(common) : new OpenAI(common);
+    if (defaults.protocol === 'anthropic') {
+        const { Anthropic } = sdk<AnthropicModule>('@anthropic-ai/sdk', kind);
+        return new Anthropic(common);
+    }
+    const { OpenAI } = sdk<OpenAIModule>('openai', kind);
+    return new OpenAI(common);
 }
 
 /**
@@ -444,6 +500,7 @@ function buildGenAI(
     opts: ProviderSpec,
     where: string,
 ): GoogleGenAI {
+    const { GoogleGenAI } = sdk<GenAIModule>('@google/genai', kind);
     const httpOptions = { baseUrl: baseURL, headers, timeout: opts.timeoutMs };
     if (kind !== 'vertex') {
         return new GoogleGenAI({ apiKey, httpOptions });

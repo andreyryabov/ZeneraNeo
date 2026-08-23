@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import type { StreamDelta } from '../events.ts';
 import type { Model, ModelRequest, ModelResponse, StopReason } from '../model.ts';
 import { zeroUsage, type Message, type TokenUsage, type ToolCall } from '../types.ts';
@@ -38,7 +38,7 @@ export class OpenAIResponsesModel implements Model {
     readonly #reasoningSummary: 'auto' | 'concise' | 'detailed' | undefined;
     readonly #store: boolean;
 
-    constructor(id: string, client = new OpenAI(), options: OpenAIResponsesModelOptions = {}) {
+    constructor(id: string, client: OpenAI, options: OpenAIResponsesModelOptions = {}) {
         this.id = id;
         this.#client = client;
         this.#reasoningEffort = options.reasoningEffort;

@@ -1,13 +1,13 @@
-import {
+import type {
+    Content,
     FinishReason,
     FunctionCallingConfigMode,
+    GenerateContentConfig,
+    GenerateContentParameters,
+    GenerateContentResponse,
+    GoogleGenAI,
+    Part,
     ThinkingLevel,
-    type Content,
-    type GenerateContentConfig,
-    type GenerateContentParameters,
-    type GenerateContentResponse,
-    type GoogleGenAI,
-    type Part,
 } from '@google/genai';
 import type { StreamDelta } from '../events.ts';
 import type { Model, ModelRequest, ModelResponse, StopReason } from '../model.ts';
@@ -49,12 +49,27 @@ export interface GeminiModelOptions {
     includeThoughts?: boolean;
 }
 
-const THINKING_LEVELS: Record<GeminiThinkingLevel, ThinkingLevel> = {
-    minimal: ThinkingLevel.MINIMAL,
-    low: ThinkingLevel.LOW,
-    medium: ThinkingLevel.MEDIUM,
-    high: ThinkingLevel.HIGH,
-};
+/**
+ * Google's `ThinkingLevel` is a *string* enum, so its members are just their
+ * own names on the wire. Spelling them out keeps `@google/genai` out of this
+ * module's runtime imports — an enum is a value, and importing one would load
+ * the whole SDK for anyone who merely imports the library. The cast is what an
+ * enum costs: a literal is not assignable to a nominal enum type, even when it
+ * is the same string.
+ */
+const THINKING_LEVELS = {
+    minimal: 'MINIMAL',
+    low: 'LOW',
+    medium: 'MEDIUM',
+    high: 'HIGH',
+} as Record<GeminiThinkingLevel, ThinkingLevel>;
+
+/** `FunctionCallingConfigMode`, spelled out for the same reason. */
+const CALLING_MODES = {
+    any: 'ANY',
+    none: 'NONE',
+    auto: 'AUTO',
+} as Record<'any' | 'none' | 'auto', FunctionCallingConfigMode>;
 
 /**
  * Ids this adapter invented. The Gemini API returns function calls without one
@@ -388,11 +403,11 @@ function parseArgs(args: string): Record<string, unknown> {
 function toCallingMode(choice: ModelRequest['toolChoice']): FunctionCallingConfigMode {
     switch (choice) {
         case 'required':
-            return FunctionCallingConfigMode.ANY;
+            return CALLING_MODES.any;
         case 'none':
-            return FunctionCallingConfigMode.NONE;
+            return CALLING_MODES.none;
         default:
-            return FunctionCallingConfigMode.AUTO;
+            return CALLING_MODES.auto;
     }
 }
 
@@ -423,15 +438,15 @@ function toUsage(u: GenerateContentResponse['usageMetadata']): TokenUsage | unde
  * only signal, and it has to be applied here rather than left to the kernel's
  * fallback, which only fires when a stop reason is missing entirely.
  */
-function toStopReason(reason: FinishReason | undefined, toolCalls: boolean): StopReason {
+function toStopReason(reason: `${FinishReason}` | undefined, toolCalls: boolean): StopReason {
     switch (reason) {
-        case FinishReason.MAX_TOKENS:
+        case 'MAX_TOKENS':
             return 'length';
-        case FinishReason.SAFETY:
-        case FinishReason.RECITATION:
-        case FinishReason.BLOCKLIST:
-        case FinishReason.PROHIBITED_CONTENT:
-        case FinishReason.SPII:
+        case 'SAFETY':
+        case 'RECITATION':
+        case 'BLOCKLIST':
+        case 'PROHIBITED_CONTENT':
+        case 'SPII':
             return 'content_filter';
         default:
             return toolCalls ? 'tool_calls' : 'stop';
