@@ -1,8 +1,9 @@
-import { createModel } from '../src/models/factory.ts';
 import { InMemoryPayloadStore } from '../src/payload-stores/in-memory.ts';
 import { AgentRunner } from '../src/runner.ts';
 import { turns } from '../src/state.ts';
 import { tool } from '../src/types.ts';
+// Which vendor and how much thinking — shared by every demo. See ./models.ts.
+import { model as pick } from './models.ts';
 // Terminal rendering — the harness every example shares. See ./ui.ts.
 import { banner, line, loadEnv, report, stats, step } from './ui.ts';
 
@@ -58,7 +59,7 @@ async function main(): Promise<void> {
 
     const payloads = new InMemoryPayloadStore('blobs');
     const runner = new AgentRunner({
-        model: createModel({ model: 'gpt-5.4-mini', api: 'responses' }),
+        model: pick('thinking'),
         payloads,
         // The whole point of this demo: keep every request, not just its hash.
         recordRequests: true,

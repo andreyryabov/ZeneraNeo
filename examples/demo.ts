@@ -1,12 +1,13 @@
 import { z } from 'zod';
-import { AgentRunner } from '../src/runner.ts';
 import { InMemoryMemoryStore } from '../src/memory-stores/in-memory.ts';
-import { createModel } from '../src/models/factory.ts';
-import { StaticSkillProvider } from '../src/skill-providers/static.ts';
-import { exportRun, importRun } from '../src/payload.ts';
 import { InMemoryPayloadStore } from '../src/payload-stores/in-memory.ts';
+import { exportRun, importRun } from '../src/payload.ts';
+import { AgentRunner } from '../src/runner.ts';
+import { StaticSkillProvider } from '../src/skill-providers/static.ts';
 import { turns, type AgentState } from '../src/state.ts';
 import { tool } from '../src/types.ts';
+// Which vendor and how much thinking — shared by every demo. See ./models.ts.
+import { model as pick } from './models.ts';
 // Terminal rendering — the harness every example shares. See ./ui.ts.
 import { banner, box, code, dataUrl, loadEnv, report, stats, step, trace } from './ui.ts';
 
@@ -67,14 +68,9 @@ const travelSkills = new StaticSkillProvider(
 );
 
 async function test() {
-    const model = createModel({
-        model: 'gpt-5.4-nano',
-        api: 'responses',
-        reasoningEffort: 'medium',
-        // Without a summary the responses API emits reasoning *tokens* but no
-        // reasoning *text*, so no `thinking_delta` would ever reach `trace()`.
-        reasoningSummary: 'auto',
-    });
+    // The reasoning summaries `trace()` renders are the point of this demo, so
+    // it asks for the tier that has them turned up. See ./models.ts.
+    const model = pick('deep');
 
     // The runner owns the shared services (model, payload store, memory stores,
     // skill providers) that every agent declared on it can draw from by name.

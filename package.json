@@ -53,6 +53,7 @@
         "demo:handbook": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/handbook.ts'",
         "demo:locked": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/locked.ts'",
         "demo:project": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/project.ts'",
+        "demo:all": "npm run demo:simple && npm run demo:fanout && npm run demo:triage && npm run demo:review && npm run demo:inspect && npm run demo:handbook && npm run demo:locked && npm run demo:project",
         "prepublishOnly": "npm run clean && npm run build"
     },
     "dependencies": {

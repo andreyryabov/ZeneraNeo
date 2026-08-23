@@ -1,12 +1,13 @@
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createModel } from '../src/models/factory.ts';
 import { hash, type PayloadResolver } from '../src/payload.ts';
 import { AgentRunner } from '../src/runner.ts';
 import { FileSkillProvider } from '../src/skill-providers/file.ts';
 import type { AgentState } from '../src/state.ts';
 import { turns } from '../src/state.ts';
 import { tool } from '../src/types.ts';
+// Which vendor and how much thinking — shared by every demo. See ./models.ts.
+import { model as pick } from './models.ts';
 // Terminal rendering — the harness every example shares. See ./ui.ts.
 import { banner, box, line, loadEnv, report, stats, step } from './ui.ts';
 
@@ -156,7 +157,7 @@ async function main(): Promise<void> {
     banner('Locked tools', 'declared from turn 1, executable only once their skill is loaded');
 
     const runner = new AgentRunner({
-        model: createModel({ model: 'gpt-5.4-mini', api: 'responses' }),
+        model: pick('thinking'),
         skills: [customs],
         // Keeps the full request behind each model call, which is what the
         // per-turn table below reads.

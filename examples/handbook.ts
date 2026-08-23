@@ -1,11 +1,12 @@
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createModel } from '../src/models/factory.ts';
 import { promptFile } from '../src/prompt.ts';
 import { AgentRunner } from '../src/runner.ts';
 import { FileSkillProvider } from '../src/skill-providers/file.ts';
 import { turns } from '../src/state.ts';
 import { tool } from '../src/types.ts';
+// Which vendor and how much thinking — shared by every demo. See ./models.ts.
+import { model as pick } from './models.ts';
 // Terminal rendering — the harness every example shares. See ./ui.ts.
 import { banner, box, line, loadEnv, report, stats, step } from './ui.ts';
 
@@ -101,7 +102,7 @@ async function main(): Promise<void> {
     const house = promptFile(doc('AGENTS.md'), 'house_rules');
 
     const runner = new AgentRunner({
-        model: createModel({ model: 'gpt-5.4-mini', api: 'responses' }),
+        model: pick('thinking'),
         skills: [handbookSkills],
         // Keeps the full request behind each model call, not just its digest —
         // so the report can show the assembled prompt exactly as it was sent.

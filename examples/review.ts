@@ -1,8 +1,9 @@
-import { createModel } from '../src/models/factory.ts';
 import { AgentRunner } from '../src/runner.ts';
 import { turns } from '../src/state.ts';
 import { projected, type ForkNode, type JoinNode, type TrajectoryNode } from '../src/trajectory.ts';
 import { tool } from '../src/types.ts';
+// Which vendor and how much thinking — shared by every demo. See ./models.ts.
+import { model as pick } from './models.ts';
 // Terminal rendering — the harness every example shares. See ./ui.ts.
 import {
     banner,
@@ -320,12 +321,7 @@ function countCalls(nodes: TrajectoryNode[], name: string): number {
 }
 
 async function main(): Promise<void> {
-    const model = createModel({
-        model: 'gpt-5.4-mini',
-        api: 'responses',
-        reasoningEffort: 'low',
-        reasoningSummary: 'auto',
-    });
+    const model = pick('thinking');
 
     const runner = new AgentRunner<AppCtx>({
         model,

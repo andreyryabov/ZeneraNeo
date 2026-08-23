@@ -1,9 +1,10 @@
 import { z } from 'zod';
-import { createModel } from '../src/models/factory.ts';
 import { AgentRunner } from '../src/runner.ts';
 import { turns } from '../src/state.ts';
 import type { JoinNode } from '../src/trajectory.ts';
 import { tool } from '../src/types.ts';
+// Which vendor and how much thinking — shared by every demo. See ./models.ts.
+import { model as pick } from './models.ts';
 // Terminal rendering — the harness every example shares. See ./ui.ts.
 import {
     banner,
@@ -141,15 +142,11 @@ const FleetReport = z.object({
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-    const model_gpt54nano = createModel({
-        model: 'gpt-5.4-nano',
-        api: 'responses',
-        reasoningEffort: 'low',
-    });
-    const model_gpt4o = createModel({
-        model: 'gpt-4o-mini',
-    });
-    const model = model_gpt54nano;
+    // Vendor and tiers come from ./models.ts, so `DEMO_VENDOR=openai` (or
+    // `anthropic`) runs this same demo elsewhere without an edit here.
+    const model_thinking = pick('thinking');
+    const model_fast = pick('fast');
+    const model = model_thinking;
 
     // No `joinPolicy` is given: the default summarizes a branch as its final
     // text, which is exactly the one-line report each prober is asked for, and

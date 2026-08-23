@@ -1,11 +1,12 @@
 import { z } from 'zod';
-import { createModel } from '../src/models/factory.ts';
 import { AgentRunner } from '../src/runner.ts';
 import { turns } from '../src/state.ts';
 import type { JoinNode } from '../src/trajectory.ts';
 import { tool } from '../src/types.ts';
 // Live one-pane-per-branch board. See ./board.ts.
 import { traceBoard } from './board.ts';
+// Which vendor and how much thinking — shared by every demo. See ./models.ts.
+import { model as pick } from './models.ts';
 // Terminal rendering — the harness every example shares. See ./ui.ts.
 import {
     banner,
@@ -253,16 +254,11 @@ const TriageReport = z.object({
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-    const model_gpt54mini = createModel({
-        model: 'gpt-5.4-mini',
-        api: 'responses',
-        reasoningEffort: 'low',
-        reasoningSummary: 'auto',
-    });
-    const model_gpt4o = createModel({
-        model: 'gpt-4o-mini',
-    });
-    const model = model_gpt54mini;
+    // Vendor and tiers come from ./models.ts, so `DEMO_VENDOR=openai` (or
+    // `anthropic`) runs this same demo elsewhere without an edit here.
+    const model_thinking = pick('thinking');
+    const model_fast = pick('fast');
+    const model = model_thinking;
 
     const runner = new AgentRunner<AppCtx>({
         model,
