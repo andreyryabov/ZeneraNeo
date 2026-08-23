@@ -52,4 +52,8 @@ export class Services {
     hasMemory(id: string): boolean {
         return this.#memory.has(id);
     }
+
+    hasSkills(id: string): boolean {
+        return this.#skills.has(id);
+    }
 }

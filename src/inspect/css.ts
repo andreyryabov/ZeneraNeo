@@ -71,25 +71,29 @@ table.st tfoot td { color: var(--fg); font-weight: 600; background: #191e2a;
   border-top: 1px solid #2b3346; border-bottom: none; padding: 7px 12px; }
 table.st tfoot td:first-child { color: var(--dim); text-transform: uppercase;
   letter-spacing: .07em; font-size: 11px; }
-#graph { display: flex; flex-direction: column; overflow: hidden; flex: 1; }
+/* Two panes hold a zoomable diagram (the run graph and the architecture), so
+   everything about one is written for both. */
+.pane { display: flex; flex-direction: column; overflow: hidden; flex: 1; }
 /* An explicit display on the pane would otherwise beat the hidden attribute
    and both views would show at once. */
-#graph[hidden], #detail[hidden], #stats[hidden] { display: none; }
-#graph svg { max-width: none; display: block; }
-#graph .node { cursor: pointer; }
+.pane[hidden], #detail[hidden], #stats[hidden] { display: none; }
+.pane svg { max-width: none; display: block; }
+.pane .node { cursor: pointer; }
+/* A node with nothing behind it in this run is not clickable, and says so. */
+.pane .node.idle { cursor: default; }
 .gtools { display: flex; align-items: center; gap: 6px; padding: 6px 10px;
   border-bottom: 1px solid var(--line); background: var(--panel); }
 .gtools button { background: var(--bg); border: 1px solid var(--line); color: var(--fg);
   border-radius: 6px; padding: 2px 10px; cursor: pointer; font: 12px var(--mono); }
 .gtools button:hover { border-color: var(--accent); }
 .gtools .hint:first-of-type { margin-left: 8px; }
-.gtools #zoomlvl { margin-left: auto; font-family: var(--mono); }
+.gtools .lvl { margin-left: auto; font-family: var(--mono); }
 /* The canvas is transformed, not scrolled: panning has to work past the edges
    of the diagram, which overflow:auto would forbid. */
-#gviewport { flex: 1; overflow: hidden; position: relative; cursor: grab; touch-action: none;
+.viewport { flex: 1; overflow: hidden; position: relative; cursor: grab; touch-action: none;
   user-select: none; -webkit-user-select: none; }
-#gviewport.drag { cursor: grabbing; }
-#gcanvas { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+.viewport.drag { cursor: grabbing; }
+.canvas { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
 .hint { color: var(--dim); font-size: 12px; }
 .hint.pad { padding: 16px; }
 .type { font-size: 11px; letter-spacing: .04em; text-transform: uppercase;
@@ -131,6 +135,9 @@ section.blk.sys { border-left: 3px solid var(--warn); }
 pre { margin: 0; padding: 10px 12px; font: 12px/1.55 var(--mono); white-space: pre-wrap;
   word-break: break-word; overflow-wrap: anywhere; }
 pre.text { white-space: pre-wrap; }
+img.media { display: block; max-width: 100%; max-height: 420px; margin: 10px 12px;
+  border: 1px solid var(--line); border-radius: 6px; background: #0d1017; }
+img.media.thumb { max-height: 88px; margin: 8px 12px; cursor: zoom-in; }
 .msg { border-top: 1px solid var(--line); border-left: 3px solid transparent; }
 .msg:first-of-type { border-top: none; }
 .msg > .role { padding: 5px 12px; font-size: 11px; text-transform: uppercase;

@@ -1,5 +1,6 @@
 import type { z } from 'zod';
 import { Agent, AgentRegistry, type AgentOptions } from './agent.ts';
+import { describeArchitecture, type Architecture } from './architecture.ts';
 import {
     EventQueue,
     RunStream,
@@ -202,6 +203,20 @@ export class AgentRunner<TCtx = unknown> {
 
     get(name: string): Agent<TCtx> {
         return this.registry.get(name);
+    }
+
+    /**
+     * The declared wiring as plain JSON: agents, their tools, skills, memory
+     * and hand-offs. It lives here rather than on the registry because three
+     * of those answers are the runner's: the fallback model, the skill
+     * catalogs behind `services`, and the context that resolves memory scopes.
+     */
+    describe(): Promise<Architecture> {
+        return describeArchitecture(this.registry, {
+            services: this.services,
+            defaultModel: this.#model,
+            context: this.#context,
+        });
     }
 
     /**

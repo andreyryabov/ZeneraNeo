@@ -31,20 +31,32 @@ export function page(report: RunReport, mermaidUrl: string): string {
       <button data-view="graph" class="on">Graph</button>
       <button data-view="detail">Detail</button>
       <button data-view="stats">Stats</button>
+      <button data-view="agents">Agents</button>
     </div>
-    <div id="graph">
-      <div class="gtools" id="gtools">
+    <div id="graph" class="pane">
+      <div class="gtools">
         <button data-zoom="out" title="zoom out">−</button>
         <button data-zoom="in" title="zoom in">+</button>
         <button data-zoom="fit" title="fit to window (double-click the canvas)">fit</button>
         <button data-zoom="reset" title="actual size">1:1</button>
         <span class="hint">scroll to zoom · drag to pan</span>
-        <span class="hint" id="zoomlvl">100%</span>
+        <span class="hint lvl">100%</span>
       </div>
-      <div id="gviewport"><div id="gcanvas"><div class="hint pad">rendering…</div></div></div>
+      <div class="viewport"><div class="canvas"><div class="hint pad">rendering…</div></div></div>
     </div>
     <div id="detail" hidden></div>
     <div id="stats" hidden></div>
+    <div id="agents" class="pane" hidden>
+      <div class="gtools">
+        <button data-zoom="out" title="zoom out">−</button>
+        <button data-zoom="in" title="zoom in">+</button>
+        <button data-zoom="fit" title="fit to window (double-click the canvas)">fit</button>
+        <button data-zoom="reset" title="actual size">1:1</button>
+        <span class="hint" id="alegend"></span>
+        <span class="hint lvl">100%</span>
+      </div>
+      <div class="viewport"><div class="canvas"><div class="hint pad">rendering…</div></div></div>
+    </div>
   </section>
 </main>
 <script id="run-data" type="application/json">${embedJson(report)}</script>

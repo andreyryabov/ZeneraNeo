@@ -189,7 +189,7 @@ async function main(): Promise<void> {
     line('◦', `first run untouched: ${res.state.trajectory.length} nodes`);
 
     step(5, 'Writing the report');
-    await report('project', res.state, runner.services.payloads, `Project · ${res.state.runId}`);
+    await report('project', res.state, runner, `Project · ${res.state.runId}`);
     line(' ', 'the first "skills" node is the preload — nothing in the transcript asked for it.');
 }
 

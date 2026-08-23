@@ -4,6 +4,7 @@ import pc from 'picocolors';
 import type { AgentEvent, RunStream } from '../src/events.ts';
 import { renderRunReport } from '../src/inspect/index.ts';
 import type { PayloadResolver } from '../src/payload.ts';
+import type { AgentRunner } from '../src/runner.ts';
 import type { AgentState, RunResult } from '../src/state.ts';
 import type { JoinNode } from '../src/trajectory.ts';
 
@@ -110,16 +111,23 @@ const OUT_DIR = new URL('../.out/', import.meta.url);
  * one: the terminal trace shows what happened, the report shows *why* — every
  * prompt, every payload and, when the runner was built with `recordRequests`,
  * the exact request behind each model call.
+ *
+ * It takes the runner rather than a payload store because the runner is also
+ * the only thing that can describe the wiring: the Agents tab draws what was
+ * declared, not just what this particular run happened to touch.
  */
 export async function report(
     name: string,
     state: AgentState,
-    payloads: PayloadResolver,
+    runner: AgentRunner<any>,
     title?: string,
 ): Promise<void> {
     await mkdir(OUT_DIR, { recursive: true });
     const file = new URL(`${name}.html`, OUT_DIR);
-    const html = await renderRunReport(state, payloads, { title: title ?? name });
+    const html = await renderRunReport(state, runner.services.payloads, {
+        title: title ?? name,
+        architecture: await runner.describe(),
+    });
     await writeFile(file, html, 'utf8');
     line('◈', `report → .out/${name}.html  (${(html.length / 1024).toFixed(0)} KB)`);
 }

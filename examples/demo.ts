@@ -181,8 +181,8 @@ async function test() {
 
     // 6. the same resolution, for a human: one HTML file per run
     step(6, 'Inspectable HTML report');
-    await report('demo', followUp.state, runner.services.payloads, 'Demo · conversation');
-    await report('demo-typed', typed.state, runner.services.payloads, 'Demo · typed run');
+    await report('demo', followUp.state, runner, 'Demo · conversation');
+    await report('demo-typed', typed.state, runner, 'Demo · typed run');
     console.log();
 }
 

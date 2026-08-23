@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildRunReport, renderRunReport } from '../src/inspect/index.ts';
+import { buildRunReport, renderReportHtml, renderRunReport } from '../src/inspect/index.ts';
 import type { Model, ModelRequest, ModelResponse } from '../src/model.ts';
 import { InMemoryPayloadStore } from '../src/payload-stores/in-memory.ts';
 import { PayloadResolver } from '../src/payload.ts';
@@ -80,6 +80,37 @@ describe('run inspector', () => {
         expect(html).toContain('flowchart TD');
     });
 
+    it('carries the declared architecture when the runner is asked for it', async () => {
+        const runner = new AgentRunner({ model: new ScriptModel() });
+        runner.agent({
+            name: 'worker',
+            instructions: 'WORKER',
+            tools: [echo],
+            handoffs: ['other'],
+        });
+        runner.agent({ name: 'other', instructions: 'OTHER' });
+        const res = await runner.run('worker', 'say hi').final();
+
+        const report = await buildRunReport(res.state, runner.services.payloads, {
+            architecture: await runner.describe(),
+        });
+        expect(report.architecture?.source).toBe('declared');
+        // 'other' was never handed to, so only the snapshot knows it exists.
+        expect(report.architecture?.agents.map((a) => a.name)).toEqual(['worker', 'other']);
+        expect(res.state.trajectory.some((n) => n.agent === 'other')).toBe(false);
+
+        const html = renderReportHtml(report);
+        expect(html).toContain('data-view="agents"');
+    });
+
+    it('renders the agents tab with no architecture to work from', async () => {
+        const payloads = new PayloadResolver(new InMemoryPayloadStore());
+        const state = { runId: 'r', trajectory: [] } as unknown as AgentState;
+        const html = await renderRunReport(state, payloads);
+        expect(html).toContain('data-view="agents"');
+        expect(html).toContain('observedArchitecture');
+    });
+
     it('truncates an oversized payload instead of inlining it', async () => {
         const payloads = new PayloadResolver(new InMemoryPayloadStore());
         const big = 'x'.repeat(5000);
@@ -89,6 +120,29 @@ describe('run inspector', () => {
         const report = await buildRunReport(state, payloads, { maxBlobBytes: 100 });
         expect(report.truncated).toEqual([ref.sha256]);
         expect(report.blobs[ref.sha256].length).toBe(100);
+    });
+
+    it('inlines an image once, however many turns re-send it', async () => {
+        const payloads = new PayloadResolver(new InMemoryPayloadStore());
+        const photo = 'data:image/png;base64,' + 'iVBORw0KGgo'.repeat(400);
+        // The same picture as the run holds it, and as two requests replay it.
+        const ref = await payloads.put(JSON.stringify({ url: photo, again: photo }));
+        const state = {
+            runId: 'r',
+            trajectory: [
+                { type: 'user_input', content: [{ type: 'image', url: photo }] },
+                { request: ref },
+            ],
+        } as unknown as AgentState;
+
+        const report = await buildRunReport(state, payloads, { maxBlobBytes: 2000 });
+        expect(report.media).toEqual([photo]);
+        expect(report.truncated).toEqual([]);
+        expect(report.blobs[ref.sha256]).toBe('{"url":"media:0","again":"media:0"}');
+        const input = report.state.trajectory[0] as unknown as {
+            content: { url: string }[];
+        };
+        expect(input.content[0].url).toBe('media:0');
     });
 
     it('cannot be escaped by payload content', async () => {

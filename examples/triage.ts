@@ -382,7 +382,7 @@ async function main(): Promise<void> {
     });
 
     step(5, 'Inspectable HTML report');
-    await report('triage', result.state, runner.services.payloads, 'Triage · INC-4417');
+    await report('triage', result.state, runner, 'Triage · INC-4417');
     console.log();
 }
 

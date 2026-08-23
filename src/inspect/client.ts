@@ -9,6 +9,7 @@ export const CLIENT = `
 const DATA = JSON.parse(document.getElementById('run-data').textContent);
 const STATE = DATA.state;
 const BLOBS = DATA.blobs;
+const MEDIA = DATA.media || [];
 const CUT = new Set(DATA.truncated || []);
 
 // --- payload access -------------------------------------------------------
@@ -130,6 +131,57 @@ function foldBlock(title, body) {
   const d = document.createElement('details');
   d.appendChild(el('summary', null, 'show'));
   d.appendChild(el('pre', null, body));
+  s.appendChild(d);
+  return s;
+}
+
+// An <img> never runs script, but the src is still pinned to shapes we
+// understand: a raster data: uri (svg is excluded on principle) or an http url.
+const IMG_SUBTYPES = ['png', 'jpeg', 'jpg', 'gif', 'webp', 'avif', 'bmp'];
+
+/** Undoes the report's media hoisting; anything else passes through. */
+function mediaUrl(u) {
+  if (typeof u !== 'string' || u.indexOf('media:') !== 0) return u;
+  const v = MEDIA[Number(u.slice(6))];
+  return v === undefined ? u : v;
+}
+
+function imageSrc(p) {
+  if (p.type !== 'image') return null;
+  const u = mediaUrl(p.url);
+  if (typeof u !== 'string') return null;
+  if (u.indexOf('https://') === 0 || u.indexOf('http://') === 0) return u;
+  if (u.indexOf('data:image/') !== 0) return null;
+  const sub = u.slice(11).split(/[;,]/)[0].toLowerCase();
+  return IMG_SUBTYPES.indexOf(sub) < 0 ? null : u;
+}
+
+/** The rendered picture, or null when the part is not one we will inline. */
+function imageEl(p, thumb) {
+  const src = imageSrc(p);
+  if (!src) return null;
+  const img = el('img', thumb ? 'media thumb' : 'media');
+  img.src = src;
+  img.alt = p.type + (p.mimeType ? ' ' + p.mimeType : '');
+  img.loading = 'lazy';
+  if (thumb) {
+    img.title = 'click to enlarge';
+    img.addEventListener('click', function () { img.classList.toggle('thumb'); });
+  }
+  return img;
+}
+
+function mediaBlock(title, p) {
+  const tag = p.type + (p.mimeType ? ' · ' + p.mimeType : '');
+  const src = imageSrc(p);
+  const img = imageEl(p, false);
+  if (!img) return textBlock(title, mediaUrl(p.url), tag);
+  const s = block(title, tag);
+  s.appendChild(img);
+  // The bytes stay reachable; they just no longer own the screen.
+  const d = document.createElement('details');
+  d.appendChild(el('summary', null, 'source'));
+  d.appendChild(el('pre', null, src));
   s.appendChild(d);
   return s;
 }
@@ -363,8 +415,9 @@ function message(m) {
 
   if (m.role === 'user' && Array.isArray(m.content)) {
     m.content.forEach(function (p) {
-      if (p.type === 'text') wrap.appendChild(el('pre', 'text', p.text));
-      else wrap.appendChild(el('pre', 'text', '[' + p.type + '] ' + p.url));
+      if (p.type === 'text') { wrap.appendChild(el('pre', 'text', p.text)); return; }
+      const img = imageEl(p, true);
+      wrap.appendChild(img || el('pre', 'text', '[' + p.type + '] ' + mediaUrl(p.url)));
     });
   } else if (typeof m.content === 'string' && m.content) {
     wrap.appendChild(el('pre', 'text', m.role === 'tool' ? pretty(m.content) : m.content));
@@ -446,7 +499,7 @@ function detailFor(e) {
       n.content.forEach(function (p, i) {
         out.appendChild(p.type === 'text'
           ? textBlock('Text part ' + (i + 1), blob(p.text))
-          : textBlock('Media part ' + (i + 1), p.url, p.type + (p.mimeType ? ' · ' + p.mimeType : '')));
+          : mediaBlock('Media part ' + (i + 1), p));
       });
       break;
 
@@ -732,111 +785,135 @@ function buildStats() {
 
 // --- views ----------------------------------------------------------------
 
+// Panes that hold a zoomable diagram, by view name. A pane laid out while it
+// was hidden has no width to fit against, so becoming visible is the moment it
+// gets a second chance.
+const PANES = {};
+
 function show(view) {
   document.getElementById('graph').hidden = view !== 'graph';
+  document.getElementById('agents').hidden = view !== 'agents';
   detailEl.hidden = view !== 'detail';
   statsEl.hidden = view !== 'stats';
   Array.prototype.forEach.call(document.getElementById('viewtabs').children, function (b) {
     b.classList.toggle('on', b.dataset.view === view);
   });
-  if (view === 'graph' && pendingFit) fit();
+  if (PANES[view]) PANES[view].refit();
 }
 Array.prototype.forEach.call(document.getElementById('viewtabs').children, function (b) {
   b.addEventListener('click', function () { show(b.dataset.view); });
 });
 
-// --- graph zoom and pan ---------------------------------------------------
+// --- zoom and pan ---------------------------------------------------------
 //
-// The diagram grows with the run, so a fixed scale is useless past a dozen
-// nodes. The canvas is moved with a CSS transform rather than scrolled: that
-// keeps zooming anchored on the pointer and costs no layout.
+// A diagram grows with what it describes, so a fixed scale is useless past a
+// dozen nodes. The canvas is moved with a CSS transform rather than scrolled:
+// that keeps zooming anchored on the pointer and costs no layout.
+//
+// Written as a factory because there are two of these — the run graph and the
+// architecture — and they must not share a scale, a pan or a drag.
 
-const viewportEl = document.getElementById('gviewport');
-const canvasEl = document.getElementById('gcanvas');
-const zoomEl = document.getElementById('zoomlvl');
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 4;
-let zoom = 1, panX = 0, panY = 0;
-let natW = 0, natH = 0;
-let pendingFit = false;
 
-function applyView() {
-  canvasEl.style.transform = 'translate(' + panX + 'px,' + panY + 'px) scale(' + zoom + ')';
-  zoomEl.textContent = Math.round(zoom * 100) + '%';
-}
+function panZoom(paneId) {
+  const pane = document.getElementById(paneId);
+  const viewportEl = pane.querySelector('.viewport');
+  const canvasEl = pane.querySelector('.canvas');
+  const zoomEl = pane.querySelector('.lvl');
+  let zoom = 1, panX = 0, panY = 0;
+  let natW = 0, natH = 0;
+  let pendingFit = false;
 
-function zoomAt(factor, cx, cy) {
-  const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom * factor));
-  const ratio = next / zoom;
-  // Keep the point under the cursor fixed while the scale changes.
-  panX = cx - (cx - panX) * ratio;
-  panY = cy - (cy - panY) * ratio;
-  zoom = next;
-  applyView();
-}
-
-function zoomCenter(factor) {
-  const r = viewportEl.getBoundingClientRect();
-  zoomAt(factor, r.width / 2, r.height / 2);
-}
-
-function fit() {
-  const r = viewportEl.getBoundingClientRect();
-  if (!r.width || !natW || !natH) { pendingFit = true; return; }
-  pendingFit = false;
-  zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM,
-    Math.min((r.width - 32) / natW, (r.height - 32) / natH)));
-  panX = (r.width - natW * zoom) / 2;
-  panY = Math.max(16, (r.height - natH * zoom) / 2);
-  applyView();
-}
-
-document.getElementById('gtools').addEventListener('click', function (ev) {
-  const what = ev.target.dataset ? ev.target.dataset.zoom : null;
-  if (what === 'in') zoomCenter(1.25);
-  else if (what === 'out') zoomCenter(1 / 1.25);
-  else if (what === 'fit') fit();
-  else if (what === 'reset') { zoom = 1; panX = 16; panY = 16; applyView(); }
-});
-
-viewportEl.addEventListener('wheel', function (ev) {
-  ev.preventDefault();
-  const r = viewportEl.getBoundingClientRect();
-  zoomAt(Math.exp(-ev.deltaY * 0.002), ev.clientX - r.left, ev.clientY - r.top);
-}, { passive: false });
-
-let dragging = false, dragMoved = false, startX = 0, startY = 0, baseX = 0, baseY = 0;
-
-viewportEl.addEventListener('pointerdown', function (ev) {
-  if (ev.button !== 0) return;
-  dragging = true; dragMoved = false;
-  startX = ev.clientX; startY = ev.clientY; baseX = panX; baseY = panY;
-});
-viewportEl.addEventListener('pointermove', function (ev) {
-  if (!dragging) return;
-  const dx = ev.clientX - startX, dy = ev.clientY - startY;
-  if (!dragMoved) {
-    if (Math.abs(dx) + Math.abs(dy) <= 4) return;
-    dragMoved = true;
-    // Captured only once this is a drag: capturing on pointerdown would
-    // retarget the following click to the viewport and no node would ever
-    // receive it.
-    viewportEl.setPointerCapture(ev.pointerId);
-    viewportEl.classList.add('drag');
+  function applyView() {
+    canvasEl.style.transform = 'translate(' + panX + 'px,' + panY + 'px) scale(' + zoom + ')';
+    zoomEl.textContent = Math.round(zoom * 100) + '%';
   }
-  panX = baseX + dx; panY = baseY + dy;
-  applyView();
-});
-function endDrag(ev) {
-  if (!dragging) return;
-  dragging = false;
-  viewportEl.classList.remove('drag');
-  if (viewportEl.hasPointerCapture(ev.pointerId)) viewportEl.releasePointerCapture(ev.pointerId);
+
+  function zoomAt(factor, cx, cy) {
+    const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom * factor));
+    const ratio = next / zoom;
+    // Keep the point under the cursor fixed while the scale changes.
+    panX = cx - (cx - panX) * ratio;
+    panY = cy - (cy - panY) * ratio;
+    zoom = next;
+    applyView();
+  }
+
+  function zoomCenter(factor) {
+    const r = viewportEl.getBoundingClientRect();
+    zoomAt(factor, r.width / 2, r.height / 2);
+  }
+
+  function fit() {
+    const r = viewportEl.getBoundingClientRect();
+    if (!r.width || !natW || !natH) { pendingFit = true; return; }
+    pendingFit = false;
+    zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM,
+      Math.min((r.width - 32) / natW, (r.height - 32) / natH)));
+    panX = (r.width - natW * zoom) / 2;
+    panY = Math.max(16, (r.height - natH * zoom) / 2);
+    applyView();
+  }
+
+  pane.querySelector('.gtools').addEventListener('click', function (ev) {
+    const what = ev.target.dataset ? ev.target.dataset.zoom : null;
+    if (what === 'in') zoomCenter(1.25);
+    else if (what === 'out') zoomCenter(1 / 1.25);
+    else if (what === 'fit') fit();
+    else if (what === 'reset') { zoom = 1; panX = 16; panY = 16; applyView(); }
+  });
+
+  viewportEl.addEventListener('wheel', function (ev) {
+    ev.preventDefault();
+    const r = viewportEl.getBoundingClientRect();
+    zoomAt(Math.exp(-ev.deltaY * 0.002), ev.clientX - r.left, ev.clientY - r.top);
+  }, { passive: false });
+
+  let dragging = false, dragMoved = false, startX = 0, startY = 0, baseX = 0, baseY = 0;
+
+  viewportEl.addEventListener('pointerdown', function (ev) {
+    if (ev.button !== 0) return;
+    dragging = true; dragMoved = false;
+    startX = ev.clientX; startY = ev.clientY; baseX = panX; baseY = panY;
+  });
+  viewportEl.addEventListener('pointermove', function (ev) {
+    if (!dragging) return;
+    const dx = ev.clientX - startX, dy = ev.clientY - startY;
+    if (!dragMoved) {
+      if (Math.abs(dx) + Math.abs(dy) <= 4) return;
+      dragMoved = true;
+      // Captured only once this is a drag: capturing on pointerdown would
+      // retarget the following click to the viewport and no node would ever
+      // receive it.
+      viewportEl.setPointerCapture(ev.pointerId);
+      viewportEl.classList.add('drag');
+    }
+    panX = baseX + dx; panY = baseY + dy;
+    applyView();
+  });
+  function endDrag(ev) {
+    if (!dragging) return;
+    dragging = false;
+    viewportEl.classList.remove('drag');
+    if (viewportEl.hasPointerCapture(ev.pointerId)) viewportEl.releasePointerCapture(ev.pointerId);
+  }
+  viewportEl.addEventListener('pointerup', endDrag);
+  viewportEl.addEventListener('pointercancel', endDrag);
+  viewportEl.addEventListener('dblclick', function () { fit(); });
+  window.addEventListener('resize', function () { if (pendingFit) fit(); });
+
+  return {
+    canvas: canvasEl,
+    setNatural: function (w, h) { natW = w; natH = h; fit(); },
+    refit: function () { if (pendingFit) fit(); },
+    // A pan that ends on a node must not be read as a click on it.
+    moved: function () { return dragMoved; }
+  };
 }
-viewportEl.addEventListener('pointerup', endDrag);
-viewportEl.addEventListener('pointercancel', endDrag);
-viewportEl.addEventListener('dblclick', function () { fit(); });
-window.addEventListener('resize', function () { if (pendingFit) fit(); });
+
+PANES.graph = panZoom('graph');
+PANES.agents = panZoom('agents');
 
 // --- diagram --------------------------------------------------------------
 
@@ -922,51 +999,328 @@ function diagram() {
   return lines.join('\\n');
 }
 
-async function drawGraph() {
-  let mermaid;
-  try {
-    mermaid = (await import(MERMAID_URL)).default;
-  } catch (err) {
-    canvasEl.replaceChildren(el('div', 'hint pad',
-      'Mermaid could not be loaded (offline?). The timeline on the left has the same nodes.'));
-    show('detail');
-    return;
+// One Mermaid, two diagrams. Loading it is the only network the page does, so
+// it happens once and both panes wait on the same promise.
+let mermaidLib = null;
+function mermaid() {
+  if (!mermaidLib) {
+    mermaidLib = import(MERMAID_URL).then(function (m) {
+      m.default.initialize({
+        startOnLoad: false, theme: 'dark', securityLevel: 'strict',
+        flowchart: { htmlLabels: false }
+      });
+      return m.default;
+    });
   }
-  mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'strict', flowchart: { htmlLabels: false } });
+  return mermaidLib;
+}
+
+/** Renders one diagram into a pane and wires its nodes. False when it failed. */
+async function draw(pane, id, source, onNode) {
+  let lib;
   try {
-    const rendered = await mermaid.render('run-graph', diagram());
+    lib = await mermaid();
+  } catch (err) {
+    pane.canvas.replaceChildren(el('div', 'hint pad',
+      'Mermaid could not be loaded (offline?). The timeline on the left has the same nodes.'));
+    return false;
+  }
+  try {
+    const rendered = await lib.render(id, source);
     // Mermaid produced this markup from labels we sanitized above; no payload
     // text reaches it.
-    canvasEl.innerHTML = rendered.svg;
+    pane.canvas.innerHTML = rendered.svg;
   } catch (err) {
-    canvasEl.replaceChildren(el('pre', null, 'diagram failed: ' + err.message + '\\n\\n' + diagram()));
-    return;
+    pane.canvas.replaceChildren(el('pre', null, 'diagram failed: ' + err.message + '\\n\\n' + source));
+    return false;
   }
-  const svg = canvasEl.querySelector('svg');
+  const svg = pane.canvas.querySelector('svg');
   if (svg) {
     // Mermaid sizes the SVG to fit its container; we want its natural size so
     // the transform above is the only thing deciding scale.
     const box = svg.viewBox && svg.viewBox.baseVal;
-    natW = (box && box.width) || svg.getBoundingClientRect().width;
-    natH = (box && box.height) || svg.getBoundingClientRect().height;
+    const w = (box && box.width) || svg.getBoundingClientRect().width;
+    const h = (box && box.height) || svg.getBoundingClientRect().height;
     svg.removeAttribute('width');
     svg.removeAttribute('height');
     svg.style.maxWidth = 'none';
-    svg.style.width = natW + 'px';
-    svg.style.height = natH + 'px';
+    svg.style.width = w + 'px';
+    svg.style.height = h + 'px';
+    pane.setNatural(w, h);
   }
-  fit();
-  canvasEl.querySelectorAll('.node').forEach(function (g) {
+  pane.canvas.querySelectorAll('.node').forEach(onNode);
+  return true;
+}
+
+async function drawGraph() {
+  const ok = await draw(PANES.graph, 'run-graph', diagram(), function (g) {
     // Mermaid ids are '<renderId>-flowchart-<ourKey>-<seq>'; only the key matters.
     const m = /-(n\\d+)-\\d+$/.exec(g.id || '');
     const key = m ? m[1] : null;
     if (!key || !BY_KEY.has(key)) return;
-    // A pan that ends on a node must not be read as a click on it.
-    g.addEventListener('click', function () { if (!dragMoved) select(key, true); });
+    g.addEventListener('click', function () { if (!PANES.graph.moved()) select(key, true); });
+  });
+  if (!ok) show('detail');
+}
+
+// --- architecture ---------------------------------------------------------
+//
+// The run graph answers "what happened". This one answers "what was wired up",
+// which is the question a trajectory structurally cannot: the agent nobody
+// handed off to and the tool nobody called leave no node behind. The declared
+// wiring arrives with the report when a runner was there to describe itself;
+// otherwise the run is read backwards into the same shape, which is smaller
+// but never wrong.
+
+const SEP = '::';
+
+function bump(map, key, entryKey) {
+  const cur = map.get(key);
+  if (cur) { cur.count += 1; return; }
+  map.set(key, { count: 1, key: entryKey });
+}
+
+// What this run actually exercised, keyed the same way the diagram names
+// things — so drawing "used" is a lookup rather than a search.
+const USED = {
+  agents: new Map(), models: new Map(), tools: new Map(),
+  skills: new Map(), handoffs: new Map(), memory: new Map(), forks: new Map()
+};
+
+ENTRIES.forEach(function (e) {
+  const n = e.node;
+  bump(USED.agents, n.agent, e.key);
+  if (n.type === 'llm_call') {
+    if (!USED.models.has(n.agent)) USED.models.set(n.agent, n.model);
+  } else if (n.type === 'tool_call') {
+    bump(USED.tools, n.agent + SEP + n.name, e.key);
+  } else if (n.type === 'load_skills') {
+    n.skills.forEach(function (s) { bump(USED.skills, n.agent + SEP + s.name, e.key); });
+  } else if (n.type === 'handoff') {
+    bump(USED.handoffs, n.from + SEP + n.to, e.key);
+  } else if (n.type === 'memory_recall' || n.type === 'memory_op') {
+    bump(USED.memory, n.agent + SEP + n.store + '/' + n.scope, e.key);
+  } else if (n.type === 'fork') {
+    n.branches.forEach(function (b) { bump(USED.forks, n.agent + SEP + b.agent, e.key); });
+  }
+});
+
+function has(list, name) {
+  return list.some(function (x) { return x.name === name; });
+}
+
+/** The run read backwards into the same shape. Used when none was supplied. */
+function observedArchitecture() {
+  const byName = new Map();
+  function agentOf(name) {
+    if (!byName.has(name)) {
+      byName.set(name, { name: name, tools: [], handoffs: [], memory: [] });
+    }
+    return byName.get(name);
+  }
+  ENTRIES.forEach(function (e) {
+    const n = e.node;
+    const a = agentOf(n.agent);
+    if (n.type === 'llm_call') {
+      if (!a.model) a.model = n.model;
+    } else if (n.type === 'tool_call') {
+      // Handoff tools are drawn as edges between agents, never as tool nodes.
+      const handoff = n.name.indexOf('transfer_to_') === 0;
+      if (!handoff && !has(a.tools, n.name)) a.tools.push({ name: n.name });
+    } else if (n.type === 'load_skills') {
+      if (!a.skills) a.skills = { provider: n.provider, discovery: 'index', catalog: [] };
+      n.skills.forEach(function (s) {
+        if (has(a.skills.catalog, s.name)) return;
+        // The unlocked tools are recorded per activation, not per skill, so
+        // they can only be attributed when one skill loaded on its own.
+        a.skills.catalog.push({
+          name: s.name, version: s.version,
+          toolNames: n.skills.length === 1 ? n.toolNames : undefined
+        });
+      });
+    } else if (n.type === 'handoff') {
+      const from = agentOf(n.from);
+      agentOf(n.to);
+      if (from.handoffs.indexOf(n.to) < 0) from.handoffs.push(n.to);
+    } else if (n.type === 'memory_recall' || n.type === 'memory_op') {
+      const known = a.memory.some(function (m) {
+        return m.store === n.store && m.scope === n.scope;
+      });
+      if (!known) {
+        a.memory.push({
+          store: n.store, scope: n.scope,
+          access: n.type === 'memory_op' ? 'read-write' : 'read'
+        });
+      }
+    } else if (n.type === 'fork') {
+      if (!a.fork) a.fork = { agents: [] };
+      n.branches.forEach(function (b) {
+        agentOf(b.agent);
+        if (a.fork.agents.indexOf(b.agent) < 0) a.fork.agents.push(b.agent);
+      });
+    }
+  });
+  return { source: 'observed', agents: Array.from(byName.values()) };
+}
+
+const ARCH = DATA.architecture || observedArchitecture();
+
+// Diagram key -> the first trajectory node that exercised the thing it names,
+// or null when nothing did. Clicking is only offered for the former.
+const ARCH_KEYS = new Map();
+let archSeq = 0;
+function archKey(used) {
+  const k = 'x' + archSeq++;
+  ARCH_KEYS.set(k, used ? used.key : null);
+  return k;
+}
+
+/** An agent with more tools than this gets a "+N more" node instead of a wall. */
+const MAX_TOOLS = 12;
+
+function times(used) {
+  return used ? ' x' + used.count : '';
+}
+
+function archDiagram() {
+  const lines = ['flowchart LR'];
+  lines.push('  classDef agent fill:#1e3357,stroke:#3d5f9e,color:#cfe0ff;');
+  lines.push('  classDef start fill:#14392c,stroke:#2f7a5c,color:#c6f5e0;');
+  lines.push('  classDef tool fill:#1e3d33,stroke:#3d7a66,color:#c8f0e2;');
+  lines.push('  classDef skill fill:#3a2450,stroke:#6b4b90,color:#e6d3ff;');
+  lines.push('  classDef mem fill:#40331a,stroke:#7a6535,color:#f0dfb4;');
+  lines.push('  classDef more fill:#1b202c,stroke:#39415a,color:#8a92a6;');
+  lines.push('  classDef idle opacity:0.4,stroke-dasharray:4 3;');
+
+  const startAgent = (STATE.spec && STATE.spec.startAgent) || STATE.agentName;
+  const selfKey = new Map();
+  // Minted up front so a hand-off can name an agent declared further down.
+  ARCH.agents.forEach(function (a) {
+    selfKey.set(a.name, archKey(USED.agents.get(a.name)));
+  });
+
+  ARCH.agents.forEach(function (a) {
+    const self = selfKey.get(a.name);
+    const live = USED.agents.get(a.name);
+    // The model on the node is the declared one, or — when the report carries
+    // no wiring — whatever this run was seen using.
+    const model = a.model || USED.models.get(a.name);
+    lines.push('  subgraph sg_' + self + '["' + safe(a.name)
+      + (a.description ? ' - ' + safe(a.description) : '') + '"]');
+    lines.push('  direction LR');
+    lines.push('  ' + self + '[["' + safe(a.name)
+      + (model ? '   ' + safe(model) + (a.inheritedModel ? ' (inherited)' : '') : '')
+      + '"]]');
+    lines.push('  class ' + self + ' ' + (a.name === startAgent ? 'start' : 'agent') + ';');
+    if (!live) lines.push('  class ' + self + ' idle;');
+
+    // Skills first: a skill owns tools, so its node has to exist before the
+    // tools it unlocks can point back at it.
+    const skillKey = new Map();
+    const catalog = (a.skills && a.skills.catalog) || [];
+    catalog.forEach(function (s) {
+      const used = USED.skills.get(a.name + SEP + s.name);
+      const k = archKey(used);
+      skillKey.set(s.name, k);
+      lines.push('  ' + k + '(["' + safe(s.name) + (s.preload ? ' (preloaded)' : '')
+        + times(used) + '"])');
+      lines.push('  class ' + k + ' skill;');
+      if (!used) lines.push('  class ' + k + ' idle;');
+      lines.push('  ' + self + ' --- ' + k);
+    });
+    if (a.skills && a.skills.unresolved) {
+      const k = archKey(null);
+      lines.push('  ' + k + '(["catalog unavailable: ' + safe(a.skills.provider) + '"])');
+      lines.push('  class ' + k + ' skill;');
+      lines.push('  class ' + k + ' idle;');
+      lines.push('  ' + self + ' --- ' + k);
+    }
+
+    const shown = a.tools.slice(0, MAX_TOOLS);
+    shown.forEach(function (t) {
+      const used = USED.tools.get(a.name + SEP + t.name);
+      const k = archKey(used);
+      lines.push('  ' + k + '["' + safe(t.name) + times(used) + '"]');
+      lines.push('  class ' + k + ' tool;');
+      if (!used) lines.push('  class ' + k + ' idle;');
+      // A skill-owned tool hangs off the skill that unlocks it, not off the
+      // agent: that edge is the whole point of a locked tool.
+      const owner = t.skill ? skillKey.get(t.skill) : null;
+      if (owner) lines.push('  ' + owner + ' -.-> ' + k);
+      else lines.push('  ' + self + ' --- ' + k);
+    });
+    if (a.tools.length > shown.length) {
+      const k = archKey(null);
+      lines.push('  ' + k + '["+' + (a.tools.length - shown.length) + ' more tools"]');
+      lines.push('  class ' + k + ' more;');
+      lines.push('  ' + self + ' --- ' + k);
+    }
+
+    a.memory.forEach(function (m) {
+      const used = USED.memory.get(a.name + SEP + m.store + '/' + m.scope);
+      const k = archKey(used);
+      lines.push('  ' + k + '[("' + safe(m.store) + ' / ' + safe(m.scope)
+        + (m.access === 'read-write' ? ' (rw)' : ' (ro)') + '")]');
+      lines.push('  class ' + k + ' mem;');
+      if (!used) lines.push('  class ' + k + ' idle;');
+      lines.push('  ' + self + ' --- ' + k);
+    });
+    lines.push('  end');
+    // Mermaid's default subgraph is a light box, which on a dark page reads as
+    // the foreground rather than as the container. An agent nobody entered is
+    // outlined rather than filled, so a dead corner of the wiring is visible
+    // from across the diagram.
+    lines.push('  style sg_' + self + ' fill:#12151d,color:#8a92a6,stroke:'
+      + (live ? '#39415a;' : '#2b3346,stroke-dasharray:5 4;'));
+  });
+
+  // Edges between agents live outside every subgraph, so Mermaid routes them
+  // between the boxes instead of trying to keep them inside one.
+  ARCH.agents.forEach(function (a) {
+    const self = selfKey.get(a.name);
+    a.handoffs.forEach(function (to) {
+      if (!selfKey.has(to)) return;
+      const used = USED.handoffs.get(a.name + SEP + to);
+      lines.push('  ' + self + (used ? ' -- "handoff' + times(used) + '" --> ' : ' -.-> ')
+        + selfKey.get(to));
+    });
+    ((a.fork && a.fork.agents) || []).forEach(function (to) {
+      if (!selfKey.has(to) || to === a.name) return;
+      const used = USED.forks.get(a.name + SEP + to);
+      lines.push('  ' + self + ' == "fork' + times(used) + '" ==> ' + selfKey.get(to));
+    });
+  });
+  return lines.join('\\n');
+}
+
+function archLegend() {
+  const agents = ARCH.agents.length;
+  const tools = ARCH.agents.reduce(function (n, a) { return n + a.tools.length; }, 0);
+  const skills = ARCH.agents.reduce(function (n, a) {
+    return n + ((a.skills && a.skills.catalog.length) || 0);
+  }, 0);
+  const idle = ARCH.agents.filter(function (a) { return !USED.agents.has(a.name); }).length;
+  return (ARCH.source === 'declared' ? 'declared' : 'observed only')
+    + ' \\u00b7 ' + agents + ' agents \\u00b7 ' + tools + ' tools \\u00b7 ' + skills + ' skills'
+    + (idle ? ' \\u00b7 ' + idle + ' idle' : '')
+    + ' \\u00b7 dimmed = unused \\u00b7 click to jump';
+}
+
+async function drawArch() {
+  document.getElementById('alegend').textContent = archLegend();
+  if (!ARCH.agents.length) {
+    PANES.agents.canvas.replaceChildren(el('div', 'hint pad', 'No agents to draw.'));
+    return;
+  }
+  await draw(PANES.agents, 'arch-graph', archDiagram(), function (g) {
+    const m = /-(x\\d+)-\\d+$/.exec(g.id || '');
+    const key = m && ARCH_KEYS.get(m[1]);
+    if (!key) return;
+    g.addEventListener('click', function () { if (!PANES.agents.moved()) select(key, true); });
   });
 }
 
-drawGraph();
+drawGraph().then(drawArch);
 buildStats();
 if (ENTRIES.length) select('n0', false);
 `;

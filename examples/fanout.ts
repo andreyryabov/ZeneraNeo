@@ -271,7 +271,7 @@ async function main(): Promise<void> {
     });
 
     step(5, 'Inspectable HTML report');
-    await report('fanout', result.state, runner.services.payloads, 'Fan-out · fleet audit');
+    await report('fanout', result.state, runner, 'Fan-out · fleet audit');
     console.log();
 }
 

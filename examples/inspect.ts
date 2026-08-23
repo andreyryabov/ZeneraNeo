@@ -91,12 +91,7 @@ async function main(): Promise<void> {
     stats({ turns: turns(res.state), nodes: res.state.trajectory.length, ...res.usage });
 
     step(2, 'Writing the report');
-    await report(
-        'inspect',
-        res.state,
-        runner.services.payloads,
-        `Investigation · ${res.state.runId}`,
-    );
+    await report('inspect', res.state, runner, `Investigation · ${res.state.runId}`);
     line(' ', 'open it and click a node in the graph to see exactly what the model was sent.');
 }
 

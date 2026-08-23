@@ -164,7 +164,7 @@ async function main(): Promise<void> {
     }
 
     step(3, 'Writing the report');
-    await report('handbook', res.state, runner.services.payloads, `Handbook · ${res.state.runId}`);
+    await report('handbook', res.state, runner, `Handbook · ${res.state.runId}`);
     line(' ', 'open a "system prompt" node to see each file beside the text it contributed,');
     line(' ', 'and the "skills" node to see the file each skill was loaded from.');
 }

@@ -245,12 +245,7 @@ async function main(): Promise<void> {
     line(' ', 'duty_quote appears twice: two skills unlock it, either one is enough.');
 
     step(4, 'Writing the report');
-    await report(
-        'locked',
-        res.state,
-        runner.services.payloads,
-        `Locked tools · ${res.state.runId}`,
-    );
+    await report('locked', res.state, runner, `Locked tools · ${res.state.runId}`);
     line(' ', 'open the failed tool_result to see the refusal the model recovered from,');
     line(' ', 'and any llm_call to see the tool array it was sent — identical on every turn.');
 }

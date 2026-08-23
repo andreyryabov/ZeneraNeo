@@ -1,4 +1,5 @@
 export * from './agent.ts';
+export * from './architecture.ts';
 export * from './events.ts';
 export * from './ids.ts';
 export * from './inspect/index.ts';
@@ -18,4 +19,3 @@ export * from './skills.ts';
 export * from './state.ts';
 export * from './trajectory.ts';
 export * from './types.ts';
-

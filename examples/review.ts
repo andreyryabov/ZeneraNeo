@@ -472,7 +472,7 @@ async function main(): Promise<void> {
 
     step(7, 'Inspectable HTML report');
     // One report for the whole session: both turns, the fork, and every branch.
-    await report('review', result.state, runner.services.payloads, 'Review · RFC-118');
+    await report('review', result.state, runner, 'Review · RFC-118');
     console.log();
 }
 
