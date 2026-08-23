@@ -234,21 +234,57 @@ function candidateParts(res: GenerateContentResponse): Part[] {
  * The role vocabulary is `user` and `model`, with tool results carried as
  * `functionResponse` parts inside a *user* turn — so, as with Anthropic,
  * adjacent turns of the same role are merged rather than emitted one per
- * message.
+ * message. The user side is buffered rather than merged in place, because
+ * Gemini constrains the shape of the turn answering a set of tool calls in two
+ * ways that the message order does not respect on its own: see `flushUser`.
  */
 function toContents(messages: Message[]): Content[] {
     const out: Content[] = [];
+    let results: Part[] = [];
+    let plain: Part[] = [];
 
-    const push = (role: 'user' | 'model', parts: Part[]): void => {
+    /**
+     * Emits the pending user turn, tool results first and on their own.
+     *
+     * Every `functionResponse` answering one model turn has to arrive in a
+     * single `Content` holding nothing else. Both halves of that are enforced
+     * by the API and neither is hypothetical here: a `load_skills` node lands
+     * between the `skill_load` result and the results of the calls issued
+     * alongside it, which naively yields `[response][text][response]` and
+     * breaks the rule twice over. The API's two complaints are worth writing
+     * down, since neither describes what is actually wrong:
+     *
+     * - splitting the responses gets `Please ensure that the number of function
+     *   response parts is equal to the number of function call parts`
+     * - mixing text in with them gets `Requests ending with a model turn are
+     *   not supported`
+     *
+     * Deferring the text to a turn of its own satisfies both. Nothing is lost:
+     * the parts still sit between the same two model turns, in the same order
+     * relative to everything the model reads as prose.
+     */
+    const flushUser = (): void => {
+        if (results.length) {
+            out.push({ role: 'user', parts: results });
+            results = [];
+        }
+        if (plain.length) {
+            out.push({ role: 'user', parts: plain });
+            plain = [];
+        }
+    };
+
+    const pushModel = (parts: Part[]): void => {
         if (!parts.length) {
             return;
         }
+        flushUser();
         const last = out.at(-1);
-        if (last?.role === role) {
+        if (last?.role === 'model') {
             last.parts?.push(...parts);
             return;
         }
-        out.push({ role, parts });
+        out.push({ role: 'model', parts });
     };
 
     for (const m of messages) {
@@ -257,10 +293,10 @@ function toContents(messages: Message[]): Content[] {
                 // A mid-conversation system message is a memory recall, and
                 // hoisting it into `systemInstruction` would move it away from
                 // the point it was injected at. A user turn keeps the position.
-                push('user', [{ text: m.content }]);
+                plain.push({ text: m.content });
                 break;
             case 'user':
-                push('user', m.content.map(toPart));
+                plain.push(...m.content.map(toPart));
                 break;
             case 'assistant': {
                 const parts: Part[] = [];
@@ -281,25 +317,24 @@ function toContents(messages: Message[]): Content[] {
                         thoughtSignature: c.signature,
                     });
                 }
-                push('model', parts);
+                pushModel(parts);
                 break;
             }
             case 'tool':
-                push('user', [
-                    {
-                        functionResponse: {
-                            id: wireId(m.callId),
-                            name: m.name,
-                            // The API wants an object, not a string. `output`
-                            // and `error` are the conventional keys, and the
-                            // distinction is otherwise lost.
-                            response: m.isError ? { error: m.content } : { output: m.content },
-                        },
+                results.push({
+                    functionResponse: {
+                        id: wireId(m.callId),
+                        name: m.name,
+                        // The API wants an object, not a string. `output`
+                        // and `error` are the conventional keys, and the
+                        // distinction is otherwise lost.
+                        response: m.isError ? { error: m.content } : { output: m.content },
                     },
-                ]);
+                });
                 break;
         }
     }
+    flushUser();
     return out;
 }
 
