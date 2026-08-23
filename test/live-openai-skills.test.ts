@@ -339,7 +339,7 @@ live('openai live locked skill tools', () => {
             model: createModel({
                 model: 'gpt-5-nano',
                 api: 'responses',
-                reasoningEffort: 'minimal',
+                reasoningEffort: 'low',
             }),
             skills: [skills],
             stream: false,

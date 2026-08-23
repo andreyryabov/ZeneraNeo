@@ -12,6 +12,7 @@ coverage/
 .vitest/
 
 # Environment
+.keys
 .env
 .env.*
 !.env.example
