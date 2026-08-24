@@ -20,6 +20,9 @@
         "clean": "tsc -b --clean && rm -rf dist"
     },
     "dependencies": {
+        "@inkjs/ui": "^2.0.0",
+        "ink": "^7.1.1",
+        "react": "^19.2.8",
         "zenera-neo": "0.1.0"
     },
     "peerDependencies": {

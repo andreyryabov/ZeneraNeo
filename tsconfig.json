@@ -6,10 +6,16 @@
     "extends": "./tsconfig.base.json",
     "compilerOptions": {
         "composite": false,
-        "noEmit": true
+        "noEmit": true,
+        // Only the CLI's drawing surface is JSX, but this program covers it too,
+        // so the setting has to be here as well as in packages/cli.
+        "jsx": "react-jsx",
+        "jsxImportSource": "react",
+        "types": ["node", "react"]
     },
     "include": [
         "packages/*/src/**/*.ts",
+        "packages/*/src/**/*.tsx",
         "packages/*/test/**/*.ts",
         "examples/**/*.ts",
         "vitest.config.ts"
