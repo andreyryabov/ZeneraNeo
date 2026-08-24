@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // ---------------------------------------------------------------------------
@@ -103,6 +103,32 @@ export function editorSettings(dir: string): string | undefined {
     return rel;
 }
 
+// ---------------------------------------------------------------------------
+// The other half of the editor story
+//
+// `AGENTS.md` is switched off above because it addresses the *project's*
+// agents. The editor's assistant still needs a brief of its own, and what it
+// needs to know is how this kind of project is put together — the file formats,
+// how a prompt is written, when to add a skill rather than an agent. That is
+// one long document, kept as a file rather than a template literal in here:
+// it is full of backticks and `${...}` examples, which a TS template literal
+// cannot hold without escaping every one of them into illegibility.
+// ---------------------------------------------------------------------------
+
+const COPILOT_TEMPLATE = new URL('../templates/copilot-instructions.md', import.meta.url);
+
+/**
+ * Writes `.github/copilot-instructions.md` under `dir` unless one is already
+ * there. Returns the relative path when it wrote one.
+ */
+export function copilotInstructions(dir: string): string | undefined {
+    const rel = join('.github', 'copilot-instructions.md');
+    if (existsSync(join(dir, rel))) return undefined;
+    mkdirSync(join(dir, '.github'), { recursive: true });
+    writeFileSync(join(dir, rel), readFileSync(COPILOT_TEMPLATE, 'utf8'), { flag: 'wx' });
+    return rel;
+}
+
 export interface ScaffoldOptions {
     /** the version directory, e.g. <project>/v1 */
     dir: string;
@@ -131,7 +157,8 @@ export function scaffold(opts: ScaffoldOptions): string[] {
 
     // The version directory is what `zen open` opens, so this is the copy that
     // matters most: here, AGENTS.md *is* the workspace root's.
-    const settings = editorSettings(opts.dir);
-    if (settings !== undefined) written.push(settings);
+    for (const rel of [editorSettings(opts.dir), copilotInstructions(opts.dir)]) {
+        if (rel !== undefined) written.push(rel);
+    }
     return written;
 }

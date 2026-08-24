@@ -11,7 +11,8 @@
         "zenera": "./dist/main.js"
     },
     "files": [
-        "dist"
+        "dist",
+        "templates"
     ],
     "engines": {
         "node": ">=24"

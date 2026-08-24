@@ -5,7 +5,7 @@ import type { Command } from '../command.ts';
 import { ensureHome } from '../home.ts';
 import { KeyStore, PROVIDERS, SHAPES } from '../keys.ts';
 import { META, Registry, nextVersion, readMeta, writeMeta } from '../projects.ts';
-import { editorSettings, scaffold } from '../scaffold.ts';
+import { copilotInstructions, editorSettings, scaffold } from '../scaffold.ts';
 import { bold, cyan, dim, green, invalidError, json, note, usageError, write } from '../term.ts';
 
 const USAGE = 'zen init [dir] [--name <name>] [--model <ref>] [--force]';
@@ -41,7 +41,9 @@ export const init: Command = {
     usage: USAGE,
     details: [
         'Writes AGENTS.md, agents.yaml and agents/ into v1, then records the',
-        'directory so `zen list` and `zen go` can find it by name.',
+        'directory so `zen list` and `zen go` can find it by name. Editor files',
+        '(.vscode/settings.json, .github/copilot-instructions.md) are written',
+        'alongside, and never overwritten.',
     ],
     run: async (ctx) => {
         const { values, positionals } = parse<Flags>(
@@ -73,10 +75,10 @@ export const init: Command = {
 
         // A second copy at the top, for `zen open --root` and for anyone who
         // opens the project rather than the version: the editor only reads the
-        // settings of the folder it was opened on.
+        // settings and instructions of the folder it was opened on.
         const files = [META, ...written.map((f) => join(version, f))];
-        const root = editorSettings(dir);
-        if (root !== undefined) files.splice(1, 0, root);
+        const root = [editorSettings(dir), copilotInstructions(dir)].filter((f) => f !== undefined);
+        files.splice(1, 0, ...root);
 
         const registry = await Registry.open();
         registry.add(name, dir);
