@@ -4,7 +4,7 @@ import { join } from 'node:path';
 // ---------------------------------------------------------------------------
 // Scaffolding
 //
-// What `zn init` writes. Deliberately close to empty: a template full of
+// What `zen init` writes. Deliberately close to empty: a template full of
 // commented-out options is a template nobody reads and everybody deletes. The
 // one agent here works as written, and every other knob is in `docs/`.
 // ---------------------------------------------------------------------------

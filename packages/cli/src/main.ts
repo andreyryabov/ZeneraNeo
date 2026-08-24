@@ -7,14 +7,14 @@ import { cliManifest, versionOf } from './commands/version.ts';
 import { CliError, EXIT, bold, cyan, dim, fail, note, pad, write } from './term.ts';
 
 // ---------------------------------------------------------------------------
-// zn — the command line over `zenera-neo`
+// zen — the command line over `zenera-neo`
 //
 // A shell, deliberately. Argument parsing, help, version and exit codes are
 // settled here so that adding a command is a matter of writing one function and
 // naming it in `COMMANDS` — nothing about the frame has to be revisited.
 //
 // Only the drawing surface has a dependency, and it is behind a dynamic import
-// inside `run`. Everything on this path is Node's own, which is why `zn --help`
+// inside `run`. Everything on this path is Node's own, which is why `zen --help`
 // starts instantly and why the CLI adds no weight to the library.
 // ---------------------------------------------------------------------------
 
@@ -40,7 +40,7 @@ async function main(argv: readonly string[]): Promise<number> {
             allowPositionals: false,
         }).values;
     } catch (e) {
-        fail((e as Error).message, `run ${bold('zn --help')} for the options`);
+        fail((e as Error).message, `run ${bold('zen --help')} for the options`);
         return EXIT.usage;
     }
 
@@ -62,7 +62,7 @@ async function main(argv: readonly string[]): Promise<number> {
     const name = ALIASES[parts.name] ?? parts.name;
     const command = COMMANDS[name];
     if (!command) {
-        fail(`unknown command "${parts.name}"`, `run ${bold('zn --help')} for the list`);
+        fail(`unknown command "${parts.name}"`, `run ${bold('zen --help')} for the list`);
         return EXIT.usage;
     }
     if (values.help) {
@@ -108,8 +108,8 @@ function usage(name?: string): void {
         return;
     }
 
-    write(`${bold('zn')} ${dim('— run agent projects from the command line')}`);
-    write(`\n${bold('Usage')}\n  zn <command> [options]`);
+    write(`${bold('zen')} ${dim('— run agent projects from the command line')}`);
+    write(`\n${bold('Usage')}\n  zen <command> [options]`);
     write(`\n${bold('Commands')}`);
     const width = Math.max(...Object.keys(COMMANDS).map((k) => k.length));
     for (const [key, cmd] of Object.entries(COMMANDS)) {
@@ -120,7 +120,7 @@ function usage(name?: string): void {
     write(`  -v, --version       ${dim('Print the version.')}`);
     write(`      --json          ${dim('Machine-readable output.')}`);
     write(`  -C, --directory <d> ${dim('Act as if run in <d>.')}`);
-    write(`\n${dim(`Start with ${cyan('zn init')}, then ${cyan('zn run')}.`)}`);
+    write(`\n${dim(`Start with ${cyan('zen init')}, then ${cyan('zen run')}.`)}`);
 }
 
 process.exitCode = await main(process.argv.slice(2));

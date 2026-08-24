@@ -7,7 +7,7 @@ import { target } from '../resolve.ts';
 import { display } from '../session.ts';
 import { bold, cyan, dim, json, note, readStdin, usageError, write } from '../term.ts';
 
-const USAGE = 'zn run [prompt] [options]';
+const USAGE = 'zen run [prompt] [options]';
 
 interface Flags {
     project?: string;

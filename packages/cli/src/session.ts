@@ -139,7 +139,7 @@ export function newestSession(versionDir: string): string | undefined {
 export function requireSession(versionDir: string, id: string): SessionPaths {
     const p = sessionPaths(versionDir, id);
     if (!existsSync(p.dir)) {
-        throw invalidError(`no session ${id}`, 'see: zn list --sessions');
+        throw invalidError(`no session ${id}`, 'see: zen list --sessions');
     }
     return p;
 }
@@ -168,7 +168,7 @@ export function acquire(p: SessionPaths): Held {
     const body = `${JSON.stringify(lock, null, 2)}\n`;
     try {
         // 'wx' fails when the file exists — the create and the check are one
-        // operation, so two `zn run`s racing cannot both win.
+        // operation, so two `zen run`s racing cannot both win.
         writeFileSync(p.lock, body, { flag: 'wx' });
     } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {

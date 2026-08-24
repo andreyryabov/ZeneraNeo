@@ -38,7 +38,7 @@ import {
     yellow,
 } from '../term.ts';
 
-const USAGE = 'zn key <ls|add|use|check|rm|show|env> [ref] [options]';
+const USAGE = 'zen key <ls|add|use|check|rm|show|env> [ref] [options]';
 
 // ---------------------------------------------------------------------------
 // Display
@@ -108,7 +108,7 @@ const ls: Sub = async (ctx, args) => {
 
     if (store.entries.length === 0) {
         note('the keyring is empty');
-        note(dim('add one: zn key add openai'));
+        note(dim('add one: zen key add openai'));
         return;
     }
     writeAll(rows(store));
@@ -129,7 +129,7 @@ const add: Sub = async (ctx, args) => {
     const { values, positionals } = parse<{ name?: string; 'no-check'?: boolean }>(
         args,
         { name: { type: 'string' }, 'no-check': { type: 'boolean' } },
-        'zn key add <provider>[/name] [--name <name>] [--no-check]',
+        'zen key add <provider>[/name] [--name <name>] [--no-check]',
     );
 
     const ref = positionals[0];
@@ -162,7 +162,7 @@ const add: Sub = async (ctx, args) => {
 
     // Verified before it is trusted, but stored either way: a key that cannot
     // be checked right now — offline, behind a proxy — is not a key that is
-    // wrong, and refusing to save it would make `zn key add` fail on a plane.
+    // wrong, and refusing to save it would make `zen key add` fail on a plane.
     if (!values['no-check']) {
         const check = await probe(store, entry);
         store.record(entry, check);
@@ -195,10 +195,10 @@ async function promptFor(holds: 'secret' | 'file', label: string, where: string)
 }
 
 const use: Sub = async (ctx, args) => {
-    const { positionals } = parse(args, {}, 'zn key use <provider>/<name>');
+    const { positionals } = parse(args, {}, 'zen key use <provider>/<name>');
     const ref = positionals[0];
     if (!ref) {
-        throw usageError('which key?', 'see: zn key ls');
+        throw usageError('which key?', 'see: zen key ls');
     }
     const { provider, name } = parseRef(ref);
     if (!name) {
@@ -215,7 +215,7 @@ const use: Sub = async (ctx, args) => {
 };
 
 const check: Sub = async (ctx, args) => {
-    const { positionals } = parse(args, {}, 'zn key check [provider[/name]]');
+    const { positionals } = parse(args, {}, 'zen key check [provider[/name]]');
     const store = await KeyStore.open();
     assertNotEmpty(store);
 
@@ -251,7 +251,7 @@ function select(store: KeyStore, ref: string): KeyEntry[] {
     }
     const entry = store.find(provider, name);
     if (!entry) {
-        throw usageError(`no key ${ref}`, 'see: zn key ls');
+        throw usageError(`no key ${ref}`, 'see: zen key ls');
     }
     return [entry];
 }
@@ -260,11 +260,11 @@ const rm: Sub = async (ctx, args) => {
     const { values, positionals } = parse<{ yes?: boolean }>(
         args,
         { yes: { type: 'boolean' } },
-        'zn key rm <provider>/<name> [--yes]',
+        'zen key rm <provider>/<name> [--yes]',
     );
     const ref = positionals[0];
     if (!ref) {
-        throw usageError('which key?', 'see: zn key ls');
+        throw usageError('which key?', 'see: zen key ls');
     }
     const { provider, name } = parseRef(ref);
     if (!name) {
@@ -272,7 +272,7 @@ const rm: Sub = async (ctx, args) => {
     }
     const store = await KeyStore.open();
     if (!store.find(provider, name)) {
-        throw usageError(`no key ${ref}`, 'see: zn key ls');
+        throw usageError(`no key ${ref}`, 'see: zen key ls');
     }
     if (!values.yes && isInteractive() && !(await confirm(`Forget ${ref}?`))) {
         throw usageError('cancelled');
@@ -294,16 +294,16 @@ const show: Sub = async (ctx, args) => {
     const { values, positionals } = parse<{ reveal?: boolean }>(
         args,
         { reveal: { type: 'boolean' } },
-        'zn key show <provider>[/name] [--reveal]',
+        'zen key show <provider>[/name] [--reveal]',
     );
     const ref = positionals[0];
     if (!ref) {
-        throw usageError('which key?', 'see: zn key ls');
+        throw usageError('which key?', 'see: zen key ls');
     }
     const store = await KeyStore.open();
     const entry = select(store, ref)[0];
     if (!entry) {
-        throw usageError(`no key ${ref}`, 'see: zn key ls');
+        throw usageError(`no key ${ref}`, 'see: zen key ls');
     }
 
     const value = values.reveal ? store.reveal(entry) : describe(store, entry);
@@ -317,7 +317,7 @@ const show: Sub = async (ctx, args) => {
         return;
     }
     if (values.reveal) {
-        // stdout, alone, unstyled — so `zn key show openai --reveal | pbcopy`
+        // stdout, alone, unstyled — so `zen key show openai --reveal | pbcopy`
         // copies the key and nothing else.
         write(value);
         return;
@@ -335,12 +335,12 @@ const show: Sub = async (ctx, args) => {
 };
 
 /**
- * `eval "$(zn key env)"` puts the active keys into a shell — for the tools that
- * are not `zn`. Real environment variables still win inside `zn` itself, so
+ * `eval "$(zen key env)"` puts the active keys into a shell — for the tools that
+ * are not `zen`. Real environment variables still win inside `zen` itself, so
  * this changes nothing about how a run resolves credentials.
  */
 const env: Sub = async (ctx, args) => {
-    const { positionals } = parse(args, {}, 'zn key env [provider …]');
+    const { positionals } = parse(args, {}, 'zen key env [provider …]');
     const store = await KeyStore.open();
     const only = positionals.length
         ? positionals.map((p) => parseRef(p).provider as Provider)
@@ -383,13 +383,13 @@ export const key: Command = {
         'Keys live in ~/.zenera/neo/keys.json (0600) and are materialised into',
         'the environment before a run. A real environment variable always wins.',
         '',
-        '  zn key ls [--check]              Everything stored, and its state.',
-        '  zn key add <provider>[/name]     Read a key from stdin, or ask for it.',
-        '  zn key use <provider>/<name>     Choose which one a run uses.',
-        '  zn key check [provider[/name]]   Ask the provider whether it still works.',
-        '  zn key rm <provider>/<name>      Forget one.',
-        '  zn key show <ref> [--reveal]     Masked by default.',
-        '  zn key env [provider …]          Shell exports, for other tools.',
+        '  zen key ls [--check]              Everything stored, and its state.',
+        '  zen key add <provider>[/name]     Read a key from stdin, or ask for it.',
+        '  zen key use <provider>/<name>     Choose which one a run uses.',
+        '  zen key check [provider[/name]]   Ask the provider whether it still works.',
+        '  zen key rm <provider>/<name>      Forget one.',
+        '  zen key show <ref> [--reveal]     Masked by default.',
+        '  zen key env [provider …]          Shell exports, for other tools.',
     ],
     run: async (ctx) => {
         const [name, ...rest] = ctx.args;
@@ -400,7 +400,7 @@ export const key: Command = {
         const sub = SUBS[name];
         if (!sub) {
             throw usageError(
-                `unknown: zn key ${name}`,
+                `unknown: zen key ${name}`,
                 `try: ${cyan(Object.keys(SUBS).slice(0, 7).join(', '))}`,
             );
         }

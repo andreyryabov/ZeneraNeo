@@ -7,7 +7,7 @@ import { openDir, Registry, summarize, versionDir, type ProjectSummary } from '.
 import { listSessions } from '../session.ts';
 import { ago, bold, count, dim, json, note, table, write, writeAll, yellow } from '../term.ts';
 
-const USAGE = 'zn list [--sessions] [--prune]';
+const USAGE = 'zen list [--sessions] [--prune]';
 
 interface Flags {
     sessions?: boolean;
@@ -50,7 +50,7 @@ export const list: Command = {
 
         if (summaries.length === 0) {
             note('no projects yet');
-            note(dim('create one: zn init'));
+            note(dim('create one: zen init'));
             return;
         }
 

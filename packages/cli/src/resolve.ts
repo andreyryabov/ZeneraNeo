@@ -54,7 +54,7 @@ export async function project(want: Wanted): Promise<Projects.Project> {
     const registry = await Projects.Registry.open();
     const known = registry.entries.filter((e) => existsSync(e.path));
     if (known.length === 0) {
-        throw usageError('not inside a project, and none are registered', 'create one: zn init');
+        throw usageError('not inside a project, and none are registered', 'create one: zen init');
     }
     if (!isInteractive()) {
         throw usageError('not inside a project', 'name one with --project');

@@ -19,7 +19,7 @@ export interface Context {
 export interface Command {
     readonly summary: string;
     readonly usage: string;
-    /** lines printed under the usage line by `zn help <command>` */
+    /** lines printed under the usage line by `zen help <command>` */
     readonly details?: readonly string[];
     run(ctx: Context): Promise<void>;
 }

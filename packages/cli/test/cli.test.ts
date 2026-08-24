@@ -89,8 +89,8 @@ describe('columns', () => {
 });
 
 describe('workspace containment', () => {
-    const root = mkdtempSync(join(tmpdir(), 'zn-ws-'));
-    const outside = mkdtempSync(join(tmpdir(), 'zn-out-'));
+    const root = mkdtempSync(join(tmpdir(), 'zen-ws-'));
+    const outside = mkdtempSync(join(tmpdir(), 'zen-out-'));
     afterAll(() => {
         rmSync(root, { recursive: true, force: true });
         rmSync(outside, { recursive: true, force: true });

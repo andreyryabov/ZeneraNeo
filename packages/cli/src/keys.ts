@@ -13,7 +13,7 @@ import { CliError, EXIT, credentialError, usageError } from './term.ts';
 //
 // That single decision buys three things. Nothing downstream changes.
 // `${OPENAI_API_KEY}` in a config keeps working. And a project checked out on a
-// machine that has never seen `zn` still runs, because the environment is
+// machine that has never seen `zen` still runs, because the environment is
 // still the interface.
 // ---------------------------------------------------------------------------
 
@@ -228,7 +228,7 @@ export class KeyStore {
     use(provider: Provider, name: string): KeyEntry {
         const entry = this.find(provider, name);
         if (!entry) {
-            throw usageError(`no key ${provider}/${name}`, 'see: zn key ls');
+            throw usageError(`no key ${provider}/${name}`, 'see: zen key ls');
         }
         this.#file.active[provider] = name;
         return entry;
@@ -258,7 +258,7 @@ export class KeyStore {
 
     /**
      * What the library would see. Real environment variables win, so CI,
-     * `docker run -e` and a one-off `OPENAI_API_KEY=… zn run` all behave
+     * `docker run -e` and a one-off `OPENAI_API_KEY=… zen run` all behave
      * exactly as they did before the store existed.
      */
     environment(only?: Provider[]): Record<string, string> {
@@ -335,12 +335,15 @@ export function assertUsable(store: KeyStore): void {
         (p) => process.env[SHAPES[p].env] || store.active(p) !== undefined,
     );
     if (reachable.length === 0) {
-        throw credentialError('no credentials for any provider', 'add one with: zn key add openai');
+        throw credentialError(
+            'no credentials for any provider',
+            'add one with: zen key add openai',
+        );
     }
 }
 
 export function assertNotEmpty(store: KeyStore): void {
     if (store.entries.length === 0) {
-        throw new CliError('the keyring is empty', EXIT.credentials, 'add one: zn key add openai');
+        throw new CliError('the keyring is empty', EXIT.credentials, 'add one: zen key add openai');
     }
 }

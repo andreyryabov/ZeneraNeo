@@ -8,8 +8,8 @@ import { invalidError, usageError } from './term.ts';
 // Projects
 //
 // The directory is the truth. `~/.zenera/neo/projects.json` is an index so that
-// `zn list` and `zn go` do not have to search the filesystem, and it is allowed
-// to be wrong: every entry can be rebuilt by pointing `zn` at the directory
+// `zen list` and `zen go` do not have to search the filesystem, and it is allowed
+// to be wrong: every entry can be rebuilt by pointing `zen` at the directory
 // again, and an entry whose path has vanished is reported, not fatal.
 // ---------------------------------------------------------------------------
 
@@ -18,7 +18,7 @@ export const META = 'zenera.json';
 export interface ProjectMeta {
     version: 1;
     name: string;
-    /** directory name of the version a bare `zn run` uses */
+    /** directory name of the version a bare `zen run` uses */
     activeVersion: string;
 }
 
@@ -85,7 +85,7 @@ export function versionDir(project: Project, name?: string): string {
         const known = versions(project.dir);
         throw invalidError(
             `${project.meta.name} has no ${chosen}`,
-            known.length ? `it has ${known.join(', ')}` : 'run: zn init',
+            known.length ? `it has ${known.join(', ')}` : 'run: zen init',
         );
     }
     return dir;
@@ -115,7 +115,7 @@ export async function openDir(dir: string): Promise<Project> {
     const at = resolve(dir);
     const meta = await readMeta(at);
     if (!meta) {
-        throw invalidError(`${at} is not a project`, `no ${META} — run: zn init`);
+        throw invalidError(`${at} is not a project`, `no ${META} — run: zen init`);
     }
     return { dir: at, meta };
 }
@@ -131,7 +131,7 @@ export async function open(nameOrDir: string): Promise<Project> {
     }
     const entry = (await Registry.open()).find(nameOrDir);
     if (!entry) {
-        throw usageError(`no project named "${nameOrDir}"`, 'see: zn list');
+        throw usageError(`no project named "${nameOrDir}"`, 'see: zen list');
     }
     return openDir(entry.path);
 }
@@ -226,7 +226,7 @@ export class Registry {
 }
 
 // ---------------------------------------------------------------------------
-// Summaries, for `zn list`
+// Summaries, for `zen list`
 // ---------------------------------------------------------------------------
 
 export interface ProjectSummary {
@@ -293,7 +293,7 @@ export async function summarize(entry: RegistryEntry): Promise<ProjectSummary> {
 // Sessions and runs
 //
 // Kept here rather than in session.ts because listing them is a read-only
-// question about a directory, and `zn list` must be able to ask it without
+// question about a directory, and `zen list` must be able to ask it without
 // pulling in the runtime.
 // ---------------------------------------------------------------------------
 

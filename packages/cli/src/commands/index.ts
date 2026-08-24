@@ -6,6 +6,7 @@ import { inspect } from './inspect.ts';
 import { key } from './key.ts';
 import { list } from './list.ts';
 import { models } from './models.ts';
+import { open } from './open.ts';
 import { run } from './run.ts';
 import { version } from './version.ts';
 
@@ -19,6 +20,7 @@ export const COMMANDS: Record<string, Command> = {
     list,
     run,
     go,
+    open,
     fork,
     key,
     models,
@@ -33,4 +35,6 @@ export const ALIASES: Record<string, string> = {
     new: 'init',
     keys: 'key',
     report: 'inspect',
+    edit: 'open',
+    code: 'open',
 };

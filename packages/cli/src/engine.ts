@@ -35,7 +35,7 @@ import { workspaceTools } from './workspace.ts';
 // ---------------------------------------------------------------------------
 // The engine
 //
-// Everything `zn run` does that is not presentation. The TUI and the one-shot
+// Everything `zen run` does that is not presentation. The TUI and the one-shot
 // path call exactly this, in the same order, which is what makes the TUI a view
 // rather than a mode: nothing is recorded only when someone is watching.
 // ---------------------------------------------------------------------------

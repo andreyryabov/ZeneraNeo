@@ -5,7 +5,7 @@ import { cyan, dim, green, note, red, yellow } from './term.ts';
 // Narration
 //
 // The one-shot view of a run. Every line goes to stderr, because the answer is
-// what goes to stdout — `zn run "…" > answer.md` must produce a file with the
+// what goes to stdout — `zen run "…" > answer.md` must produce a file with the
 // answer in it and nothing else, whether or not anyone watched it happen.
 //
 // Deltas are not printed. A one-shot run is usually redirected, piped or in

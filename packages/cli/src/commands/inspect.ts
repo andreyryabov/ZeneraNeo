@@ -27,7 +27,7 @@ import {
 } from '../session.ts';
 import { bold, cyan, dim, invalidError, json, note, write } from '../term.ts';
 
-const USAGE = 'zn inspect [run] [--session <id>] [--open] [--rebuild] [--serve [port]]';
+const USAGE = 'zen inspect [run] [--session <id>] [--open] [--rebuild] [--serve [port]]';
 
 interface Flags {
     project?: string;
@@ -83,7 +83,7 @@ export const inspect: Command = {
         if (values.open) {
             reveal(`file://${run.report}`);
         } else {
-            note(dim(`open it: ${cyan('zn inspect --open')}`));
+            note(dim(`open it: ${cyan('zen inspect --open')}`));
         }
     },
 };
@@ -98,7 +98,7 @@ function pickSession(dir: string, asked?: string): SessionPaths {
     }
     const newest = newestSession(dir);
     if (!newest) {
-        throw invalidError('nothing has been run here yet', 'start one: zn run');
+        throw invalidError('nothing has been run here yet', 'start one: zen run');
     }
     return sessionPaths(dir, newest);
 }

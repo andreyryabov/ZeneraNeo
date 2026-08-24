@@ -81,8 +81,8 @@ export function split(argv: readonly string[]): Split {
 }
 
 /**
- * Pulls the global flags back out of a command's arguments — `zn list --json`
- * reads better than `zn --json list`, and both must work — and returns what is
+ * Pulls the global flags back out of a command's arguments — `zen list --json`
+ * reads better than `zen --json list`, and both must work — and returns what is
  * left for the command's own parser. Nothing after `--` is touched.
  */
 export function extract(after: readonly string[]): { rest: string[]; global: string[] } {

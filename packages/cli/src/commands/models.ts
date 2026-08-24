@@ -19,7 +19,7 @@ import {
     yellow,
 } from '../term.ts';
 
-const USAGE = 'zn models [--project <name|dir>] [--version-dir <vN>]';
+const USAGE = 'zen models [--project <name|dir>] [--version-dir <vN>]';
 
 interface Flags {
     project?: string;
@@ -61,7 +61,7 @@ export const models: Command = {
             // cannot get far enough to validate anything. Saying "invalid
             // project" there would be a lie about whose fault it is.
             if (!fromEnv.size && !PROVIDERS.some((p) => store.active(p))) {
-                throw credentialError(message, 'add a key: zn key add openai');
+                throw credentialError(message, 'add a key: zen key add openai');
             }
             throw invalidError(message, dir);
         }
@@ -129,7 +129,7 @@ export const models: Command = {
         }
         if (credentials.every((c) => c.source === 'missing')) {
             note('');
-            note(yellow('nothing can be reached — add a key: zn key add openai'));
+            note(yellow('nothing can be reached — add a key: zen key add openai'));
         }
     },
 };

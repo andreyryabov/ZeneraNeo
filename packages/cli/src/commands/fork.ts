@@ -6,7 +6,7 @@ import { nextVersion, versionDir, versions, writeMeta } from '../projects.ts';
 import { project as resolveProject } from '../resolve.ts';
 import { bold, cyan, dim, green, json, note, usageError, write } from '../term.ts';
 
-const USAGE = 'zn fork [--from <vN>] [--project <name|dir>] [--keep-active]';
+const USAGE = 'zen fork [--from <vN>] [--project <name|dir>] [--keep-active]';
 
 interface Flags {
     from?: string;
@@ -87,7 +87,7 @@ export const fork: Command = {
         if (!values['keep-active']) {
             note(`${name} is now active`);
         }
-        note(dim(`edit it: ${cyan(`zn go ${project.meta.name}`)}`));
+        note(dim(`edit it: ${cyan(`zen go ${project.meta.name}`)}`));
         write(to);
     },
 };

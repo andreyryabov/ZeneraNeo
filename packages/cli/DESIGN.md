@@ -22,7 +22,7 @@ the CLI can take dependencies the library refuses to.
 3. **Two output modes.** Human by default, `--json` for everything else. A
    command that cannot answer in JSON says so rather than printing prose.
 4. **stdout is the answer, stderr is the narration.** Progress, warnings and
-   errors never touch stdout, so `zn run … | jq` always works.
+   errors never touch stdout, so `zen run … | jq` always works.
 5. **Zero dependencies for the frame.** `parseArgs` and `styleText` are Node's.
    Only the drawing surface (§7.3) may add one, and only behind a dynamic import.
 6. **Never prompt when nobody is there.** Every interactive step has a flag, and
@@ -47,8 +47,8 @@ nothing but the convenience of being listed.
 `ZENERA_HOME` overrides the root, which is what makes the whole thing testable
 and what CI uses to get an empty one.
 
-`projects.json` is derived: every entry can be rebuilt by pointing `zn` at the
-directory again. It exists so `zn list` and `zn go` do not have to search the
+`projects.json` is derived: every entry can be rebuilt by pointing `zen` at the
+directory again. It exists so `zen list` and `zen go` do not have to search the
 filesystem, and it is allowed to be wrong — an entry whose path has vanished is
 reported as stale, not treated as an error.
 
@@ -90,7 +90,7 @@ prompt never silently reinterprets old runs.
 self-describing, so moving the directory does not lose the active version.
 
 Two `state.json` files, deliberately. The one under `.data/` is mutable — it is
-what `zn run` resumes from. The one under `runs/<id>/` is a snapshot taken when
+what `zen run` resumes from. The one under `runs/<id>/` is a snapshot taken when
 that run finished and is never written again; it is what `report.html` was built
 from, and what makes a run reproducible after the session has moved on.
 
@@ -119,6 +119,7 @@ two.
 | `init`    | Creates a project here, or in `<dir>`, and registers it.                 |
 | `list`    | Every known project: version, sessions, last run, whether one is live.   |
 | `go`      | Prints a project's active version directory, for the shell to `cd` to.   |
+| `open`    | Opens a project in your editor.                                          |
 | `fork`    | Copies the active version to the next one and makes it active.           |
 | `key`     | The credential store (§6).                                               |
 | `run`     | Runs the project — the TUI on a terminal, one shot otherwise (§7).       |
@@ -136,7 +137,7 @@ point, and a flag says that better than a command does.
 
 ## 5. Projects
 
-### 5.1 `zn init [dir]`
+### 5.1 `zen init [dir]`
 
 Scaffolds `v1` — an empty `AGENTS.md`, a minimal `agents.yaml` naming one
 `default` agent, and empty `.agents/prompts/` and `.agents/skills/` — writes
@@ -147,34 +148,77 @@ silently merging into someone's source tree. The project name defaults to the
 directory's, and `--name` overrides it; a name already in the registry pointing
 somewhere else is a usage error, not a silent overwrite.
 
-### 5.2 `zn list`
+### 5.2 `zen list`
 
 Reads `projects.json`, then stats each project to fill in what the registry does
 not store: session count, the newest run, and whether any `sessions/*/.lock`
 holds a live pid. A lock whose process is gone is reported as stale and cleaned
 on the next run, which is the only reason it records a pid at all.
 
-Stale entries — path missing — are listed dimmed, and `zn list --prune` drops
+Stale entries — path missing — are listed dimmed, and `zen list --prune` drops
 them.
 
-### 5.3 `zn go <project>`
+### 5.3 `zen go <project>`
 
-**A process cannot change its parent shell's directory.** So `zn go` does the
-only honest thing: it prints the resolved path to stdout and exits. `cd "$(zn go
+**A process cannot change its parent shell's directory.** So `zen go` does the
+only honest thing: it prints the resolved path to stdout and exits. `cd "$(zen go
 foo)"` works everywhere, immediately, with no setup.
 
-For the ergonomic version, `zn shell-init [zsh|bash|fish]` emits a shell
-function that shadows `zn`, intercepts `go`, and `cd`s for you, passing
+For the ergonomic version, `zen shell-init [zsh|bash|fish]` emits a shell
+function that shadows `zen`, intercepts `go`, and `cd`s for you, passing
 everything else through:
 
 ```sh
-eval "$(zn shell-init zsh)"    # in ~/.zshrc
+eval "$(zen shell-init zsh)"    # in ~/.zshrc
 ```
 
 This is the standard shape — `zoxide`, `nvm` and `direnv` all do it — and it
 keeps the binary free of any assumption about the shell it was called from.
 
-### 5.4 `zn fork`
+### 5.4 `zen open [project]`
+
+The same resolution as `go`, but the path is handed to an editor rather than to
+the shell. It exists because `code "$(zen go)"` is what everyone types second,
+and because choosing the editor has more corners than it looks like.
+
+The editor is the first of: `--editor`, `$ZENERA_EDITOR`, **the editor whose
+integrated terminal this is**, `$VISUAL`, `$EDITOR`, the first of
+`code`/`cursor`/`code-insiders`/`windsurf`/`zed`/`subl`/`idea` found on `PATH`,
+the first of those found installed in `/Applications`, and finally the platform
+opener. `$EDITOR` may carry arguments — `code -n`, `emacsclient -c` — which are
+split on whitespace and passed as arguments; **no shell is involved**, so
+nothing in the path is ever interpreted.
+
+Two of those steps are the ones that matter, and both exist because `PATH` is a
+bad place to look for a GUI editor.
+
+VS Code and its forks export `VSCODE_GIT_ASKPASS_MAIN` into their integrated
+terminal, pointing inside the running installation. Four directories up is the
+app root, and `product.json` there names the CLI and the product — so the
+lookup is exact rather than a guess: it picks Cursor when you are in Cursor, and
+it works when the `code` shell command was never installed, which on macOS is
+the default. That is checked **before** `$EDITOR`, deliberately: `$EDITOR` names
+something to edit _a file_ with and is very often `vim`, set once years ago,
+whereas this command opens a directory as a project. `$ZENERA_EDITOR` is the way
+to say otherwise.
+
+Failing that, macOS keeps applications where they can be found. A bundle in
+`/Applications` or `~/Applications` is opened through LaunchServices with `open
+-a`, which needs nothing installed. Only when no editor is found at all does the
+directory go to the platform opener — and on macOS that is Finder, which is the
+symptom this design is arranged to avoid.
+
+The distinction that decides how it is spawned is whether the editor takes over
+this terminal. `$VISUAL` and `$EDITOR` name one that does by convention, so they
+are run with inherited stdio and waited for, and are an error off a TTY.
+Everything else is detached and unreferenced, because a window that dies when
+`zen` returns is not an editor. `--wait` forces the attached form and passes the
+editor's own wait flag — `--wait`, `-w`, or `open -W`.
+
+A named editor that is not on `PATH` is resolved and rejected _before_ anything
+is spawned — an ENOENT on a detached child is a failure nobody would ever see.
+
+### 5.5 `zen fork`
 
 `v<n>` → `v<n+1>`: copies `AGENTS.md`, `agents.yaml` and `.agents/`, and copies
 **no sessions**, then points `zenera.json` at the new version. Editing prompts
@@ -182,10 +226,10 @@ in place stays legal; `fork` is for when you want the old runs to keep meaning
 what they meant.
 
 Not called `version` because that name is taken by the CLI's own, and overloading
-it would make `zn version` ambiguous in exactly the situation you most want a
+it would make `zen version` ambiguous in exactly the situation you most want a
 straight answer.
 
-## 6. Credentials — `zn key`
+## 6. Credentials — `zen key`
 
 ### 6.1 The shape of it
 
@@ -194,7 +238,7 @@ in `agents.yaml`, and it will keep doing so. The keyring is **a CLI feature the
 library never learns about**: before any command touches `loadProject`, the CLI
 materializes the selected credentials into `process.env`. Nothing downstream
 changes, `${OPENAI_API_KEY}` in a config keeps working, and a project checked out
-on a machine with no `zn` still runs.
+on a machine with no `zen` still runs.
 
 A real environment variable always wins over the store, so CI and `docker run
 -e` behave as they always did. `--key <name>` overrides both.
@@ -211,19 +255,19 @@ vertex/prod      ~/.keys/vertexai-key.json (copied)   live
 ### 6.2 The commands
 
 ```
-zn key                              # same as `zn key ls`
-zn key ls [--json]
-zn key add <provider> [value] [--name <name>] [--use]
-zn key use <provider> <name>        # pick the active one for that provider
-zn key check [<provider>[/<name>] | --all]
-zn key rm  <provider>/<name>
-zn key show <provider>/<name> [--reveal]
-zn key env [--export]               # eval-able lines, for scripts
+zen key                              # same as `zen key ls`
+zen key ls [--json]
+zen key add <provider> [value] [--name <name>] [--use]
+zen key use <provider> <name>        # pick the active one for that provider
+zen key check [<provider>[/<name>] | --all]
+zen key rm  <provider>/<name>
+zen key show <provider>/<name> [--reveal]
+zen key env [--export]               # eval-able lines, for scripts
 ```
 
 `add` with no value reads from stdin, and prompts with echo off on a terminal.
 **Passing a secret as an argument is supported but never suggested**: argv is
-visible in `ps` and lands in shell history. `zn key add openai < key.txt` and the
+visible in `ps` and lands in shell history. `zen key add openai < key.txt` and the
 prompt are the documented paths; the help text says so.
 
 A value that names an existing readable file is treated as a file — that is how
@@ -234,7 +278,7 @@ rather than an API key.
 
 `add` verifies before it stores, unless `--no-check`. A key that fails
 verification is still stored — refusing would be wrong when the network is
-down — but it is stored marked `dead` and `zn key ls` says so.
+down — but it is stored marked `dead` and `zen key ls` says so.
 
 ### 6.3 Liveness
 
@@ -242,7 +286,7 @@ The cheapest authenticated call each SDK has: `models.list()` for OpenAI and
 Anthropic, `models.list()` on `GoogleGenAI`, and for `vertex` an ADC token
 refresh. Each entry caches `{ state, checkedAt, detail }`; `ls` prints the cached
 verdict with its age and never calls out on its own, because a list command that
-makes three network round trips is a list command nobody runs. `zn key check`
+makes three network round trips is a list command nobody runs. `zen key check`
 is the one that goes to the network, and it does so concurrently.
 
 The distinction that matters in the output is _dead_ (the provider said no —
@@ -261,7 +305,7 @@ the wrong bug.
 - Nothing is ever written into the project. Credentials live in `$HOME`, so a
   project directory is safe to commit by construction.
 
-## 7. Running — `zn run`
+## 7. Running — `zen run`
 
 ### 7.1 Resolution
 
@@ -278,7 +322,7 @@ hangs on a prompt.
 
 The workspace is what the agent can read and write. For a new session the
 default is the session's own empty `workspace/`; `--workspace .` points it at
-wherever `zn run` was started, which is the useful case and the dangerous one.
+wherever `zen run` was started, which is the useful case and the dangerous one.
 Anything outside the session directory is confirmed once, explicitly, naming the
 path — and `--yes` is required to skip that in a script. An agent with file tools
 pointed at `$HOME` is a mistake that should take more than one keystroke.
@@ -314,19 +358,29 @@ events and the `Architecture` projection — the TUI holds no state the trajecto
 does not already have, which is what keeps it a view and makes `report.html`
 and the TUI two renderings of one thing.
 
-## 8. Distribution — the `zn` binary
+## 8. Distribution — the `zen` binary
 
 The command name is a `bin` entry in [package.json](packages/cli/package.json),
 nothing more. npm creates the shim on install: a symlink in `node_modules/.bin`
 locally, one in the npm prefix's `bin` directory globally.
 
 ```json
-"bin": { "zn": "./dist/main.js", "zenera": "./dist/main.js" }
+"bin": {
+    "zen": "./dist/main.js",
+    "zn": "./dist/main.js",
+    "zenera": "./dist/main.js"
+}
 ```
 
-`zn` is the name to type; `zenera` stays as the unambiguous long form, because a
-two-letter command is cheap to collide with and users should have a way out.
-Both point at the same file — the CLI never branches on `argv[0]`.
+`zen` is the name, and the only one the help, the errors and this document ever
+use. `zn` is an abbreviation for people who type it fifty times a day, and
+`zenera` the unambiguous long form for when a two-letter command has collided
+with something. All three point at the same file — the CLI never branches on
+`argv[0]`, so there is no behaviour to keep in step between them, and nothing to
+choose between when reading someone else's script.
+
+`zen shell-init` emits its wrapper for both short names, defining `zn` as a call
+to the `zen` function rather than a second copy of it.
 
 Three things have to hold or the shim is broken, and all three do:
 
@@ -338,12 +392,12 @@ Three things have to hold or the shim is broken, and all three do:
 
 How it becomes available:
 
-| Situation          | What the user runs                                                              |
-| ------------------ | ------------------------------------------------------------------------------- |
-| Global install     | `npm i -g zenera-cli` → `zn` on `PATH`                                          |
-| Without installing | `npx zenera-cli …`                                                              |
-| Project dependency | `npx zn …`, or `zn` inside an npm script                                        |
-| This repo          | `npm install` at the root links `node_modules/.bin/zn` at the workspace symlink |
+| Situation          | What the user runs                                                               |
+| ------------------ | -------------------------------------------------------------------------------- |
+| Global install     | `npm i -g zenera-cli` → `zen` on `PATH`                                          |
+| Without installing | `npx zenera-cli …`                                                               |
+| Project dependency | `npx zen …`, or `zen` inside an npm script                                       |
+| This repo          | `npm install` at the root links `node_modules/.bin/zen` at the workspace symlink |
 
 The package is still `private: true`; publishing means dropping that flag. Until
 then the only path is the workspace link or `npm link packages/cli`.
@@ -355,10 +409,10 @@ symlink — not a copy — in the global prefix:
 
 ```
 <prefix>/lib/node_modules/zenera-cli  ->  packages/cli
-<prefix>/bin/zn                       ->  ../lib/node_modules/zenera-cli/dist/main.js
+<prefix>/bin/zen                       ->  ../lib/node_modules/zenera-cli/dist/main.js
 ```
 
-So `zn` picks up every rebuild with no reinstall, and `zenera-neo` resolves
+So `zen` picks up every rebuild with no reinstall, and `zenera-neo` resolves
 through the workspace: Node takes the realpath of the shim's target before
 walking up for `node_modules`, so the lookup starts inside the repo and finds
 the workspace symlink. The unpublished exact-version dependency is never fetched.

@@ -24,7 +24,7 @@ function libraryManifest(): URL {
 
 export const version: Command = {
     summary: 'Print the CLI, library and Node versions.',
-    usage: 'zn version',
+    usage: 'zen version',
     run: async (ctx) => {
         const versions = {
             cli: await versionOf(cliManifest),

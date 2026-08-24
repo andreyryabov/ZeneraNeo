@@ -24,7 +24,7 @@ const MAX_ENTRIES = 500;
 
 export interface WorkspaceOptions {
     root: string;
-    /** refuse every mutating tool; `zn run --read-only` */
+    /** refuse every mutating tool; `zen run --read-only` */
     readOnly?: boolean;
 }
 

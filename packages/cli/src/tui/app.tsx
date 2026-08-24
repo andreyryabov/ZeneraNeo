@@ -10,8 +10,8 @@ import { display } from '../session.ts';
 // The drawing surface
 //
 // This is the CLI's one dependency, and it is behind a dynamic import in the
-// `run` command: nothing else in the tool loads React, so `zn list` and
-// `zn key ls` stay as fast as they would be without it.
+// `run` command: nothing else in the tool loads React, so `zen list` and
+// `zen key ls` stay as fast as they would be without it.
 //
 // It is a *view*. Every turn goes through `Engine.run`, exactly as the one-shot
 // path does, so a session started here is indistinguishable from one started in

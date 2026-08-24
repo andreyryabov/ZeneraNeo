@@ -8,7 +8,7 @@ import { META, Registry, nextVersion, readMeta, writeMeta } from '../projects.ts
 import { scaffold } from '../scaffold.ts';
 import { bold, cyan, dim, green, invalidError, json, note, usageError, write } from '../term.ts';
 
-const USAGE = 'zn init [dir] [--name <name>] [--model <ref>] [--force]';
+const USAGE = 'zen init [dir] [--name <name>] [--model <ref>] [--force]';
 
 interface Flags {
     name?: string;
@@ -41,7 +41,7 @@ export const init: Command = {
     usage: USAGE,
     details: [
         'Writes AGENTS.md, agents.yaml and .agents/ into v1, then records the',
-        'directory so `zn list` and `zn go` can find it by name.',
+        'directory so `zen list` and `zen go` can find it by name.',
     ],
     run: async (ctx) => {
         const { values, positionals } = parse<Flags>(
@@ -58,7 +58,7 @@ export const init: Command = {
         const name = values.name ?? basename(dir);
 
         if (await readMeta(dir)) {
-            throw invalidError(`${dir} is already a project`, 'add a version with: zn fork');
+            throw invalidError(`${dir} is already a project`, 'add a version with: zen fork');
         }
         if (existsSync(dir) && readdirSync(dir).length > 0 && !values.force) {
             throw usageError(`${dir} is not empty`, 'pass --force to write into it anyway');
@@ -90,7 +90,7 @@ export const init: Command = {
             note(`  ${dim(join(version, file))}`);
         }
         note();
-        note(`Next: ${cyan(`cd ${dir}`)} then ${cyan('zn run')}`);
+        note(`Next: ${cyan(`cd ${dir}`)} then ${cyan('zen run')}`);
         write(dir);
     },
 };
