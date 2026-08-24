@@ -253,16 +253,16 @@ agents:
           preload: [house_style]
 ```
 
-| Field         | Meaning                                                                                               |
-| ------------- | ----------------------------------------------------------------------------------------------------- |
-| `name`        | **Required.** See [Names](#names)                                                                     |
-| `description` | What a sibling agent's `transfer_to_<name>` tool tells the model. Write it for the model              |
+| Field         | Meaning                                                                                              |
+| ------------- | ---------------------------------------------------------------------------------------------------- |
+| `name`        | **Required.** See [Names](#names)                                                                    |
+| `description` | What a sibling agent's `transfer_to_<name>` tool tells the model. Write it for the model             |
 | `system`      | Path to a markdown file, relative to the root. Defaults to `agents/prompts/<name>.md` if that exists |
-| `model`       | A `models:` name or a shorthand. Falls back to the top-level `model:`                                 |
-| `tools`       | Names resolved against `ProjectOptions.tools` — code cannot live in yaml                              |
-| `handoffs`    | Agent names this one may transfer to                                                                  |
-| `skills`      | Skill binding; see below                                                                              |
-| `default`     | `true` marks the entry point, if no top-level `default:`                                              |
+| `model`       | A `models:` name or a shorthand. Falls back to the top-level `model:`                                |
+| `tools`       | Names resolved against `ProjectOptions.tools` — code cannot live in yaml                             |
+| `handoffs`    | Agent names this one may transfer to                                                                 |
+| `skills`      | Skill binding; see below                                                                             |
+| `default`     | `true` marks the entry point, if no top-level `default:`                                             |
 
 `handoffs` takes bare strings by design, not objects. A hand-off carries no
 configuration in this version, so there is nothing for an object form to hold,
