@@ -6,6 +6,7 @@
     "private": true,
     "type": "module",
     "bin": {
+        "zn": "./dist/main.js",
         "zenera": "./dist/main.js"
     },
     "files": [

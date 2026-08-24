@@ -23,6 +23,8 @@
         "typecheck": "npm run build && tsc -p tsconfig.json --noEmit",
         "typecheck:watch": "tsc -p tsconfig.json --noEmit --watch",
         "cli": "npm run build --silent && node packages/cli/dist/main.js",
+        "cli:link": "npm run build && npm link -w packages/cli",
+        "cli:unlink": "npm rm -g zenera-cli",
         "check:node": "node -e \"if (+process.versions.node.split('.')[0] < 24) { console.error('Node >=24 required (running ' + process.version + '). Run: nvm use'); process.exit(1); }\"",
         "demo:simple": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/demo.ts'",
         "demo:fanout": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/fanout.ts'",
