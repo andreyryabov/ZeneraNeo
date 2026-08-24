@@ -148,6 +148,36 @@ silently merging into someone's source tree. The project name defaults to the
 directory's, and `--name` overrides it; a name already in the registry pointing
 somewhere else is a usage error, not a silent overwrite.
 
+It also writes `.vscode/settings.json`, in the version **and** at the project
+root:
+
+```json
+{
+    "chat.useAgentsMdFile": false,
+    "chat.useNestedAgentsMdFiles": false
+}
+```
+
+VS Code reads an `AGENTS.md` at the root of an open folder and feeds it to its
+own assistant as always-on instructions. A version's `AGENTS.md` is the house
+rules for _this project's_ agents — addressed to them, about their tools and
+their workspace — and `zen open` opens exactly that directory, so left alone the
+two would be confused every single time.
+
+`chat.useAgentsMdFile` defaults to true, so switching it off is the part that
+does the work. `chat.useNestedAgentsMdFiles` is already false by default and is
+written anyway: it is opt-in globally, and someone who turned it on would
+otherwise pull in every version's `AGENTS.md` at once from the project root.
+Both are _restricted_ settings, so they apply only in a trusted workspace, which
+is the right way round — an untrusted folder is not one to be running agents in
+either.
+
+Two copies rather than one because an editor only reads the settings of the
+folder it was opened on, and both `zen open` and `zen open --root` are ordinary
+things to do. Neither is ever overwritten: an existing `settings.json` is
+somebody's, and a directory may well predate the project. `fork` carries the
+file forward with the rest of the version.
+
 ### 5.2 `zen list`
 
 Reads `projects.json`, then stats each project to fill in what the registry does

@@ -4,6 +4,7 @@ import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { nextVersion, versionDir, versions, writeMeta } from '../projects.ts';
 import { project as resolveProject } from '../resolve.ts';
+import { editorSettings } from '../scaffold.ts';
 import { bold, cyan, dim, green, json, note, usageError, write } from '../term.ts';
 
 const USAGE = 'zen fork [--from <vN>] [--project <name|dir>] [--keep-active]';
@@ -66,10 +67,13 @@ export const fork: Command = {
             throw err;
         }
 
+        // Carried over by the copy in anything scaffolded since it existed;
+        // written here for the projects that predate it.
+        editorSettings(to);
+
         if (!values['keep-active']) {
             writeMeta(project.dir, { ...project.meta, activeVersion: name });
         }
-
         if (ctx.json) {
             json({
                 project: project.meta.name,

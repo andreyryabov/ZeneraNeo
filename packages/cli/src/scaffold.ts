@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // ---------------------------------------------------------------------------
@@ -64,6 +64,45 @@ const GITIGNORE = `# Sessions hold run state, memory, blobs and whatever the age
 sessions/
 `;
 
+// ---------------------------------------------------------------------------
+// Telling the editor this AGENTS.md is not for it
+//
+// VS Code reads an `AGENTS.md` at the root of an open folder and feeds it to
+// its own assistant as always-on instructions. A version's AGENTS.md is the
+// house rules for *this project's* agents — addressed to them, about their
+// tools and their workspace — and `zen open` opens exactly that directory, so
+// left alone the two would be confused every single time.
+//
+// `chat.useAgentsMdFile` defaults to true, so switching it off is the part
+// that does the work. `chat.useNestedAgentsMdFiles` is already false by
+// default and is written anyway: it is opt-in globally, and someone who turned
+// it on would otherwise pull in every version's AGENTS.md at once when they
+// opened the project root.
+//
+// Both are *restricted* settings, so they apply only in a trusted workspace.
+// That is the right way round — an untrusted folder is not one you should be
+// running agents in either.
+// ---------------------------------------------------------------------------
+
+const VSCODE_SETTINGS = `{
+    "chat.useAgentsMdFile": false,
+    "chat.useNestedAgentsMdFiles": false
+}
+`;
+
+/**
+ * Writes `.vscode/settings.json` under `dir` unless one is already there — an
+ * existing file is somebody's, and a project directory may predate the project.
+ * Returns the relative path when it wrote one.
+ */
+export function editorSettings(dir: string): string | undefined {
+    const rel = join('.vscode', 'settings.json');
+    if (existsSync(join(dir, rel))) return undefined;
+    mkdirSync(join(dir, '.vscode'), { recursive: true });
+    writeFileSync(join(dir, rel), VSCODE_SETTINGS, { flag: 'wx' });
+    return rel;
+}
+
 export interface ScaffoldOptions {
     /** the version directory, e.g. <project>/v1 */
     dir: string;
@@ -89,5 +128,10 @@ export function scaffold(opts: ScaffoldOptions): string[] {
     put(join('.agents', 'prompts', 'default.md'), PROMPT);
     put(join('.agents', 'skills', 'README.md'), SKILLS_README);
     put('.gitignore', GITIGNORE);
+
+    // The version directory is what `zen open` opens, so this is the copy that
+    // matters most: here, AGENTS.md *is* the workspace root's.
+    const settings = editorSettings(opts.dir);
+    if (settings !== undefined) written.push(settings);
     return written;
 }

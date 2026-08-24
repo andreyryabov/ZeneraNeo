@@ -5,7 +5,7 @@ import type { Command } from '../command.ts';
 import { ensureHome } from '../home.ts';
 import { KeyStore, PROVIDERS, SHAPES } from '../keys.ts';
 import { META, Registry, nextVersion, readMeta, writeMeta } from '../projects.ts';
-import { scaffold } from '../scaffold.ts';
+import { editorSettings, scaffold } from '../scaffold.ts';
 import { bold, cyan, dim, green, invalidError, json, note, usageError, write } from '../term.ts';
 
 const USAGE = 'zen init [dir] [--name <name>] [--model <ref>] [--force]';
@@ -71,23 +71,25 @@ export const init: Command = {
         const written = scaffold({ dir: versionDir, model: values.model ?? suggestModel(store) });
         writeMeta(dir, { version: 1, name, activeVersion: version });
 
+        // A second copy at the top, for `zen open --root` and for anyone who
+        // opens the project rather than the version: the editor only reads the
+        // settings of the folder it was opened on.
+        const files = [META, ...written.map((f) => join(version, f))];
+        const root = editorSettings(dir);
+        if (root !== undefined) files.splice(1, 0, root);
+
         const registry = await Registry.open();
         registry.add(name, dir);
         registry.save();
 
         if (ctx.json) {
-            json({
-                name,
-                path: dir,
-                version,
-                files: [META, ...written.map((f) => join(version, f))],
-            });
+            json({ name, path: dir, version, files });
             return;
         }
 
         note(`${green('created')} ${bold(name)} ${dim(dir)}`);
-        for (const file of written) {
-            note(`  ${dim(join(version, file))}`);
+        for (const file of files) {
+            note(`  ${dim(file)}`);
         }
         note();
         note(`Next: ${cyan(`cd ${dir}`)} then ${cyan('zen run')}`);
