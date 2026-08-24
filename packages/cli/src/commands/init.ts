@@ -40,7 +40,7 @@ export const init: Command = {
     summary: 'Create a project here, or in <dir>, and register it.',
     usage: USAGE,
     details: [
-        'Writes AGENTS.md, agents.yaml and .agents/ into v1, then records the',
+        'Writes AGENTS.md, agents.yaml and agents/ into v1, then records the',
         'directory so `zen list` and `zen go` can find it by name.',
     ],
     run: async (ctx) => {

@@ -19,7 +19,7 @@ providers: {} # named connections
 provider: openai # which provider a bare model id belongs to
 models: {} # named model configurations
 model: fast # fallback for agents that do not pin their own
-skills: .agents/skills # one directory, or a list
+skills: agents/skills # one directory, or a list
 
 agents:
     - name: intake
@@ -221,16 +221,16 @@ client, and a bad ref raises its error once, at the agent that wrote it.
 ## `skills:`
 
 ```yaml
-skills: .agents/skills
+skills: agents/skills
 # or
 skills:
-    - .agents/skills
+    - agents/skills
     - ../shared/skills
 ```
 
 Directories are relative to the project root and may not escape it. Several
 directories are merged into a single catalog with the provider id `project`.
-If the key is absent and `.agents/skills` exists, it is used.
+If the key is absent and `agents/skills` exists, it is used.
 
 ---
 
@@ -240,7 +240,7 @@ If the key is absent and `.agents/skills` exists, it is used.
 agents:
     - name: intake
       description: Takes the first message, gets the claim reference, routes the case.
-      system: .agents/prompts/intake.md
+      system: agents/prompts/intake.md
       model: router
       tools: [policy_lookup]
       handoffs: [adjuster]
@@ -257,7 +257,7 @@ agents:
 | ------------- | ----------------------------------------------------------------------------------------------------- |
 | `name`        | **Required.** See [Names](#names)                                                                     |
 | `description` | What a sibling agent's `transfer_to_<name>` tool tells the model. Write it for the model              |
-| `system`      | Path to a markdown file, relative to the root. Defaults to `.agents/prompts/<name>.md` if that exists |
+| `system`      | Path to a markdown file, relative to the root. Defaults to `agents/prompts/<name>.md` if that exists |
 | `model`       | A `models:` name or a shorthand. Falls back to the top-level `model:`                                 |
 | `tools`       | Names resolved against `ProjectOptions.tools` — code cannot live in yaml                              |
 | `handoffs`    | Agent names this one may transfer to                                                                  |

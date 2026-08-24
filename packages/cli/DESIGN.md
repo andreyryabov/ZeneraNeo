@@ -64,7 +64,7 @@ prompt never silently reinterprets old runs.
     v1/
         AGENTS.md
         agents.yaml
-        .agents/
+        agents/
             prompts/
             skills/
         sessions/
@@ -140,7 +140,7 @@ point, and a flag says that better than a command does.
 ### 5.1 `zen init [dir]`
 
 Scaffolds `v1` — an empty `AGENTS.md`, a minimal `agents.yaml` naming one
-`default` agent, and empty `.agents/prompts/` and `.agents/skills/` — writes
+`default` agent, and empty `agents/prompts/` and `agents/skills/` — writes
 `zenera.json`, and adds the path to `projects.json`.
 
 Refuses a non-empty directory unless `--force`, because the alternative is
@@ -250,7 +250,7 @@ is spawned — an ENOENT on a detached child is a failure nobody would ever see.
 
 ### 5.5 `zen fork`
 
-`v<n>` → `v<n+1>`: copies `AGENTS.md`, `agents.yaml` and `.agents/`, and copies
+`v<n>` → `v<n+1>`: copies `AGENTS.md`, `agents.yaml` and `agents/`, and copies
 **no sessions**, then points `zenera.json` at the new version. Editing prompts
 in place stays legal; `fork` is for when you want the old runs to keep meaning
 what they meant.

@@ -24,8 +24,8 @@ import { projectDir, projectFile, projectRoot } from './refs.ts';
  * ```
  * AGENTS.md                     house rules, prepended to every agent
  * agents.yaml                   who exists, what they may reach for
- * .agents/prompts/<role>.md     one agent's own instructions
- * .agents/skills/<name>/SKILL.md
+ * agents/prompts/<role>.md      one agent's own instructions
+ * agents/skills/<name>/SKILL.md
  * ```
  *
  * The loader turns that into the objects an author would otherwise write by
@@ -67,9 +67,9 @@ export interface ProjectOptions<TCtx = unknown> {
     skills?: SkillProvider[];
 }
 
-const PROMPTS_DIR = '.agents/prompts';
-const SKILLS_DIR = '.agents/skills';
-const CONFIG_NAMES = ['agents.yaml', 'agents.yml', '.agents/agents.yaml', '.agents/agents.yml'];
+const PROMPTS_DIR = 'agents/prompts';
+const SKILLS_DIR = 'agents/skills';
+const CONFIG_NAMES = ['agents.yaml', 'agents.yml', 'agents/agents.yaml', 'agents/agents.yml'];
 const HOUSE_RULES = 'AGENTS.md';
 
 /**

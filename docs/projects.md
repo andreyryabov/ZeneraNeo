@@ -14,7 +14,7 @@ See [agents-yaml.md](agents-yaml.md) for the configuration reference, and
 my-project/
     AGENTS.md                        house rules, prepended to every agent
     agents.yaml                      who exists, what they may reach for
-    .agents/
+    agents/
         prompts/
             intake.md                one agent's own brief
             adjuster.md
@@ -30,8 +30,8 @@ The config file is found by looking for these names, in order:
 
 1. `agents.yaml`
 2. `agents.yml`
-3. `.agents/agents.yaml`
-4. `.agents/agents.yml`
+3. `agents/agents.yaml`
+4. `agents/agents.yml`
 
 ## Loading
 
@@ -102,7 +102,7 @@ Each agent's instructions are assembled in a fixed order:
 1. `AGENTS.md`, if present — read **once** and shared by every agent, so the
    report says "one document, five prompts" instead of five identical blobs.
 2. The agent's own file: `system:` if given, otherwise
-   `.agents/prompts/<name>.md` if it exists.
+   `agents/prompts/<name>.md` if it exists.
 
 Shared context before the specific job — which also puts the stable half of the
 prompt in front, where a cache can reuse it. Both are optional; an agent with
@@ -122,7 +122,7 @@ error, not a prompt containing a private key.
 ## Skills
 
 The `skills:` key takes one directory or several. If it is absent and
-`.agents/skills` exists, that is used. Several directories become **one**
+`agents/skills` exists, that is used. Several directories become **one**
 provider (id `project`), not several — a binding names exactly one catalog, and
 "which folder is this skill in?" is not a question an agent author should have
 to answer.

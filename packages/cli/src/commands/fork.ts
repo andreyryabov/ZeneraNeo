@@ -27,7 +27,7 @@ export const fork: Command = {
     summary: 'Copy the active version to the next one and make it active.',
     usage: USAGE,
     details: [
-        'Copies AGENTS.md, agents.yaml and .agents/ into the next vN.',
+        'Copies AGENTS.md, agents.yaml and agents/ into the next vN.',
         'Sessions stay with the version that produced them.',
     ],
     run: async (ctx) => {

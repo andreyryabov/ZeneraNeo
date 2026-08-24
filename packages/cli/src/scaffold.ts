@@ -30,7 +30,7 @@ model: ${model}
 agents:
     - name: default
       description: The entry point.
-      # Instructions live in .agents/prompts/<name>.md and are picked up by
+      # Instructions live in agents/prompts/<name>.md and are picked up by
       # convention — no need to name the file here.
       tools:
           - read_file
@@ -119,14 +119,14 @@ export function scaffold(opts: ScaffoldOptions): string[] {
         written.push(rel);
     };
 
-    mkdirSync(join(opts.dir, '.agents', 'prompts'), { recursive: true });
-    mkdirSync(join(opts.dir, '.agents', 'skills'), { recursive: true });
+    mkdirSync(join(opts.dir, 'agents', 'prompts'), { recursive: true });
+    mkdirSync(join(opts.dir, 'agents', 'skills'), { recursive: true });
     mkdirSync(join(opts.dir, 'sessions'), { recursive: true });
 
     put('AGENTS.md', AGENTS_MD);
     put('agents.yaml', AGENTS_YAML(opts.model));
-    put(join('.agents', 'prompts', 'default.md'), PROMPT);
-    put(join('.agents', 'skills', 'README.md'), SKILLS_README);
+    put(join('agents', 'prompts', 'default.md'), PROMPT);
+    put(join('agents', 'skills', 'README.md'), SKILLS_README);
     put('.gitignore', GITIGNORE);
 
     // The version directory is what `zen open` opens, so this is the copy that

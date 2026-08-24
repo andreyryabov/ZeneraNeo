@@ -33,21 +33,21 @@ models:
 # Fallback for agents that do not pin their own.
 model: router
 
-# One catalog, scanned once. `.agents/skills` is the default, written out here
+# One catalog, scanned once. `agents/skills` is the default, written out here
 # so the layout is visible from the config alone.
-skills: .agents/skills
+skills: agents/skills
 
 agents:
     - name: intake
       description: Takes the first message, gets the claim reference, routes the case.
-      system: .agents/prompts/intake.md
+      system: agents/prompts/intake.md
       model: router
       tools: [policy_lookup]
       handoffs: [adjuster]
 
     - name: adjuster
       description: Applies the written peril policies to a claim and explains the outcome.
-      system: .agents/prompts/adjuster.md
+      system: agents/prompts/adjuster.md
       model: balanced
       skills:
           # Names and descriptions go into the system prompt, so the agent can

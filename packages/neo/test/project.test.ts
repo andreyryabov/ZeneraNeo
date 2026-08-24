@@ -39,9 +39,9 @@ const MINIMAL = {
     'agents.yaml': `
 agents:
   - name: solo
-    system: .agents/prompts/solo.md
+    system: agents/prompts/solo.md
 `,
-    '.agents/prompts/solo.md': 'You answer questions.',
+    'agents/prompts/solo.md': 'You answer questions.',
 };
 
 const lookup = tool({
@@ -84,11 +84,11 @@ describe('project layout', () => {
         expect(instructions.map((i) => i.path.split('/').pop())).toEqual(['AGENTS.md', 'solo.md']);
     });
 
-    it('falls back to .agents/prompts/<name>.md when `system` is absent', async () => {
+    it('falls back to agents/prompts/<name>.md when `system` is absent', async () => {
         const p = await loadProject(
             project({
                 'agents.yaml': 'agents:\n  - name: solo\n',
-                '.agents/prompts/solo.md': 'You answer questions.',
+                'agents/prompts/solo.md': 'You answer questions.',
             }),
         );
         const instructions = p.registry.get('solo').instructions as { path: string }[];
@@ -101,8 +101,8 @@ describe('project layout', () => {
             project({
                 ...MINIMAL,
                 'agents.yaml':
-                    'agents:\n  - name: solo\n    system: .agents/prompts/solo.md\n' +
-                    '  - name: other\n    system: .agents/prompts/solo.md\n',
+                    'agents:\n  - name: solo\n    system: agents/prompts/solo.md\n' +
+                    '  - name: other\n    system: agents/prompts/solo.md\n',
             }),
         );
         const a = (p.registry.get('solo').instructions as unknown[])[0];
@@ -117,7 +117,7 @@ describe('project layout', () => {
             project({
                 ...MINIMAL,
                 'agents.yaml':
-                    'agents:\n  - name: solo\n    system: .agents/prompts/solo.md\n' +
+                    'agents:\n  - name: solo\n    system: agents/prompts/solo.md\n' +
                     '    tools: [lookup]\n',
             }),
             { tools: [lookup] },
@@ -130,10 +130,10 @@ describe('project layout', () => {
             project({
                 ...MINIMAL,
                 'agents.yaml':
-                    'agents:\n  - name: solo\n    system: .agents/prompts/solo.md\n' +
+                    'agents:\n  - name: solo\n    system: agents/prompts/solo.md\n' +
                     '    skills:\n      discovery: search\n      preload: [style]\n',
-                '.agents/skills/pricing/SKILL.md': SKILL,
-                '.agents/skills/style/SKILL.md': STYLE,
+                'agents/skills/pricing/SKILL.md': SKILL,
+                'agents/skills/style/SKILL.md': STYLE,
             }),
             { tools: [quote] },
         );
@@ -158,8 +158,8 @@ describe('entrypoint', () => {
         const p = await loadProject(
             project({
                 'agents.yaml': two('default: second\n'),
-                '.agents/prompts/first.md': 'a',
-                '.agents/prompts/second.md': 'b',
+                'agents/prompts/first.md': 'a',
+                'agents/prompts/second.md': 'b',
             }),
         );
         expect(p.entry).toBe('second');
@@ -249,7 +249,7 @@ describe('validation', () => {
             loadProject(
                 project({
                     'agents.yaml': 'agents:\n  - name: solo\n    skills:\n      preload: [ghost]\n',
-                    '.agents/skills/style/SKILL.md': STYLE,
+                    'agents/skills/style/SKILL.md': STYLE,
                 }),
             ),
         ).rejects.toThrow(/skills\.preload: unknown skill "ghost"/);
@@ -262,8 +262,8 @@ describe('validation', () => {
                     'agents.yaml':
                         'agents:\n  - name: solo\n    skills:\n' +
                         '      allow: [pricing]\n      preload: [style]\n',
-                    '.agents/skills/pricing/SKILL.md': SKILL,
-                    '.agents/skills/style/SKILL.md': STYLE,
+                    'agents/skills/pricing/SKILL.md': SKILL,
+                    'agents/skills/style/SKILL.md': STYLE,
                 }),
                 { tools: [quote] },
             ),
@@ -423,8 +423,8 @@ describe('path safety', () => {
     });
 
     it('allows a plain relative reference', () => {
-        expect(projectPath('/srv/app', '.agents/prompts/solo.md', 'x')).toBe(
-            '/srv/app/.agents/prompts/solo.md',
+        expect(projectPath('/srv/app', 'agents/prompts/solo.md', 'x')).toBe(
+            '/srv/app/agents/prompts/solo.md',
         );
     });
 
