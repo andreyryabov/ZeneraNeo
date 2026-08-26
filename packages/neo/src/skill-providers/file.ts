@@ -1,7 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { Skill, SkillProvider, SkillSummary } from '../skills.ts';
-import type { AnyTool } from '../types.ts';
+import { selectTools, type AnyTool } from '../types.ts';
 
 // ---------------------------------------------------------------------------
 // Filesystem-backed skill provider
@@ -17,7 +17,8 @@ export interface FileSkillProviderOptions {
     /**
      * Tools a skill may unlock, by name. Instructions can live in a file but
      * code cannot, so a markdown skill declares `tools: [a, b]` in its
-     * frontmatter and the names are resolved against this registry.
+     * frontmatter and the names are resolved against this registry — by name,
+     * by `<group>:*`, or `*` for all of them.
      */
     tools?: AnyTool<any>[];
 }
@@ -104,15 +105,9 @@ export class FileSkillProvider implements SkillProvider {
         if (version && found && found !== version) {
             throw new Error(`skill ${name} is at ${found}, ${version} was requested`);
         }
-        const tools = (entry.summary.toolNames ?? []).map((n) => {
-            const t = this.#tools.get(n);
-            if (!t) {
-                throw new Error(
-                    `skill "${name}" declares tool "${n}", which is not registered on ` +
-                        `provider "${this.id}"`,
-                );
-            }
-            return t;
+        const tools = selectTools([...this.#tools.values()], entry.summary.toolNames ?? [], {
+            where: `skill "${name}"`,
+            hint: `register it on provider "${this.id}"`,
         });
         return {
             ...entry.summary,

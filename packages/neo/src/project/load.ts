@@ -10,7 +10,7 @@ import { promptFile, type PromptPart } from '../prompt.ts';
 import { AgentRunner, type RunOptions, type RunnerOptions } from '../runner.ts';
 import { FileSkillProvider } from '../skill-providers/file.ts';
 import type { SkillBinding, SkillProvider, SkillSummary } from '../skills.ts';
-import type { AnyTool, Input } from '../types.ts';
+import { selectTools, type AnyTool, type Input } from '../types.ts';
 import { parseConfig, type AgentConfig, type ProjectConfig } from './config.ts';
 import { projectDir, projectFile, projectRoot } from './refs.ts';
 
@@ -336,16 +336,9 @@ function toolsFor<TCtx>(spec: AgentConfig, available: AnyTool<TCtx>[]): AnyTool<
     if (!spec.tools?.length) {
         return [];
     }
-    const byName = new Map(available.map((t) => [t.name, t]));
-    return spec.tools.map((name) => {
-        const t = byName.get(name);
-        if (!t) {
-            throw new Error(
-                `agents.${spec.name}.tools: unknown tool "${name}" ` +
-                    `(pass it in ProjectOptions.tools; known: ${[...byName.keys()].join(', ') || 'none'})`,
-            );
-        }
-        return t;
+    return selectTools(available, spec.tools, {
+        where: `agents.${spec.name}.tools`,
+        hint: 'pass it in ProjectOptions.tools',
     });
 }
 

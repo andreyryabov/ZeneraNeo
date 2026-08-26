@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
@@ -8,7 +8,6 @@ import { isStamp, stamp, stampInstant } from '../src/ids.ts';
 import { mask, parseRef, type KeyStore } from '../src/keys.ts';
 import { pad, table } from '../src/term.ts';
 import { windowOf, wrap } from '../src/tui/wrap.ts';
-import { Workspace } from '../src/workspace.ts';
 
 // ---------------------------------------------------------------------------
 // The parts of the CLI that are pure functions of their input. Everything else
@@ -118,40 +117,6 @@ describe('the streaming window', () => {
 
     it('asks for no more rows than there are', () => {
         expect(windowOf('one\ntwo', 40, 6)).toEqual(['one', 'two']);
-    });
-});
-
-describe('workspace containment', () => {
-    const root = mkdtempSync(join(tmpdir(), 'zen-ws-'));
-    const outside = mkdtempSync(join(tmpdir(), 'zen-out-'));
-    afterAll(() => {
-        rmSync(root, { recursive: true, force: true });
-        rmSync(outside, { recursive: true, force: true });
-    });
-
-    const ws = new Workspace({ root });
-
-    it('allows paths inside, including ones that do not exist yet', () => {
-        expect(ws.within('notes.md')).toBe(join(ws.root, 'notes.md'));
-        expect(ws.within('a/b/c.txt')).toBe(join(ws.root, 'a/b/c.txt'));
-    });
-
-    it('refuses to climb out', () => {
-        expect(() => ws.within('../escape')).toThrow();
-        expect(() => ws.within('/etc/passwd')).toThrow();
-        expect(() => ws.within('a/../../escape')).toThrow();
-    });
-
-    it('refuses a null byte', () => {
-        expect(() => ws.within('ok\u0000/../../etc/passwd')).toThrow();
-    });
-
-    /** The check is on the resolved path, so a symlink cannot be a back door. */
-    it('follows symlinks before deciding', () => {
-        writeFileSync(join(outside, 'secret.txt'), 'no');
-        mkdirSync(join(root, 'links'), { recursive: true });
-        symlinkSync(outside, join(root, 'links', 'out'));
-        expect(() => ws.within('links/out/secret.txt')).toThrow();
     });
 });
 

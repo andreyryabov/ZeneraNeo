@@ -1,13 +1,13 @@
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FileMemoryStore, createMemoryStore } from '../src/memory-stores/index.ts';
 import { memoryOpId } from '../src/memory.ts';
-import { FilePayloadStore, createPayloadStore } from '../src/payload-stores/index.ts';
 import { InMemoryPayloadStore } from '../src/payload-stores/in-memory.ts';
-import { FileSkillProvider, createSkillProvider } from '../src/skill-providers/index.ts';
+import { FilePayloadStore, createPayloadStore } from '../src/payload-stores/index.ts';
 import { PayloadResolver, exportRun, hash, importRun } from '../src/payload.ts';
+import { FileSkillProvider, createSkillProvider } from '../src/skill-providers/index.ts';
 import { tool } from '../src/types.ts';
 
 let dir: string;
@@ -196,8 +196,25 @@ describe('FileSkillProvider', () => {
     it('rejects a version mismatch and an unregistered tool', async () => {
         const provider = new FileSkillProvider(dir);
         await expect(provider.load('budget_travel', '2.0.0')).rejects.toThrow(/is at 1.2.0/);
-        await expect(provider.load('budget_travel')).rejects.toThrow(/not registered/);
+        await expect(provider.load('budget_travel')).rejects.toThrow(/unknown tool "cheap_hotels"/);
         await expect(provider.load('nope')).rejects.toThrow(/unknown skill/);
+    });
+
+    it('unlocks a whole group from frontmatter', async () => {
+        const roomService = tool<Record<string, never>>({
+            name: 'room_service',
+            group: 'hotel',
+            description: 'orders room service',
+            parameters: { type: 'object', properties: {} },
+            execute: () => 'ordered',
+        });
+        await writeFile(
+            join(dir, 'suite.md'),
+            ['---', 'description: living large', 'tools: [hotel:*]', '---', 'Order in.'].join('\n'),
+            'utf8',
+        );
+        const provider = new FileSkillProvider({ dir, tools: [cheapHotels, roomService] });
+        expect((await provider.load('suite')).tools?.map((t) => t.name)).toEqual(['room_service']);
     });
 
     it('picks up new files after refresh', async () => {

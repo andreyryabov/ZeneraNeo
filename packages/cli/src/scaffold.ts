@@ -32,20 +32,23 @@ agents:
       description: The entry point.
       # Instructions live in agents/prompts/<name>.md and are picked up by
       # convention — no need to name the file here.
+      #
+      # workspace:* is every file tool at once. Name them one by one to be
+      # narrower, or subtract: [workspace:*, -delete_file]
       tools:
-          - read_file
-          - list_dir
-          - find_files
-          - write_file
-          - delete_file
+          - workspace:*
 `;
 
 const PROMPT = `You are a helpful assistant working inside a project workspace.
 
-You have tools to read, search and write files. The workspace is the only
+You have tools to read, search and edit files. The workspace is the only
 place you can see; paths are relative to its root.
 
-Prefer reading before writing, and say what you changed.
+Read a file before you change it: \`apply_patch\` matches the surrounding text
+exactly, so a patch written from memory will not apply. Use \`apply_patch\` to
+change part of a file and \`write_file\` only for a new one.
+
+Say what you changed.
 `;
 
 const SKILLS_README = `Skills go here, one directory each:

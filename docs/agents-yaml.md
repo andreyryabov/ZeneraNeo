@@ -259,7 +259,7 @@ agents:
 | `description` | What a sibling agent's `transfer_to_<name>` tool tells the model. Write it for the model             |
 | `system`      | Path to a markdown file, relative to the root. Defaults to `agents/prompts/<name>.md` if that exists |
 | `model`       | A `models:` name or a shorthand. Falls back to the top-level `model:`                                |
-| `tools`       | Names resolved against `ProjectOptions.tools` — code cannot live in yaml                             |
+| `tools`       | Tool selectors resolved against `ProjectOptions.tools` — code cannot live in yaml                    |
 | `handoffs`    | Agent names this one may transfer to                                                                 |
 | `skills`      | Skill binding; see below                                                                             |
 | `default`     | `true` marks the entry point, if no top-level `default:`                                             |
@@ -267,6 +267,34 @@ agents:
 `handoffs` takes bare strings by design, not objects. A hand-off carries no
 configuration in this version, so there is nothing for an object form to hold,
 and accepting one would mean accepting keys nothing honours.
+
+### `agents[].tools`
+
+An entry is a tool name, or a selector:
+
+| Selector    | Selects                                                     |
+| ----------- | ----------------------------------------------------------- |
+| `read_file` | that one tool                                               |
+| `group:*`   | every tool in a group — `workspace:*` is all the file tools |
+| `'*'`       | everything the host passed to `loadProject`                 |
+| `-<any>`    | removes what it matches from the selection so far           |
+
+Quote a lone `'*'`: unquoted, YAML reads it as an alias and refuses the file.
+`workspace:*` needs no quoting.
+
+Selectors are applied in the order written, so subtraction reads as an
+exception to the line above it:
+
+```yaml
+tools: [workspace:*, -delete_file, -move_file, policy_lookup]
+```
+
+Groups come from the tool, not from config: `workspaceTools()` tags its seven
+with `workspace`, and a host's own tools can carry any `group` they like. The
+model never sees a group — it gets the same flat list of names either way.
+
+The same grammar resolves a skill's `tools:` frontmatter against the tools
+registered on its provider.
 
 ### `agents[].skills`
 
@@ -301,7 +329,8 @@ reply.
 - Unknown key anywhere (strict schema)
 - A name that breaks the name pattern
 - `models.<alias>.provider` naming an undeclared provider
-- `agents[].tools` naming a tool not passed to `loadProject`
+- `agents[].tools` naming a tool not passed to `loadProject`, or a group with
+  nothing in it
 - `agents[].handoffs` naming an unknown agent, or the agent itself
 - `agents[].skills.provider` naming an unknown catalog
 - `agents[].skills.allow` / `.preload` naming a skill not in the catalog

@@ -58,6 +58,17 @@ const quote = tool({
     execute: () => ({ eur: 42 }),
 });
 
+/** A group, so a config can name the set rather than count its members. */
+const grouped = ['fs_read', 'fs_write', 'fs_delete'].map((name) =>
+    tool({
+        name,
+        group: 'files',
+        description: name,
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+        execute: () => 'ok',
+    }),
+);
+
 const SKILL = `---
 name: pricing
 description: How things are priced.
@@ -195,6 +206,66 @@ describe('entrypoint', () => {
         await expect(
             loadProject(project({ 'agents.yaml': two('default: third\n') })),
         ).rejects.toThrow(/unknown agent "third"/);
+    });
+});
+
+describe('tool selectors', () => {
+    /** Loads a one-agent project whose `tools:` is the given yaml list. */
+    async function chosen(list: string, available = [...grouped, lookup]): Promise<string[]> {
+        const p = await loadProject(
+            project({ 'agents.yaml': `agents:\n  - name: solo\n    tools: ${list}\n` }),
+            { tools: available },
+        );
+        return p.registry.get('solo').tools.map((t) => t.name);
+    }
+
+    it('takes a whole group with <group>:*', async () => {
+        expect(await chosen('[files:*]')).toEqual(['fs_read', 'fs_write', 'fs_delete']);
+    });
+
+    it("takes everything with '*'", async () => {
+        expect(await chosen("['*']")).toEqual(['fs_read', 'fs_write', 'fs_delete', 'lookup']);
+    });
+
+    it('subtracts what a later entry excludes', async () => {
+        expect(await chosen('[files:*, -fs_delete]')).toEqual(['fs_read', 'fs_write']);
+    });
+
+    it('applies selectors in order, so a group can be added back', async () => {
+        expect(await chosen('[files:*, -fs_delete, fs_delete]')).toEqual([
+            'fs_read',
+            'fs_write',
+            'fs_delete',
+        ]);
+    });
+
+    it('keeps the first position of a tool a group repeats', async () => {
+        expect(await chosen('[fs_delete, files:*]')).toEqual(['fs_delete', 'fs_read', 'fs_write']);
+    });
+
+    it('ignores an exclusion that matches nothing selected', async () => {
+        expect(await chosen('[fs_read, -lookup]')).toEqual(['fs_read']);
+    });
+
+    it('reads a bare name exactly, with no globbing', async () => {
+        await expect(chosen('[fs_*]')).rejects.toThrow(/unknown tool "fs_\*"/);
+    });
+
+    it('rejects a group nobody is in, and lists the ones that exist', async () => {
+        await expect(chosen('[web:*]')).rejects.toThrow(
+            /no tools in group "web" \(known groups: files\)/,
+        );
+    });
+
+    it('rejects a selector that excludes nothing in particular', async () => {
+        await expect(chosen("['-', fs_read]")).rejects.toThrow(/empty tool selector/);
+    });
+
+    it('survives the round trip through yaml unquoted', async () => {
+        expect(await chosen('\n          - files:*\n          - -fs_delete')).toEqual([
+            'fs_read',
+            'fs_write',
+        ]);
     });
 });
 

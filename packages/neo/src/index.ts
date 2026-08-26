@@ -17,5 +17,7 @@ export * from './services.ts';
 export * from './skill-providers/index.ts';
 export * from './skills.ts';
 export * from './state.ts';
+export * from './tools/index.ts';
 export * from './trajectory.ts';
 export * from './types.ts';
+

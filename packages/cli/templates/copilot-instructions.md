@@ -222,16 +222,16 @@ agents: # the only required key; at least one entry
 
 **Agent fields**
 
-| Field         | Meaning                                                                              |
-| ------------- | ------------------------------------------------------------------------------------ |
-| `name`        | **Required.** See §2.3                                                               |
-| `description` | What a sibling's `transfer_to_<name>` tool tells the model. Write it _for the model_ |
-| `system`      | Prompt path, relative to root. Defaults to `agents/prompts/<name>.md` if present     |
-| `model`       | A `models:` alias or shorthand. Falls back to top-level `model:`                     |
-| `tools`       | Names resolved against `ProjectOptions.tools` — code cannot live in YAML             |
-| `handoffs`    | Agent names this one may transfer to. Bare strings; no per-edge config               |
-| `skills`      | Skill binding — see §5.2                                                             |
-| `default`     | `true` marks the entry point when no top-level `default:`                            |
+| Field         | Meaning                                                                                |
+| ------------- | -------------------------------------------------------------------------------------- |
+| `name`        | **Required.** See §2.3                                                                 |
+| `description` | What a sibling's `transfer_to_<name>` tool tells the model. Write it _for the model_   |
+| `system`      | Prompt path, relative to root. Defaults to `agents/prompts/<name>.md` if present       |
+| `model`       | A `models:` alias or shorthand. Falls back to top-level `model:`                       |
+| `tools`       | Selectors resolved against `ProjectOptions.tools` — see §3.6. Code cannot live in YAML |
+| `handoffs`    | Agent names this one may transfer to. Bare strings; no per-edge config                 |
+| `skills`      | Skill binding — see §5.2                                                               |
+| `default`     | `true` marks the entry point when no top-level `default:`                              |
 
 **Providers** — a provider is a _connection_, not a model. One client is built
 per name and shared, so five agents on one key open one connection pool.
@@ -257,7 +257,7 @@ provider with a missing key does not fail loading.
 
 - any unknown key; any name breaking the pattern
 - `models.<alias>.provider` naming an undeclared provider
-- `agents[].tools` naming a tool not passed to `loadProject`
+- `agents[].tools` naming a tool not passed to `loadProject`, or a group with nothing in it
 - `agents[].handoffs` naming an unknown agent, or the agent itself
 - `agents[].skills.provider` / `.allow` / `.preload` naming something absent
 - a `preload:` entry missing from `allow:`
@@ -407,9 +407,70 @@ Rules:
 - **Flat parameters.** Deeply nested objects are filled in wrong.
 - **Idempotent where possible**, because retries and replays happen.
 - **Never accept a secret as a parameter.** Credentials come from the environment.
+- **Give a related set a `group:`** — `tool({ name: 'search_orders', group: 'orders', … })`
+  — so `agents.yaml` can name the set instead of counting its members (§3.6).
 - One tool per file under `src/tools/`, re-exported from `src/tools/index.ts`.
 
-### 3.6 The host (`src/main.ts`)
+### 3.6 The workspace tools (`workspace:*`)
+
+`zn run` builds one tool set for you: the **workspace** group, rooted at the
+session's workspace directory. It is the only thing passed to `loadProject`, so
+an agent whose `tools:` does not name them cannot see a file at all.
+
+| Tool          | What it does                                                                             |
+| ------------- | ---------------------------------------------------------------------------------------- |
+| `read_file`   | Reads text; `start_line`/`end_line` for a range. Reports total lines and if it truncated |
+| `list_dir`    | Entries with kind, format (text/binary/image/…), size, and line count for text           |
+| `find_files`  | Paths containing a substring, case-insensitive                                           |
+| `write_file`  | Creates or overwrites a whole file, making parent directories                            |
+| `apply_patch` | Edits by surrounding context rather than line numbers; several files atomically          |
+| `move_file`   | Moves or renames; refuses to clobber without `overwrite`                                 |
+| `delete_file` | Deletes; a directory needs `recursive`                                                   |
+
+Every path is resolved through one containment gate — symlinks followed, then
+checked — so nothing outside the workspace root is reachable. Reads are capped
+and listings bounded, so no single call can flood the context.
+
+**Selecting them.** A `tools:` entry is a selector, not only a name:
+
+| Selector      | Selects                                           |
+| ------------- | ------------------------------------------------- |
+| `read_file`   | that one tool                                     |
+| `workspace:*` | every tool in the group                           |
+| `'*'`         | everything the host passed to `loadProject`       |
+| `-<any>`      | removes what it matches from the selection so far |
+
+```yaml
+agents:
+    - name: editor
+      tools: [workspace:*]
+
+    - name: reviewer
+      # Everything except the four that can change something.
+      tools: [workspace:*, -write_file, -apply_patch, -move_file, -delete_file]
+```
+
+Selectors apply in the order written, so a `-` line reads as an exception to the
+line above it. Quote a lone `'*'`: unquoted, YAML reads it as an alias and
+refuses the file. `workspace:*` needs no quoting. There is no name globbing —
+`read_*` is an unknown tool, because a selector should track a declared set, not
+a naming habit.
+
+`zn run --read-only` withholds the four mutating tools whatever `agents.yaml`
+asks for: the deployment overriding the repository, as everywhere else.
+
+**Prompting for them.** Three lines earn their place in any prompt that grants
+this group:
+
+- Read before editing — `apply_patch` matches on exact text, so a patch built
+  from memory fails.
+- Prefer `apply_patch` to `write_file` for an existing file. Rewriting a file to
+  change one line costs the whole file in output tokens and loses everything the
+  model did not think to repeat.
+- `list_dir` before guessing a path; `find_files` when the name is known but the
+  location is not.
+
+### 3.7 The host (`src/main.ts`)
 
 ```ts
 import { loadProject } from 'zenera-neo';
@@ -441,7 +502,18 @@ describes intent, a deployment overrides it:
 | `memory` / `payloads`  | Stores handed to the runner                                           |
 | `skills`               | Extra `SkillProvider`s, appended to the project's own                 |
 
-### 3.7 `.env`
+A host that wants the workspace tools asks for them — they are not wired in by
+default, because what an agent may touch is a deployment decision:
+
+```ts
+import { loadProject, workspaceTools } from 'zenera-neo';
+
+const project = await loadProject('.', {
+    tools: [...workspaceTools({ root: '/srv/sandbox' }), ...tools],
+});
+```
+
+### 3.8 `.env`
 
 ```
 OPENAI_API_KEY=...
@@ -915,6 +987,8 @@ Before finishing any change here:
 - [ ] `additionalProperties: false`, explicit `required`
 - [ ] Errors returned as data, not thrown
 - [ ] No secrets in parameters
+- [ ] An agent that only reads is not holding `write_file`, `apply_patch`,
+      `move_file` or `delete_file` — subtract them from `workspace:*`
 
 **Models**
 
@@ -944,6 +1018,8 @@ Before finishing any change here:
 | Never loads the skill it should            | The skill's `description`; or `preload` it            |
 | Loads too much, answers slowly             | `allow:`, `maxIndexEntries:`, or `discovery: search`  |
 | Invents a number                           | A tool; plus a prompt line naming the tool            |
+| Rewrites a whole file to change one line   | A prompt line preferring `apply_patch` — §3.6         |
+| Edits files it should only be reading      | Subtract the mutating tools, or `zn run --read-only`  |
 | Answers instead of routing                 | Router prompt prohibition; check `handoffs:`          |
 | Routes to the wrong specialist             | The target agents' `description:` fields              |
 | Loses a detail after a handoff             | Say it in the handoff; check the collapse policy      |

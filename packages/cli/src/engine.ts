@@ -11,6 +11,7 @@ import {
     loadProject,
     renderReportHtml,
     turns,
+    workspaceTools,
     type AgentEvent,
     type AgentProject,
     type AgentState,
@@ -31,7 +32,6 @@ import {
     type SessionPaths,
 } from './session.ts';
 import { CliError, EXIT, invalidError, warn } from './term.ts';
-import { workspaceTools } from './workspace.ts';
 
 // ---------------------------------------------------------------------------
 // The engine

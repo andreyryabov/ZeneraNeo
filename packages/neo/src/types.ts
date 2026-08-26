@@ -222,6 +222,12 @@ export function isToolReturn(v: unknown): v is ToolReturn {
 }
 
 export interface Tool<TArgs = unknown, TCtx = unknown> extends ToolSchema {
+    /**
+     * The family this tool belongs to, so config can name the whole set at
+     * once as `<group>:*`. Purely an authoring convenience — it is never sent
+     * to the model, which sees one flat list of names either way.
+     */
+    group?: string;
     execute(args: TArgs, tc: ToolContext<TCtx>): unknown | Promise<unknown>;
 }
 
@@ -241,6 +247,94 @@ export type AnyTool<TCtx = unknown> = Tool<any, TCtx>;
  */
 export function tool<TArgs, TCtx = unknown>(def: Tool<TArgs, TCtx>): Tool<TArgs, TCtx> {
     return def;
+}
+
+// ---------------------------------------------------------------------------
+// Choosing tools by name
+//
+// Config names tools; it cannot contain them. That seam is fine until a set
+// grows: seven filesystem tools written out under every agent is seven chances
+// to leave one behind on a rename, and the list says nothing about intent —
+// nobody reads it and thinks "the workspace", they read it and count.
+//
+// So a selector may also name a *group*, and subtract:
+//
+//     tools: [workspace:*, -delete_file, policy_lookup]
+//
+// Subtraction is what makes the wildcard usable rather than a trap. Without it
+// the only way to withhold one tool from a family is to stop using the family,
+// and an author who wants six of seven is back to listing names.
+//
+// Everything is resolved at load, and an unknown name or an empty group is a
+// startup failure: a typo that silently grants nothing is the same bug as a
+// typo that silently grants everything, and both surface as a confused model.
+// ---------------------------------------------------------------------------
+
+export interface ToolSelection {
+    /** the config key to name in an error, e.g. `agents.triage.tools` */
+    where: string;
+    /** how the caller should register a tool that is missing */
+    hint?: string;
+}
+
+/**
+ * Resolves selectors against the tools a host provided, in the order written
+ * and without duplicates. A selector is a tool name, `<group>:*` for every tool
+ * in a group, or `*` for everything; any of them prefixed with `-` removes
+ * what it matches from the selection so far.
+ */
+export function selectTools<TCtx>(
+    available: AnyTool<TCtx>[],
+    selectors: string[],
+    opts: ToolSelection,
+): AnyTool<TCtx>[] {
+    const chosen = new Map<string, AnyTool<TCtx>>();
+    for (const raw of selectors) {
+        const drop = raw.startsWith('-');
+        const selector = (drop ? raw.slice(1) : raw).trim();
+        if (!selector) {
+            throw new Error(`${opts.where}: empty tool selector`);
+        }
+        for (const t of matchTools(available, selector, opts)) {
+            if (drop) {
+                chosen.delete(t.name);
+            } else {
+                chosen.set(t.name, t);
+            }
+        }
+    }
+    return [...chosen.values()];
+}
+
+function matchTools<TCtx>(
+    available: AnyTool<TCtx>[],
+    selector: string,
+    opts: ToolSelection,
+): AnyTool<TCtx>[] {
+    if (selector === '*') {
+        return available;
+    }
+    if (selector.endsWith(':*')) {
+        const group = selector.slice(0, -2);
+        const hits = available.filter((t) => t.group === group);
+        if (hits.length === 0) {
+            const groups = [...new Set(available.map((t) => t.group).filter(Boolean))];
+            throw new Error(
+                `${opts.where}: no tools in group "${group}" ` +
+                    `(known groups: ${groups.join(', ') || 'none'})`,
+            );
+        }
+        return hits;
+    }
+    const exact = available.find((t) => t.name === selector);
+    if (exact) {
+        return [exact];
+    }
+    const known = available.map((t) => t.name).join(', ') || 'none';
+    throw new Error(
+        `${opts.where}: unknown tool "${selector}" ` +
+            (opts.hint ? `(${opts.hint}; known: ${known})` : `(known: ${known})`),
+    );
 }
 
 // Built-in tool names. Hand-offs, memory, skills and forks are all ordinary
