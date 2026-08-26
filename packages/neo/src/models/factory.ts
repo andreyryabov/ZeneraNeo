@@ -168,6 +168,25 @@ export interface ModelSpec
  */
 export type ModelRef = ModelSpec | string;
 
+/**
+ * What a ref *would* connect with. `model()` answers the same question by
+ * building a client — which needs the very credential a caller wanting to
+ * report on credentials does not have. This resolves the same precedence rules
+ * and stops there, so a CLI can say which model is unreachable before anything
+ * throws three frames deeper.
+ */
+export interface ModelRequirement {
+    /** the provider name the ref resolves to, declared or built-in */
+    provider: string;
+    kind: ProviderKind;
+    /** env var consulted when the spec carries no `apiKey` of its own */
+    apiKeyEnv: string;
+    /** a client could be built as things stand */
+    satisfied: boolean;
+    /** the SDK authenticates without a key, so `satisfied` says little */
+    keyOptional: boolean;
+}
+
 interface KindDefaults {
     /** the request format, and so the adapter and the client to build */
     protocol: Protocol;
@@ -339,7 +358,7 @@ export class ModelRegistry {
             return existing;
         }
         const spec = this.#spec(name);
-        const built = spec.client ?? buildClient(name, this.#kind(name), spec, spec);
+        const built = spec.client ?? buildClient(name, this.kindOf(name), spec, spec);
         this.#clients.set(name, built);
         return built;
     }
@@ -349,7 +368,7 @@ export class ModelRegistry {
         const spec = typeof ref === 'string' ? this.parse(ref) : ref;
         const name = spec.provider ?? this.#default;
         const provider = this.#spec(name);
-        const kind = this.#kind(name);
+        const kind = this.kindOf(name);
         const defaults = KINDS[kind];
 
         // Inline credentials opt out of the shared client: they describe a
@@ -382,6 +401,43 @@ export class ModelRegistry {
         return api === 'responses'
             ? new OpenAIResponsesModel(spec.model, client as OpenAI, spec)
             : new OpenAIModel(spec.model, client as OpenAI, spec);
+    }
+
+    /**
+     * What a ref needs to reach its vendor, resolved but not contacted. An
+     * unknown provider still throws: that is a broken config, not a missing
+     * credential, and the two want different words.
+     */
+    requirement(ref: ModelRef): ModelRequirement {
+        const spec = typeof ref === 'string' ? this.parse(ref) : ref;
+        const name = spec.provider ?? this.#default;
+        const provider = this.#spec(name);
+        const kind = this.kindOf(name);
+        const defaults = KINDS[kind];
+        const creds: Credentials = hasCredentials(spec) ? spec : provider;
+        const apiKeyEnv = creds.apiKeyEnv ?? defaults.apiKeyEnv;
+
+        // An unset `${VAR}` is precisely the absent credential being asked
+        // about, so it answers the question rather than interrupting it.
+        let apiKey: string | undefined;
+        try {
+            apiKey = expand(creds.apiKey, `provider "${name}": apiKey`) ?? fromEnv(apiKeyEnv);
+        } catch {
+            apiKey = undefined;
+        }
+
+        return {
+            provider: name,
+            kind,
+            apiKeyEnv,
+            satisfied: Boolean(
+                apiKey ??
+                    provider.token ??
+                    (spec.client || provider.client) ??
+                    defaults.keyOptional,
+            ),
+            keyOptional: Boolean(defaults.keyOptional),
+        };
     }
 
     /** `[provider[/api]:]model` → spec. Exposed so a caller can validate a ref. */
@@ -424,7 +480,7 @@ export class ModelRegistry {
     }
 
     /** A declared kind wins; otherwise a built-in name is its own kind. */
-    #kind(name: string): ProviderKind {
+    kindOf(name: string): ProviderKind {
         const declared = this.#providers.get(name)?.kind;
         return declared ?? (isProviderKind(name) ? name : 'openai');
     }

@@ -72,6 +72,26 @@ const SKILLS_DIR = 'agents/skills';
 const CONFIG_NAMES = ['agents.yaml', 'agents.yml', 'agents/agents.yaml', 'agents/agents.yml'];
 const HOUSE_RULES = 'AGENTS.md';
 
+/** A project's declaration, before anything is assembled from it. */
+export interface ProjectSource {
+    root: string;
+    /** the config file that was read */
+    source: string;
+    config: ProjectConfig;
+}
+
+/**
+ * Finds and validates `agents.yaml`, and stops there. Loading a project builds
+ * its model clients, which needs credentials — so anything that wants to *look*
+ * at what a project declares, credentials included, has to be able to read it
+ * without that.
+ */
+export function readProjectConfig(dir: string): ProjectSource {
+    const root = projectRoot(dir);
+    const source = findConfig(root);
+    return { root, source, config: parseConfig(readFileSync(source, 'utf8'), source) };
+}
+
 /**
  * Reads a project into memory. Every file it will ever need is read here, so a
  * broken path, an unknown tool or a hand-off to nobody fails at startup with
@@ -82,9 +102,7 @@ export async function loadProject<TCtx = unknown>(
     dir: string,
     opts: ProjectOptions<TCtx> = {},
 ): Promise<AgentProject<TCtx>> {
-    const root = projectRoot(dir);
-    const source = findConfig(root);
-    const config = parseConfig(readFileSync(source, 'utf8'), source);
+    const { root, source, config } = readProjectConfig(dir);
 
     // Read once and share the object: every agent's prompt then reports the
     // same path and the same content hash, so the report says "one document,
@@ -93,7 +111,7 @@ export async function loadProject<TCtx = unknown>(
 
     const providers = [...skillProviders(root, config, opts), ...(opts.skills ?? [])];
     const catalogs = await indexOf(providers);
-    const models = modelRegistry(config, opts);
+    const models = projectRegistry(config, opts);
 
     const registry = new AgentRegistry<TCtx>();
     const resolve = modelResolver(config, opts, models);
@@ -260,7 +278,10 @@ function instructionsFor(
  * no environment: a project may name a vendor a given deployment has no key
  * for, and only pay for it if an agent actually reaches for it.
  */
-function modelRegistry<TCtx>(config: ProjectConfig, opts: ProjectOptions<TCtx>): ModelRegistry {
+export function projectRegistry<TCtx>(
+    config: ProjectConfig,
+    opts: ProjectOptions<TCtx> = {},
+): ModelRegistry {
     const models = opts.registry ?? new ModelRegistry();
     for (const [name, spec] of Object.entries(config.providers ?? {})) {
         models.provider(name, spec);

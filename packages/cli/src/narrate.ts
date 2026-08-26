@@ -23,7 +23,7 @@ export interface NarratorOptions {
 export class Narrator {
     readonly #quiet: boolean;
     readonly #live: boolean;
-    #streaming = false;
+    #streaming?: 'text' | 'thinking';
     #agent?: string;
 
     constructor(opts: NarratorOptions = {}) {
@@ -80,14 +80,29 @@ export class Narrator {
     };
 
     #delta(event: AgentEvent & { type: string }): void {
-        if (!this.#live || event.type !== 'text_delta') {
+        if (!this.#live) {
+            return;
+        }
+        const kind =
+            event.type === 'text_delta'
+                ? 'text'
+                : event.type === 'thinking_delta'
+                  ? 'thinking'
+                  : undefined;
+        if (!kind) {
             return;
         }
         const { delta } = event as { delta: string };
         if (!delta) {
             return;
         }
-        this.#streaming = true;
+        // Reasoning and the answer are two different streams; run together they
+        // read as one confused paragraph, so a switch between them breaks the
+        // line first.
+        if (this.#streaming && this.#streaming !== kind) {
+            process.stderr.write('\n');
+        }
+        this.#streaming = kind;
         process.stderr.write(dim(delta));
     }
 
@@ -95,7 +110,7 @@ export class Narrator {
     #break(): void {
         if (this.#streaming) {
             process.stderr.write('\n');
-            this.#streaming = false;
+            this.#streaming = undefined;
         }
     }
 

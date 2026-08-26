@@ -136,6 +136,22 @@ export async function open(nameOrDir: string): Promise<Project> {
     return openDir(entry.path);
 }
 
+/**
+ * `open` where a miss is an answer rather than an error. It exists for the one
+ * place a word might be a project name and might be something else entirely —
+ * `zen run <project>` against `zen run <prompt>` — and the difference decides
+ * how the rest of the line is read.
+ */
+export async function find(nameOrDir: string): Promise<Project | undefined> {
+    if (isAbsolute(nameOrDir) || nameOrDir.startsWith('.') || existsSync(nameOrDir)) {
+        const dir = resolve(nameOrDir);
+        const meta = await readMeta(dir);
+        return meta ? { dir, meta } : undefined;
+    }
+    const entry = (await Registry.open()).find(nameOrDir);
+    return entry ? openDir(entry.path) : undefined;
+}
+
 /** The project a bare command means: the one you are standing in. */
 export async function current(cwd = process.cwd()): Promise<Project | undefined> {
     return findUp(cwd);

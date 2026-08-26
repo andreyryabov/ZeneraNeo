@@ -1,11 +1,13 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { extract, split } from '../src/args.ts';
+import { auditModels } from '../src/audit.ts';
 import { isStamp, stamp, stampInstant } from '../src/ids.ts';
-import { mask, parseRef } from '../src/keys.ts';
+import { mask, parseRef, type KeyStore } from '../src/keys.ts';
 import { pad, table } from '../src/term.ts';
+import { windowOf, wrap } from '../src/tui/wrap.ts';
 import { Workspace } from '../src/workspace.ts';
 
 // ---------------------------------------------------------------------------
@@ -88,6 +90,37 @@ describe('columns', () => {
     });
 });
 
+describe('the streaming window', () => {
+    // The bug this exists for: a reasoning stream is one long paragraph with no
+    // newlines, so counting `\n` says one line while the terminal draws fifty,
+    // and a frame taller than the viewport cannot be erased.
+    const paragraph = Array.from({ length: 400 }, (_, i) => `word${i}`).join(' ');
+
+    it('measures the rows a terminal will draw, not the newlines', () => {
+        expect(paragraph.split('\n')).toHaveLength(1);
+        expect(windowOf(paragraph, 40, 6)).toHaveLength(6);
+    });
+
+    it('never returns a row the terminal would wrap again', () => {
+        for (const row of windowOf(paragraph, 40, 6)) {
+            expect(row.length).toBeLessThanOrEqual(40);
+        }
+    });
+
+    it('shows the tail, which is where the stream is', () => {
+        const rows = windowOf(paragraph, 40, 6);
+        expect(rows.at(-1)).toContain('word399');
+    });
+
+    it('breaks a word wider than the terminal rather than overflowing', () => {
+        expect(wrap('x'.repeat(25), 10)).toEqual(['xxxxxxxxxx', 'xxxxxxxxxx', 'xxxxx']);
+    });
+
+    it('asks for no more rows than there are', () => {
+        expect(windowOf('one\ntwo', 40, 6)).toEqual(['one', 'two']);
+    });
+});
+
 describe('workspace containment', () => {
     const root = mkdtempSync(join(tmpdir(), 'zen-ws-'));
     const outside = mkdtempSync(join(tmpdir(), 'zen-out-'));
@@ -119,5 +152,81 @@ describe('workspace containment', () => {
         mkdirSync(join(root, 'links'), { recursive: true });
         symlinkSync(outside, join(root, 'links', 'out'));
         expect(() => ws.within('links/out/secret.txt')).toThrow();
+    });
+});
+
+describe('the credential audit', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zen-audit-'));
+    // Only the keyring's verdict on a key is asked for here; the keys
+    // themselves reach the audit the way they reach the library, through the
+    // environment.
+    const store = { active: () => undefined } as unknown as KeyStore;
+    const kept = { ...process.env };
+
+    afterEach(() => {
+        process.env = { ...kept };
+    });
+    afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+    const project = (models: string): string => {
+        writeFileSync(
+            join(dir, 'agents.yaml'),
+            `version: 1\nmodel: fast\nmodels:\n${models}\nagents:\n  - name: default\n`,
+        );
+        return dir;
+    };
+
+    it('names the model and the variable that would carry its key', () => {
+        delete process.env.GEMINI_API_KEY;
+        const issues = auditModels(
+            project('    fast:\n        provider: google\n        model: gemini-2.5-flash\n'),
+            store,
+        );
+        expect(issues).toEqual([
+            {
+                name: 'fast',
+                provider: 'google',
+                env: 'GEMINI_API_KEY',
+                reason: 'missing',
+                add: 'google',
+            },
+        ]);
+    });
+
+    it('says nothing about a model that can be reached', () => {
+        process.env.GEMINI_API_KEY = 'k';
+        expect(
+            auditModels(
+                project('    fast:\n        provider: google\n        model: gemini-2.5-flash\n'),
+                store,
+            ),
+        ).toEqual([]);
+    });
+
+    /**
+     * Vertex takes no api key at all, so asking after `VERTEX_API_KEY` would
+     * warn about every correctly configured service account there is.
+     */
+    it('looks for vertex credentials where vertex keeps them', () => {
+        const config = '    fast:\n        provider: vertex\n        model: gemini-2.5-flash\n';
+        process.env.GOOGLE_APPLICATION_CREDENTIALS = join(dir, 'sa.json');
+        expect(auditModels(project(config), store)).toEqual([]);
+
+        delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
+        process.env.CLOUDSDK_CONFIG = join(dir, 'no-gcloud');
+        expect(auditModels(project(config), store)).toEqual([
+            {
+                name: 'fast',
+                provider: 'vertex',
+                env: 'GOOGLE_APPLICATION_CREDENTIALS',
+                reason: 'missing',
+                add: 'vertex',
+            },
+        ]);
+    });
+
+    /** A config nothing can read is the loader's to complain about, in its own words. */
+    it('stays quiet when there is no config to read', () => {
+        expect(auditModels(join(dir, 'nowhere'), store)).toEqual([]);
     });
 });

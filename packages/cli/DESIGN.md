@@ -388,6 +388,39 @@ events and the `Architecture` projection — the TUI holds no state the trajecto
 does not already have, which is what keeps it a view and makes `report.html`
 and the TUI two renderings of one thing.
 
+The screen is in two halves and the split is not cosmetic. Everything that is
+finished — the banner, each turn, each tool call — goes through `Static`, which
+prints once and is never touched again, so it scrolls into real terminal
+scrollback. Everything else is the **repainting frame**, and the frame must
+never be taller than the terminal: Ink erases the previous one by moving the
+cursor back over it, which only works while it is still on screen. A frame that
+outgrows the viewport scrolls its own top away, the erase falls short, and every
+repaint strands another copy of its first line in the scrollback.
+
+The unit that decides "taller" is the row the terminal draws, not the line the
+model wrote — a reasoning stream is one enormous paragraph, so counting `\n`
+says six lines while the terminal draws sixty. So the two unbounded things, the
+reasoning stream and the answer as it arrives, are wrapped by
+[tui/wrap.ts](packages/cli/src/tui/wrap.ts) to a known width, windowed onto
+their last N rows, and then given that same N again as an explicit `height`
+with `overflow="hidden"` — a miscount clips rather than corrupts. Nothing is
+lost: the finished answer lands in `Static` whole, and the full reasoning chain
+is in the trajectory.
+
+### 7.4 Light and dark
+
+The terminal already has a colour scheme. The answer is drawn in its own
+foreground, asides are drawn dim, and only four things take a colour: the
+person's turn, the agent name, a warning, an error. Those four swap between a
+dark and a light palette ([tui/theme.ts](packages/cli/src/tui/theme.ts)),
+because `cyan` and `gray` are the two ANSI colours a light background reliably
+ruins.
+
+Which palette is chosen: `--theme dark|light|auto`, then `ZENERA_THEME`, then
+the terminal asked directly (OSC 11, before Ink takes stdin), then `COLORFGBG`,
+then dark. The override comes first because detection can be wrong and nobody
+should have to argue with a terminal about what colour it is.
+
 ## 8. Distribution — the `zen` binary
 
 The command name is a `bin` entry in [package.json](packages/cli/package.json),

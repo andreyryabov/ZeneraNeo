@@ -17,6 +17,7 @@ import {
     type Input,
     type RunResult,
 } from 'zenera-neo';
+import { auditModels, describeIssue } from './audit.ts';
 import { readJson, writeJson } from './home.ts';
 import { KeyStore, assertUsable } from './keys.ts';
 import type { Project } from './projects.ts';
@@ -29,7 +30,7 @@ import {
     type RunPaths,
     type SessionPaths,
 } from './session.ts';
-import { CliError, EXIT, invalidError } from './term.ts';
+import { CliError, EXIT, invalidError, warn } from './term.ts';
 import { workspaceTools } from './workspace.ts';
 
 // ---------------------------------------------------------------------------
@@ -70,6 +71,13 @@ export async function open(opts: EngineOptions): Promise<Engine> {
     const keys = await KeyStore.open();
     keys.materialize();
     assertUsable(keys);
+
+    // Said before the load, because the load stops at the first model it cannot
+    // build: one SDK's words about one model, when the useful answer is which
+    // of the project's models are reachable and which are not.
+    for (const issue of auditModels(opts.versionDir, keys)) {
+        warn(describeIssue(issue));
+    }
 
     const meta = await readSessionMeta(opts.session);
     const workspace = resolve(meta.workspace);
@@ -142,6 +150,8 @@ export interface RunOutcome {
     result: RunResult<string>;
     text: string;
     durationMs: number;
+    /** where the report landed, when one could be rendered */
+    report?: string;
 }
 
 /**
@@ -207,12 +217,14 @@ async function record(
     await writeFile(run.output, `${text}\n`, 'utf8');
     writeJson(run.state, result.state, 0o644);
 
+    let report: string | undefined;
     try {
-        const report = await buildRunReport(result.state, engine.runner.services.payloads, {
+        const built = await buildRunReport(result.state, engine.runner.services.payloads, {
             title: `${engine.name} · ${run.id}`,
             architecture: await engine.runner.describe(),
         });
-        await writeFile(run.report, renderReportHtml(report), 'utf8');
+        await writeFile(run.report, renderReportHtml(built), 'utf8');
+        report = run.report;
     } catch {
         // A report is a convenience. Losing it must not lose the run.
     }
@@ -236,7 +248,7 @@ async function record(
         0o644,
     );
 
-    return { run, result, text, durationMs };
+    return { run, result, text, durationMs, report };
 }
 
 function asText(input: Input): string {

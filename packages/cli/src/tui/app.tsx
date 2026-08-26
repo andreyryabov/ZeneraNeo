@@ -1,10 +1,14 @@
 import { TextInput } from '@inkjs/ui';
 import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
-import React, { useCallback, useRef, useState } from 'react';
-import { isCheckpoint, zeroUsage, type AgentEvent, type TokenUsage } from 'zenera-neo';
+import { pathToFileURL } from 'node:url';
+import React, { useCallback, useContext, useRef, useState } from 'react';
+import { isCheckpoint, turns, zeroUsage, type AgentEvent, type TokenUsage } from 'zenera-neo';
 import * as Engine from '../engine.ts';
 import { format } from '../narrate.ts';
 import { display } from '../session.ts';
+import { CliError } from '../term.ts';
+import { resolveTheme, THEMES, type Kind, type Theme } from './theme.ts';
+import { windowOf } from './wrap.ts';
 
 // ---------------------------------------------------------------------------
 // The drawing surface
@@ -18,8 +22,6 @@ import { display } from '../session.ts';
 // a script — nothing is recorded only when someone is watching.
 // ---------------------------------------------------------------------------
 
-type Kind = 'you' | 'agent' | 'tool' | 'note' | 'error';
-
 interface Line {
     key: string;
     kind: Kind;
@@ -27,13 +29,15 @@ interface Line {
     detail?: string;
 }
 
-const COLOUR: Record<Kind, string> = {
-    you: 'cyan',
-    agent: 'white',
-    tool: 'gray',
-    note: 'gray',
-    error: 'red',
-};
+/**
+ * What `Static` prints. The banner is the first of them because it is printed
+ * once, exactly like a finished turn: see the note on the frame below.
+ */
+type Item = Line | { key: 'banner' };
+
+const BANNER: Item = { key: 'banner' };
+
+const isBanner = (item: Item): item is { key: 'banner' } => item.key === 'banner';
 
 const MARK: Record<Kind, string> = {
     you: '›',
@@ -43,14 +47,21 @@ const MARK: Record<Kind, string> = {
     error: '!',
 };
 
+// The theme is decided once, before the first frame, and never changes while
+// the app is up — a terminal does not repaint its own scheme underneath us.
+// A context rather than props only because every part of the view wants it.
+const ThemeContext = React.createContext<Theme>(THEMES.dark);
+const useTheme = (): Theme => useContext(ThemeContext);
+
 function Row({ line }: { line: Line }): React.ReactElement {
+    const style = useTheme().line[line.kind];
     return (
         <Box flexDirection="row" marginTop={line.kind === 'you' ? 1 : 0}>
-            <Text color={COLOUR[line.kind]} dimColor={line.kind === 'tool'}>
+            <Text color={style.color} dimColor={style.dim}>
                 {MARK[line.kind]}{' '}
             </Text>
             <Box flexDirection="column">
-                <Text color={COLOUR[line.kind]} bold={line.kind === 'you'}>
+                <Text color={style.color} dimColor={style.dim} bold={line.kind === 'you'}>
                     {line.text}
                 </Text>
                 {line.detail ? <Text dimColor>{line.detail}</Text> : null}
@@ -63,26 +74,59 @@ function Row({ line }: { line: Line }): React.ReactElement {
 
 export interface AppOptions {
     readOnly: boolean;
+    /** `dark`, `light` or `auto`. Unset means `auto`. */
+    theme?: string;
 }
 
 interface Props {
     engine: Engine.Engine;
     options: AppOptions;
+    theme: Theme;
 }
 
-function App({ engine, options }: Props): React.ReactElement {
+/**
+ * What the footer knows.
+ *
+ * `session` is what the run state carries: the whole conversation, including
+ * every turn taken before this process started. `turn` is the difference the
+ * last turn made. Both are worth seeing and they are not remotely the same
+ * number — with a warm cache a long session's total says almost nothing about
+ * what the last question cost.
+ */
+interface Stats {
+    session: TokenUsage;
+    turn?: TokenUsage;
+    /** model calls in the session, which is not the number of questions asked */
+    calls: number;
+    durationMs?: number;
+}
+
+function App({ engine, options, theme }: Props): React.ReactElement {
     const { exit } = useApp();
     const { stdout } = useStdout();
 
     const [lines, setLines] = useState<Line[]>([]);
     const [live, setLive] = useState('');
+    const [thinking, setThinking] = useState('');
     const [busy, setBusy] = useState(false);
     const [agent, setAgent] = useState(engine.state?.agentName ?? engine.project.entry);
-    const [usage, setUsage] = useState<TokenUsage>(engine.state?.usage ?? zeroUsage());
+    const [stats, setStats] = useState<Stats>({
+        session: engine.state?.usage ?? zeroUsage(),
+        calls: engine.state ? turns(engine.state) : 0,
+    });
     const [tool, setTool] = useState<string | undefined>(undefined);
 
     const stopping = useRef<AbortController | undefined>(undefined);
     const seq = useRef(0);
+
+    // Read during render so a resize, which re-renders the root, resizes the
+    // windows below with it. The two streaming blocks share one budget: what
+    // is left of the terminal once the chrome has had its rows.
+    const rows = stdout?.rows ?? 24;
+    const columns = stdout?.columns ?? 80;
+    const budget = Math.max(2, rows - CHROME_ROWS);
+    const thinkingRows = thinking ? Math.min(THINKING_ROWS, Math.max(1, budget - 2)) : 0;
+    const liveRows = Math.max(1, budget - thinkingRows);
 
     const push = useCallback((kind: Kind, text: string, detail?: string): void => {
         setLines((prev) => [...prev, { key: `${seq.current++}`, kind, text, detail }]);
@@ -91,15 +135,25 @@ function App({ engine, options }: Props): React.ReactElement {
     // Deltas arrive far faster than a terminal can usefully redraw, so text is
     // accumulated in one string and React coalesces the repaints. The finished
     // answer replaces it in one piece when the turn lands.
+    //
+    // Reasoning is accumulated the same way but never enters `lines`: it is a
+    // progress indicator, not part of the conversation. The full chain is in
+    // the trajectory (`LlmCallNode.thinking`) and the run's report, so nothing
+    // is lost when it is cleared at the start of the next model call.
     const onEvent = useCallback(
         (event: AgentEvent): void => {
             if (!isCheckpoint(event)) {
                 if (event.type === 'text_delta') {
                     setLive((prev) => prev + event.delta);
+                } else if (event.type === 'thinking_delta') {
+                    setThinking((prev) => prev + event.delta);
                 }
                 return;
             }
             switch (event.type) {
+                case 'before_llm_call':
+                    setThinking('');
+                    break;
                 case 'before_tool_call':
                     setTool(event.call.name);
                     break;
@@ -147,6 +201,7 @@ function App({ engine, options }: Props): React.ReactElement {
             push('you', text);
             setBusy(true);
             setLive('');
+            setThinking('');
             const controller = new AbortController();
             stopping.current = controller;
 
@@ -154,16 +209,29 @@ function App({ engine, options }: Props): React.ReactElement {
                 try {
                     const outcome = await Engine.run(engine, text, onEvent, controller.signal);
                     push('agent', outcome.text);
-                    setUsage(outcome.result.usage);
+                    // The previous total is the only thing that can say what
+                    // this turn cost, and reading it out of the updater is what
+                    // makes that true regardless of when the turn lands.
+                    setStats((prev) => ({
+                        session: outcome.result.usage,
+                        turn: since(prev.session, outcome.result.usage),
+                        calls: turns(outcome.result.state),
+                        durationMs: outcome.durationMs,
+                    }));
                     setAgent(outcome.result.agent);
                     if (outcome.result.stopReason === 'aborted') {
                         push('note', 'stopped');
                     }
+                    if (outcome.report) {
+                        push('note', `↗ report ${pathToFileURL(outcome.report).href}`);
+                    }
                 } catch (err) {
-                    push('error', err instanceof Error ? err.message : String(err));
+                    const hint = err instanceof CliError ? err.hint : undefined;
+                    push('error', err instanceof Error ? err.message : String(err), hint);
                 } finally {
                     setBusy(false);
                     setLive('');
+                    setThinking('');
                     setTool(undefined);
                     stopping.current = undefined;
                 }
@@ -186,73 +254,214 @@ function App({ engine, options }: Props): React.ReactElement {
     });
 
     return (
-        <Box flexDirection="column">
-            <Header engine={engine} agent={agent} readOnly={options.readOnly} />
+        <ThemeContext.Provider value={theme}>
+            <Box flexDirection="column">
+                {/* `Static` prints once and never repaints, so the banner and
+                    finished turns scroll away into real terminal scrollback
+                    instead of being redrawn on every keystroke. */}
+                <Static items={[BANNER, ...lines]}>
+                    {(item) =>
+                        isBanner(item) ? (
+                            <Header key={item.key} engine={engine} readOnly={options.readOnly} />
+                        ) : (
+                            <Row key={item.key} line={item} />
+                        )
+                    }
+                </Static>
 
-            {/* `Static` prints once and never repaints, so finished turns
-                scroll away into real terminal scrollback instead of being
-                redrawn on every keystroke. */}
-            <Static items={lines}>{(line) => <Row key={line.key} line={line} />}</Static>
+                {thinking ? (
+                    <Thinking text={thinking} columns={columns} rows={thinkingRows} />
+                ) : null}
 
-            {live ? (
-                <Box marginTop={0} flexDirection="row">
-                    <Text dimColor> </Text>
-                    <Text>{live}</Text>
-                </Box>
-            ) : null}
+                {/* The answer as it arrives, in the terminal's own foreground:
+                    it is the text, not a highlight on it. */}
+                {live ? <Live text={live} columns={columns} rows={liveRows} /> : null}
 
-            <Footer busy={busy} tool={tool} usage={usage} />
+                <Footer
+                    agent={agent}
+                    busy={busy}
+                    tool={tool}
+                    stats={stats}
+                    thinking={Boolean(thinking)}
+                />
 
-            {busy ? null : (
-                <Box>
-                    <Text color="cyan">› </Text>
-                    <TextInput placeholder="Ask something… (/exit to leave)" onSubmit={submit} />
-                </Box>
-            )}
-        </Box>
+                {busy ? null : (
+                    <Box>
+                        <Text color={theme.accent}>› </Text>
+                        <TextInput
+                            placeholder="Ask something… (/exit to leave)"
+                            onSubmit={submit}
+                        />
+                    </Box>
+                )}
+            </Box>
+        </ThemeContext.Provider>
     );
 }
 
 function Header({
     engine,
-    agent,
     readOnly,
 }: {
     engine: Engine.Engine;
-    agent: string;
     readOnly: boolean;
 }): React.ReactElement {
+    const theme = useTheme();
     return (
         <Box flexDirection="column" marginBottom={1}>
             <Box>
                 <Text bold>{engine.name}</Text>
                 <Text dimColor> {engine.session.id}</Text>
-                <Text color="cyan"> {agent}</Text>
-                {readOnly ? <Text color="yellow"> read-only</Text> : null}
+                {readOnly ? <Text color={theme.warn}> read-only</Text> : null}
             </Box>
             <Text dimColor>{display(engine.workspace)}</Text>
         </Box>
     );
 }
 
+// ---------------------------------------------------------------------------
+// The repainting frame
+//
+// Everything below `Static` is redrawn on every event, and it has one hard
+// constraint: **it must never be taller than the terminal.** Ink erases the
+// previous frame by moving the cursor up over it, which only works while that
+// frame is still on screen. A frame that outgrows the viewport scrolls its own
+// top away, the erase falls short, and every repaint strands another copy of
+// its first line in the scrollback — the same line, over and over, with the
+// text creeping sideways as the stream advances.
+//
+// The unit that matters here is the **row the terminal draws**, not the line
+// the model wrote. A reasoning stream is one enormous paragraph with almost no
+// newlines in it, so counting `\n` says "six lines" while the terminal draws
+// sixty. So `windowOf` wraps the text itself, to a width it knows, and takes
+// the last N wrapped rows — and then the same number is given again as an
+// explicit `height` with `overflow="hidden"`, so a miscount clips instead of
+// corrupting.
+//
+// Nothing is lost by any of it: the finished answer lands in `Static` whole,
+// and the full reasoning chain is in the trajectory and the run's report.
+// ---------------------------------------------------------------------------
+
+/** How much of the reasoning stream is worth showing. It is a progress bar. */
+const THINKING_ROWS = 6;
+
+/** The two footer rows, its margin, the prompt, and a row in hand. */
+const CHROME_ROWS = 6;
+
+/** The gutter every streaming block is indented behind. */
+const GUTTER = 2;
+
+interface StreamProps {
+    text: string;
+    /** Terminal width. */
+    columns: number;
+    /** The most rows this block may occupy. */
+    rows: number;
+}
+
+function Thinking({ text, columns, rows }: StreamProps): React.ReactElement {
+    const theme = useTheme();
+    const shown = windowOf(text, columns - GUTTER, rows);
+    return (
+        <Box flexDirection="row" height={shown.length} overflow="hidden">
+            <Box flexDirection="column" width={GUTTER}>
+                {shown.map((_, i) => (
+                    <Text key={i} color={theme.rule} dimColor>
+                        {i === 0 ? '◇ ' : '  '}
+                    </Text>
+                ))}
+            </Box>
+            <Box flexDirection="column">
+                {shown.map((row, i) => (
+                    <Text key={i} dimColor italic wrap="truncate-end">
+                        {row}
+                    </Text>
+                ))}
+            </Box>
+        </Box>
+    );
+}
+
+function Live({ text, columns, rows }: StreamProps): React.ReactElement {
+    const shown = windowOf(text, columns - GUTTER, rows);
+    return (
+        <Box flexDirection="column" paddingLeft={GUTTER} height={shown.length} overflow="hidden">
+            {shown.map((row, i) => (
+                <Text key={i} wrap="truncate-end">
+                    {row}
+                </Text>
+            ))}
+        </Box>
+    );
+}
+
 function Footer({
+    agent,
     busy,
     tool,
-    usage,
+    stats,
+    thinking,
 }: {
+    agent: string;
     busy: boolean;
     tool?: string;
-    usage: TokenUsage;
+    stats: Stats;
+    thinking: boolean;
 }): React.ReactElement {
+    const what = tool ? `running ${tool}` : thinking ? 'reasoning' : 'thinking';
+    const theme = useTheme();
     return (
-        <Box marginTop={1}>
-            {busy ? <Text color="yellow">{tool ? `running ${tool}` : 'thinking'}… </Text> : null}
+        <Box flexDirection="column" marginTop={1}>
+            <Box>
+                {busy ? <Text color={theme.warn}>{what}… </Text> : null}
+                <Text color={theme.accent} dimColor>
+                    {agent}
+                </Text>
+                {stats.turn ? (
+                    <Text dimColor>
+                        {'  turn '}
+                        {tokens(stats.turn)}
+                        {stats.durationMs === undefined
+                            ? ''
+                            : ` · ${durationOf(stats.durationMs) ?? ''}`}
+                    </Text>
+                ) : null}
+                {busy ? <Text dimColor>{'  esc to stop'}</Text> : null}
+            </Box>
             <Text dimColor>
-                {format(usage.inputTokens)} in · {format(usage.outputTokens)} out
-                {busy ? '  esc to stop' : ''}
+                {'session '}
+                {tokens(stats.session)}
+                {stats.calls ? ` · ${stats.calls} ${stats.calls === 1 ? 'call' : 'calls'}` : ''}
             </Text>
         </Box>
     );
+}
+
+/**
+ * Cache and reasoning are subsets of the numbers beside them, not additions to
+ * them, and they are only worth the width when a provider actually reports one
+ * — most do not, and a row of zeroes teaches nobody anything.
+ */
+function tokens(usage: TokenUsage): string {
+    const parts = [`${format(usage.inputTokens)} in`];
+    if (usage.cachedInputTokens) {
+        parts.push(`${format(usage.cachedInputTokens)} cached`);
+    }
+    parts.push(`${format(usage.outputTokens)} out`);
+    if (usage.reasoningTokens) {
+        parts.push(`${format(usage.reasoningTokens)} thinking`);
+    }
+    return parts.join(' · ');
+}
+
+/** What the last turn added. Usage only ever grows, so a subtraction is safe. */
+function since(before: TokenUsage, after: TokenUsage): TokenUsage {
+    return {
+        inputTokens: after.inputTokens - before.inputTokens,
+        cachedInputTokens: after.cachedInputTokens - before.cachedInputTokens,
+        outputTokens: after.outputTokens - before.outputTokens,
+        reasoningTokens: after.reasoningTokens - before.reasoningTokens,
+    };
 }
 
 function durationOf(ms?: number): string | undefined {
@@ -262,9 +471,14 @@ function durationOf(ms?: number): string | undefined {
 // ---------------------------------------------------------------------------
 
 export async function start(engine: Engine.Engine, options: AppOptions): Promise<void> {
+    // Asked before Ink takes the terminal: the query talks to stdin directly,
+    // and there is exactly one moment when nothing else is holding it.
+    const theme = await resolveTheme(options.theme);
     const { render } = await import('ink');
     // Ctrl-C is handled above so an in-flight turn can be aborted and recorded
     // rather than the process simply vanishing mid-write.
-    const instance = render(<App engine={engine} options={options} />, { exitOnCtrlC: false });
+    const instance = render(<App engine={engine} options={options} theme={theme} />, {
+        exitOnCtrlC: false,
+    });
     await instance.waitUntilExit();
 }

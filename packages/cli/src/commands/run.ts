@@ -3,11 +3,13 @@ import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import * as Engine from '../engine.ts';
 import { duration, Narrator, stopMark, summary } from '../narrate.ts';
+import * as Projects from '../projects.ts';
 import { target } from '../resolve.ts';
 import { display } from '../session.ts';
 import { bold, cyan, dim, json, note, readStdin, usageError, write } from '../term.ts';
+import { parseChoice } from '../tui/theme.ts';
 
-const USAGE = 'zen run [prompt] [options]';
+const USAGE = 'zen run [project] [prompt] [options]';
 
 interface Flags {
     project?: string;
@@ -20,6 +22,7 @@ interface Flags {
     yes?: boolean;
     quiet?: boolean;
     plain?: boolean;
+    theme?: string;
     out?: string;
 }
 
@@ -36,8 +39,12 @@ export const run: Command = {
         '  --read-only            Give the agent no way to write.',
         '  --quiet                Answer only; no narration.',
         '  --plain                One shot, even on a terminal.',
+        '  --theme <dark|light>   Force the palette. Detected otherwise; $ZENERA_THEME.',
         '  --out <file>           Write the answer here as well as to stdout.',
         '  --yes                  Accept the questions this would otherwise ask.',
+        '',
+        'The first word is the project when it names one, as in `zen run acme`,',
+        'and the first word of the prompt when it does not. --project settles it.',
         '',
         'The prompt comes from the argument, or stdin, or the TUI. There is no',
         '`resume`: a session continues itself, because its state is what it is.',
@@ -56,17 +63,31 @@ export const run: Command = {
                 yes: { type: 'boolean' },
                 quiet: { type: 'boolean' },
                 plain: { type: 'boolean' },
+                theme: { type: 'string' },
                 out: { type: 'string' },
             },
             USAGE,
         );
 
         const piped = await readStdin();
-        const prompt = positionals.join(' ').trim() || piped;
+
+        // `zen run acme` is what everyone types before finding --project, and a
+        // project name is a bare word where a prompt is a sentence. So the
+        // first positional is read as a project when it names one and as the
+        // first word of the prompt when it does not — which also makes
+        // `zen run acme "what changed?"` mean what it looks like. --project is
+        // there for the day a project is called "why".
+        const [head, ...rest] = positionals;
+        const named = !values.project && head ? await Projects.find(head) : undefined;
+        const prompt = (named ? rest : positionals).join(' ').trim() || piped;
+
+        if (values.theme !== undefined && !parseChoice(values.theme)) {
+            throw usageError(`unknown theme: ${values.theme}`, 'dark, light or auto');
+        }
 
         const where = await target({
             cwd: ctx.cwd,
-            project: values.project,
+            project: values.project ?? (named ? head : undefined),
             version: values['version-dir'],
             session: values.session,
             fresh: values.new,
@@ -96,7 +117,10 @@ export const run: Command = {
 
             if (drawing) {
                 const { start } = await import('../tui/app.tsx');
-                await start(engine, { readOnly: Boolean(values['read-only']) });
+                await start(engine, {
+                    readOnly: Boolean(values['read-only']),
+                    theme: values.theme,
+                });
                 return;
             }
 
@@ -172,6 +196,8 @@ async function once(
             `${stopMark(outcome.result.stopReason)} ${dim(duration(outcome.durationMs))}  ` +
                 dim(summary(outcome.result.usage)),
         );
-        note(dim(`report: ${cyan(display(outcome.run.report, cwd))}`));
+        if (outcome.report) {
+            note(dim(`report: ${cyan(display(outcome.report, cwd))}`));
+        }
     }
 }

@@ -726,8 +726,9 @@ models:
     careful:
         provider: openai
         api: responses
-        model: gpt-5.4
+        model: gpt-5.4-mini
         reasoningEffort: high
+        reasoningSummary: auto # so the reasoning is visible while it works
     writer:
         provider: claude
         model: claude-sonnet-4-5
@@ -763,7 +764,7 @@ naming `balanced` share one model over one client.
 | Field                  | Applies to        | Notes                                                                   |
 | ---------------------- | ----------------- | ----------------------------------------------------------------------- |
 | `reasoningEffort`      | openai            | Free string on purpose — the API is the authority on validity           |
-| `reasoningSummary`     | openai            | `auto` \| `concise` \| `detailed`                                       |
+| `reasoningSummary`     | openai            | `auto` \| `concise` \| `detailed`. **Needs `api: responses`** — §7.5    |
 | `maxTokens`            | anthropic, gemini | Anthropic **requires** one (default 8192) and bills thinking against it |
 | `thinkingBudgetTokens` | anthropic         | Extended thinking budget                                                |
 | `thinkingBudget`       | gemini 2.5        | Tokens: `0` off, `-1` auto                                              |
@@ -779,7 +780,62 @@ those endpoints drop exactly what this runtime is built on: thinking budgets,
 thought signatures, cache accounting. `openai-compatible` is the shim kind — vLLM,
 OpenRouter, a gateway.
 
-### 7.5 Known traps
+### 7.5 Turning reasoning on
+
+Ask two separate questions: does the model **reason**, and does it **say what it
+reasoned**. They are different knobs, and the second is off by default on every
+vendor except Gemini — which is why a reasoning model can burn thousands of
+thinking tokens while the CLI shows no progress at all.
+
+**OpenAI** — reasoning text only exists on the **responses** API, and only as a
+summary. `api: responses` is therefore not optional here: on chat completions
+there is nothing to stream.
+
+```yaml
+models:
+    default:
+        provider: openai
+        api: responses # required — chat completions exposes no reasoning
+        model: gpt-5.4-nano
+        reasoningEffort: medium # how hard it thinks
+        reasoningSummary: auto # whether you get to see it
+```
+
+**Anthropic** — `thinkingBudgetTokens` turns extended thinking on, and it is
+billed against `maxTokens`, so raise that too. Read §7.6 first: this combination
+is unsafe for tool-using agents.
+
+```yaml
+models:
+    careful:
+        provider: anthropic
+        model: claude-sonnet-4-5
+        maxTokens: 16000
+        thinkingBudgetTokens: 8000
+```
+
+**Gemini** — thought summaries are on by default (`includeThoughts: true`); what
+varies is the budget. Gemini 3 takes `thinkingLevel`, Gemini 2.5 takes
+`thinkingBudget` in tokens.
+
+```yaml
+models:
+    balanced:
+        provider: vertex
+        model: gemini-3.5-flash
+        thinkingLevel: high
+```
+
+What this buys, in both views: `zn run` in the TUI streams the reasoning as a dim
+running tail above the answer, and the one-shot path prints it under `--live`.
+The full chain is kept in the trajectory either way and is in the inspect report,
+so turning summaries off costs visibility, not the audit trail.
+
+The cost is real — a summary is extra output tokens on every call — so leave it
+on where someone is watching and reach for a cheaper tier before turning effort
+up (§7.7).
+
+### 7.6 Known traps
 
 - **Anthropic + `thinkingBudgetTokens` + multi-turn tool use** — thinking-block
   signatures are not replayed, and the API rejects the follow-up. Leave extended
@@ -790,7 +846,7 @@ OpenRouter, a gateway.
   gcloud user credentials and metadata-server credentials carry no project id, so
   those deployments must set the variable.
 
-### 7.6 How to choose, in practice
+### 7.7 How to choose, in practice
 
 1. Start every agent on `balanced`.
 2. Demote to `router` any agent whose job is classification, extraction, or a
@@ -893,6 +949,7 @@ Before finishing any change here:
 | Loses a detail after a handoff             | Say it in the handoff; check the collapse policy      |
 | Slow and expensive on trivial cases        | Demote that agent's model tier / reasoning effort     |
 | Fails only on genuinely hard cases         | Promote that agent's tier, or split the hard path out |
+| Shows no reasoning while it works          | Turn summaries on for that model — §7.5               |
 | Forgets across conversations               | A memory binding with `autoRecall`                    |
 | Breaks at load with a named path           | Read the message — it names the exact key             |
 
@@ -928,7 +985,7 @@ Update it when:
 
 - the layout changes (a new directory, a moved catalog)
 - a model alias is added, retired or repointed — §7.2 must match `agents.yaml`
-- a vendor trap is discovered — add it to §7.5
+- a vendor trap is discovered — add it to §7.6
 - a recurring review comment appears twice — turn it into a checklist line in §9
 - a runtime capability is added — describe it here, or it will not be used
 
