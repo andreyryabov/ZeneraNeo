@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Agent, AgentRegistry } from '../agent.ts';
+import { Agent, AgentRegistry, type ForkOptions } from '../agent.ts';
 import { RunStream } from '../events.ts';
 import type { MemoryStore } from '../memory.ts';
 import type { Model } from '../model.ts';
@@ -124,6 +124,7 @@ export async function loadProject<TCtx = unknown>(
             tools: toolsFor(spec, opts.tools ?? []),
             handoffs: spec.handoffs,
             skills: bindingFor(spec, providers),
+            fork: forkFor(spec),
         });
     }
 
@@ -362,6 +363,19 @@ function bindingFor(spec: AgentConfig, providers: SkillProvider[]): SkillBinding
     };
 }
 
+/**
+ * `true` and `{}` both mean "opt in, no limits", because the kernel offers the
+ * tool on the binding's presence alone. `false` folds back to absent, so a
+ * project can write the "no" it was going to write anyway without that being a
+ * different state from omitting the key.
+ */
+function forkFor(spec: AgentConfig): ForkOptions | undefined {
+    if (!spec.fork) {
+        return undefined;
+    }
+    return spec.fork === true ? {} : spec.fork;
+}
+
 function skillProviders<TCtx>(
     root: string,
     config: ProjectConfig,
@@ -440,6 +454,17 @@ function validate<TCtx>(
             }
             if (target === spec.name) {
                 throw new Error(`agents.${spec.name}.handoffs: an agent cannot hand off to itself`);
+            }
+        }
+
+        // Unlike a hand-off, naming yourself is the common case here — one role
+        // fanned out over ten regions — so only unknown names are an error.
+        for (const target of registry.get(spec.name).fork?.agents ?? []) {
+            if (!registry.find(target)) {
+                throw new Error(
+                    `agents.${spec.name}.fork.agents: unknown agent "${target}" ` +
+                        `(known: ${registry.names().join(', ')})`,
+                );
             }
         }
 

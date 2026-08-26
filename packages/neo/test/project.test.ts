@@ -160,6 +160,24 @@ describe('project layout', () => {
         // The skill's tool resolved from the same registry the agents use.
         expect(p.skillProviders[0].tool('quote')?.name).toBe('quote');
     });
+
+    it('binds fork, and leaves an agent that never mentions it unable to', async () => {
+        const p = await loadProject(
+            project({
+                'agents.yaml':
+                    'agents:\n  - name: trunk\n    fork:\n' +
+                    '      agents: [trunk, lens]\n      maxBranches: 4\n' +
+                    '  - name: opener\n    fork: true\n' +
+                    '  - name: lens\n',
+            }),
+        );
+
+        expect(p.registry.get('trunk').fork).toEqual({ agents: ['trunk', 'lens'], maxBranches: 4 });
+        // `true` is the unrestricted form, and the kernel offers the tool on the
+        // binding's presence alone — so an empty object is the whole opt-in.
+        expect(p.registry.get('opener').fork).toEqual({});
+        expect(p.registry.get('lens').fork).toBeUndefined();
+    });
 });
 
 describe('entrypoint', () => {
@@ -313,6 +331,35 @@ describe('validation', () => {
                 project({ 'agents.yaml': 'agents:\n  - name: solo\n    tools: [missing]\n' }),
             ),
         ).rejects.toThrow(/unknown tool "missing"/);
+    });
+
+    it('rejects a fork branch running nobody', async () => {
+        await expect(
+            loadProject(
+                project({
+                    'agents.yaml': 'agents:\n  - name: solo\n    fork:\n      agents: [ghost]\n',
+                }),
+            ),
+        ).rejects.toThrow(/fork\.agents: unknown agent "ghost"/);
+    });
+
+    it('lets a fork branch run the agent that forked it', async () => {
+        const p = await loadProject(
+            project({
+                'agents.yaml': 'agents:\n  - name: solo\n    fork:\n      agents: [solo]\n',
+            }),
+        );
+        expect(p.registry.get('solo').fork?.agents).toEqual(['solo']);
+    });
+
+    it('rejects a branch cap no call could satisfy', async () => {
+        await expect(
+            loadProject(
+                project({
+                    'agents.yaml': 'agents:\n  - name: solo\n    fork:\n      maxBranches: 1\n',
+                }),
+            ),
+        ).rejects.toThrow(/fork\.maxBranches/);
     });
 
     it('rejects a preload naming a skill the catalog does not have', async () => {

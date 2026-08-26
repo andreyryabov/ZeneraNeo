@@ -262,6 +262,7 @@ agents:
 | `tools`       | Tool selectors resolved against `ProjectOptions.tools` — code cannot live in yaml                    |
 | `handoffs`    | Agent names this one may transfer to                                                                 |
 | `skills`      | Skill binding; see below                                                                             |
+| `fork`        | `true`, or a binding — opt-in to parallel branches; see below                                        |
 | `default`     | `true` marks the entry point, if no top-level `default:`                                             |
 
 `handoffs` takes bare strings by design, not objects. A hand-off carries no
@@ -322,6 +323,33 @@ active. Because activation lands at the head of the transcript and never moves,
 it sits inside the cached prefix instead of being appended after the first
 reply.
 
+### `agents[].fork`
+
+Without the key an agent has no `fork` tool at all: it can only work in its own
+conversation. `fork: true` gives it the unrestricted form, and the object form
+narrows it.
+
+| Field         | Default              | Meaning                              |
+| ------------- | -------------------- | ------------------------------------ |
+| `agents`      | every declared agent | Which agents a branch may run        |
+| `maxBranches` | unlimited            | Cap on branches per call (minimum 2) |
+
+```yaml
+- name: trunk
+  fork:
+      agents: [lens] # every branch runs the specialist
+      maxBranches: 4
+```
+
+`agents` may include the forking agent itself — one role fanned out over ten
+regions is the common shape, and unlike `handoffs` that is not an error. The
+list reaches the model as an `enum` on each branch's `agent` field, so a name
+outside it cannot be decoded rather than merely being told off afterwards.
+
+Nesting is capped independently: a branch may fork again, but only while
+`forkDepth` is below the run's `maxForkDepth` (2 by default, a `RunOptions`
+field), so a fan-out cannot recurse without bound.
+
 ---
 
 ## Errors caught at load
@@ -335,4 +363,6 @@ reply.
 - `agents[].skills.provider` naming an unknown catalog
 - `agents[].skills.allow` / `.preload` naming a skill not in the catalog
 - A `preload` entry absent from `allow`
+- `agents[].fork.agents` naming an unknown agent, or being empty
+- `agents[].fork.maxBranches` below 2, which no valid call could satisfy
 - `system:` pointing at a missing file, or outside the project root

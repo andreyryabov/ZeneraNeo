@@ -92,6 +92,25 @@ const skillsBinding = z
     })
     .strict();
 
+/**
+ * Opt-in to parallel sub-agents. The kernel gates the `fork` tool on the
+ * binding *existing*, not on what it holds, so `true` and `{}` say the same
+ * thing and there is nothing here to default — an agent that does not mention
+ * `fork:` is never offered the tool.
+ *
+ * Both limits are stated as errors rather than as values that get clamped
+ * later: `maxBranches: 1` would make every call the model could write fail, and
+ * `agents: []` reads as "no agents" while actually meaning "only itself".
+ */
+const forkBinding = z
+    .object({
+        /** agents a branch may run; absent means any registered agent */
+        agents: z.array(name).min(1).optional(),
+        /** a fork is never valid with one branch, so a cap below two is a contradiction */
+        maxBranches: z.int().min(2).optional(),
+    })
+    .strict();
+
 const agent = z
     .object({
         name,
@@ -109,6 +128,8 @@ const agent = z
          */
         handoffs: z.array(name).optional(),
         skills: skillsBinding.optional(),
+        /** parallel sub-agents; `true` is the unrestricted form */
+        fork: z.union([z.boolean(), forkBinding]).optional(),
         /** entrypoint, when no top-level `default` is given */
         default: z.boolean().optional(),
     })

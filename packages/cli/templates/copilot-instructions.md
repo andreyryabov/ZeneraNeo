@@ -47,9 +47,10 @@ An agent is four things and nothing more:
 | **Tools**       | `agents.yaml` → `tools:` + TS impls      | What it can _do_              |
 | **Knowledge**   | `agents/skills/*` + memory               | What it can _know_, on demand |
 
-Plus one relation: **handoffs** — which other agents it may transfer control to.
+Plus two relations: **handoffs** — which other agents it may transfer control to
+— and **fork** — whether it may split into parallel branches at all (§6.4).
 
-There is no hidden orchestration layer. If behaviour is wrong, one of those five
+There is no hidden orchestration layer. If behaviour is wrong, one of those six
 things is wrong.
 
 ### 1.2 The loop
@@ -231,6 +232,7 @@ agents: # the only required key; at least one entry
 | `tools`       | Selectors resolved against `ProjectOptions.tools` — see §3.6. Code cannot live in YAML |
 | `handoffs`    | Agent names this one may transfer to. Bare strings; no per-edge config                 |
 | `skills`      | Skill binding — see §5.2                                                               |
+| `fork`        | `true`, or `{ agents, maxBranches }` — opt-in to parallel branches; see §6.4           |
 | `default`     | `true` marks the entry point when no top-level `default:`                              |
 
 **Providers** — a provider is a _connection_, not a model. One client is built
@@ -261,6 +263,7 @@ provider with a missing key does not fail loading.
 - `agents[].handoffs` naming an unknown agent, or the agent itself
 - `agents[].skills.provider` / `.allow` / `.preload` naming something absent
 - a `preload:` entry missing from `allow:`
+- `agents[].fork.agents` naming an unknown agent, or being empty; `maxBranches` below 2
 - `system:` pointing at a missing file, or outside the project root
 
 ### 3.2 `AGENTS.md`
@@ -413,7 +416,7 @@ Rules:
 
 ### 3.6 The workspace tools (`workspace:*`)
 
-`zn run` builds one tool set for you: the **workspace** group, rooted at the
+`zen run` builds one tool set for you: the **workspace** group, rooted at the
 session's workspace directory. It is the only thing passed to `loadProject`, so
 an agent whose `tools:` does not name them cannot see a file at all.
 
@@ -456,7 +459,7 @@ refuses the file. `workspace:*` needs no quoting. There is no name globbing —
 `read_*` is an unknown tool, because a selector should track a declared set, not
 a naming habit.
 
-`zn run --read-only` withholds the four mutating tools whatever `agents.yaml`
+`zen run --read-only` withholds the four mutating tools whatever `agents.yaml`
 asks for: the deployment overriding the repository, as everywhere else.
 
 **Prompting for them.** Three lines earn their place in any prompt that grants
@@ -717,18 +720,9 @@ agents:
 **Pipeline.** Fixed stages, each handing to the next; only the last answers the
 user. Encode the order in `handoffs:` so a stage cannot skip ahead.
 
-**Fan-out / join.** For independent parallel work, use the built-in `fork` tool
-(opt in per agent). The model names N branches with instructions; they run truly
-concurrently and rejoin as **one tool call and one tool result** in the parent's
-history — so N branches cost the parent O(N × summary), not O(N × full history).
-
-Choose `context:` deliberately:
-
-- `inherit` — branch gets the full prefix. For work that depends on the case.
-- `compact` — prefix minus tool calls, tool results and recalls: _what was
-  decided_, not the raw noise. **The default for wide fan-outs.**
-- `none` — system prompt plus instructions only. Cheapest; for independent
-  lookups.
+**Fan-out / join.** For independent parallel work — ten regions, four review
+lenses, six candidate suppliers — declare `fork:` on the agent that owns the
+work and let the model split it. See §6.4.
 
 **Single agent + rich catalog.** One agent, `discovery: index`, twenty skills.
 Cheapest to run, cheapest to reason about, and correct far more often than the
@@ -746,7 +740,62 @@ multi-agent instinct suggests.
   the full transcript. Do not assume it saw a detail three turns back; if it
   matters, put it in the handoff.
 
-### 6.4 Termination
+### 6.4 Forking (fan-out / join)
+
+Forking is **opt-in per agent**. Without the key the agent is never offered the
+`fork` tool and cannot split, however obviously parallel the work looks:
+
+```yaml
+agents:
+    - name: trunk
+      fork: true # unrestricted: any agent, any number of branches
+
+    - name: sweep
+      fork:
+          agents: [prober] # every branch runs the specialist
+          maxBranches: 6
+```
+
+| Field         | Default              | Meaning                               |
+| ------------- | -------------------- | ------------------------------------- |
+| `agents`      | every declared agent | Which agents a branch may run         |
+| `maxBranches` | unlimited            | Cap on branches per call; minimum `2` |
+
+The **model** decides the split: it names N branches, each with self-contained
+instructions. They run truly concurrently and rejoin as **one tool call and one
+tool result** in the parent's history — so N branches cost the parent
+O(N × summary), not O(N × full history).
+
+Rules worth knowing before you write the key:
+
+- `agents:` **may include the forking agent itself** — unlike `handoffs:`, that
+  is not an error, and one role fanned out over ten items is the common shape.
+  The list reaches the model as an `enum`, so a name outside it cannot even be
+  decoded.
+- A fork always needs **at least two** branches. A one-branch call is refused
+  with a message telling the model to do the work itself instead.
+- **Branches cannot talk to each other.** If branch B needs branch A's answer,
+  it is a sequence, not a fork — keep it in one conversation.
+- Nesting is capped by the run's `maxForkDepth` (2 by default), so a branch may
+  fork again but not without bound.
+- Fork vs handoff: a handoff is _one_ conversation changing owner; a fork is the
+  _same_ question asked N times at once and merged.
+
+Choose `context:` deliberately — the model sets it per call, so say in the
+agent's prompt which one this work wants:
+
+- `inherit` — branch gets the full prefix. For work that depends on the case.
+- `compact` — prefix minus tool calls, tool results and recalls: _what was
+  decided_, not the raw noise. **The default for wide fan-outs.**
+- `none` — system prompt plus instructions only. Cheapest; for independent
+  lookups.
+
+Declaring `fork:` only makes the tool available. Say in the agent's prompt when
+to reach for it, in the terms of this domain — _"When the request covers more
+than one region, fork one branch per region and merge their findings"_ — or a
+weaker model will work through the list serially and never call it.
+
+### 6.5 Termination
 
 - **Untyped run**: the model replies with no tool calls → that text is the answer.
 - **Typed run**: pass a Zod `output` schema; a synthetic `final_output` tool is
@@ -898,7 +947,7 @@ models:
         thinkingLevel: high
 ```
 
-What this buys, in both views: `zn run` in the TUI streams the reasoning as a dim
+What this buys, in both views: `zen run` in the TUI streams the reasoning as a dim
 running tail above the answer, and the one-shot path prints it under `--live`.
 The full chain is kept in the trajectory either way and is in the inspect report,
 so turning summaries off costs visibility, not the audit trail.
@@ -947,8 +996,8 @@ There is no compiler for prose. Substitutes, in order of value:
 5. **Watch the token accounting.** A change that doubles prefix size is a
    regression even if the answer improved.
 
-CLI (`zn --help` for the authoritative list): `zn init`, `zn run`, `zn inspect`,
-`zn models`, `zn key`, `zn list`. **stdout is the answer, stderr is the
+CLI (`zen --help` for the authoritative list): `zen init`, `zen run`, `zen inspect`,
+`zen models`, `zen key`, `zen list`. **stdout is the answer, stderr is the
 narration**; every command takes `--json`. Exit codes: `0` ok, `1` failed,
 `2` usage, `3` invalid project, `4` no usable credential.
 
@@ -965,6 +1014,7 @@ Before finishing any change here:
 - [ ] Every agent has a `description:` written as a routing condition
 - [ ] No self-handoff; no accidental cycle back to the router
 - [ ] Names match `^[a-z0-9]+(?:[-_][a-z0-9]+)*$`
+- [ ] An agent expected to fan out has `fork:`, and its prompt says when to use it
 
 **Prompts**
 
@@ -1019,10 +1069,12 @@ Before finishing any change here:
 | Loads too much, answers slowly             | `allow:`, `maxIndexEntries:`, or `discovery: search`  |
 | Invents a number                           | A tool; plus a prompt line naming the tool            |
 | Rewrites a whole file to change one line   | A prompt line preferring `apply_patch` — §3.6         |
-| Edits files it should only be reading      | Subtract the mutating tools, or `zn run --read-only`  |
+| Edits files it should only be reading      | Subtract the mutating tools, or `zen run --read-only` |
 | Answers instead of routing                 | Router prompt prohibition; check `handoffs:`          |
 | Routes to the wrong specialist             | The target agents' `description:` fields              |
 | Loses a detail after a handoff             | Say it in the handoff; check the collapse policy      |
+| Works through N independent items serially | `fork:` on that agent, and a prompt line — §6.4       |
+| Forks when the steps actually depend       | Prompt line: branches cannot see each other           |
 | Slow and expensive on trivial cases        | Demote that agent's model tier / reasoning effort     |
 | Fails only on genuinely hard cases         | Promote that agent's tier, or split the hard path out |
 | Shows no reasoning while it works          | Turn summaries on for that model — §7.5               |
@@ -1045,6 +1097,8 @@ Before finishing any change here:
   prompt never forbade it.
 - **Ping-pong handoffs.** Specialists that hand back to the router, which hands
   back to a specialist.
+- **Forking a chain.** Branches never see each other, so a fork whose second
+  branch needs the first branch's answer is a sequence wearing a fork's clothes.
 - **Tools that throw.** An exception ends the branch; an error object lets the
   model recover.
 - **Volatile prefix.** "Current date: …" in `AGENTS.md`. Permanent cache miss.
