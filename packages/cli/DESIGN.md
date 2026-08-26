@@ -238,6 +238,13 @@ Failing that, macOS keeps applications where they can be found. A bundle in
 directory go to the platform opener — and on macOS that is Finder, which is the
 symptom this design is arranged to avoid.
 
+Before the window opens, the editor files from `init` — `.vscode/settings.json`
+and `.github/copilot-instructions.md` — are written into the directory being
+opened if they are not already there. An editor reads only the folder it was
+opened on, and a project may predate either file, so the moment it is about to
+be read is the moment to make sure it exists. Whichever was added is named in
+the narration, and in `files` under `--json`. Neither is ever overwritten.
+
 The distinction that decides how it is spawned is whether the editor takes over
 this terminal. `$VISUAL` and `$EDITOR` name one that does by convention, so they
 are run with inherited stdio and waited for, and are an error off a TTY.

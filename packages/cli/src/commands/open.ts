@@ -6,6 +6,7 @@ import { one, parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { versionDir } from '../projects.ts';
 import { project as resolveProject } from '../resolve.ts';
+import { copilotInstructions, editorSettings } from '../scaffold.ts';
 import { CliError, cyan, dim, EXIT, json, note, usageError } from '../term.ts';
 
 const USAGE = 'zen open [project] [--editor <cmd>] [--version-dir <vN>] [--root] [--wait]';
@@ -32,6 +33,9 @@ export const open: Command = {
         'Editor: --editor, then $ZENERA_EDITOR, then the editor this terminal',
         'belongs to, then $VISUAL or $EDITOR, then a known editor on PATH or',
         'installed, then the platform opener.',
+        'The editor files `zen init` writes (.vscode/settings.json,',
+        '.github/copilot-instructions.md) are added to the directory being',
+        'opened if they are missing, and never overwritten.',
     ],
     run: async (ctx) => {
         const { values, positionals } = parse<Flags>(
@@ -53,15 +57,27 @@ export const open: Command = {
         const editor = choose(values.editor, values.wait === true);
         verify(editor);
 
+        // The editor reads the settings and instructions of the folder it was
+        // opened on, and a project may predate either file — or predate them
+        // existing at all. Write whichever is missing before the window is
+        // there to read it; neither is ever overwritten.
+        const written = [editorSettings(dir), copilotInstructions(dir)].filter(
+            (f) => f !== undefined,
+        );
+
         if (ctx.json) {
             json({
                 name: found.meta.name,
                 path: dir,
                 editor: [editor.command, ...editor.args].join(' '),
                 from: editor.from,
+                files: written,
             });
         } else {
             note(`opening ${cyan(dir)} with ${editor.label} ${dim(`(${editor.from})`)}`);
+            for (const file of written) {
+                note(`  ${dim(`added ${file}`)}`);
+            }
         }
         await launch(editor, dir);
     },
