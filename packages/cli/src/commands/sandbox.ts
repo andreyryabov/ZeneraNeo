@@ -106,7 +106,10 @@ async function status(image: string | undefined, asJson: boolean): Promise<void>
     if (found.image) {
         write(`${bold('image')}      ${found.image} ${mark(Boolean(found.imagePresent))}`);
     }
-    write(`${bold('containers')} ${containers.length ? containers.join(', ') : dim('none')}`);
+    const listed = containers.map((c) =>
+        c.state === 'running' ? `${c.name} ${green('running')}` : `${c.name} ${dim(c.state)}`,
+    );
+    write(`${bold('containers')} ${listed.length ? listed.join(', ') : dim('none')}`);
 
     if (!found.installed || !found.ready) {
         note('');
@@ -124,7 +127,7 @@ async function up(image: string | undefined, yes: boolean, asJson: boolean): Pro
 }
 
 async function clean(asJson: boolean): Promise<void> {
-    const names = await ownedContainers();
+    const names = (await ownedContainers()).map((c) => c.name);
     await removeContainers(names);
     if (asJson) {
         json({ removed: names });

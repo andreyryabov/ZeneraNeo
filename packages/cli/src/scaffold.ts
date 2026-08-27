@@ -27,6 +27,15 @@ version: 1
 # whole project moves.
 model: ${model}
 
+# The container \`sandbox:*\` commands run in. \`persist: true\` keeps it between
+# runs instead of throwing it away, so what the agent installs is still there
+# next time — otherwise only /workspace and its home directory survive, and an
+# \`apt-get\` or a root \`pip install\` is repeated on every run. \`zen sandbox
+# clean\` removes the ones left behind. Everything else has a default; see the
+# sandbox: block in docs/agents-yaml.md to size or pin the image.
+sandbox:
+    persist: true
+
 agents:
     - name: default
       description: The entry point.
@@ -39,8 +48,7 @@ agents:
       # sandbox:* runs commands in a container, not on this machine, so it
       # needs podman — \`zen run\` installs and starts what it can on its own,
       # and \`zen sandbox status\` says where that got to. Drop the line if you
-      # would rather this agent never reached a shell; see the sandbox: block
-      # in docs/agents-yaml.md to size or pin the image.
+      # would rather this agent never reached a shell.
       tools:
           - workspace:*
           - sandbox:*

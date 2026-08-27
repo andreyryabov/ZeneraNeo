@@ -295,11 +295,25 @@ function safeMachines(stdout: string): Machine[] {
     }
 }
 
-/** Containers this CLI created, whatever session they belong to. */
-export async function ownedContainers(engine = 'podman', exec = runProcess): Promise<string[]> {
+export interface OwnedContainer {
+    name: string;
+    /** podman's own word: `running`, `exited`, `created`, `paused` */
+    state: string;
+}
+
+/**
+ * Containers this CLI created, whatever session they belong to, and whether
+ * each is up. `--all` is the point: with `persist: true` a session leaves a
+ * *stopped* container behind, and a listing that only showed running ones
+ * would say nothing is there while the disk says otherwise.
+ */
+export async function ownedContainers(
+    engine = 'podman',
+    exec = runProcess,
+): Promise<OwnedContainer[]> {
     const res = await exec(
         engine,
-        ['ps', '--all', '--filter', 'label=zenera=1', '--format', '{{.Names}}'],
+        ['ps', '--all', '--filter', 'label=zenera=1', '--format', '{{.Names}}\t{{.State}}'],
         { timeoutMs: 30_000 },
     ).catch(() => undefined);
     if (!res || res.code !== 0) {
@@ -308,7 +322,11 @@ export async function ownedContainers(engine = 'podman', exec = runProcess): Pro
     return res.stdout
         .split('\n')
         .map((l) => l.trim())
-        .filter(Boolean);
+        .filter(Boolean)
+        .map((line) => {
+            const [name, state] = line.split('\t');
+            return { name, state: state?.trim() || 'unknown' };
+        });
 }
 
 export async function removeContainers(

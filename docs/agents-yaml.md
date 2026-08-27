@@ -244,6 +244,7 @@ what the model wrote.
 
 ```yaml
 sandbox:
+    persist: true
     image: docker.io/library/python:3.13-slim
     cpus: 4
     memory: 4096
@@ -261,7 +262,7 @@ sandbox:
 | `workdir` | absolute path          | `/workspace`                                  | Where the workspace is mounted, and the default cwd |
 | `timeout` | integer, seconds       | `120`                                         | Per command, unless a call asks for less            |
 | `user`    | string                 | the image's                                   | uid, name, or `uid:gid`                             |
-| `persist` | boolean                | `false`                                       | Keep the container between sessions                 |
+| `persist` | boolean                | `false` — **recommended `true`**              | Keep the container between runs of a session        |
 | `env`     | string[]               | none                                          | Host variables to forward, **by name**              |
 
 `cpus` and `memory` do two jobs on macOS and Windows: they cap the container,
@@ -270,8 +271,9 @@ Linux there is no machine and they only cap the container.
 
 ### What survives, and what does not
 
-The container is removed when the session closes, so anything installed into
-its root filesystem is gone. Two directories are bind mounts and do survive:
+By default the container is removed when the session closes, so anything
+installed into its root filesystem is gone. Two directories are bind mounts and
+do survive:
 
 | Inside        | On the host                                              |
 | ------------- | -------------------------------------------------------- |
@@ -288,14 +290,34 @@ way. Changing `workdir` moves both names together.
 
 So `pip install --user`, `npm config`, `~/.cache` and anything else an agent
 puts in its home directory are still there when the session is opened again,
-and they travel with the session directory when it is copied. A `pip install`
-into the system site-packages does not. `persist: true` keeps the whole
-container instead — stopped, not running — at the cost of a rootfs that no
-longer matches the config that made it.
+and they travel with the session directory when it is copied.
+
+### `persist: true`, and why to write it
+
+What the two mounts do **not** cover is the ordinary case. An agent that runs
+`pip install duckdb` or `apt-get install` is root in its container, so the
+package lands in the image's system paths — not under `$HOME` — and the next
+`zen run` starts from a fresh rootfs without it. The agent reinstalls on every
+run, and its own transcript from last time claims the install succeeded, so it
+usually does not notice.
+
+```yaml
+sandbox:
+    persist: true
+```
+
+With it the container is **stopped** rather than removed, and the next run of
+the same session starts that same container back up with everything still in
+place. This is the recommended setting for any project whose agents install
+things; `zen sandbox status` lists what is left behind and `zen sandbox clean`
+removes it.
 
 Changing any field here changes the container's name, so a project that bumps
 its image gets a new container rather than an old one quietly persisting with
-the wrong contents.
+the wrong contents. That is also the cost of `persist: true`: a config change
+abandons the old container along with whatever was installed in it, so anything
+the project always needs still belongs in `image:` rather than in an
+accumulated rootfs.
 
 ### `env:` names, never values
 

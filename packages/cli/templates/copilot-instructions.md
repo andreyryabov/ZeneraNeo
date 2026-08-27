@@ -479,6 +479,7 @@ lines that differ:
 
 ```yaml
 sandbox:
+    persist: true # recommended — see below
     image: docker.io/library/python:3.14-slim-bookworm # the default
     cpus: 4 # fractional cores
     memory: 4096 # MiB
@@ -487,17 +488,17 @@ sandbox:
     env: [HTTPS_PROXY, NO_PROXY] # host variables to forward, by NAME
 ```
 
-| Field     | Default                                       | Meaning                              |
-| --------- | --------------------------------------------- | ------------------------------------ |
-| `image`   | `docker.io/library/python:3.14-slim-bookworm` | The base image commands run in       |
-| `cpus`    | the host's                                    | Fractional cores                     |
-| `memory`  | the host's                                    | MiB                                  |
-| `network` | `bridge`                                      | `bridge` / `none` / `host`           |
-| `workdir` | `/workspace`                                  | Mount point and default cwd          |
-| `timeout` | `120`                                         | Seconds per command                  |
-| `user`    | the image's                                   | uid, name, or `uid:gid`              |
-| `persist` | `false`                                       | Keep the container between sessions  |
-| `env`     | none                                          | Host variables to forward, **names** |
+| Field     | Default                                       | Meaning                                      |
+| --------- | --------------------------------------------- | -------------------------------------------- |
+| `image`   | `docker.io/library/python:3.14-slim-bookworm` | The base image commands run in               |
+| `cpus`    | the host's                                    | Fractional cores                             |
+| `memory`  | the host's                                    | MiB                                          |
+| `network` | `bridge`                                      | `bridge` / `none` / `host`                   |
+| `workdir` | `/workspace`                                  | Mount point and default cwd                  |
+| `timeout` | `120`                                         | Seconds per command                          |
+| `user`    | the image's                                   | uid, name, or `uid:gid`                      |
+| `persist` | `false` — **set it to `true`**                | Keep the container between runs of a session |
+| `env`     | none                                          | Host variables to forward, **names**         |
 
 `env:` takes **names, never values** — a value here would be a secret in the
 repository — and anything credential-shaped (`KEY`, `TOKEN`, `SECRET`,
@@ -521,14 +522,31 @@ agents:
       tools: [workspace:*, sandbox:*] # shares the project's container
 ```
 
-Two things survive the session: `/workspace`, and `/home/agent` — which is
-`$HOME` inside, backed by the session directory. So a `pip install --user` or a
-populated `~/.cache` is still there next time; anything installed into the
-container's system paths is not. Pick an `image:` that already has what the work
-needs rather than installing it on every run.
+**Write `persist: true` unless you have a reason not to.** By default the
+container is _removed_ when the session closes, and only two paths survive it:
+`/workspace`, and `/home/agent` — which is `$HOME` inside, backed by the session
+directory. That covers `pip install --user`, `npm config` and `~/.cache`, but it
+does **not** cover the ordinary thing an agent actually does: `pip install X` or
+`apt-get install X` as root writes to the container's system paths, and those
+are gone on the next `zen run`. The agent then reinstalls, silently, every
+single time — and usually does not realise it has, because the previous run's
+transcript says it succeeded.
+
+```yaml
+sandbox:
+    persist: true
+```
+
+With it, the container is _stopped_ rather than removed, and the next run of
+that session starts the same one back up with everything still installed. The
+cost is containers that outlive their sessions — `zen sandbox status` lists them
+and `zen sandbox clean` removes them.
 
 Changing any field renames the container, so bumping the image gets a fresh one
-rather than an old one quietly persisting with the wrong contents.
+rather than an old one quietly persisting with the wrong contents. That is also
+the one sharp edge of `persist: true`: a config change abandons the old
+container with whatever was installed in it, so a long-lived setup still belongs
+in `image:` rather than in an accumulated rootfs.
 
 Granting the group is what makes the project need Podman: `zen run` checks the
 engine before the first turn and exits `5` with an install command if it is
@@ -1076,6 +1094,7 @@ Before finishing any change here:
 - [ ] An agent that only reads is not holding `write_file`, `apply_patch`,
       `move_file` or `delete_file` — subtract them from `workspace:*`
 - [ ] `sandbox:*` is granted only where a shell is actually needed
+- [ ] `sandbox.persist: true`, unless a throwaway rootfs is wanted on purpose
 - [ ] The `sandbox:` image carries what the work needs, rather than the prompt
       installing it every run
 - [ ] `sandbox.env` lists names only, and nothing credential-shaped
@@ -1112,7 +1131,7 @@ Before finishing any change here:
 | Rewrites a whole file to change one line   | A prompt line preferring `apply_patch` — §3.6              |
 | Edits files it should only be reading      | Subtract the mutating tools, or `zen run --read-only`      |
 | Cannot run the build or the tests          | Grant `sandbox:*`; pick an `image:` that has the toolchain |
-| Installs the same packages on every run    | Set `sandbox.image`, or rely on `/home/agent` — §3.7       |
+| Installs the same packages on every run    | `sandbox.persist: true`, or set `sandbox.image` — §3.7     |
 | Answers instead of routing                 | Router prompt prohibition; check `handoffs:`               |
 | Routes to the wrong specialist             | The target agents' `description:` fields                   |
 | Loses a detail after a handoff             | Say it in the handoff; check the collapse policy           |
