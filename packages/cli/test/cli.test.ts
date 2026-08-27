@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
@@ -10,6 +10,7 @@ import { mask, parseRef, type KeyStore } from '../src/keys.ts';
 import { ensurePodmanReady } from '../src/podman.ts';
 import { EXIT, pad, table } from '../src/term.ts';
 import { windowOf, wrap } from '../src/tui/wrap.ts';
+import { validateProject, type Report } from '../src/validate.ts';
 
 // ---------------------------------------------------------------------------
 // The parts of the CLI that are pure functions of their input. Everything else
@@ -195,6 +196,113 @@ describe('the credential audit', () => {
     /** A config nothing can read is the loader's to complain about, in its own words. */
     it('stays quiet when there is no config to read', () => {
         expect(auditModels(join(dir, 'nowhere'), store)).toEqual([]);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// The project check
+//
+// What is under test is the thing the loader cannot do: keep going. Every case
+// below plants more than one problem and asserts that more than one comes
+// back, because a check that stopped at the first would be the loader with a
+// longer name.
+// ---------------------------------------------------------------------------
+
+describe('the project check', () => {
+    const root = mkdtempSync(join(tmpdir(), 'zen-check-'));
+    let n = 0;
+
+    afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+    /** A project directory holding exactly the files a case names. */
+    const project = (files: Record<string, string>): string => {
+        const dir = join(root, `p${n++}`);
+        for (const [rel, body] of Object.entries(files)) {
+            mkdirSync(join(dir, rel, '..'), { recursive: true });
+            writeFileSync(join(dir, rel), body);
+        }
+        mkdirSync(dir, { recursive: true });
+        return dir;
+    };
+
+    const codes = (report: Report): string[] => report.findings.map((f) => f.code);
+    const errors = (report: Report): string[] =>
+        report.findings.filter((f) => f.severity === 'error').map((f) => f.code);
+
+    it('passes a project whose files are all there', async () => {
+        const dir = project({
+            'zenera.json': '{"version":1,"name":"ok"}',
+            'AGENTS.md': 'House rules.\n',
+            'agents.yaml': 'version: 1\nmodel: gpt-4o\nagents:\n  - name: solo\n',
+            'agents/prompts/solo.md': 'Be useful.\n',
+        });
+        const report = await validateProject({ dir });
+
+        expect(report.ok).toBe(true);
+        expect(errors(report)).toEqual([]);
+        expect(report.project.entry).toBe('solo');
+        expect(report.agents[0].instructions).toEqual(['AGENTS.md', 'agents/prompts/solo.md']);
+        // No keyring was passed, so nothing may be said about credentials.
+        expect(report.models[0].credential).toBe('unknown');
+    });
+
+    it('reports every broken reference, not the first', async () => {
+        const dir = project({
+            'agents.yaml':
+                'version: 1\nmodel: gpt-4o\ndefault: nobody\nagents:\n' +
+                '  - name: intake\n    system: prompts/gone.md\n' +
+                '    tools: [workspace:*, invented_tool]\n' +
+                '    handoffs: [ghost, intake]\n',
+        });
+        const found = errors(await validateProject({ dir }));
+
+        expect(found).toContain('entry.unknown');
+        expect(found).toContain('prompt.missing');
+        expect(found).toContain('tools.unresolved');
+        expect(found).toContain('handoff.unknown');
+        expect(found).toContain('handoff.self');
+    });
+
+    it('says which files it looked for when there is no config at all', async () => {
+        const report = await validateProject({ dir: project({ 'AGENTS.md': 'hello\n' }) });
+
+        expect(errors(report)).toEqual(['config.missing']);
+        expect(report.project.config).toBeNull();
+    });
+
+    /**
+     * A schema failure ends the walk, so the one thing that must survive it is
+     * the file inventory: it is what says whether the prompts a broken config
+     * points at are even on disk.
+     */
+    it('keeps the file inventory when the schema fails', async () => {
+        const report = await validateProject({
+            dir: project({
+                'agents.yaml': 'version: 1\nagents:\n  - name: Not A Name\n',
+                'AGENTS.md': 'hello\n',
+            }),
+        });
+
+        expect(errors(report)).toEqual(['config.invalid']);
+        expect(report.files.find((f) => f.path === 'AGENTS.md')?.exists).toBe(true);
+    });
+
+    it('checks the skill catalog it will actually read', async () => {
+        const dir = project({
+            'agents.yaml':
+                'version: 1\nmodel: gpt-4o\nagents:\n  - name: solo\n' +
+                '    skills:\n      allow: [known]\n      preload: [unlisted]\n',
+            'agents/prompts/solo.md': 'Be useful.\n',
+            'agents/skills/known/SKILL.md': '---\nname: known\ndescription: A skill.\n---\nBody.\n',
+            'agents/skills/halfway/notes.md': 'no SKILL.md here\n',
+        });
+        const report = await validateProject({ dir });
+
+        expect(errors(report)).toContain('skills.preload-not-allowed');
+        expect(errors(report)).toContain('skills.preload-unknown');
+        expect(codes(report)).toContain('skill.no-skill-md');
+        expect(report.skills.entries.map((s) => s.name)).toEqual(['known']);
+        expect(report.skills.entries[0].usedBy).toEqual(['solo']);
     });
 });
 

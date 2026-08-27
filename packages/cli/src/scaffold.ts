@@ -63,17 +63,6 @@ change part of a file and \`write_file\` only for a new one.
 Say what you changed.
 `;
 
-const SKILLS_README = `Skills go here, one directory each:
-
-    <name>/SKILL.md
-
-A skill is a bundle of instructions the agent loads on demand rather than
-carrying in every prompt. The front matter names it and says when to reach for
-it; anything else in the directory is the skill's own material.
-
-See docs/projects.md.
-`;
-
 const GITIGNORE = `# Sessions hold run state, memory, blobs and whatever the agent wrote.
 # None of it is source.
 sessions/
@@ -166,7 +155,6 @@ export function scaffold(opts: ScaffoldOptions): string[] {
     put('AGENTS.md', AGENTS_MD);
     put('agents.yaml', AGENTS_YAML(opts.model));
     put(join('agents', 'prompts', 'default.md'), PROMPT);
-    put(join('agents', 'skills', 'README.md'), SKILLS_README);
     put('.gitignore', GITIGNORE);
 
     // The project directory is what `zen open` opens, so this is where the

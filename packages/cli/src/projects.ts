@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { paths, readJson, writeJson } from './home.ts';
 import { isStamp } from './ids.ts';
@@ -7,56 +7,58 @@ import { invalidError, usageError } from './term.ts';
 // ---------------------------------------------------------------------------
 // Projects
 //
-// The directory is the truth. `~/.zenera/neo/projects.json` is an index so that
-// `zen list` and `zen go` do not have to search the filesystem, and it is allowed
-// to be wrong: every entry can be rebuilt by pointing `zen` at the directory
-// again, and an entry whose path has vanished is reported, not fatal.
+// The directory is the truth, and what makes a directory a project is the one
+// file the runtime cannot do without: `agents.yaml`. There is no marker file
+// beside it — that would be a second thing to keep in sync, holding a name the
+// directory already has.
+//
+// `~/.zenera/neo/projects.json` is an index so that `zen list` and `zen go` do
+// not have to search the filesystem, and it is allowed to be wrong: every entry
+// can be rebuilt by pointing `zen` at the directory again, and an entry whose
+// path has vanished is reported, not fatal.
 // ---------------------------------------------------------------------------
 
-export const META = 'zenera.json';
+/**
+ * The loader's own names, in its own order — `packages/neo/src/project/load.ts`.
+ * Anything the library would load, `zen` finds.
+ */
+const CONFIG_NAMES = ['agents.yaml', 'agents.yml', 'agents/agents.yaml', 'agents/agents.yml'];
 
-export interface ProjectMeta {
-    version: 1;
-    name: string;
+/** Whether a directory is a project: whether the loader has something to read. */
+export function isProjectDir(dir: string): boolean {
+    return CONFIG_NAMES.some((name) => existsSync(join(dir, name)));
 }
 
 /** A project resolved on disk. */
 export interface Project {
     dir: string;
-    meta: ProjectMeta;
+    /** what it is called: the registry's name, or the directory's own */
+    name: string;
 }
 
 // ---------------------------------------------------------------------------
 // The project directory
 // ---------------------------------------------------------------------------
 
-export async function readMeta(dir: string): Promise<ProjectMeta | undefined> {
-    const path = join(dir, META);
-    if (!existsSync(path)) {
-        return undefined;
-    }
-    const meta = await readJson<Partial<ProjectMeta>>(path, {});
-    if (!meta.name) {
-        throw invalidError(`${path} is missing "name"`);
-    }
-    return { version: 1, name: meta.name };
-}
-
-export function writeMeta(dir: string, meta: ProjectMeta): void {
-    writeJson(join(dir, META), meta, 0o644);
+/**
+ * What a project answers to. The registry is asked first, so one registered
+ * under a name of its own keeps it; the directory's name answers for a project
+ * that was never registered — which is a working project, just not a listed one.
+ */
+async function nameOf(dir: string): Promise<string> {
+    return (await Registry.open()).findPath(dir)?.name ?? basename(dir);
 }
 
 // ---------------------------------------------------------------------------
 // Finding one
 // ---------------------------------------------------------------------------
 
-/** Walks up from `start` looking for `zenera.json`. */
+/** Walks up from `start` looking for a project configuration. */
 export async function findUp(start: string): Promise<Project | undefined> {
     let dir = resolve(start);
     for (;;) {
-        const meta = await readMeta(dir);
-        if (meta) {
-            return { dir, meta };
+        if (isProjectDir(dir)) {
+            return { dir, name: await nameOf(dir) };
         }
         const parent = dirname(dir);
         if (parent === dir) {
@@ -68,11 +70,10 @@ export async function findUp(start: string): Promise<Project | undefined> {
 
 export async function openDir(dir: string): Promise<Project> {
     const at = resolve(dir);
-    const meta = await readMeta(at);
-    if (!meta) {
-        throw invalidError(`${at} is not a project`, `no ${META} — run: zen init`);
+    if (!isProjectDir(at)) {
+        throw invalidError(`${at} is not a project`, `no ${CONFIG_NAMES[0]} — run: zen init`);
     }
-    return { dir: at, meta };
+    return { dir: at, name: await nameOf(at) };
 }
 
 /**
@@ -100,8 +101,7 @@ export async function open(nameOrDir: string): Promise<Project> {
 export async function find(nameOrDir: string): Promise<Project | undefined> {
     if (isAbsolute(nameOrDir) || nameOrDir.startsWith('.') || existsSync(nameOrDir)) {
         const dir = resolve(nameOrDir);
-        const meta = await readMeta(dir);
-        return meta ? { dir, meta } : undefined;
+        return isProjectDir(dir) ? { dir, name: await nameOf(dir) } : undefined;
     }
     const entry = (await Registry.open()).find(nameOrDir);
     return entry ? openDir(entry.path) : undefined;
@@ -186,7 +186,7 @@ export class Registry {
 
     /** Drops entries whose directory is gone. Returns what it dropped. */
     prune(): RegistryEntry[] {
-        const gone = this.#file.projects.filter((p) => !existsSync(join(p.path, META)));
+        const gone = this.#file.projects.filter((p) => !isProjectDir(p.path));
         this.#file.projects = this.#file.projects.filter((p) => !gone.includes(p));
         return gone;
     }
@@ -221,13 +221,7 @@ export async function summarize(entry: RegistryEntry): Promise<ProjectSummary> {
         runs: 0,
         busy: false,
     };
-    let meta: ProjectMeta | undefined;
-    try {
-        meta = await readMeta(entry.path);
-    } catch {
-        return base;
-    }
-    if (!meta) {
+    if (!isProjectDir(entry.path)) {
         return base;
     }
 

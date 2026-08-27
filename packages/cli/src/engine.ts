@@ -157,7 +157,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
     return {
         project,
         runner,
-        name: opts.project.meta.name,
+        name: opts.project.name,
         workspace,
         session: opts.session,
         state,

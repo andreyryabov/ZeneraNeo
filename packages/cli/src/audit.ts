@@ -81,8 +81,12 @@ function hasGcloudAdc(): boolean {
  * wrong question for Vertex: that kind is `keyOptional` because it
  * authenticates from a service-account file instead. So the file-shaped
  * credential is looked for where the keyring keeps it.
+ *
+ * Exported because a report that named `VERTEX_API_KEY` while the audit
+ * silently checked `GOOGLE_APPLICATION_CREDENTIALS` would be two answers to
+ * one question, and the wrong one is the one people would act on.
  */
-function credential(need: ModelRequirement): { env: string; present: boolean } {
+export function credentialFor(need: ModelRequirement): { env: string; present: boolean } {
     const provider = isProvider(need.kind) ? need.kind : undefined;
     const shape = provider ? SHAPES[provider] : undefined;
     if (shape?.holds === 'file') {
@@ -119,7 +123,7 @@ export function auditModels(projectDir: string, store: KeyStore): ModelIssue[] {
             continue;
         }
 
-        const { env, present } = credential(need);
+        const { env, present } = credentialFor(need);
         const provider = isProvider(need.kind) ? need.kind : undefined;
 
         if (!present) {

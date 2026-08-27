@@ -80,7 +80,7 @@ export const models: Command = {
 
         if (ctx.json) {
             json({
-                project: found.meta.name,
+                project: found.name,
                 source: project.source,
                 providers: project.models.names(),
                 agents,
@@ -89,7 +89,7 @@ export const models: Command = {
             return;
         }
 
-        note(`${bold(found.meta.name)} ${dim(project.source)}`);
+        note(`${bold(found.name)} ${dim(project.source)}`);
         note('');
         note(bold('Agents'));
         writeAll(

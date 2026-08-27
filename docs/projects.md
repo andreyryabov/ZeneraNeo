@@ -182,3 +182,8 @@ actually loaded:
 - `agents[].skills.allow` / `.preload` name skills in that catalog.
 - A `preload:` entry must also be in `allow:`, when `allow:` is given —
   otherwise the runner would activate it and then hide it from the index.
+
+All of these are thrown, so the load stops at the first. To see every problem
+at once, from a folder rather than from a host, run `zen check` — it walks the
+same ground without stopping, and also reports what is not an error but is
+probably not what was meant.

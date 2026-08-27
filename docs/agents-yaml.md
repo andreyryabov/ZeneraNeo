@@ -474,3 +474,10 @@ field), so a fan-out cannot recurse without bound.
 - `agents[].fork.agents` naming an unknown agent, or being empty
 - `agents[].fork.maxBranches` below 2, which no valid call could satisfy
 - `system:` pointing at a missing file, or outside the project root
+
+The loader stops at the first of these. `zen check` does not: it reports every
+one it can reach, each with the key it is about and the fix, and adds the checks
+that are not load errors — an agent with no prompt at all, a skill with no
+description, a folder in the catalog with no `SKILL.md`, a model with no
+credential on this machine. Nothing is called; `--json` for the same report
+without the rendering.

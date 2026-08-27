@@ -5,7 +5,7 @@ import type { Command } from '../command.ts';
 import { ensureHome } from '../home.ts';
 import { KeyStore, PROVIDERS, SHAPES, type Provider } from '../keys.ts';
 import { probeAll } from '../liveness.ts';
-import { META, Registry, readMeta, writeMeta } from '../projects.ts';
+import { isProjectDir, Registry } from '../projects.ts';
 import { scaffold } from '../scaffold.ts';
 import {
     bold,
@@ -99,7 +99,7 @@ export const init: Command = {
         const dir = resolve(ctx.cwd, one(positionals, 'directory', USAGE) ?? '.');
         const name = values.name ?? basename(dir);
 
-        if (await readMeta(dir)) {
+        if (isProjectDir(dir)) {
             throw invalidError(`${dir} is already a project`);
         }
         if (existsSync(dir) && readdirSync(dir).length > 0 && !values.force) {
@@ -110,10 +110,7 @@ export const init: Command = {
         const store = await KeyStore.open();
         const provider = values.model ? undefined : await reachableProvider(store);
         const model = values.model ?? DEFAULT_MODEL[provider ?? 'openai'];
-        const written = scaffold({ dir, model });
-        writeMeta(dir, { version: 1, name });
-
-        const files = [META, ...written];
+        const files = scaffold({ dir, model });
 
         const registry = await Registry.open();
         registry.add(name, dir);

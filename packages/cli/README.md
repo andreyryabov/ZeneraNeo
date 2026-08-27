@@ -33,6 +33,7 @@ zen key add openai < key.txt    # credentials, never in the project
 zen init my-project             # scaffolds the project + a brief for your coding agent
 cd "$(zen go my-project)"
 zen run                         # a TUI on a terminal, one shot when piped
+zen check                       # validate the project and every file it names
 zen inspect                     # open the last run's report.html
 ```
 

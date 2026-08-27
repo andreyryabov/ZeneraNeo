@@ -1028,7 +1028,11 @@ up (§7.7).
 There is no compiler for prose. Substitutes, in order of value:
 
 1. **Load the project.** Most structural mistakes are load errors — run the host
-   or the test that calls `loadProject`.
+   or the test that calls `loadProject`. From the CLI, `zen check` is faster and
+   says more: it validates `agents.yaml`, checks that every prompt, skill and
+   catalog it names is on disk, that hand-offs and tool selectors resolve, and
+   that the models have credentials — without stopping at the first problem and
+   without calling anything. `zen check --json` if you are parsing it.
 2. **Run the case that motivated the change**, plus one that must _not_ change.
 3. **Read the inspect report** — it shows the assembled prompt, every request and
    response, tool calls, skill activations and cost. Behaviour questions are
@@ -1039,9 +1043,9 @@ There is no compiler for prose. Substitutes, in order of value:
 5. **Watch the token accounting.** A change that doubles prefix size is a
    regression even if the answer improved.
 
-CLI (`zen --help` for the authoritative list): `zen init`, `zen run`, `zen inspect`,
-`zen models`, `zen key`, `zen list`. **stdout is the answer, stderr is the
-narration**; every command takes `--json`. Exit codes: `0` ok, `1` failed,
+CLI (`zen --help` for the authoritative list): `zen init`, `zen run`, `zen check`,
+`zen inspect`, `zen models`, `zen key`, `zen list`. **stdout is the answer, stderr
+is the narration**; every command takes `--json`. Exit codes: `0` ok, `1` failed,
 `2` usage, `3` invalid project, `4` no usable credential.
 
 ---

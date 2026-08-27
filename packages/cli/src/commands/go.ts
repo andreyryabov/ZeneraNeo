@@ -28,7 +28,7 @@ export const go: Command = {
         const dir = found.dir;
 
         if (ctx.json) {
-            json({ name: found.meta.name, path: dir });
+            json({ name: found.name, path: dir });
             return;
         }
         write(dir);

@@ -149,6 +149,7 @@ zen init my-project            # scaffold the project and register it
 cd "$(zen go my-project)"
 zen run                        # TUI on a terminal
 zen run "summarise this repo"  # one shot; stdout is the answer
+zen check                      # validate the project and every file it names
 zen inspect                    # open the last run's report.html
 ```
 
@@ -162,6 +163,7 @@ zen inspect                    # open the last run's report.html
 | `open`    | Opens a project in your editor.                                          |
 | `key`     | The credential keyring — add, check, switch, remove.                     |
 | `run`     | Runs the project — the TUI on a terminal, one shot otherwise.            |
+| `check`   | Validates `agents.yaml` and every file it names, and reports in full.    |
 | `inspect` | Opens or rebuilds a run's `report.html`.                                 |
 | `models`  | Resolves providers and models and validates the config, calling nothing. |
 | `sandbox` | Checks and prepares the container that command-line tools run in.        |

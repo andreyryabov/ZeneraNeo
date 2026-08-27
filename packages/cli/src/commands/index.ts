@@ -1,4 +1,5 @@
 import type { Command } from '../command.ts';
+import { check } from './check.ts';
 import { go, shellInit } from './go.ts';
 import { init } from './init.ts';
 import { inspect } from './inspect.ts';
@@ -23,6 +24,7 @@ export const COMMANDS: Record<string, Command> = {
     open,
     key,
     models,
+    check,
     inspect,
     sandbox,
     'shell-init': shellInit,
@@ -34,6 +36,8 @@ export const ALIASES: Record<string, string> = {
     ls: 'list',
     new: 'init',
     keys: 'key',
+    validate: 'check',
+    doctor: 'check',
     report: 'inspect',
     edit: 'open',
     code: 'open',

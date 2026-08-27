@@ -61,7 +61,7 @@ export const open: Command = {
 
         if (ctx.json) {
             json({
-                name: found.meta.name,
+                name: found.name,
                 path: dir,
                 editor: [editor.command, ...editor.args].join(' '),
                 from: editor.from,
