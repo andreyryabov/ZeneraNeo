@@ -1,6 +1,6 @@
 {
     "name": "zenera-cli",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "description": "Command-line front end for zenera-neo: agentic projects you can run, share and commit.",
     "keywords": [
         "agents",
