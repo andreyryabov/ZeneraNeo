@@ -231,7 +231,6 @@ describe('the project check', () => {
 
     it('passes a project whose files are all there', async () => {
         const dir = project({
-            'zenera.json': '{"version":1,"name":"ok"}',
             'INSTRUCTIONS.md': 'House rules.\n',
             'agents.yaml': 'version: 1\nmodel: gpt-4o\nagents:\n  - name: solo\n',
             'agents/prompts/solo.md': 'Be useful.\n',

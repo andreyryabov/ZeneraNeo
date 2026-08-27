@@ -54,7 +54,6 @@ repositories are shareable.**
 
 ```
 my-project/
-    zenera.json                  the project's own name
     INSTRUCTIONS.md              house rules, prepended to every agent
     agents.yaml                  who exists, what they may reach for
     agents/
@@ -176,8 +175,8 @@ credential, `5` sandbox unavailable.
 ### Concepts
 
 - **Project** — a named directory holding a complete agent definition and the
-  sessions that ran against it. Self-describing: `zenera.json` travels with it,
-  so moving or cloning it loses nothing.
+  sessions that ran against it. Self-describing: `agents.yaml` is what makes it
+  one, so moving or cloning the directory loses nothing.
 - **Session** — a context that persists: one workspace, one memory, one blob
   store, one accumulating trajectory. Resumable.
 - **Run** — one prompt in, one answer out, inside a session. Recorded in full,

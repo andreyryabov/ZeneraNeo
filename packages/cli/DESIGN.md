@@ -59,9 +59,8 @@ sessions that ran against it.
 
 ```
 <project>/
-    zenera.json                  { name } — the project's own truth
     INSTRUCTIONS.md
-    agents.yaml
+    agents.yaml                  what makes the directory a project
     agents/
         prompts/
         skills/
@@ -82,8 +81,10 @@ sessions that ran against it.
                     meta.json     model, usage, duration, exit
 ```
 
-`zenera.json` at the top rather than only in the registry: the project stays
-self-describing, so moving the directory does not lose its name.
+`agents.yaml` is the marker, and there is no second one. A directory the loader
+can read is a project — by path, from anywhere, on a machine that has never seen
+it. Being _named_ is the registry's business, and a name the directory already
+has is not worth a file of its own to hold.
 
 Two `state.json` files, deliberately. The one under `.data/` is mutable — it is
 what `zen run` resumes from. The one under `runs/<id>/` is a snapshot taken when
@@ -137,7 +138,7 @@ point, and a flag says that better than a command does.
 
 Scaffolds the project — an empty `INSTRUCTIONS.md`, a minimal `agents.yaml`
 naming one `default` agent, and empty `agents/prompts/` and `agents/skills/` —
-writes `zenera.json`, and adds the path to `projects.json`.
+and adds the path to `projects.json`.
 
 That agent gets `workspace:*` and `sandbox:*`: an agent that can read and write
 files but cannot run the test it just changed is a demo, not a project, and the
@@ -344,7 +345,7 @@ hangs on a prompt.
 
 | Question  | Flag                      | Inferred from                               | Otherwise      |
 | --------- | ------------------------- | ------------------------------------------- | -------------- |
-| Project   | `--project <name\|dir>`   | `zenera.json` at or above the cwd           | Pick from list |
+| Project   | `--project <name\|dir>`   | `agents.yaml` at or above the cwd           | Pick from list |
 | Session   | `--session <id>`, `--new` | The most recent session, resumed            | Pick or create |
 | Workspace | `--workspace <dir>`       | `sessions/<id>/workspace` for a new session | Ask            |
 
@@ -532,8 +533,8 @@ thrown away when the session closes, unless `sandbox.persist` says otherwise.
 - **No daemon.** Nothing runs between commands. "Is a run live" is answered by a
   lockfile holding a pid, not by a service that has to be kept alive to answer.
 - **No server** beyond `inspect --serve`, which is a static file handler.
-- **No project config of its own.** `agents.yaml` is the configuration; the CLI
-  adds `zenera.json` and it holds two fields.
+- **No project config of its own.** `agents.yaml` is the configuration, and the
+  CLI adds nothing beside it.
 - **No credential logic in the library.** The keyring ends at `process.env`.
 - **No sync, no remote projects, no team sharing.** The registry is one
   machine's index of one machine's directories.
