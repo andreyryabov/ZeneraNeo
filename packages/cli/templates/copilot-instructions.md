@@ -14,23 +14,24 @@
 
 ## 0. What this repository is
 
-This is **not a normal application repository**. It is a folder of declarative
-artefacts — YAML, Markdown, and a thin seam of TypeScript — that assemble into a
-running multi-agent system.
+This is **not a normal application repository**. There is no application code
+here. It is a folder of declarative artefacts — YAML and Markdown — that
+assemble into a running multi-agent system, driven by the `zen` CLI.
 
-The centre of gravity is **prose**, not code. Most valuable changes here are
-edits to a prompt, a skill, or one line of `agents.yaml`. Reach for TypeScript
-only when the system needs a capability the model cannot have by reading:
-network calls, database access, arithmetic that must be exact, side effects.
+The centre of gravity is **prose**. Every valuable change here is an edit to a
+prompt, a skill, or one line of `agents.yaml`. Behaviour is configured, not
+programmed: what an agent knows, which model answers, and which of the tools
+`zen run` provides it may reach for.
 
 **Default posture when working in this repo:**
 
 1. Find which artefact owns the behaviour before editing anything (§10).
 2. Prefer editing a prompt or skill over adding an agent.
 3. Prefer adding a skill over lengthening a prompt.
-4. Prefer adding a tool over asking the model to compute or remember.
+4. Prefer granting a tool over asking the model to compute or remember.
 5. Never add an agent to solve a problem that is really a prompt problem.
-6. Every change must still load: `agents.yaml` is validated strictly at load.
+6. Every change must still load: `agents.yaml` is validated strictly at load,
+   and `zen check` says so before a model is ever called.
 
 ---
 
@@ -44,7 +45,7 @@ An agent is four things and nothing more:
 | --------------- | ---------------------------------------- | ----------------------------- |
 | **Instruction** | `AGENTS.md` + `agents/prompts/<name>.md` | How it behaves                |
 | **Model**       | `agents.yaml` → `model:`                 | How well and how expensively  |
-| **Tools**       | `agents.yaml` → `tools:` + TS impls      | What it can _do_              |
+| **Tools**       | `agents.yaml` → `tools:`                 | What it can _do_              |
 | **Knowledge**   | `agents/skills/*` + memory               | What it can _know_, on demand |
 
 Plus two relations: **handoffs** — which other agents it may transfer control to
@@ -134,13 +135,7 @@ my-project/
 │       ├── water_damage/
 │       │   └── SKILL.md
 │       └── shipping_delays.md    flat skill (frontmatter + body)
-├── src/
-│   ├── tools/
-│   │   ├── policy-lookup.ts      one tool per file
-│   │   └── index.ts              exports the array passed to loadProject
-│   └── main.ts                   the host: loadProject + run
-└── test/
-    └── project.test.ts           loads the project, asserts on wiring
+└── sessions/                     run state, memory, whatever the agent wrote
 ```
 
 Only `agents.yaml` is required, and only `agents:` is required inside it.
@@ -223,17 +218,17 @@ agents: # the only required key; at least one entry
 
 **Agent fields**
 
-| Field         | Meaning                                                                                |
-| ------------- | -------------------------------------------------------------------------------------- |
-| `name`        | **Required.** See §2.3                                                                 |
-| `description` | What a sibling's `transfer_to_<name>` tool tells the model. Write it _for the model_   |
-| `system`      | Prompt path, relative to root. Defaults to `agents/prompts/<name>.md` if present       |
-| `model`       | A `models:` alias or shorthand. Falls back to top-level `model:`                       |
-| `tools`       | Selectors resolved against `ProjectOptions.tools` — see §3.6. Code cannot live in YAML |
-| `handoffs`    | Agent names this one may transfer to. Bare strings; no per-edge config                 |
-| `skills`      | Skill binding — see §5.2                                                               |
-| `fork`        | `true`, or `{ agents, maxBranches }` — opt-in to parallel branches; see §6.4           |
-| `default`     | `true` marks the entry point when no top-level `default:`                              |
+| Field         | Meaning                                                                              |
+| ------------- | ------------------------------------------------------------------------------------ |
+| `name`        | **Required.** See §2.3                                                               |
+| `description` | What a sibling's `transfer_to_<name>` tool tells the model. Write it _for the model_ |
+| `system`      | Prompt path, relative to root. Defaults to `agents/prompts/<name>.md` if present     |
+| `model`       | A `models:` alias or shorthand. Falls back to top-level `model:`                     |
+| `tools`       | Selectors over the tools `zen run` provides — see §3.6                               |
+| `handoffs`    | Agent names this one may transfer to. Bare strings; no per-edge config               |
+| `skills`      | Skill binding — see §5.2                                                             |
+| `fork`        | `true`, or `{ agents, maxBranches }` — opt-in to parallel branches; see §6.4         |
+| `default`     | `true` marks the entry point when no top-level `default:`                            |
 
 **Providers** — a provider is a _connection_, not a model. One client is built
 per name and shared, so five agents on one key open one connection pool.
@@ -259,7 +254,7 @@ provider with a missing key does not fail loading.
 
 - any unknown key; any name breaking the pattern
 - `models.<alias>.provider` naming an undeclared provider
-- `agents[].tools` naming a tool not passed to `loadProject`, or a group with nothing in it
+- `agents[].tools` naming a tool the runtime does not provide, or a group with nothing in it
 - `agents[].handoffs` naming an unknown agent, or the agent itself
 - `agents[].skills.provider` / `.allow` / `.preload` naming something absent
 - a `preload:` entry missing from `allow:`
@@ -374,45 +369,23 @@ the skill is active. This is how a tool can be gated without breaking the cache.
 Use a folder skill when the content needs companions — a CSV rate table, an
 example letter, a JSON schema. Siblings become `resources` the model can read.
 
-### 3.5 Tools (TypeScript)
+### 3.5 Tools
 
-Config can _name_ things; it cannot _contain_ code. `ProjectOptions.tools` is the
-seam.
+A tool is what an agent can _do_ rather than say. `zen run` provides two groups
+— the workspace tools (§3.6) and the sandbox tools (§3.7) — and `agents.yaml`
+decides which agent holds which. Nothing else reaches the machine, so `tools:`
+is the whole permission model: an agent that does not name a tool cannot use it,
+whatever its prompt says.
 
-```ts
-import { tool } from 'zenera-neo';
+Two rules follow:
 
-export const policyLookup = tool<{ reference: string }>({
-    name: 'policy_lookup',
-    description: 'Looks up a policy by its NM- claim reference.',
-    parameters: {
-        type: 'object',
-        properties: {
-            reference: { type: 'string', description: 'NM- followed by six digits' },
-        },
-        required: ['reference'],
-        additionalProperties: false,
-    },
-    execute: ({ reference }) => POLICIES[reference] ?? { error: 'no such policy', reference },
-});
-```
+- **Grant the narrowest set the job needs.** An agent that only reviews should
+  not be holding the tools that overwrite files.
+- **Say in the prompt when to reach for what.** A granted tool the prompt never
+  mentions is used at the model's discretion, which is not the same as never.
 
-Rules:
-
-- **`snake_case` names**, verb-first: `policy_lookup`, `issue_refund`,
-  `search_orders`. The name is read by the model far more often than by you.
-- **`description` is a prompt.** Say when to call it and what comes back, not how
-  it is implemented.
-- **`additionalProperties: false` and explicit `required`** — always. Loose
-  schemas produce hallucinated parameters.
-- **Errors are data, not exceptions.** Return `{ error: '…', … }` so the model
-  can recover; throw only for programmer error.
-- **Flat parameters.** Deeply nested objects are filled in wrong.
-- **Idempotent where possible**, because retries and replays happen.
-- **Never accept a secret as a parameter.** Credentials come from the environment.
-- **Give a related set a `group:`** — `tool({ name: 'search_orders', group: 'orders', … })`
-  — so `agents.yaml` can name the set instead of counting its members (§3.6).
-- One tool per file under `src/tools/`, re-exported from `src/tools/index.ts`.
+Skills can own tools too — `tools:` in a skill's frontmatter (§3.4) names tools
+that refuse to run until that skill is active.
 
 ### 3.6 The workspace tools (`workspace:*`)
 
@@ -447,7 +420,7 @@ container involved there is no second name and everything stays relative.
 | ------------- | ------------------------------------------------- |
 | `read_file`   | that one tool                                     |
 | `workspace:*` | every tool in the group                           |
-| `'*'`         | everything the host passed to `loadProject`       |
+| `'*'`         | every tool the runtime provides                   |
 | `-<any>`      | removes what it matches from the selection so far |
 
 ```yaml
@@ -500,14 +473,67 @@ only the workspace and the session's `/home/agent` are mounted, the container
 is removed at the end of the session, and the command is never a shell argument
 on the host: it travels on stdin to `/bin/sh` inside.
 
-Configure it with `sandbox:` in `agents.yaml` — image, `cpus`, `memory`,
-`network`, `timeout`, and an `env` allow-list of host variable **names** that
-refuses anything credential-shaped. Agents share one container unless one of
-them declares its own `sandbox:` block. See `docs/agents-yaml.md`.
+**Configuring it.** A top-level `sandbox:` block in `agents.yaml` describes the
+container. Every field has a default, so the block is optional — write only the
+lines that differ:
+
+```yaml
+sandbox:
+    image: docker.io/library/python:3.14-slim-bookworm # the default
+    cpus: 4 # fractional cores
+    memory: 4096 # MiB
+    network: bridge # `none` for a project that must not reach out
+    timeout: 300 # seconds per command
+    env: [HTTPS_PROXY, NO_PROXY] # host variables to forward, by NAME
+```
+
+| Field     | Default                                       | Meaning                              |
+| --------- | --------------------------------------------- | ------------------------------------ |
+| `image`   | `docker.io/library/python:3.14-slim-bookworm` | The base image commands run in       |
+| `cpus`    | the host's                                    | Fractional cores                     |
+| `memory`  | the host's                                    | MiB                                  |
+| `network` | `bridge`                                      | `bridge` / `none` / `host`           |
+| `workdir` | `/workspace`                                  | Mount point and default cwd          |
+| `timeout` | `120`                                         | Seconds per command                  |
+| `user`    | the image's                                   | uid, name, or `uid:gid`              |
+| `persist` | `false`                                       | Keep the container between sessions  |
+| `env`     | none                                          | Host variables to forward, **names** |
+
+`env:` takes **names, never values** — a value here would be a secret in the
+repository — and anything credential-shaped (`KEY`, `TOKEN`, `SECRET`,
+`PASSWORD`, `CREDENTIAL`) is refused at load.
+
+Agents share one container, because they share the workspace and a hand-off is
+meant to be continuous. An agent that needs something else says so and gets its
+own, with its block merged over the top-level one:
+
+```yaml
+sandbox:
+    image: docker.io/library/python:3.14-slim-bookworm
+
+agents:
+    - name: builder
+      tools: [workspace:*, sandbox:*]
+      sandbox:
+          image: docker.io/library/node:22-bookworm-slim
+          memory: 8192
+    - name: analyst
+      tools: [workspace:*, sandbox:*] # shares the project's container
+```
+
+Two things survive the session: `/workspace`, and `/home/agent` — which is
+`$HOME` inside, backed by the session directory. So a `pip install --user` or a
+populated `~/.cache` is still there next time; anything installed into the
+container's system paths is not. Pick an `image:` that already has what the work
+needs rather than installing it on every run.
+
+Changing any field renames the container, so bumping the image gets a fresh one
+rather than an old one quietly persisting with the wrong contents.
 
 Granting the group is what makes the project need Podman: `zen run` checks the
 engine before the first turn and exits `5` with an install command if it is
-missing. `zen sandbox status` answers the same question on its own.
+missing. `zen sandbox status` answers the same question on its own. Full
+reference: `docs/agents-yaml.md`.
 
 **Prompting for them.** Two lines earn their place:
 
@@ -517,48 +543,29 @@ missing. `zen sandbox status` answers the same question on its own.
 - Anything that does not return, returns — use `run_command_background` for a
   server, not `run_command` with a large timeout.
 
-### 3.8 The host (`src/main.ts`)
+### 3.8 Running it
 
-```ts
-import { loadProject } from 'zenera-neo';
-import { tools } from './tools/index.ts';
+`zen run` is what turns this folder into a running system. It reads the
+directory, checks it, builds the workspace and sandbox tools against the
+session's workspace, and starts the conversation:
 
-const project = await loadProject('.', { tools });
-
-for await (const ev of project.run('Water damage, policy NM-448127.')) {
-    if (ev.type === 'text_delta') process.stdout.write(ev.text);
-}
+```
+zen run                         open the entry agent on this project
+zen run "what changed?"         one shot; stdout is the answer
+zen run --session <id>          continue a session
+zen run --workspace ./repo      what the agent may read and write
+zen run --model careful         override the default model for this run
+zen run --image <ref>           override the sandbox image for this run
+zen run --read-only             withhold every tool that can write
 ```
 
-`loadProject` reads **every** file the project will ever need, up front. A
-missing prompt, an unknown tool name, a handoff to nobody — all fail at load with
-the offending key named, rather than surfacing three turns into production.
+The project is read **once, up front**: a missing prompt, an unknown tool name,
+a handoff to nobody all fail before the first call, with the offending key
+named. Flags always win over the file — the repository states intent, the
+invocation overrides it.
 
-`AgentProject` is immutable and therefore shareable: load once per process, let
-every chat use the same instance. Per-conversation data reaches tools through
-`RunOptions.context`, never through the project.
-
-`ProjectOptions` — the override seam. **Host options always win**; a repository
-describes intent, a deployment overrides it:
-
-| Option                 | Purpose                                                               |
-| ---------------------- | --------------------------------------------------------------------- |
-| `tools`                | Tool implementations by name (agent `tools:` and skill `tools:`)      |
-| `providers` / `models` | Merged **over** the YAML — repoint a key or an alias without a commit |
-| `registry`             | An existing `ModelRegistry`, to share clients across projects         |
-| `memory` / `payloads`  | Stores handed to the runner                                           |
-| `skills`               | Extra `SkillProvider`s, appended to the project's own                 |
-
-A host that wants the workspace tools asks for them — they are not wired in by
-default, because what an agent may touch is a deployment decision:
-
-```ts
-import { loadProject, workspaceTools } from 'zenera-neo';
-
-const project = await loadProject('.', {
-    tools: [...workspaceTools({ root: '/srv/sandbox' }), ...tools],
-});
-```
+A session owns a workspace, a trajectory, memory and whatever the agent wrote,
+under `sessions/`. None of it is source; none of it is committed.
 
 ### 3.9 `.env`
 
@@ -680,34 +687,20 @@ agents:
 ### 5.3 Memory
 
 Memory is the read-write twin of skills: written by the run, not authored. A
-**scope** is a namespace string; agents naming the same scope share memory.
+**scope** is a namespace string; agents bound to the same scope share what is
+in it, and the default scope is the agent's own — so memory is private until
+something says otherwise. Recall is automatic: matches for the current input
+are injected before each call, which is what makes memory work without the
+model remembering to look, and an agent with write access also gets tools to
+search, add, update and delete entries.
 
-```ts
-memory: [
-    {
-        store: 'main',
-        scope: 'user:${ctx.userId}',
-        access: 'read-write',
-        autoRecall: { query: 'last_user_input', limit: 5 },
-    },
-    { store: 'main', scope: 'org:policies', access: 'read' },
-];
-```
+It is a session-level facility rather than an `agents.yaml` key: `zen run`
+binds each session's store under `sessions/`, so memory travels with the
+session and is not part of this repository.
 
-- **Private** — omit `memory`, or bind `agent:<name>` (the default scope).
-- **Shared team memory** — several agents bind `scope: 'team:support'`.
-- **Read-only common knowledge** — bind with `access: 'read'`; a separate curator
-  agent holds `read-write`.
-- **Per-user** — build the scope from run context; the resolved value is recorded
-  in the trajectory, so a resumed run cannot drift into another user's space.
-
-`autoRecall` injects top-k matches before each call — this is what makes memory
-work without the model remembering to look. Explicit `memory_search` /
-`memory_write` / `memory_update` / `memory_delete` tools are injected for
-writable bindings.
-
-Do not use memory as a database. It is for things learned that should persist;
-anything authoritative belongs behind a tool.
+Do not treat memory as a database. It is for things learned that should
+persist. Anything authoritative — a rate, a policy clause, a procedure — belongs
+in a skill, where it is versioned and reviewable.
 
 ### 5.4 Cache discipline
 
@@ -841,13 +834,12 @@ weaker model will work through the list serially and never call it.
 
 ### 6.5 Termination
 
-- **Untyped run**: the model replies with no tool calls → that text is the answer.
-- **Typed run**: pass a Zod `output` schema; a synthetic `final_output` tool is
-  added and the run ends when it validates. Parse failures come back as an error
-  result so the model can repair its own output.
+A turn ends when the model replies with no tool calls — that text is the answer.
+There is no turn limit, so an agent that must stop somewhere needs a prompt that
+says where: what "done" looks like, and what to do when it cannot get there.
 
-There is no `maxTurns`. Runaway protection is the host's job (wall-clock or token
-budget), not a hidden turn counter.
+So say in the prompt which handoff ends the turn, or what the final answer
+should contain. An agent with no stated finish keeps working the problem.
 
 ---
 
@@ -920,9 +912,9 @@ Only the **first** colon separates, so a fine-tuned id must name its provider:
 vendor. Anything the shorthand cannot express (keys, base urls, reasoning knobs)
 needs the object form.
 
-Resolution order for any `model:` value: host `ProjectOptions.models` → this
-file's `models:` → the shorthand parser. Results are memoized, so two agents
-naming `balanced` share one model over one client.
+Resolution order for any `model:` value: `zen run --model` → this file's
+`models:` → the shorthand parser. Two agents naming `balanced` share one model
+over one connection.
 
 ### 7.4 Vendor knobs
 
@@ -1028,19 +1020,18 @@ up (§7.7).
 
 There is no compiler for prose. Substitutes, in order of value:
 
-1. **Load the project.** Most structural mistakes are load errors — run the host
-   or the test that calls `loadProject`. From the CLI, `zen check` is faster and
-   says more: it validates `agents.yaml`, checks that every prompt, skill and
-   catalog it names is on disk, that hand-offs and tool selectors resolve, and
-   that the models have credentials — without stopping at the first problem and
-   without calling anything. `zen check --json` if you are parsing it.
+1. **`zen check`.** Most structural mistakes are load errors, and this is the
+   fastest way to see all of them: it validates `agents.yaml`, checks that every
+   prompt, skill and catalog it names is on disk, that hand-offs and tool
+   selectors resolve, and that the models have credentials — without stopping at
+   the first problem and without calling anything. `zen check --json` if you are
+   parsing it.
 2. **Run the case that motivated the change**, plus one that must _not_ change.
 3. **Read the inspect report** — it shows the assembled prompt, every request and
    response, tool calls, skill activations and cost. Behaviour questions are
    answered there, not by re-reading the YAML.
-4. **Keep a `test/` file that asserts wiring**: entry agent, handoff graph, which
-   tools an agent holds, that every skill has a description. Cheap, and it catches
-   the rename that silently unlinked a handoff.
+4. **Re-run `zen check` after any rename.** It is what catches the handoff, the
+   skill or the prompt path that a rename silently unlinked.
 5. **Watch the token accounting.** A change that doubles prefix size is a
    regression even if the answer improved.
 
@@ -1081,12 +1072,14 @@ Before finishing any change here:
 
 **Tools**
 
-- [ ] `snake_case`, verb-first, description written for the model
-- [ ] `additionalProperties: false`, explicit `required`
-- [ ] Errors returned as data, not thrown
-- [ ] No secrets in parameters
+- [ ] Every agent holds the narrowest set its job needs
 - [ ] An agent that only reads is not holding `write_file`, `apply_patch`,
       `move_file` or `delete_file` — subtract them from `workspace:*`
+- [ ] `sandbox:*` is granted only where a shell is actually needed
+- [ ] The `sandbox:` image carries what the work needs, rather than the prompt
+      installing it every run
+- [ ] `sandbox.env` lists names only, and nothing credential-shaped
+- [ ] Every granted tool the prompt expects is named in that prompt
 
 **Models**
 
@@ -1101,33 +1094,35 @@ Before finishing any change here:
 
 **Secrets**
 
-- [ ] No key literal in YAML, source, test or log — `${VAR}` only
+- [ ] No key literal in YAML, prompt, skill or log — `${VAR}` only
 - [ ] `.env` is git-ignored
 
 ---
 
 ## 10. Where to change what
 
-| Symptom                                    | Change this                                           |
-| ------------------------------------------ | ----------------------------------------------------- |
-| Wrong tone, wrong format, wrong length     | `AGENTS.md` (all agents) or the agent prompt          |
-| Says something forbidden                   | `AGENTS.md` prohibition, stated specifically          |
-| Ignores a rule that only applies sometimes | Move the rule into a skill with a sharp description   |
-| Never loads the skill it should            | The skill's `description`; or `preload` it            |
-| Loads too much, answers slowly             | `allow:`, `maxIndexEntries:`, or `discovery: search`  |
-| Invents a number                           | A tool; plus a prompt line naming the tool            |
-| Rewrites a whole file to change one line   | A prompt line preferring `apply_patch` — §3.6         |
-| Edits files it should only be reading      | Subtract the mutating tools, or `zen run --read-only` |
-| Answers instead of routing                 | Router prompt prohibition; check `handoffs:`          |
-| Routes to the wrong specialist             | The target agents' `description:` fields              |
-| Loses a detail after a handoff             | Say it in the handoff; check the collapse policy      |
-| Works through N independent items serially | `fork:` on that agent, and a prompt line — §6.4       |
-| Forks when the steps actually depend       | Prompt line: branches cannot see each other           |
-| Slow and expensive on trivial cases        | Demote that agent's model tier / reasoning effort     |
-| Fails only on genuinely hard cases         | Promote that agent's tier, or split the hard path out |
-| Shows no reasoning while it works          | Turn summaries on for that model — §7.5               |
-| Forgets across conversations               | A memory binding with `autoRecall`                    |
-| Breaks at load with a named path           | Read the message — it names the exact key             |
+| Symptom                                    | Change this                                                |
+| ------------------------------------------ | ---------------------------------------------------------- |
+| Wrong tone, wrong format, wrong length     | `AGENTS.md` (all agents) or the agent prompt               |
+| Says something forbidden                   | `AGENTS.md` prohibition, stated specifically               |
+| Ignores a rule that only applies sometimes | Move the rule into a skill with a sharp description        |
+| Never loads the skill it should            | The skill's `description`; or `preload` it                 |
+| Loads too much, answers slowly             | `allow:`, `maxIndexEntries:`, or `discovery: search`       |
+| Invents a number                           | A skill holding the figure, or a command that computes it  |
+| Rewrites a whole file to change one line   | A prompt line preferring `apply_patch` — §3.6              |
+| Edits files it should only be reading      | Subtract the mutating tools, or `zen run --read-only`      |
+| Cannot run the build or the tests          | Grant `sandbox:*`; pick an `image:` that has the toolchain |
+| Installs the same packages on every run    | Set `sandbox.image`, or rely on `/home/agent` — §3.7       |
+| Answers instead of routing                 | Router prompt prohibition; check `handoffs:`               |
+| Routes to the wrong specialist             | The target agents' `description:` fields                   |
+| Loses a detail after a handoff             | Say it in the handoff; check the collapse policy           |
+| Works through N independent items serially | `fork:` on that agent, and a prompt line — §6.4            |
+| Forks when the steps actually depend       | Prompt line: branches cannot see each other                |
+| Slow and expensive on trivial cases        | Demote that agent's model tier / reasoning effort          |
+| Fails only on genuinely hard cases         | Promote that agent's tier, or split the hard path out      |
+| Shows no reasoning while it works          | Turn summaries on for that model — §7.5                    |
+| Forgets across conversations               | Continue the session rather than starting a new one        |
+| Breaks at load with a named path           | Read the message — it names the exact key                  |
 
 ---
 
@@ -1147,10 +1142,9 @@ Before finishing any change here:
   back to a specialist.
 - **Forking a chain.** Branches never see each other, so a fork whose second
   branch needs the first branch's answer is a sequence wearing a fork's clothes.
-- **Tools that throw.** An exception ends the branch; an error object lets the
-  model recover.
+- **Installing the toolchain every run.** A prompt that begins with `apt-get
+install` is an `image:` that was never set — §3.7.
 - **Volatile prefix.** "Current date: …" in `AGENTS.md`. Permanent cache miss.
-- **Late tool schemas.** Anything that changes the declared tool set mid-run.
 
 ---
 

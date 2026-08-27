@@ -252,17 +252,17 @@ sandbox:
     env: [HTTPS_PROXY, NO_PROXY]
 ```
 
-| Field     | Type                   | Default                                  | Meaning                                             |
-| --------- | ---------------------- | ---------------------------------------- | --------------------------------------------------- |
-| `image`   | string                 | `docker.io/library/debian:bookworm-slim` | The base image commands run in                      |
-| `cpus`    | number                 | the host's                               | Fractional cores, as podman's `--cpus`              |
-| `memory`  | integer, MiB           | the host's                               | As podman's `--memory`                              |
-| `network` | `bridge`/`none`/`host` | `bridge`                                 | `none` for a project that must not reach out        |
-| `workdir` | absolute path          | `/workspace`                             | Where the workspace is mounted, and the default cwd |
-| `timeout` | integer, seconds       | `120`                                    | Per command, unless a call asks for less            |
-| `user`    | string                 | the image's                              | uid, name, or `uid:gid`                             |
-| `persist` | boolean                | `false`                                  | Keep the container between sessions                 |
-| `env`     | string[]               | none                                     | Host variables to forward, **by name**              |
+| Field     | Type                   | Default                                       | Meaning                                             |
+| --------- | ---------------------- | --------------------------------------------- | --------------------------------------------------- |
+| `image`   | string                 | `docker.io/library/python:3.14-slim-bookworm` | The base image commands run in                      |
+| `cpus`    | number                 | the host's                                    | Fractional cores, as podman's `--cpus`              |
+| `memory`  | integer, MiB           | the host's                                    | As podman's `--memory`                              |
+| `network` | `bridge`/`none`/`host` | `bridge`                                      | `none` for a project that must not reach out        |
+| `workdir` | absolute path          | `/workspace`                                  | Where the workspace is mounted, and the default cwd |
+| `timeout` | integer, seconds       | `120`                                         | Per command, unless a call asks for less            |
+| `user`    | string                 | the image's                                   | uid, name, or `uid:gid`                             |
+| `persist` | boolean                | `false`                                       | Keep the container between sessions                 |
+| `env`     | string[]               | none                                          | Host variables to forward, **by name**              |
 
 `cpus` and `memory` do two jobs on macOS and Windows: they cap the container,
 and they size the Podman virtual machine if the CLI has to create one. On

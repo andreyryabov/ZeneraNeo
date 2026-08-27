@@ -33,7 +33,7 @@ const JOBS = '/tmp/zenera-jobs';
 const MAX_OUTPUT = 64 * 1024;
 /** ...and a job's log is read in windows of this many lines. */
 const MAX_LOG_LINES = 400;
-const DEFAULT_IMAGE = 'docker.io/library/debian:bookworm-slim';
+const DEFAULT_IMAGE = 'docker.io/library/python:3.14-slim-bookworm';
 /** The image a project gets when it does not name one. */
 export const DEFAULT_SANDBOX_IMAGE = DEFAULT_IMAGE;
 const DEFAULT_TIMEOUT_MS = 120_000;

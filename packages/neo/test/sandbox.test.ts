@@ -75,7 +75,7 @@ describe('starting a container', () => {
         expect(create).toBeDefined();
         expect(create?.args).toContain('--detach');
         expect(create?.args).toContain(`/host/ws:${SANDBOX_MOUNT}`);
-        expect(create?.args.at(-3)).toBe('docker.io/library/debian:bookworm-slim');
+        expect(create?.args.at(-3)).toBe('docker.io/library/python:3.14-slim-bookworm');
         expect(create?.args.slice(-2)).toEqual(['sleep', 'infinity']);
     });
 
