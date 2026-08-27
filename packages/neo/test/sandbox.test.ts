@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { parseConfig } from '../src/project/config.ts';
 import {
-    MOUNT,
     Sandbox,
     SANDBOX_GROUP,
+    SANDBOX_MOUNT,
     SandboxPool,
     sandboxTools,
     type ProcOptions,
@@ -74,7 +74,7 @@ describe('starting a container', () => {
         const create = find(f, 'run');
         expect(create).toBeDefined();
         expect(create?.args).toContain('--detach');
-        expect(create?.args).toContain(`/host/ws:${MOUNT}`);
+        expect(create?.args).toContain(`/host/ws:${SANDBOX_MOUNT}`);
         expect(create?.args.at(-3)).toBe('docker.io/library/debian:bookworm-slim');
         expect(create?.args.slice(-2)).toEqual(['sleep', 'infinity']);
     });
@@ -112,7 +112,7 @@ describe('starting a container', () => {
     it('mounts the workspace read-only when the run is', async () => {
         const f = fresh();
         await box(f, { readOnly: true }).start();
-        expect(find(f, 'run')?.args).toContain(`/host/ws:${MOUNT}:ro`);
+        expect(find(f, 'run')?.args).toContain(`/host/ws:${SANDBOX_MOUNT}:ro`);
     });
 
     it('forwards only the environment it was given', async () => {
@@ -195,11 +195,13 @@ describe('running a command', () => {
         const b = box(f);
         await b.exec('ls');
         const first = find(f, 'exec');
-        expect(first?.args[first.args.indexOf('--workdir') + 1]).toBe(MOUNT);
+        expect(first?.args[first.args.indexOf('--workdir') + 1]).toBe(SANDBOX_MOUNT);
 
         await b.exec('ls', { cwd: 'packages/cli' });
         const last = f.calls.at(-1);
-        expect(last?.args[last.args.indexOf('--workdir') + 1]).toBe(`${MOUNT}/packages/cli`);
+        expect(last?.args[last.args.indexOf('--workdir') + 1]).toBe(
+            `${SANDBOX_MOUNT}/packages/cli`,
+        );
     });
 
     it('refuses a working directory outside the workspace', () => {
@@ -250,8 +252,18 @@ describe('background jobs', () => {
 
         const launch = f.calls.at(-1);
         expect(launch?.opts?.input).toContain(`/bin/sh /tmp/zenera-jobs/${job.id}.sh`);
-        expect(launch?.opts?.input).toContain(`cd '${MOUNT}/app'`);
+        expect(launch?.opts?.input).toContain(`cd '${SANDBOX_MOUNT}/app'`);
         expect(launch?.opts?.input).not.toContain('npm run dev');
+
+        // The redirection and the `&` have to be on the same line as the
+        // command they apply to. A newline there ends the command instead, and
+        // the job runs in the foreground of the exec that started it — which
+        // no argument assertion notices, because every fragment is still
+        // present and in order.
+        const line = (launch?.opts?.input ?? '')
+            .split('\n')
+            .find((l) => l.includes(`${job.id}.sh`));
+        expect(line).toMatch(/> \S+\.log 2>&1 < \/dev\/null &$/);
     });
 
     it('reads the log back with the running flag and a resumable window', async () => {

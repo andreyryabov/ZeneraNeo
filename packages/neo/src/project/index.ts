@@ -5,7 +5,7 @@ export {
     type ModelConfig,
     type ProjectConfig,
     type ProviderConfig,
-    type SandboxConfig
+    type SandboxConfig,
 } from './config.ts';
 export {
     AgentProject,
@@ -13,7 +13,6 @@ export {
     projectRegistry,
     readProjectConfig,
     type ProjectOptions,
-    type ProjectSource
+    type ProjectSource,
 } from './load.ts';
 export { projectDir, projectFile, projectPath, projectRoot } from './refs.ts';
-

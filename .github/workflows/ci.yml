@@ -1,0 +1,23 @@
+name: CI
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+    workflow_dispatch:
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 24
+                  cache: npm
+            - run: npm ci
+            - run: npm run format:check
+            - run: npm run typecheck
+            # Live tests talk to real providers and need credentials; they are
+            # excluded here rather than skipped, so a missing key is not a pass.
+            - run: npx vitest run --exclude '**/live-*'

@@ -278,6 +278,12 @@ its root filesystem is gone. Two directories are bind mounts and do survive:
 | `/workspace`  | the session's workspace                                  |
 | `/home/agent` | `<session>/.data/sandbox/home`, and `$HOME` points at it |
 
+`/workspace` is the same directory the file tools work in, and they are told so:
+`read_file`, `apply_patch` and the rest accept `/workspace/src/a.ts` as well as
+`src/a.ts`. A path copied out of a compiler error or a stack trace can be handed
+straight to a file tool without the model having to translate it. Changing
+`workdir` moves both names together.
+
 So `pip install --user`, `npm config`, `~/.cache` and anything else an agent
 puts in its home directory are still there when the session is opened again,
 and they travel with the session directory when it is copied. A `pip install`

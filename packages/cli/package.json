@@ -1,8 +1,24 @@
 {
     "name": "zenera-cli",
     "version": "0.1.0",
-    "description": "Command-line front end for zenera-neo.",
+    "description": "Command-line front end for zenera-neo: agentic projects you can run, share and commit.",
+    "keywords": [
+        "agents",
+        "ai-agents",
+        "cli",
+        "llm",
+        "agent-runtime",
+        "tui"
+    ],
     "license": "MIT",
+    "author": "Andrey Ryabov",
+    "homepage": "https://github.com/andreyryabov/ZeneraNeo#readme",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/andreyryabov/ZeneraNeo.git",
+        "directory": "packages/cli"
+    },
+    "bugs": "https://github.com/andreyryabov/ZeneraNeo/issues",
     "private": true,
     "type": "module",
     "bin": {

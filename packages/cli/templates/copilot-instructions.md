@@ -416,9 +416,9 @@ Rules:
 
 ### 3.6 The workspace tools (`workspace:*`)
 
-`zen run` builds one tool set for you: the **workspace** group, rooted at the
-session's workspace directory. It is the only thing passed to `loadProject`, so
-an agent whose `tools:` does not name them cannot see a file at all.
+`zen run` builds this set for you, rooted at the session's workspace directory.
+Nothing else reaches the file system, so an agent whose `tools:` does not name
+them cannot see a file at all.
 
 | Tool          | What it does                                                                             |
 | ------------- | ---------------------------------------------------------------------------------------- |
@@ -433,6 +433,12 @@ an agent whose `tools:` does not name them cannot see a file at all.
 Every path is resolved through one containment gate — symlinks followed, then
 checked — so nothing outside the workspace root is reachable. Reads are capped
 and listings bounded, so no single call can flood the context.
+
+Paths are written relative to the root, and `/workspace/...` — the name the same
+directory has inside the sandbox (§3.7) — is accepted as well, so a path copied
+out of a command's output does not have to be translated first. Results are
+reported relative, which is the shorter of the two and the only one that means
+anything when no container is involved.
 
 **Selecting them.** A `tools:` entry is a selector, not only a name:
 
@@ -505,7 +511,8 @@ missing. `zen sandbox status` answers the same question on its own.
 **Prompting for them.** Two lines earn their place:
 
 - The workspace is at `/workspace` and is the same directory the file tools
-  see — an edit made with `apply_patch` is what a command will compile.
+  see — an edit made with `apply_patch` is what a command will compile, and a
+  path from either side works on both.
 - Anything that does not return, returns — use `run_command_background` for a
   server, not `run_command` with a large timeout.
 

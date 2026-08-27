@@ -1,0 +1,346 @@
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import {
+    DEFAULT_SANDBOX_IMAGE,
+    runProcess,
+    Sandbox,
+    SANDBOX_MOUNT,
+    SandboxPool,
+} from '../src/tools/sandbox.ts';
+
+// ---------------------------------------------------------------------------
+// The other half of sandbox.test.ts.
+//
+// That file asserts which arguments podman is handed; this one hands them to
+// podman. Everything here starts a real container, so nothing here can be
+// checked by inspecting argv: that the mount is the workspace and only the
+// workspace, that `--read-only` is honoured by the engine rather than by us,
+// that a killed job's children die with it, that the timeout returns.
+//
+// It self-skips when no engine answers, like the live model tests do without a
+// key, and it is excluded by `npm test -- --exclude '**/live-*'`.
+// ---------------------------------------------------------------------------
+
+const ENGINE = process.env.ZENERA_SANDBOX_ENGINE ?? 'podman';
+const IMAGE = process.env.ZENERA_SANDBOX_IMAGE ?? DEFAULT_SANDBOX_IMAGE;
+const MINUTE = 60_000;
+
+/** `info` rather than `--version`: on macOS the binary exists long before the VM does. */
+async function engineAnswers(): Promise<boolean> {
+    try {
+        const res = await runProcess(ENGINE, ['info', '--format', '{{.Host.OS}}'], {
+            timeoutMs: MINUTE,
+        });
+        return res.code === 0;
+    } catch {
+        return false;
+    }
+}
+
+const ENABLED = await engineAnswers();
+
+if (!ENABLED) {
+    console.warn(`[live-sandbox] skipped: \`${ENGINE} info\` did not answer`);
+}
+
+describe.skipIf(!ENABLED)('a real container', () => {
+    let root = '';
+    let box: Sandbox;
+
+    /** Container names, so cleanup can be checked against the engine itself. */
+    const exists = async (name: string): Promise<boolean> =>
+        (await runProcess(ENGINE, ['container', 'inspect', name], { timeoutMs: MINUTE })).code ===
+        0;
+
+    beforeAll(async () => {
+        // realpath matters on macOS, where the mkdtemp path is under a symlink
+        // (/var -> /private/var) and the VM only shares the resolved one.
+        root = await realpath(await mkdtemp(join(tmpdir(), 'zn-live-sandbox-')));
+
+        const has = await runProcess(ENGINE, ['image', 'exists', IMAGE], { timeoutMs: MINUTE });
+        if (has.code !== 0) {
+            const pull = await runProcess(ENGINE, ['pull', IMAGE], { timeoutMs: 10 * MINUTE });
+            if (pull.code !== 0) {
+                throw new Error(`could not pull ${IMAGE}: ${pull.stderr.trim()}`);
+            }
+        }
+
+        box = new Sandbox({ root, key: 'live-sandbox', image: IMAGE, engine: ENGINE });
+        await box.start();
+    }, 12 * MINUTE);
+
+    afterAll(async () => {
+        await box?.dispose();
+        if (root) {
+            await rm(root, { recursive: true, force: true });
+        }
+    }, 2 * MINUTE);
+
+    it(
+        'runs a command and reports what it did',
+        async () => {
+            const res = await box.exec('echo hello; echo oops >&2; exit 3');
+            expect(res.exit_code).toBe(3);
+            expect(res.stdout).toBe('hello\n');
+            expect(res.stderr).toBe('oops\n');
+            expect(res.timed_out).toBeUndefined();
+            expect(res.duration_ms).toBeGreaterThanOrEqual(0);
+        },
+        MINUTE,
+    );
+
+    it(
+        'keeps state between commands, because it is one container',
+        async () => {
+            await box.exec('echo remembered > /tmp/marker');
+            expect((await box.exec('cat /tmp/marker')).stdout).toBe('remembered\n');
+        },
+        MINUTE,
+    );
+
+    it(
+        'runs the command inside, not here',
+        async () => {
+            // Two proofs at once: the shell that parsed this was the container's
+            // (the host spawns argv arrays only), and the host directory holding
+            // the workspace is not itself reachable from in there.
+            const res = await box.exec(`[ -e '${root}' ] && echo host-visible || echo isolated`);
+            expect(res.stdout.trim()).toBe('isolated');
+
+            const uname = await box.exec('uname -s');
+            expect(uname.stdout.trim()).toBe('Linux');
+        },
+        MINUTE,
+    );
+
+    it(
+        'passes shell metacharacters through as text',
+        async () => {
+            const nasty = String.raw`a; b \`c\` $(d) && e | f > g`;
+            const res = await box.exec(`cat <<'EOF'\n${nasty}\nEOF`);
+            expect(res.stdout).toBe(`${nasty}\n`);
+        },
+        MINUTE,
+    );
+
+    it(
+        'mounts the workspace, and it is the same directory on both sides',
+        async () => {
+            await writeFile(join(root, 'from-host.txt'), 'written outside\n');
+
+            const read = await box.exec(`cat ${SANDBOX_MOUNT}/from-host.txt`);
+            expect(read.exit_code).toBe(0);
+            expect(read.stdout).toBe('written outside\n');
+
+            const wrote = await box.exec('printf "written inside\\n" > made-here.txt');
+            expect(wrote.exit_code).toBe(0);
+            expect(await readFile(join(root, 'made-here.txt'), 'utf8')).toBe('written inside\n');
+        },
+        MINUTE,
+    );
+
+    it(
+        'runs in the workspace by default and in a subdirectory on request',
+        async () => {
+            expect((await box.exec('pwd')).stdout.trim()).toBe(SANDBOX_MOUNT);
+            await box.exec('mkdir -p sub/dir');
+            expect((await box.exec('pwd', { cwd: 'sub/dir' })).stdout.trim()).toBe(
+                `${SANDBOX_MOUNT}/sub/dir`,
+            );
+        },
+        MINUTE,
+    );
+
+    it(
+        'returns when the timeout expires rather than holding the turn',
+        async () => {
+            const res = await box.exec('sleep 60', { timeout: 2 });
+            expect(res.timed_out).toBe(true);
+            expect(res.exit_code).not.toBe(0);
+            expect(res.duration_ms).toBeLessThan(30_000);
+        },
+        MINUTE,
+    );
+
+    it(
+        'caps the output a single command can return',
+        async () => {
+            const res = await box.exec('yes 0123456789 | head -n 40000');
+            expect(res.truncated).toBe(true);
+            expect(res.stdout.length).toBeLessThanOrEqual(64 * 1024);
+        },
+        2 * MINUTE,
+    );
+
+    describe('background jobs', () => {
+        it(
+            'outlives the call that started it, and is readable in windows',
+            async () => {
+                const job = await box.startJob(
+                    'for i in 1 2 3 4 5; do echo line-$i; sleep 1; done; echo done',
+                );
+
+                const first = (await box.readJob(job.id)) as Record<string, unknown>;
+                expect(first.running).toBe(true);
+                expect(first.job_id).toBe(job.id);
+
+                let last = first;
+                for (let i = 0; i < 30 && last.running === true; i++) {
+                    await new Promise((r) => setTimeout(r, 1000));
+                    last = (await box.readJob(job.id)) as Record<string, unknown>;
+                }
+
+                expect(last.running).toBe(false);
+                expect(last.exit_code).toBe(0);
+                expect(String(last.output)).toContain('line-5');
+                expect(last.lines).toBe(6);
+
+                const tail = (await box.readJob(job.id, 6)) as Record<string, unknown>;
+                expect(tail.start_line).toBe(6);
+                expect(tail.output).toBe('done\n');
+            },
+            2 * MINUTE,
+        );
+
+        it(
+            'kills the whole process group, not just the wrapper',
+            async () => {
+                // `ps` is not in a slim image, so count /proc instead. The duration
+                // is a marker: the container's own `sleep infinity` would otherwise
+                // be counted too. The bracket keeps grep off its own command line.
+                const children = async (): Promise<number> => {
+                    const res = await box.exec(
+                        String.raw`grep -al '31313[1]' /proc/[0-9]*/cmdline 2>/dev/null | wc -l`,
+                    );
+                    return Number(res.stdout.trim());
+                };
+
+                const job = await box.startJob('sleep 313131 & sleep 313131 & wait');
+                await new Promise((r) => setTimeout(r, 1000));
+                expect(await children()).toBe(2);
+
+                await box.stopJob(job.id);
+                await new Promise((r) => setTimeout(r, 1500));
+                expect(await children()).toBe(0);
+            },
+            2 * MINUTE,
+        );
+    });
+
+    describe('a read-only run', () => {
+        it(
+            'is refused by the engine, not by us',
+            async () => {
+                const ro = new Sandbox({
+                    root,
+                    key: 'live-sandbox-ro',
+                    image: IMAGE,
+                    engine: ENGINE,
+                    readOnly: true,
+                    env: { ZENERA_LIVE: 'yes' },
+                });
+                try {
+                    const write = await ro.exec('printf x > refused.txt');
+                    expect(write.exit_code).not.toBe(0);
+                    expect(write.stderr.toLowerCase()).toContain('read-only');
+
+                    // The forwarded environment is the same container, so it costs
+                    // nothing to check that it actually arrived.
+                    expect((await ro.exec('printf %s "$ZENERA_LIVE"')).stdout).toBe('yes');
+
+                    // ...and the container's own filesystem is still writable, or
+                    // every package manager would be dead on arrival.
+                    expect((await ro.exec('printf x > /tmp/fine')).exit_code).toBe(0);
+                } finally {
+                    await ro.dispose();
+                }
+            },
+            3 * MINUTE,
+        );
+    });
+
+    describe('the pool', () => {
+        it(
+            'gives an agent that differs a container of its own',
+            async () => {
+                const pool = new SandboxPool({
+                    root,
+                    key: 'live-sandbox-pool',
+                    image: IMAGE,
+                    engine: ENGINE,
+                    agents: { analyst: { memory: 512 } },
+                });
+                try {
+                    const shared = pool.for('writer');
+                    const own = pool.for('analyst');
+                    expect(pool.for('editor')).toBe(shared);
+                    expect(own.name).not.toBe(shared.name);
+
+                    await shared.exec('echo shared > /tmp/who');
+                    const seen = await own.exec('cat /tmp/who 2>/dev/null || echo absent');
+                    expect(seen.stdout.trim()).toBe('absent');
+
+                    expect(pool.running.map((b) => b.name).sort()).toEqual(
+                        [shared.name, own.name].sort(),
+                    );
+                } finally {
+                    await pool.dispose();
+                }
+            },
+            3 * MINUTE,
+        );
+    });
+
+    describe('disposal', () => {
+        it(
+            'removes an ephemeral container and leaves the workspace behind',
+            async () => {
+                const one = new Sandbox({
+                    root,
+                    key: 'live-sandbox-gone',
+                    image: IMAGE,
+                    engine: ENGINE,
+                });
+                await one.exec('echo survives > disposed.txt');
+                expect(await exists(one.name)).toBe(true);
+
+                await one.dispose();
+                expect(one.started).toBe(false);
+                expect(await exists(one.name)).toBe(false);
+                expect(await readFile(join(root, 'disposed.txt'), 'utf8')).toBe('survives\n');
+            },
+            3 * MINUTE,
+        );
+
+        it(
+            'only stops one that asked to persist',
+            async () => {
+                const kept = new Sandbox({
+                    root,
+                    key: 'live-sandbox-kept',
+                    image: IMAGE,
+                    engine: ENGINE,
+                    persist: true,
+                });
+                try {
+                    await kept.exec('true');
+                    await kept.dispose();
+                    expect(await exists(kept.name)).toBe(true);
+
+                    // ...and it comes back up rather than being recreated: the
+                    // container name is a function of the spec, so this is the
+                    // same one, with what the last session left in it.
+                    await kept.exec('echo again > /tmp/resumed');
+                    expect((await kept.exec('cat /tmp/resumed')).stdout).toBe('again\n');
+                } finally {
+                    await runProcess(ENGINE, ['rm', '--force', '--volumes', kept.name], {
+                        timeoutMs: MINUTE,
+                    });
+                }
+            },
+            3 * MINUTE,
+        );
+    });
+});

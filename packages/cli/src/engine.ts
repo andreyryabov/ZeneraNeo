@@ -5,6 +5,7 @@ import {
     AgentRunner,
     FileMemoryStore,
     FilePayloadStore,
+    SANDBOX_MOUNT,
     assertState,
     buildRunReport,
     lastText,
@@ -112,7 +113,14 @@ export async function open(opts: EngineOptions): Promise<Engine> {
         });
         project = await loadProject(opts.versionDir, {
             tools: [
-                ...workspaceTools({ root: workspace, readOnly: opts.readOnly }),
+                // Both groups are pointed at one directory, so both are told the
+                // one name for it: whatever `run_command` prints a path as,
+                // `read_file` accepts.
+                ...workspaceTools({
+                    root: workspace,
+                    readOnly: opts.readOnly,
+                    mount: sandbox.spec.workdir ?? SANDBOX_MOUNT,
+                }),
                 ...sandboxTools(sandbox.pool),
             ],
             payloads,

@@ -1,8 +1,28 @@
 {
     "name": "zenera-neo",
     "version": "0.1.0",
-    "description": "ZeneraNeo TypeScript library.",
+    "description": "A multi-agent runtime for Node.js: agents, models, tools, skills, memory and an append-only trajectory.",
+    "keywords": [
+        "agents",
+        "ai-agents",
+        "multi-agent",
+        "llm",
+        "agent-runtime",
+        "tool-calling",
+        "openai",
+        "anthropic",
+        "gemini",
+        "typescript"
+    ],
     "license": "MIT",
+    "author": "Andrey Ryabov",
+    "homepage": "https://github.com/andreyryabov/ZeneraNeo#readme",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/andreyryabov/ZeneraNeo.git",
+        "directory": "packages/neo"
+    },
+    "bugs": "https://github.com/andreyryabov/ZeneraNeo/issues",
     "type": "module",
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",

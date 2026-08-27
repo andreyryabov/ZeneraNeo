@@ -44,6 +44,37 @@ describe('workspace containment', () => {
         symlinkSync(outside, join(root, 'links', 'out'));
         expect(() => ws.within('links/out/secret.txt')).toThrow();
     });
+
+    /**
+     * The sandbox mounts this same directory at /workspace, so a path copied
+     * out of a command's output has to land on the same file as a relative one.
+     */
+    describe('the mounted name', () => {
+        const mounted = new Workspace({ root, mount: '/workspace' });
+
+        it('is the same file as the relative one', () => {
+            expect(mounted.within('/workspace/a/b.txt')).toBe(mounted.within('a/b.txt'));
+            expect(mounted.within('/workspace')).toBe(mounted.root);
+            expect(mounted.within('/workspace/')).toBe(mounted.root);
+        });
+
+        it('is a name, not a way out', () => {
+            expect(() => mounted.within('/workspace/../etc/passwd')).toThrow();
+            expect(() => mounted.within('/workspaceX/a')).toThrow();
+            expect(() => mounted.within('/etc/passwd')).toThrow();
+        });
+
+        it('is not accepted when nothing is mounted there', () => {
+            expect(() => ws.within('/workspace/a/b.txt')).toThrow();
+        });
+
+        it('tells the model both spellings', () => {
+            const say = (w: Workspace): string =>
+                JSON.stringify(workspaceTools({ root: w.root, mount: w.mount }));
+            expect(say(mounted)).toContain('/workspace');
+            expect(say(ws)).not.toContain('/workspace');
+        });
+    });
 });
 
 describe('the workspace tools', () => {

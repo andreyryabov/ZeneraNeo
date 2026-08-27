@@ -35,17 +35,30 @@ export interface WorkspaceOptions {
     root: string;
     /** refuse every mutating tool; `zen run --read-only` */
     readOnly?: boolean;
+    /**
+     * An absolute path the root is *also* known by, because something else has
+     * mounted it there — the sandbox bind-mounts the workspace at `/workspace`,
+     * so `run_command` returns compiler errors, stack traces and `pwd` output
+     * naming files under a prefix the file tools would otherwise refuse. Set
+     * it and both spellings reach the same file.
+     */
+    mount?: string;
 }
 
 export class Workspace {
     readonly root: string;
     readonly readOnly: boolean;
+    readonly mount: string | undefined;
 
     constructor(opts: WorkspaceOptions) {
         // Resolve the root's own symlinks once, so a workspace that *is* a
         // symlink does not fail every containment check against itself.
         this.root = realpathSync(resolve(opts.root));
         this.readOnly = opts.readOnly ?? false;
+        // A trailing slash — or a mount of `/`, which would make everything on
+        // the machine look like it was inside — is not a mount point.
+        const mount = opts.mount?.replace(/\/+$/, '');
+        this.mount = mount ? mount : undefined;
     }
 
     /**
@@ -62,12 +75,36 @@ export class Workspace {
         if (input.includes('\0')) {
             throw new Error('path contains a null byte');
         }
-        const wanted = resolve(this.root, input);
+        const wanted = resolve(this.root, this.#unmount(input));
         const real = this.#realish(wanted);
         if (real !== this.root && !real.startsWith(this.root + sep)) {
             throw new Error(`outside the workspace: ${input}`);
         }
         return real;
+    }
+
+    /**
+     * `/workspace/src/a.ts` and `src/a.ts` are one file under two names, and
+     * only the second resolves against the root, so the mounted spelling is
+     * rewritten before anything else looks at it.
+     *
+     * This is renaming, not permission. What comes out is still relative, still
+     * resolved, still symlink-followed and still checked against the root
+     * above: `/workspace/../etc/passwd` loses its prefix and then fails
+     * containment exactly as `../etc/passwd` does.
+     */
+    #unmount(input: string): string {
+        if (this.mount === undefined) {
+            return input;
+        }
+        const at = input.replace(/\\/g, '/');
+        if (at === this.mount) {
+            return '.';
+        }
+        if (!at.startsWith(this.mount + '/')) {
+            return input;
+        }
+        return at.slice(this.mount.length).replace(/^\/+/, '') || '.';
     }
 
     #realish(path: string): string {
@@ -556,18 +593,33 @@ const GROUP = 'workspace';
 export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<TCtx>[] {
     const ws = new Workspace(opts);
 
+    // What the model is told about naming a file. The long form goes in
+    // `read_file`, which is the first of these any model reaches for; the short
+    // one is repeated on every `path` argument, which is where the value is
+    // actually written and where a wrong guess costs a turn.
+    const scope = ws.mount
+        ? `Paths are relative to the workspace root, which is also mounted at ${ws.mount}, so ` +
+          `${ws.mount}/src/a.ts and src/a.ts are the same file. That directory is the whole of ` +
+          'what can be reached: nothing outside it can be read or written.'
+        : 'Paths are relative to the workspace root, and that directory is the whole of what ' +
+          'can be reached: nothing outside it can be read or written.';
+    const inside = ws.mount
+        ? `Path inside the workspace — relative to its root, or under ${ws.mount}.`
+        : 'Path inside the workspace, relative to its root.';
+
     const readFileTool = tool<{ path: string; start_line?: number; end_line?: number }, TCtx>({
         name: 'read_file',
         group: GROUP,
         description:
-            'Reads a UTF-8 text file from the workspace. Paths are relative to the workspace ' +
-            'root. Give start_line/end_line (1-based, inclusive) to read a range; without them ' +
+            'Reads a UTF-8 text file from the workspace. ' +
+            scope +
+            ' Give start_line/end_line (1-based, inclusive) to read a range; without them ' +
             'the file is read from the top until the size cap, and `truncated` says whether ' +
             'anything was left. Read before patching: apply_patch matches on the exact text.',
         parameters: {
             type: 'object',
             properties: {
-                path: { type: 'string', description: 'Path inside the workspace.' },
+                path: { type: 'string', description: inside },
                 start_line: { type: 'integer', description: 'First line to return, 1-based.' },
                 end_line: { type: 'integer', description: 'Last line to return, inclusive.' },
             },
@@ -634,7 +686,7 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
             properties: {
                 path: {
                     type: 'string',
-                    description: 'Directory, relative to the root. Defaults to the root.',
+                    description: `${inside} Defaults to the root.`,
                 },
             },
             required: [],
@@ -690,7 +742,7 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
         parameters: {
             type: 'object',
             properties: {
-                path: { type: 'string' },
+                path: { type: 'string', description: inside },
                 content: { type: 'string' },
             },
             required: ['path', 'content'],
@@ -775,8 +827,8 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
         parameters: {
             type: 'object',
             properties: {
-                from: { type: 'string', description: 'Existing path inside the workspace.' },
-                to: { type: 'string', description: 'Destination path inside the workspace.' },
+                from: { type: 'string', description: `What to move. ${inside}` },
+                to: { type: 'string', description: `Where it should end up. ${inside}` },
                 overwrite: {
                     type: 'boolean',
                     description: 'Replace the destination if it exists.',
@@ -827,7 +879,7 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
         parameters: {
             type: 'object',
             properties: {
-                path: { type: 'string' },
+                path: { type: 'string', description: inside },
                 recursive: {
                     type: 'boolean',
                     description: 'Required to delete a directory and its contents.',
@@ -868,7 +920,7 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
             type: 'object',
             properties: {
                 pattern: { type: 'string', description: 'Substring to match against the path.' },
-                path: { type: 'string', description: 'Directory to search under.' },
+                path: { type: 'string', description: `Directory to search under. ${inside}` },
             },
             required: ['pattern'],
             additionalProperties: false,

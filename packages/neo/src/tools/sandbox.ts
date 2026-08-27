@@ -26,7 +26,7 @@ import { tool, type AnyTool, type JsonSchema } from '../types.ts';
 // ---------------------------------------------------------------------------
 
 /** Where the workspace appears inside the container. */
-export const MOUNT = '/workspace';
+export const SANDBOX_MOUNT = '/workspace';
 /** Where background jobs keep their logs. Inside the container, not the host. */
 const JOBS = '/tmp/zenera-jobs';
 /** One command's output is capped, so a `cat` of a log file cannot fill the context. */
@@ -436,11 +436,29 @@ export class Sandbox {
             throw new SandboxError(`could not write the job: ${message(body)}`);
         }
 
+        // One logical line, because a newline would end the group command and
+        // leave the redirection and the `&` on a statement of their own — the
+        // job would then run in the foreground of this `exec`, with its output
+        // going to the caller instead of the log.
+        //
+        // `setsid` puts the job in a session of its own so that stopping it can
+        // signal a process group rather than one process; a shell without job
+        // control leaves background jobs in its own group, and signalling that
+        // would take down the `exec` shell with them. It is not required: where
+        // it is missing the job still runs, and stopping falls back to the
+        // single pid. The leader writes its own pid, since with `setsid` the
+        // launching shell's `$!` is no longer the process to signal.
+        const inner =
+            `echo $$ > ${JOBS}/${id}.pid; ` +
+            `/bin/sh ${JOBS}/${id}.sh; echo $? > ${JOBS}/${id}.exit`;
         const launch = [
             `cd ${quote(cwd)}`,
-            `{ /bin/sh ${JOBS}/${id}.sh; echo $? > ${JOBS}/${id}.exit; }`,
-            `> ${JOBS}/${id}.log 2>&1 < /dev/null &`,
-            `echo $! > ${JOBS}/${id}.pid`,
+            `S=; command -v setsid > /dev/null 2>&1 && S=setsid`,
+            `$S /bin/sh -c ${quote(inner)} > ${JOBS}/${id}.log 2>&1 < /dev/null &`,
+            // The pid file is written by the child, so the launcher waits for
+            // it: a read or a stop arriving immediately after must not find
+            // the job missing.
+            `i=0; while [ ! -s ${JOBS}/${id}.pid ] && [ $i -lt 50 ]; do i=$((i+1)); sleep 0.1; done`,
         ].join('\n');
 
         const started = await this.#run(
@@ -600,7 +618,7 @@ function jobId(): string {
 }
 
 function resolveSpec(opts: SandboxOptions): Resolved {
-    const workdir = opts.workdir ?? MOUNT;
+    const workdir = opts.workdir ?? SANDBOX_MOUNT;
     if (!posix.isAbsolute(workdir)) {
         throw new SandboxError(`sandbox workdir must be absolute: ${workdir}`);
     }
@@ -717,7 +735,7 @@ export function sandboxTools<TCtx = unknown>(
             },
             cwd: {
                 type: 'string',
-                description: `Directory to run in, relative to ${MOUNT}.`,
+                description: `Directory to run in, relative to ${SANDBOX_MOUNT}.`,
             },
         },
         required: ['command'],
@@ -729,7 +747,7 @@ export function sandboxTools<TCtx = unknown>(
         group: SANDBOX_GROUP,
         description:
             'Runs a shell command in a Linux container and waits for it to finish. The ' +
-            `workspace is mounted at ${MOUNT} and is the working directory, so files you ` +
+            `workspace is mounted at ${SANDBOX_MOUNT} and is the working directory, so files you ` +
             'read and write here are the same files the workspace tools see. Everything ' +
             'else is throwaway. Use this for builds, tests, and package installs; use ' +
             'run_command_background for anything that does not end on its own, such as a ' +

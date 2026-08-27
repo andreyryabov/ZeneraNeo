@@ -3,6 +3,13 @@
     "version": "0.0.0",
     "description": "ZeneraNeo workspace: the library and its command-line front end.",
     "license": "MIT",
+    "author": "Andrey Ryabov",
+    "homepage": "https://github.com/andreyryabov/ZeneraNeo#readme",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/andreyryabov/ZeneraNeo.git"
+    },
+    "bugs": "https://github.com/andreyryabov/ZeneraNeo/issues",
     "private": true,
     "type": "module",
     "workspaces": [
