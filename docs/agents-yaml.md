@@ -280,9 +280,11 @@ its root filesystem is gone. Two directories are bind mounts and do survive:
 
 `/workspace` is the same directory the file tools work in, and they are told so:
 `read_file`, `apply_patch` and the rest accept `/workspace/src/a.ts` as well as
-`src/a.ts`. A path copied out of a compiler error or a stack trace can be handed
-straight to a file tool without the model having to translate it. Changing
-`workdir` moves both names together.
+`src/a.ts`, and they answer with the mounted name — one vocabulary on both
+sides. A path copied out of a compiler error, a `find` listing or a stack trace
+can be handed straight to a file tool, and a path a file tool reported can be
+handed straight to `run_command`, without the model having to translate either
+way. Changing `workdir` moves both names together.
 
 So `pip install --user`, `npm config`, `~/.cache` and anything else an agent
 puts in its home directory are still there when the session is opened again,

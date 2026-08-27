@@ -75,7 +75,12 @@ export class Workspace {
         if (input.includes('\0')) {
             throw new Error('path contains a null byte');
         }
-        const wanted = resolve(this.root, this.#unmount(input));
+        // A lone `/` is the model's other name for "the top of what I can see".
+        // There is nothing above the root for it to mean, so it means the root
+        // — refusing it teaches nothing and costs a turn. This is the only
+        // absolute path treated as rooted: `/etc/passwd` still names the
+        // machine's file and still fails containment below.
+        const wanted = resolve(this.root, /^[\\/]+$/.test(input) ? '.' : this.#unmount(input));
         const real = this.#realish(wanted);
         if (real !== this.root && !real.startsWith(this.root + sep)) {
             throw new Error(`outside the workspace: ${input}`);
@@ -129,8 +134,27 @@ export class Workspace {
         }
     }
 
+    /** Where a path sits under the root, in posix form. `.` is the root. */
     rel(path: string): string {
-        return relative(this.root, path) || '.';
+        return relative(this.root, path).split(sep).join('/') || '.';
+    }
+
+    /**
+     * How a path is written back to the model, and the reason `mount` is not
+     * only about what comes in. A shell in the sandbox prints the mounted name
+     * — `find` returns /workspace/src/a.ts — so if the file tools answered with
+     * `src/a.ts` the model would be holding two vocabularies for one tree and
+     * would have to translate between them to feed one tool's output to the
+     * other. With a mount configured every path in and every path out is the
+     * mounted one, and copying a path from a command's output into read_file
+     * is exact. Without one, everything stays relative as before.
+     */
+    show(path: string): string {
+        const rel = this.rel(path);
+        if (this.mount === undefined) {
+            return rel;
+        }
+        return rel === '.' ? this.mount : `${this.mount}/${rel}`;
     }
 
     mutable(): void {
@@ -598,14 +622,17 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
     // one is repeated on every `path` argument, which is where the value is
     // actually written and where a wrong guess costs a turn.
     const scope = ws.mount
-        ? `Paths are relative to the workspace root, which is also mounted at ${ws.mount}, so ` +
-          `${ws.mount}/src/a.ts and src/a.ts are the same file. That directory is the whole of ` +
-          'what can be reached: nothing outside it can be read or written.'
+        ? `The workspace is mounted at ${ws.mount}, which is the name commands running in the ` +
+          `sandbox print and the name these tools answer with, so a path from a command's ` +
+          `output can be used here unchanged. A path relative to the workspace root names the ` +
+          `same file: ${ws.mount}/src/a.ts and src/a.ts are one file. That directory is the ` +
+          'whole of what can be reached: nothing outside it can be read or written.'
         : 'Paths are relative to the workspace root, and that directory is the whole of what ' +
           'can be reached: nothing outside it can be read or written.';
     const inside = ws.mount
-        ? `Path inside the workspace — relative to its root, or under ${ws.mount}.`
-        : 'Path inside the workspace, relative to its root.';
+        ? `Path to a file in the workspace, under ${ws.mount} or relative to its root. ` +
+          `"/" and "${ws.mount}" are the root.`
+        : 'Path inside the workspace, relative to its root. "/" is that root.';
 
     const readFileTool = tool<{ path: string; start_line?: number; end_line?: number }, TCtx>({
         name: 'read_file',
@@ -630,12 +657,12 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
             const at = ws.within(path);
             const info = await stat(at);
             if (info.isDirectory()) {
-                return { error: `${ws.rel(at)} is a directory`, hint: 'use list_dir' };
+                return { error: `${ws.show(at)} is a directory`, hint: 'use list_dir' };
             }
             const shape = await inspectFile(at, info.size, false);
             if (shape.format !== 'text') {
                 return {
-                    error: `${ws.rel(at)} is not a text file`,
+                    error: `${ws.show(at)} is not a text file`,
                     format: shape.format,
                     bytes: info.size,
                 };
@@ -646,7 +673,7 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
             const from = Math.max(1, Math.trunc(start_line ?? 1));
             const to = Math.min(total, end_line === undefined ? total : Math.trunc(end_line));
             if (from > total) {
-                return { path: ws.rel(at), lines: total, error: `file has ${total} lines` };
+                return { path: ws.show(at), lines: total, error: `file has ${total} lines` };
             }
 
             // The cap is spent line by line, so a truncated read still ends on a
@@ -663,7 +690,7 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
                 used += line.length + 1;
             }
             return {
-                path: ws.rel(at),
+                path: ws.show(at),
                 bytes: info.size,
                 lines: total,
                 start_line: from,
@@ -726,7 +753,7 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
                 }
             }
             return {
-                path: ws.rel(at),
+                path: ws.show(at),
                 entries: listed,
                 truncated: entries.length > MAX_ENTRIES ? entries.length : undefined,
             };
@@ -757,7 +784,7 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
             await mkdir(dirname(at), { recursive: true });
             await writeFile(at, content, 'utf8');
             return {
-                path: ws.rel(at),
+                path: ws.show(at),
                 bytes: Buffer.byteLength(content),
                 lines: lineCount(content),
                 written: true,
@@ -851,13 +878,13 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
                 return { error: 'the source and the destination are the same path' };
             }
             if (target.startsWith(source + sep)) {
-                return { error: `cannot move ${ws.rel(source)} into itself` };
+                return { error: `cannot move ${ws.show(source)} into itself` };
             }
             await stat(source); // ENOENT here is the honest error
             if (await statOrNull(target)) {
                 if (!overwrite) {
                     return {
-                        error: `${ws.rel(target)} already exists`,
+                        error: `${ws.show(target)} already exists`,
                         hint: 'pass overwrite to replace it',
                     };
                 }
@@ -866,7 +893,7 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
             }
             await mkdir(dirname(target), { recursive: true });
             await rename(source, target);
-            return { from: ws.rel(source), to: ws.rel(target), moved: true };
+            return { from: ws.show(source), to: ws.show(target), moved: true };
         },
     });
 
@@ -898,15 +925,15 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
             if (info.isDirectory()) {
                 if (!recursive) {
                     return {
-                        error: `${ws.rel(at)} is a directory`,
+                        error: `${ws.show(at)} is a directory`,
                         hint: 'pass recursive to delete it and everything in it',
                     };
                 }
                 await rm(at, { recursive: true });
-                return { path: ws.rel(at), deleted: true, directory: true };
+                return { path: ws.show(at), deleted: true, directory: true };
             }
             await rm(at);
-            return { path: ws.rel(at), deleted: true };
+            return { path: ws.show(at), deleted: true };
         },
     });
 
@@ -930,9 +957,11 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
             const needle = pattern.toLowerCase();
             const hits: string[] = [];
             await walk(at, ws, (file) => {
-                const rel = ws.rel(file);
-                if (rel.toLowerCase().includes(needle)) {
-                    hits.push(rel);
+                // Matched on the path within the workspace, reported under the
+                // name the model uses: a mount prefix is on every candidate, so
+                // matching it would mean nothing.
+                if (ws.rel(file).toLowerCase().includes(needle)) {
+                    hits.push(ws.show(file));
                 }
                 return hits.length < MAX_ENTRIES;
             });
@@ -973,36 +1002,36 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
             throw new PatchError(`${op.path} is the workspace root`);
         }
         if (seen.has(at)) {
-            throw new PatchError(`${ws.rel(at)} appears twice in the patch`);
+            throw new PatchError(`${ws.show(at)} appears twice in the patch`);
         }
         seen.add(at);
 
         if (op.kind === 'delete') {
             const info = await statOrNull(at);
             if (!info) {
-                throw new PatchError(`${ws.rel(at)} does not exist`);
+                throw new PatchError(`${ws.show(at)} does not exist`);
             }
             if (info.isDirectory()) {
-                throw new PatchError(`${ws.rel(at)} is a directory`);
+                throw new PatchError(`${ws.show(at)} is a directory`);
             }
             steps.push({ kind: 'delete', at });
-            touched.push({ path: ws.rel(at), action: 'deleted' });
+            touched.push({ path: ws.show(at), action: 'deleted' });
             continue;
         }
 
         if (op.kind === 'add') {
             if (await statOrNull(at)) {
                 throw new PatchError(
-                    `${ws.rel(at)} already exists — update it instead of adding it`,
+                    `${ws.show(at)} already exists — update it instead of adding it`,
                 );
             }
             const content = op.lines.length > 0 ? op.lines.join('\n') + '\n' : '';
             if (Buffer.byteLength(content) > MAX_WRITE) {
-                throw new PatchError(`${ws.rel(at)} would exceed ${MAX_WRITE} bytes`);
+                throw new PatchError(`${ws.show(at)} would exceed ${MAX_WRITE} bytes`);
             }
             steps.push({ kind: 'write', at, content });
             touched.push({
-                path: ws.rel(at),
+                path: ws.show(at),
                 action: 'added',
                 bytes: Buffer.byteLength(content),
                 lines: op.lines.length,
@@ -1012,20 +1041,20 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
 
         const info = await statOrNull(at);
         if (!info) {
-            throw new PatchError(`${ws.rel(at)} does not exist`);
+            throw new PatchError(`${ws.show(at)} does not exist`);
         }
         if (info.isDirectory()) {
-            throw new PatchError(`${ws.rel(at)} is a directory`);
+            throw new PatchError(`${ws.show(at)} is a directory`);
         }
         if (info.size > MAX_WRITE) {
-            throw new PatchError(`${ws.rel(at)} is too large to patch`);
+            throw new PatchError(`${ws.show(at)} is too large to patch`);
         }
         const shape = await inspectFile(at, info.size, false);
         if (shape.format !== 'text') {
-            throw new PatchError(`${ws.rel(at)} is a ${shape.format} file, not text`);
+            throw new PatchError(`${ws.show(at)} is a ${shape.format} file, not text`);
         }
         const body = await readFile(at, 'utf8');
-        const patched = patchLines(toLines(body), op.chunks, ws.rel(at));
+        const patched = patchLines(toLines(body), op.chunks, ws.show(at));
         fuzz += patched.fuzz;
         // Whether the file ended in a newline is a property of the file, not of
         // the patch, so it survives the edit.
@@ -1033,12 +1062,12 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
         const content =
             patched.lines.length === 0 ? '' : patched.lines.join('\n') + (trailing ? '\n' : '');
         if (Buffer.byteLength(content) > MAX_WRITE) {
-            throw new PatchError(`${ws.rel(at)} would exceed ${MAX_WRITE} bytes`);
+            throw new PatchError(`${ws.show(at)} would exceed ${MAX_WRITE} bytes`);
         }
         steps.push({ kind: 'write', at, content });
 
         const entry: Record<string, unknown> = {
-            path: ws.rel(at),
+            path: ws.show(at),
             action: 'updated',
             chunks: op.chunks.length,
             bytes: Buffer.byteLength(content),
@@ -1051,11 +1080,11 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
             }
             if (to !== at) {
                 if (await statOrNull(to)) {
-                    throw new PatchError(`${ws.rel(to)} already exists`);
+                    throw new PatchError(`${ws.show(to)} already exists`);
                 }
                 steps.push({ kind: 'move', from: at, to });
                 entry.action = 'moved';
-                entry.to = ws.rel(to);
+                entry.to = ws.show(to);
             }
         }
         touched.push(entry);

@@ -33,6 +33,13 @@ describe('workspace containment', () => {
         expect(() => ws.within('a/../../escape')).toThrow();
     });
 
+    /** `/` has no meaning above the root, so it is the root. */
+    it('reads a lone slash as the root', () => {
+        expect(ws.within('/')).toBe(ws.root);
+        expect(ws.within('//')).toBe(ws.root);
+        expect(new Workspace({ root, mount: '/workspace' }).within('/')).toBe(ws.root);
+    });
+
     it('refuses a null byte', () => {
         expect(() => ws.within('ok\u0000/../../etc/passwd')).toThrow();
     });
@@ -66,6 +73,50 @@ describe('workspace containment', () => {
 
         it('is not accepted when nothing is mounted there', () => {
             expect(() => ws.within('/workspace/a/b.txt')).toThrow();
+        });
+
+        /**
+         * The mount is not only about what comes in: a command in the sandbox
+         * prints /workspace/..., so the file tools answer in the same words and
+         * the model never has to translate between two names for one tree.
+         */
+        it('is the name paths come back under', () => {
+            // `mounted.root` rather than `root`: the workspace resolved its own
+            // symlinks, and on macOS the temp dir is behind one.
+            expect(mounted.show(join(mounted.root, 'a/b.txt'))).toBe('/workspace/a/b.txt');
+            expect(mounted.show(mounted.root)).toBe('/workspace');
+            expect(ws.show(join(ws.root, 'a/b.txt'))).toBe('a/b.txt');
+            expect(ws.show(ws.root)).toBe('.');
+        });
+
+        it('is what the tools report', async () => {
+            mkdirSync(join(root, 'src'), { recursive: true });
+            writeFileSync(join(root, 'src', 'a.ts'), 'export const a = 1;\n');
+            const tools = workspaceTools({ root, mount: '/workspace' });
+            const run = async (name: string, args: unknown): Promise<any> => {
+                const found = tools.find((t) => t.name === name);
+                return await found!.execute(args, {} as never);
+            };
+
+            // In under either spelling, out under the mounted one.
+            expect((await run('read_file', { path: '/workspace/src/a.ts' })).path).toBe(
+                '/workspace/src/a.ts',
+            );
+            expect((await run('read_file', { path: 'src/a.ts' })).path).toBe('/workspace/src/a.ts');
+            expect((await run('list_dir', { path: '/' })).path).toBe('/workspace');
+            expect((await run('list_dir', { path: 'src' })).path).toBe('/workspace/src');
+            expect((await run('find_files', { pattern: 'a.ts' })).matches).toContain(
+                '/workspace/src/a.ts',
+            );
+            expect(
+                (await run('write_file', { path: '/workspace/src/b.ts', content: 'x\n' })).path,
+            ).toBe('/workspace/src/b.ts');
+            expect(
+                await run('move_file', { from: 'src/b.ts', to: '/workspace/src/c.ts' }),
+            ).toMatchObject({ from: '/workspace/src/b.ts', to: '/workspace/src/c.ts' });
+            expect((await run('delete_file', { path: '/workspace/src/c.ts' })).path).toBe(
+                '/workspace/src/c.ts',
+            );
         });
 
         it('tells the model both spellings', () => {
@@ -145,6 +196,9 @@ describe('the workspace tools', () => {
         expect(byName.get('poem.txt')).toMatchObject({ format: 'text', lines: 4, bytes: 19 });
         expect(byName.get('pic.png')).toMatchObject({ format: 'image', bytes: 4 });
         expect(byName.get('blob.bin')).toMatchObject({ format: 'binary' });
+
+        const slash = await call('list_dir', { path: '/' });
+        expect(slash.entries).toEqual(entries);
     });
 
     it('patches a file by its context', async () => {

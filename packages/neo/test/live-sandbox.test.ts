@@ -8,7 +8,10 @@ import {
     Sandbox,
     SANDBOX_MOUNT,
     SandboxPool,
+    sandboxTools,
 } from '../src/tools/sandbox.ts';
+import { workspaceTools } from '../src/tools/workspace.ts';
+import type { AnyTool, ToolContext } from '../src/types.ts';
 
 // ---------------------------------------------------------------------------
 // The other half of sandbox.test.ts.
@@ -290,6 +293,198 @@ describe.skipIf(!ENABLED)('a real container', () => {
                 }
             },
             3 * MINUTE,
+        );
+    });
+
+    /**
+     * The two toolsets are handed to the same agent and they name the same
+     * bytes: `run_command` writes at /workspace, `read_file` reads at the
+     * relative path, and neither has to be told they are the same directory.
+     * This is the seam `WorkspaceOptions.mount` exists for, and it can only be
+     * checked against a real bind mount.
+     */
+    describe('the file tools and the shell', () => {
+        const AGENT = { agent: { name: 'both' } } as ToolContext;
+
+        const call = async (tools: AnyTool[], name: string, args: unknown): Promise<any> => {
+            const found = tools.find((t) => t.name === name);
+            if (!found) {
+                throw new Error(`no such tool: ${name}`);
+            }
+            return await found.execute(args, AGENT);
+        };
+
+        /**
+         * The container's name is a function of its spec, so a pool built from
+         * the same options attaches to the box `beforeAll` started — no second
+         * container, and `afterAll`'s dispose covers this one too.
+         */
+        const toolsets = (): { file: AnyTool[]; shell: AnyTool[] } => ({
+            file: workspaceTools({ root, mount: SANDBOX_MOUNT }),
+            shell: sandboxTools({ root, key: 'live-sandbox', image: IMAGE, engine: ENGINE }),
+        });
+
+        it(
+            'read what the other one wrote, whichever way the path is spelled',
+            async () => {
+                const { file, shell } = toolsets();
+
+                // The container makes three files under its own name for the
+                // directory...
+                const made = await call(shell, 'run_command', {
+                    command:
+                        'mkdir -p /workspace/both && for i in 1 2 3; do ' +
+                        'printf "from the shell %s\\n" "$i" > /workspace/both/shell-$i.txt; done',
+                });
+                expect(made.exit_code).toBe(0);
+
+                // ...and the file tools see them under theirs. Paths come back
+                // relative whichever spelling went in.
+                const listed = await call(file, 'list_dir', { path: `${SANDBOX_MOUNT}/both` });
+                const names = (out: any): string[] =>
+                    out.entries.map((e: any) => e.name).sort() as string[];
+                expect(names(listed)).toEqual(['shell-1.txt', 'shell-2.txt', 'shell-3.txt']);
+                expect(listed.entries.find((e: any) => e.name === 'shell-1.txt')).toMatchObject({
+                    format: 'text',
+                    lines: 1,
+                });
+                expect(await call(file, 'list_dir', { path: 'both' })).toEqual(listed);
+
+                const read = await call(file, 'read_file', {
+                    path: `${SANDBOX_MOUNT}/both/shell-2.txt`,
+                });
+                expect(read.content).toBe('from the shell 2');
+                // Out under the name the shell prints, whichever name went in.
+                expect(read.path).toBe(`${SANDBOX_MOUNT}/both/shell-2.txt`);
+                expect(await call(file, 'read_file', { path: 'both/shell-2.txt' })).toEqual(read);
+
+                const found = await call(file, 'find_files', {
+                    pattern: 'shell-',
+                    path: `${SANDBOX_MOUNT}/both`,
+                });
+                expect(found.matches.sort()).toEqual([
+                    `${SANDBOX_MOUNT}/both/shell-1.txt`,
+                    `${SANDBOX_MOUNT}/both/shell-2.txt`,
+                    `${SANDBOX_MOUNT}/both/shell-3.txt`,
+                ]);
+
+                // ...so a path taken straight out of a command's output is a
+                // path read_file accepts, which is the whole point.
+                const listing = await call(shell, 'run_command', {
+                    command: 'find /workspace/both -name shell-3.txt',
+                });
+                const printed = listing.stdout.trim();
+                expect(printed).toBe(`${SANDBOX_MOUNT}/both/shell-3.txt`);
+                expect((await call(file, 'read_file', { path: printed })).content).toBe(
+                    'from the shell 3',
+                );
+
+                // The other direction: written by the file tools, once under
+                // each spelling, and read back inside the container.
+                await call(file, 'write_file', {
+                    path: `${SANDBOX_MOUNT}/both/tools-1.txt`,
+                    content: 'from the file tools 1\n',
+                });
+                await call(file, 'write_file', {
+                    path: 'both/tools-2.txt',
+                    content: 'from the file tools 2\n',
+                });
+                const back = await call(shell, 'run_command', {
+                    command: 'cat /workspace/both/tools-1.txt /workspace/both/tools-2.txt',
+                });
+                expect(back.exit_code).toBe(0);
+                expect(back.stdout).toBe('from the file tools 1\nfrom the file tools 2\n');
+
+                // Both spellings landed in one directory, not two.
+                const all = await call(shell, 'run_command', { command: 'ls both | sort' });
+                expect(all.stdout.trim().split('\n')).toEqual([
+                    'shell-1.txt',
+                    'shell-2.txt',
+                    'shell-3.txt',
+                    'tools-1.txt',
+                    'tools-2.txt',
+                ]);
+            },
+            2 * MINUTE,
+        );
+
+        it(
+            'agree about the root, whether it is called /, /workspace or .',
+            async () => {
+                const { file, shell } = toolsets();
+
+                const dot = await call(file, 'list_dir', { path: '.' });
+                expect(dot.path).toBe(SANDBOX_MOUNT);
+                expect(await call(file, 'list_dir', { path: '/' })).toEqual(dot);
+                expect(await call(file, 'list_dir', { path: SANDBOX_MOUNT })).toEqual(dot);
+
+                // ...and it is the directory the container starts in.
+                const pwd = await call(shell, 'run_command', { command: 'pwd' });
+                expect(pwd.stdout.trim()).toBe(SANDBOX_MOUNT);
+
+                const inside = await call(shell, 'run_command', {
+                    command: 'ls -A /workspace | sort',
+                });
+                expect(inside.stdout.trim().split('\n').sort()).toEqual(
+                    dot.entries.map((e: any) => e.name).sort(),
+                );
+            },
+            2 * MINUTE,
+        );
+
+        it(
+            'patch a file the container is about to run',
+            async () => {
+                const { file, shell } = toolsets();
+
+                await call(file, 'write_file', {
+                    path: 'both/report.sh',
+                    content: '#!/bin/sh\necho draft\n',
+                });
+                const patched = await call(file, 'apply_patch', {
+                    patch: [
+                        '*** Begin Patch',
+                        `*** Update File: ${SANDBOX_MOUNT}/both/report.sh`,
+                        '@@',
+                        ' #!/bin/sh',
+                        '-echo draft',
+                        '+echo final',
+                        '*** End Patch',
+                        '',
+                    ].join('\n'),
+                });
+                expect(patched.applied).toBe(1);
+                expect(patched.files[0].path).toBe(`${SANDBOX_MOUNT}/both/report.sh`);
+
+                const ran = await call(shell, 'run_command', {
+                    command: 'sh /workspace/both/report.sh',
+                });
+                expect(ran.stdout).toBe('final\n');
+
+                // A rename made here is the same rename in there. Only the new
+                // name is checked inside the container: the guest caches
+                // directory lookups for about a second, so an immediate
+                // "is it gone?" would be asking the cache, not the mount.
+                const moved = await call(file, 'move_file', {
+                    from: `${SANDBOX_MOUNT}/both/report.sh`,
+                    to: 'both/final.sh',
+                });
+                expect(moved).toMatchObject({
+                    from: `${SANDBOX_MOUNT}/both/report.sh`,
+                    to: `${SANDBOX_MOUNT}/both/final.sh`,
+                    moved: true,
+                });
+                const after = await call(shell, 'run_command', {
+                    command: 'sh /workspace/both/final.sh',
+                });
+                expect(after.stdout).toBe('final\n');
+
+                const left = await call(file, 'list_dir', { path: SANDBOX_MOUNT + '/both' });
+                const names = left.entries.map((e: any) => e.name);
+                expect(names).toContain('final.sh');
+                expect(names).not.toContain('report.sh');
+            },
+            2 * MINUTE,
         );
     });
 

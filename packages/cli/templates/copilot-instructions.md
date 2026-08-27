@@ -436,9 +436,10 @@ and listings bounded, so no single call can flood the context.
 
 Paths are written relative to the root, and `/workspace/...` — the name the same
 directory has inside the sandbox (§3.7) — is accepted as well, so a path copied
-out of a command's output does not have to be translated first. Results are
-reported relative, which is the shorter of the two and the only one that means
-anything when no container is involved.
+out of a command's output does not have to be translated first. When a mount is
+configured the tools also _report_ that name, so the two toolsets speak one
+vocabulary and a path can be passed from either to the other unchanged; with no
+container involved there is no second name and everything stays relative.
 
 **Selecting them.** A `tools:` entry is a selector, not only a name:
 
