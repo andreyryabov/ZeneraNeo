@@ -630,9 +630,17 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
         : 'Paths are relative to the workspace root, and that directory is the whole of what ' +
           'can be reached: nothing outside it can be read or written.';
     const inside = ws.mount
-        ? `Path to a file in the workspace, under ${ws.mount} or relative to its root. ` +
-          `"/" and "${ws.mount}" are the root.`
-        : 'Path inside the workspace, relative to its root. "/" is that root.';
+        ? `Path in the workspace: ${ws.mount}/src/a.ts, or src/a.ts relative to the root — the ` +
+          `same file either way. The root itself is "${ws.mount}", "/" or ".".`
+        : 'Path in the workspace, relative to its root: src/a.ts. The root itself is "." or "/".';
+
+    /**
+     * `.`, `/`, the mount and nothing at all are four spellings of the root, and
+     * a tool whose path is optional takes all four. A model that means "the top"
+     * writes whichever one it has in mind, and being told `path is required`
+     * because it sent "" rather than omitting the argument teaches it nothing.
+     */
+    const root = (path: string | undefined): string => ws.within(path?.trim() || '.');
 
     const readFileTool = tool<{ path: string; start_line?: number; end_line?: number }, TCtx>({
         name: 'read_file',
@@ -713,14 +721,14 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
             properties: {
                 path: {
                     type: 'string',
-                    description: `${inside} Defaults to the root.`,
+                    description: `${inside} Omit it to list the root.`,
                 },
             },
             required: [],
             additionalProperties: false,
         },
-        execute: async ({ path = '.' }) => {
-            const at = ws.within(path);
+        execute: async ({ path }) => {
+            const at = root(path);
             const entries = await readdir(at, { withFileTypes: true });
             const listed: FileInfo[] = [];
             let budget = LIST_SCAN_BUDGET;
@@ -947,13 +955,18 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
             type: 'object',
             properties: {
                 pattern: { type: 'string', description: 'Substring to match against the path.' },
-                path: { type: 'string', description: `Directory to search under. ${inside}` },
+                path: {
+                    type: 'string',
+                    description:
+                        `Directory to search under; omit it to search the whole ` +
+                        `workspace. ${inside}`,
+                },
             },
             required: ['pattern'],
             additionalProperties: false,
         },
-        execute: async ({ pattern, path = '.' }) => {
-            const at = ws.within(path);
+        execute: async ({ pattern, path }) => {
+            const at = root(path);
             const needle = pattern.toLowerCase();
             const hits: string[] = [];
             await walk(at, ws, (file) => {

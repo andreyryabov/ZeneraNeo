@@ -201,6 +201,21 @@ describe('the workspace tools', () => {
         expect(slash.entries).toEqual(entries);
     });
 
+    /**
+     * Four spellings of the same idea, and a model picks whichever it has in
+     * mind — being refused for sending "" instead of omitting the argument
+     * teaches it nothing.
+     */
+    it('takes every spelling of the root where the path is optional', async () => {
+        const listed = await call('list_dir', {});
+        for (const path of ['', ' ', '.', '/']) {
+            expect(await call('list_dir', { path })).toEqual(listed);
+        }
+        expect((await call('find_files', { pattern: 'poem', path: '' })).matches).toEqual(
+            (await call('find_files', { pattern: 'poem' })).matches,
+        );
+    });
+
     it('patches a file by its context', async () => {
         await call('write_file', {
             path: 'code.ts',
