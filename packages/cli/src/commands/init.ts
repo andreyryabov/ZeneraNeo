@@ -76,8 +76,8 @@ export const init: Command = {
     summary: 'Create a project here, or in <dir>, and register it.',
     usage: USAGE,
     details: [
-        'Writes AGENTS.md, agents.yaml and agents/, then records the directory',
-        'so `zen list` and `zen go` can find it by name. Editor files',
+        'Writes INSTRUCTIONS.md, agents.yaml and agents/, then records the',
+        'directory so `zen list` and `zen go` can find it by name. Editor files',
         '(.vscode/settings.json, .github/copilot-instructions.md) are written',
         'alongside, and never overwritten.',
         '',

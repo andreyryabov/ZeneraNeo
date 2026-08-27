@@ -19,7 +19,7 @@ loadEnv();
 // This one keeps nothing in the source: both agents are assembled from files
 // under ./assets/handbook, and so are their skills.
 //
-//   assets/handbook/AGENTS.md                     shared by both agents
+//   assets/handbook/INSTRUCTIONS.md               shared by both agents
 //   assets/handbook/triage.md                     one agent's own brief
 //   assets/handbook/resolver.md                   the other's
 //   assets/handbook/skills/shipping_delays.md     a flat skill
@@ -95,11 +95,11 @@ const handbookSkills = new FileSkillProvider({
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-    banner('Prompts on disk', 'two agents, one shared AGENTS.md, skills from files');
+    banner('Prompts on disk', 'two agents, one shared INSTRUCTIONS.md, skills from files');
 
     // Read once, used by both agents. Same bytes, same content hash, so the
     // report shows one document feeding two prompts rather than two copies.
-    const house = promptFile(doc('AGENTS.md'), 'house_rules');
+    const house = promptFile(doc('INSTRUCTIONS.md'), 'house_rules');
 
     const runner = new AgentRunner({
         model: pick('thinking'),

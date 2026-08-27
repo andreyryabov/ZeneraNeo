@@ -60,7 +60,7 @@ sessions that ran against it.
 ```
 <project>/
     zenera.json                  { name } — the project's own truth
-    AGENTS.md
+    INSTRUCTIONS.md
     agents.yaml
     agents/
         prompts/
@@ -135,9 +135,9 @@ point, and a flag says that better than a command does.
 
 ### 5.1 `zen init [dir]`
 
-Scaffolds the project — an empty `AGENTS.md`, a minimal `agents.yaml` naming one
-`default` agent, and empty `agents/prompts/` and `agents/skills/` — writes
-`zenera.json`, and adds the path to `projects.json`.
+Scaffolds the project — an empty `INSTRUCTIONS.md`, a minimal `agents.yaml`
+naming one `default` agent, and empty `agents/prompts/` and `agents/skills/` —
+writes `zenera.json`, and adds the path to `projects.json`.
 
 That agent gets `workspace:*` and `sandbox:*`: an agent that can read and write
 files but cannot run the test it just changed is a demo, not a project, and the
@@ -159,24 +159,24 @@ It also writes `.vscode/settings.json`:
 
 ```json
 {
-    "chat.useAgentsMdFile": false,
     "chat.useNestedAgentsMdFiles": false
 }
 ```
 
-VS Code reads an `AGENTS.md` at the root of an open folder and feeds it to its
-own assistant as always-on instructions. The project's `AGENTS.md` is the house
-rules for _this project's_ agents — addressed to them, about their tools and
-their workspace — and `zen open` opens exactly that directory, so left alone the
-two would be confused every single time.
+The project's house rules live in `INSTRUCTIONS.md`, deliberately not
+`AGENTS.md`. Every coding assistant now reads that name out of the root of an
+open folder and feeds it to itself as always-on instructions, and `zen open`
+opens exactly this directory — so a project that used it would have its rules,
+addressed to _its_ agents about _their_ tools and workspace, confused with the
+editor's own every single time. A name nobody else claims settles that without a
+setting.
 
-`chat.useAgentsMdFile` defaults to true, so switching it off is the part that
-does the work. `chat.useNestedAgentsMdFiles` is already false by default and is
-written anyway: it is opt-in globally, and someone who turned it on would
-otherwise pull in every nested `AGENTS.md` at once.
-Both are _restricted_ settings, so they apply only in a trusted workspace, which
-is the right way round — an untrusted folder is not one to be running agents in
-either.
+`chat.useNestedAgentsMdFiles` is written anyway. It is already false by default,
+but it is opt-in globally, and this is a directory the agent itself writes into;
+someone who turned it on would otherwise have the editor pick up whatever
+`AGENTS.md` a run left behind. It is a _restricted_ setting, so it applies only
+in a trusted workspace, which is the right way round — an untrusted folder is not
+one to be running agents in either.
 
 It is never overwritten: an existing `settings.json` is somebody's, and a
 directory may well predate the project.

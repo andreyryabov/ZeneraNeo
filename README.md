@@ -55,7 +55,7 @@ repositories are shareable.**
 ```
 my-project/
     zenera.json                  the project's own name
-    AGENTS.md                    house rules, prepended to every agent
+    INSTRUCTIONS.md              house rules, prepended to every agent
     agents.yaml                  who exists, what they may reach for
     agents/
         prompts/<name>.md        each agent's own brief

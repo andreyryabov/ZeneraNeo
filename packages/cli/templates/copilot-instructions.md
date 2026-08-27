@@ -41,12 +41,12 @@ programmed: what an agent knows, which model answers, and which of the tools
 
 An agent is four things and nothing more:
 
-| Part            | Where it lives                           | What it decides               |
-| --------------- | ---------------------------------------- | ----------------------------- |
-| **Instruction** | `AGENTS.md` + `agents/prompts/<name>.md` | How it behaves                |
-| **Model**       | `agents.yaml` → `model:`                 | How well and how expensively  |
-| **Tools**       | `agents.yaml` → `tools:`                 | What it can _do_              |
-| **Knowledge**   | `agents/skills/*` + memory               | What it can _know_, on demand |
+| Part            | Where it lives                                 | What it decides               |
+| --------------- | ---------------------------------------------- | ----------------------------- |
+| **Instruction** | `INSTRUCTIONS.md` + `agents/prompts/<name>.md` | How it behaves                |
+| **Model**       | `agents.yaml` → `model:`                       | How well and how expensively  |
+| **Tools**       | `agents.yaml` → `tools:`                       | What it can _do_              |
+| **Knowledge**   | `agents/skills/*` + memory                     | What it can _know_, on demand |
 
 Plus two relations: **handoffs** — which other agents it may transfer control to
 — and **fork** — whether it may split into parallel branches at all (§6.4).
@@ -80,7 +80,7 @@ is deciding **what is in that sequence and in what order**.
 ```
 ┌─────────────────────────────────────────────┐
 │ tool schemas          fixed at load         │  ← stable, cacheable
-│ AGENTS.md             shared by all agents  │  ← stable, cacheable
+│ INSTRUCTIONS.md       shared by all agents  │  ← stable, cacheable
 │ agent prompt          this agent's brief    │  ← stable per agent
 │ skill index           names + descriptions  │  ← stable per agent
 │ preloaded skills      activated turn 0      │  ← stable, in the cached prefix
@@ -122,7 +122,7 @@ my-project/
 ├── .github/
 │   └── copilot-instructions.md   this file
 ├── .env                          credentials — NEVER committed
-├── AGENTS.md                     house rules, prepended to every agent
+├── INSTRUCTIONS.md               house rules, prepended to every agent
 ├── agents.yaml                   who exists, what they may reach for
 ├── agents/
 │   ├── prompts/
@@ -148,7 +148,7 @@ The config is found by name, in order: `agents.yaml`, `agents.yml`,
 prompt, a large skill catalog. Prefer this until routing is genuinely needed.
 
 ```
-AGENTS.md · agents.yaml · agents/prompts/assistant.md · agents/skills/**  (20 skills)
+INSTRUCTIONS.md · agents.yaml · agents/prompts/assistant.md · agents/skills/**  (20 skills)
 ```
 
 **Router + specialists** — a cheap intake agent that classifies and hands off.
@@ -261,10 +261,12 @@ provider with a missing key does not fail loading.
 - `agents[].fork.agents` naming an unknown agent, or being empty; `maxBranches` below 2
 - `system:` pointing at a missing file, or outside the project root
 
-### 3.2 `AGENTS.md`
+### 3.2 `INSTRUCTIONS.md`
 
 House rules, read **once** and prepended to every agent's system prompt. It is
-the stable head of the cached prefix, so it should change rarely.
+the stable head of the cached prefix, so it should change rarely. The name is
+deliberately not `AGENTS.md` — that one belongs to the coding assistant reading
+this file, and these rules address the project's own agents.
 
 Put here only what is true for **every** agent:
 
@@ -282,7 +284,7 @@ preloaded skill.
 ### 3.3 `agents/prompts/<name>.md`
 
 Plain Markdown, no frontmatter. This is the agent's _job description_, appended
-after `AGENTS.md`.
+after `INSTRUCTIONS.md`.
 
 Structure that works:
 
@@ -603,14 +605,14 @@ key in a log line, a test fixture, or a chat message.
 ### 4.1 Composition order
 
 ```
-1. AGENTS.md              (shared, once, all agents)
+1. INSTRUCTIONS.md        (shared, once, all agents)
 2. agents/prompts/<n>.md  (this agent)
 3. skill index            (rendered by the runtime — do not hand-write it)
 4. preloaded skills       (activated before the first call)
 ```
 
-Never duplicate `AGENTS.md` content into an agent prompt; never hand-render a
-list of skills into a prompt (the runtime does it, and a hand-written one goes
+Never duplicate `INSTRUCTIONS.md` content into an agent prompt; never hand-render
+a list of skills into a prompt (the runtime does it, and a hand-written one goes
 stale silently).
 
 ### 4.2 Rules
@@ -651,8 +653,8 @@ When behaviour is wrong, in this order:
 
 1. **Read the actual assembled prompt**, not the file. Use the inspect report.
 2. Is the instruction _present_? (Missed skill load, wrong agent, compaction.)
-3. Is it _contradicted_ by `AGENTS.md` or a skill? Adjacent contradictions win
-   over distant ones; later text usually wins over earlier.
+3. Is it _contradicted_ by `INSTRUCTIONS.md` or a skill? Adjacent contradictions
+   win over distant ones; later text usually wins over earlier.
 4. Is it _specific enough to be checkable_? Rewrite as a testable assertion.
 5. Only then consider a stronger model.
 
@@ -669,7 +671,7 @@ The decision for every piece of knowledge:
 
 | Where               | Cost                    | Use when                                              |
 | ------------------- | ----------------------- | ----------------------------------------------------- |
-| `AGENTS.md`         | every call, every agent | true always, for everyone                             |
+| `INSTRUCTIONS.md`   | every call, every agent | true always, for everyone                             |
 | agent prompt        | every call, one agent   | true always, for this job                             |
 | **preloaded skill** | every call, one agent   | always needed, but versioned/shared separately        |
 | **indexed skill**   | one line until loaded   | needed _sometimes_, model can tell when from one line |
@@ -725,12 +727,12 @@ in a skill, where it is versioned and reviewable.
 Rules that follow directly from "stable prefix = cache hit":
 
 - Do not reorder `agents.yaml` for cosmetic reasons — tool order is prompt order.
-- Do not put timestamps, run ids, or "today is …" in `AGENTS.md` or a prompt.
-  A changing prefix is a permanent cache miss. Put volatile facts in a tool
-  result.
+- Do not put timestamps, run ids, or "today is …" in `INSTRUCTIONS.md` or a
+  prompt. A changing prefix is a permanent cache miss. Put volatile facts in a
+  tool result.
 - Prefer `preload` over an instruction telling the model to load a skill first.
 - Keep the volatile half of an instruction in the agent prompt and the stable
-  half in `AGENTS.md`, not the reverse.
+  half in `INSTRUCTIONS.md`, not the reverse.
 
 ---
 
@@ -1075,7 +1077,7 @@ Before finishing any change here:
 
 **Prompts**
 
-- [ ] Nothing duplicated between `AGENTS.md` and an agent prompt
+- [ ] Nothing duplicated between `INSTRUCTIONS.md` and an agent prompt
 - [ ] Every tool and agent referenced by its exact name
 - [ ] Failure paths stated for every instruction that can fail
 - [ ] No facts, rates or figures embedded in a prompt
@@ -1122,8 +1124,8 @@ Before finishing any change here:
 
 | Symptom                                    | Change this                                                |
 | ------------------------------------------ | ---------------------------------------------------------- |
-| Wrong tone, wrong format, wrong length     | `AGENTS.md` (all agents) or the agent prompt               |
-| Says something forbidden                   | `AGENTS.md` prohibition, stated specifically               |
+| Wrong tone, wrong format, wrong length     | `INSTRUCTIONS.md` (all agents) or the agent prompt         |
+| Says something forbidden                   | `INSTRUCTIONS.md` prohibition, stated specifically         |
 | Ignores a rule that only applies sometimes | Move the rule into a skill with a sharp description        |
 | Never loads the skill it should            | The skill's `description`; or `preload` it                 |
 | Loads too much, answers slowly             | `allow:`, `maxIndexEntries:`, or `discovery: search`       |
@@ -1150,8 +1152,8 @@ Before finishing any change here:
 - **The mega-prompt.** 300 lines covering twelve scenarios. Split into skills.
 - **Agent sprawl.** Eight agents that share one model, one tool set and one
   prompt style. Collapse into one with a catalog.
-- **Facts in prompts.** A fee schedule inside `AGENTS.md`. It cannot be versioned,
-  cannot be shared, and is paid for on every call.
+- **Facts in prompts.** A fee schedule inside `INSTRUCTIONS.md`. It cannot be
+  versioned, cannot be shared, and is paid for on every call.
 - **Politeness padding.** "Please try your best to be helpful." Costs tokens,
   changes nothing.
 - **Fixing prompts with models.** See §4.4.
@@ -1163,7 +1165,8 @@ Before finishing any change here:
   branch needs the first branch's answer is a sequence wearing a fork's clothes.
 - **Installing the toolchain every run.** A prompt that begins with `apt-get
 install` is an `image:` that was never set — §3.7.
-- **Volatile prefix.** "Current date: …" in `AGENTS.md`. Permanent cache miss.
+- **Volatile prefix.** "Current date: …" in `INSTRUCTIONS.md`. Permanent cache
+  miss.
 
 ---
 

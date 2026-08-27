@@ -169,7 +169,7 @@ export interface ValidateOptions {
 // Duplicated rather than exported, because a check that agreed with the loader
 // by construction could not report that the two had diverged.
 const CONFIG_NAMES = ['agents.yaml', 'agents.yml', 'agents/agents.yaml', 'agents/agents.yml'];
-const HOUSE_RULES = 'AGENTS.md';
+const HOUSE_RULES = 'INSTRUCTIONS.md';
 const PROMPTS_DIR = 'agents/prompts';
 const SKILLS_DIR = 'agents/skills';
 
@@ -337,7 +337,7 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
             code: 'house-rules.missing',
             where: HOUSE_RULES,
             message:
-                'no AGENTS.md, which is allowed: every agent then runs on its own role ' +
+                'no INSTRUCTIONS.md, which is allowed: every agent then runs on its own role ' +
                 'prompt alone, with nothing shared between them',
         });
     } else if (empty(join(root, HOUSE_RULES))) {
@@ -345,7 +345,7 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
             severity: 'warning',
             code: 'house-rules.empty',
             where: HOUSE_RULES,
-            message: 'AGENTS.md is empty, so it contributes nothing but a prompt section',
+            message: 'INSTRUCTIONS.md is empty, so it contributes nothing but a prompt section',
             fix: 'write the rules that hold regardless of which agent is answering, or delete it',
         });
     }
@@ -525,7 +525,7 @@ function checkAgent(
     // The role prompt: named by `system:`, or found by convention. A named one
     // that is not there is an error — the loader says so too. An absent
     // conventional one is not, because a project may keep everything it has to
-    // say in AGENTS.md.
+    // say in INSTRUCTIONS.md.
     if (spec.system) {
         const rel = normalise(root, spec.system);
         const outside = rel === undefined;
@@ -579,8 +579,8 @@ function checkAgent(
             code: 'agent.no-instructions',
             where,
             message:
-                'this agent has no prompt at all — no AGENTS.md and no role file — so it ' +
-                'runs on the tool descriptions alone',
+                'this agent has no prompt at all — no INSTRUCTIONS.md and no role file — so ' +
+                'it runs on the tool descriptions alone',
             fix: `write ${join(PROMPTS_DIR, `${spec.name}.md`)}, or name one with \`system:\``,
         });
     }

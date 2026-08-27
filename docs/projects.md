@@ -12,7 +12,7 @@ See [agents-yaml.md](agents-yaml.md) for the configuration reference, and
 
 ```
 my-project/
-    AGENTS.md                        house rules, prepended to every agent
+    INSTRUCTIONS.md                  house rules, prepended to every agent
     agents.yaml                      who exists, what they may reach for
     agents/
         prompts/
@@ -99,8 +99,10 @@ hit _across_ conversations, not merely within one.
 
 Each agent's instructions are assembled in a fixed order:
 
-1. `AGENTS.md`, if present — read **once** and shared by every agent, so the
-   report says "one document, five prompts" instead of five identical blobs.
+1. `INSTRUCTIONS.md`, if present — read **once** and shared by every agent, so
+   the report says "one document, five prompts" instead of five identical blobs.
+   The name is deliberately not `AGENTS.md`: that one is claimed by coding
+   assistants, and these rules address _this project's_ agents.
 2. The agent's own file: `system:` if given, otherwise
    `agents/prompts/<name>.md` if it exists.
 

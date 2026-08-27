@@ -22,7 +22,7 @@ import { projectDir, projectFile, projectRoot } from './refs.ts';
  * A folder is an agentic system:
  *
  * ```
- * AGENTS.md                     house rules, prepended to every agent
+ * INSTRUCTIONS.md               house rules, prepended to every agent
  * agents.yaml                   who exists, what they may reach for
  * agents/prompts/<role>.md      one agent's own instructions
  * agents/skills/<name>/SKILL.md
@@ -70,7 +70,10 @@ export interface ProjectOptions<TCtx = unknown> {
 const PROMPTS_DIR = 'agents/prompts';
 const SKILLS_DIR = 'agents/skills';
 const CONFIG_NAMES = ['agents.yaml', 'agents.yml', 'agents/agents.yaml', 'agents/agents.yml'];
-const HOUSE_RULES = 'AGENTS.md';
+// Deliberately not `AGENTS.md`: every coding assistant now reads that name out
+// of an open folder, and `zen open` opens exactly this directory. The house
+// rules here address *this project's* agents, not the editor's.
+const HOUSE_RULES = 'INSTRUCTIONS.md';
 
 /** A project's declaration, before anything is assembled from it. */
 export interface ProjectSource {
@@ -248,9 +251,9 @@ function readHouseRules(root: string): PromptPart | undefined {
 }
 
 /**
- * `AGENTS.md` first, the agent's own file second — shared context before the
- * specific job, and the stable half of the prompt in front where a cache can
- * reuse it.
+ * `INSTRUCTIONS.md` first, the agent's own file second — shared context before
+ * the specific job, and the stable half of the prompt in front where a cache
+ * can reuse it.
  */
 function instructionsFor(
     root: string,

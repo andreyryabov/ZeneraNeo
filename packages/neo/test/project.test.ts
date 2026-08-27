@@ -35,7 +35,7 @@ function project(files: Record<string, string>): string {
 }
 
 const MINIMAL = {
-    'AGENTS.md': 'Be terse.',
+    'INSTRUCTIONS.md': 'Be terse.',
     'agents.yaml': `
 agents:
   - name: solo
@@ -87,12 +87,15 @@ Be brief.
 // ---------------------------------------------------------------------------
 
 describe('project layout', () => {
-    it('assembles agents, prompts and the shared AGENTS.md', async () => {
+    it('assembles agents, prompts and the shared INSTRUCTIONS.md', async () => {
         const p = await loadProject(project(MINIMAL));
 
         expect(p.registry.names()).toEqual(['solo']);
         const instructions = p.registry.get('solo').instructions as { path: string }[];
-        expect(instructions.map((i) => i.path.split('/').pop())).toEqual(['AGENTS.md', 'solo.md']);
+        expect(instructions.map((i) => i.path.split('/').pop())).toEqual([
+            'INSTRUCTIONS.md',
+            'solo.md',
+        ]);
     });
 
     it('falls back to agents/prompts/<name>.md when `system` is absent', async () => {
@@ -107,7 +110,7 @@ describe('project layout', () => {
         expect(instructions[0].path.endsWith('solo.md')).toBe(true);
     });
 
-    it('shares one AGENTS.md object across every agent', async () => {
+    it('shares one INSTRUCTIONS.md object across every agent', async () => {
         const p = await loadProject(
             project({
                 ...MINIMAL,
@@ -399,7 +402,7 @@ describe('validation', () => {
     });
 
     it('reports a missing configuration file', async () => {
-        await expect(loadProject(project({ 'AGENTS.md': 'x' }))).rejects.toThrow(
+        await expect(loadProject(project({ 'INSTRUCTIONS.md': 'x' }))).rejects.toThrow(
             /no project configuration/,
         );
     });

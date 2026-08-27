@@ -9,7 +9,7 @@ import { join } from 'node:path';
 // one agent here works as written, and every other knob is in `docs/`.
 // ---------------------------------------------------------------------------
 
-const AGENTS_MD = `# House rules
+const INSTRUCTIONS_MD = `# House rules
 
 Everything in this file is prepended to every agent's prompt, so it is the
 place for the things that are true regardless of who is answering: tone,
@@ -77,26 +77,24 @@ sessions/
 `;
 
 // ---------------------------------------------------------------------------
-// Telling the editor this AGENTS.md is not for it
+// Telling the editor which instructions are not for it
 //
-// VS Code reads an `AGENTS.md` at the root of an open folder and feeds it to
-// its own assistant as always-on instructions. A project's AGENTS.md is the
-// house rules for *this project's* agents — addressed to them, about their
-// tools and their workspace — and `zen open` opens exactly that directory, so
-// left alone the two would be confused every single time.
+// The project's house rules are `INSTRUCTIONS.md`, deliberately not
+// `AGENTS.md`: every coding assistant now reads that name out of an open
+// folder and feeds it to itself as always-on instructions, and `zen open`
+// opens exactly this directory. A name nobody else claims means the two are
+// never confused, and `chat.useAgentsMdFile` no longer has to be switched off
+// to keep them apart.
 //
-// `chat.useAgentsMdFile` defaults to true, so switching it off is the part
-// that does the work. `chat.useNestedAgentsMdFiles` is already false by
-// default and is written anyway: it is opt-in globally, and someone who turned
-// it on would otherwise pull in every nested `AGENTS.md` at once.
-//
-// Both are *restricted* settings, so they apply only in a trusted workspace.
-// That is the right way round — an untrusted folder is not one you should be
-// running agents in either.
+// `chat.useNestedAgentsMdFiles` is still written. It is already false by
+// default, but it is opt-in globally, and this is a directory the agent itself
+// writes into — someone who turned it on would otherwise have the editor pick
+// up whatever `AGENTS.md` a run happened to leave behind. It is a *restricted*
+// setting, so it applies only in a trusted workspace; that is the right way
+// round, since an untrusted folder is not one to run agents in either.
 // ---------------------------------------------------------------------------
 
 const VSCODE_SETTINGS = `{
-    "chat.useAgentsMdFile": false,
     "chat.useNestedAgentsMdFiles": false
 }
 `;
@@ -117,13 +115,13 @@ export function editorSettings(dir: string): string | undefined {
 // ---------------------------------------------------------------------------
 // The other half of the editor story
 //
-// `AGENTS.md` is switched off above because it addresses the *project's*
-// agents. The editor's assistant still needs a brief of its own, and what it
-// needs to know is how this kind of project is put together — the file formats,
-// how a prompt is written, when to add a skill rather than an agent. That is
-// one long document, kept as a file rather than a template literal in here:
-// it is full of backticks and `${...}` examples, which a TS template literal
-// cannot hold without escaping every one of them into illegibility.
+// `INSTRUCTIONS.md` addresses the *project's* agents. The editor's assistant
+// still needs a brief of its own, and what it needs to know is how this kind
+// of project is put together — the file formats, how a prompt is written, when
+// to add a skill rather than an agent. That is one long document, kept as a
+// file rather than a template literal in here: it is full of backticks and
+// `${...}` examples, which a TS template literal cannot hold without escaping
+// every one of them into illegibility.
 // ---------------------------------------------------------------------------
 
 const COPILOT_TEMPLATE = new URL('../templates/copilot-instructions.md', import.meta.url);
@@ -160,13 +158,13 @@ export function scaffold(opts: ScaffoldOptions): string[] {
     mkdirSync(join(opts.dir, 'agents', 'skills'), { recursive: true });
     mkdirSync(join(opts.dir, 'sessions'), { recursive: true });
 
-    put('AGENTS.md', AGENTS_MD);
+    put('INSTRUCTIONS.md', INSTRUCTIONS_MD);
     put('agents.yaml', AGENTS_YAML(opts.model));
     put(join('agents', 'prompts', 'default.md'), PROMPT);
     put('.gitignore', GITIGNORE);
 
     // The project directory is what `zen open` opens, so this is where the
-    // editor actually reads them: here, AGENTS.md *is* the workspace root's.
+    // editor actually reads them.
     for (const rel of [editorSettings(opts.dir), copilotInstructions(opts.dir)]) {
         if (rel !== undefined) written.push(rel);
     }

@@ -232,7 +232,7 @@ describe('the project check', () => {
     it('passes a project whose files are all there', async () => {
         const dir = project({
             'zenera.json': '{"version":1,"name":"ok"}',
-            'AGENTS.md': 'House rules.\n',
+            'INSTRUCTIONS.md': 'House rules.\n',
             'agents.yaml': 'version: 1\nmodel: gpt-4o\nagents:\n  - name: solo\n',
             'agents/prompts/solo.md': 'Be useful.\n',
         });
@@ -241,7 +241,10 @@ describe('the project check', () => {
         expect(report.ok).toBe(true);
         expect(errors(report)).toEqual([]);
         expect(report.project.entry).toBe('solo');
-        expect(report.agents[0].instructions).toEqual(['AGENTS.md', 'agents/prompts/solo.md']);
+        expect(report.agents[0].instructions).toEqual([
+            'INSTRUCTIONS.md',
+            'agents/prompts/solo.md',
+        ]);
         // No keyring was passed, so nothing may be said about credentials.
         expect(report.models[0].credential).toBe('unknown');
     });
@@ -264,7 +267,7 @@ describe('the project check', () => {
     });
 
     it('says which files it looked for when there is no config at all', async () => {
-        const report = await validateProject({ dir: project({ 'AGENTS.md': 'hello\n' }) });
+        const report = await validateProject({ dir: project({ 'INSTRUCTIONS.md': 'hello\n' }) });
 
         expect(errors(report)).toEqual(['config.missing']);
         expect(report.project.config).toBeNull();
@@ -279,12 +282,12 @@ describe('the project check', () => {
         const report = await validateProject({
             dir: project({
                 'agents.yaml': 'version: 1\nagents:\n  - name: Not A Name\n',
-                'AGENTS.md': 'hello\n',
+                'INSTRUCTIONS.md': 'hello\n',
             }),
         });
 
         expect(errors(report)).toEqual(['config.invalid']);
-        expect(report.files.find((f) => f.path === 'AGENTS.md')?.exists).toBe(true);
+        expect(report.files.find((f) => f.path === 'INSTRUCTIONS.md')?.exists).toBe(true);
     });
 
     it('checks the skill catalog it will actually read', async () => {
