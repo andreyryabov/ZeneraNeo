@@ -139,6 +139,17 @@ Scaffolds the project — an empty `AGENTS.md`, a minimal `agents.yaml` naming o
 `default` agent, and empty `agents/prompts/` and `agents/skills/` — writes
 `zenera.json`, and adds the path to `projects.json`.
 
+That agent gets `workspace:*` and `sandbox:*`: an agent that can read and write
+files but cannot run the test it just changed is a demo, not a project, and the
+shell is a container over the workspace rather than the machine.
+
+Without `--model`, the model is chosen by asking. Stored keys are probed —
+one authenticated call each, no tokens — and the first provider that answers
+decides the default; an environment variable is taken at its word. `dead` is a
+verdict and `unknown` is not, so a flaky network still scaffolds. When nothing
+is reachable the project is still written, with the missing key said once, here,
+instead of by the first run.
+
 Refuses a non-empty directory unless `--force`, because the alternative is
 silently merging into someone's source tree. The project name defaults to the
 directory's, and `--name` overrides it; a name already in the registry pointing

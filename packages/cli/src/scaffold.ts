@@ -33,21 +33,28 @@ agents:
       # Instructions live in agents/prompts/<name>.md and are picked up by
       # convention — no need to name the file here.
       #
-      # workspace:* is every file tool at once. Name them one by one to be
-      # narrower, or subtract: [workspace:*, -delete_file]
+      # workspace:* is every file tool at once, sandbox:* is the shell. Name
+      # them one by one to be narrower, or subtract: [workspace:*, -delete_file]
       #
-      # Add sandbox:* to let it run shell commands in a container. That needs
-      # podman on this machine — check with \`zen sandbox status\`, and see the
-      # sandbox: block in docs/agents-yaml.md to size or pin it.
+      # sandbox:* runs commands in a container, not on this machine, so it
+      # needs podman — \`zen run\` installs and starts what it can on its own,
+      # and \`zen sandbox status\` says where that got to. Drop the line if you
+      # would rather this agent never reached a shell; see the sandbox: block
+      # in docs/agents-yaml.md to size or pin the image.
       tools:
           - workspace:*
-          # - sandbox:*
+          - sandbox:*
 `;
 
 const PROMPT = `You are a helpful assistant working inside a project workspace.
 
 You have tools to read, search and edit files. The workspace is the only
 place you can see; paths are relative to its root.
+
+You can also run shell commands. They run in a container over the same
+workspace, not on the user's machine, so a command that fails there has cost
+them nothing — but it is still their work in the directory, so read before you
+overwrite and say what you ran.
 
 Read a file before you change it: \`apply_patch\` matches the surrounding text
 exactly, so a patch written from memory will not apply. Use \`apply_patch\` to
