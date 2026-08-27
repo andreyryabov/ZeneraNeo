@@ -1,12 +1,12 @@
 import boxen from 'boxen';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import pc from 'picocolors';
-import type { AgentEvent, RunStream } from '../src/events.ts';
-import { renderRunReport } from '../src/inspect/index.ts';
-import type { PayloadResolver } from '../src/payload.ts';
-import type { AgentRunner } from '../src/runner.ts';
-import type { AgentState, RunResult } from '../src/state.ts';
-import type { JoinNode } from '../src/trajectory.ts';
+import type { AgentEvent, RunStream } from '../packages/neo/src/events.ts';
+import { renderRunReport } from '../packages/neo/src/inspect/index.ts';
+import type { PayloadResolver } from '../packages/neo/src/payload.ts';
+import type { AgentRunner } from '../packages/neo/src/runner.ts';
+import type { AgentState, RunResult } from '../packages/neo/src/state.ts';
+import type { JoinNode } from '../packages/neo/src/trajectory.ts';
 
 // ---------------------------------------------------------------------------
 // Shared reporting harness for the examples

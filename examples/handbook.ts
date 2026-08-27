@@ -1,10 +1,10 @@
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promptFile } from '../src/prompt.ts';
-import { AgentRunner } from '../src/runner.ts';
-import { FileSkillProvider } from '../src/skill-providers/file.ts';
-import { turns } from '../src/state.ts';
-import { tool } from '../src/types.ts';
+import { promptFile } from '../packages/neo/src/prompt.ts';
+import { AgentRunner } from '../packages/neo/src/runner.ts';
+import { FileSkillProvider } from '../packages/neo/src/skill-providers/file.ts';
+import { turns } from '../packages/neo/src/state.ts';
+import { tool } from '../packages/neo/src/types.ts';
 // Which vendor and how much thinking — shared by every demo. See ./models.ts.
 import { model as pick } from './models.ts';
 // Terminal rendering — the harness every example shares. See ./ui.ts.

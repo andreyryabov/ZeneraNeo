@@ -1,9 +1,9 @@
 import { relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { InMemoryPayloadStore } from '../src/payload-stores/in-memory.ts';
-import { loadProject } from '../src/project/index.ts';
-import { turns } from '../src/state.ts';
-import { tool } from '../src/types.ts';
+import { InMemoryPayloadStore } from '../packages/neo/src/payload-stores/in-memory.ts';
+import { loadProject } from '../packages/neo/src/project/index.ts';
+import { turns } from '../packages/neo/src/state.ts';
+import { tool } from '../packages/neo/src/types.ts';
 // Terminal rendering — the harness every example shares. See ./ui.ts.
 import { banner, box, line, loadEnv, report, stats, step } from './ui.ts';
 
@@ -19,8 +19,8 @@ loadEnv();
 //
 //   assets/project/AGENTS.md                      house rules, every agent
 //   assets/project/agents.yaml                    who exists, what they reach for
-//   assets/project/.agents/prompts/<name>.md      one agent's own brief
-//   assets/project/.agents/skills/<name>/SKILL.md the catalog
+//   assets/project/agents/prompts/<name>.md       one agent's own brief
+//   assets/project/agents/skills/<name>/SKILL.md  the catalog
 //
 // Two things are worth watching in the trace.
 //
@@ -107,7 +107,7 @@ const damageEstimate = tool<{
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-    banner('A project is a folder', 'agents.yaml, AGENTS.md and .agents/ — loaded, not written');
+    banner('A project is a folder', 'agents.yaml, AGENTS.md and agents/ — loaded, not written');
 
     step(1, 'Loading');
     // One store for both runners below, so the two chats' payloads land in the

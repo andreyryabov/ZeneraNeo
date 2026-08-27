@@ -1,25 +1,23 @@
+// The editor / typecheck project: one program over everything in the repo,
+// including the parts that are never emitted (tests, examples, this config).
+// Emitting is `tsconfig.build.json`, which drives the two packages through
+// project references instead.
 {
+    "extends": "./tsconfig.base.json",
     "compilerOptions": {
-        "target": "ES2023",
-        "lib": ["ES2023"],
-        "module": "NodeNext",
-        "moduleResolution": "NodeNext",
-        "rootDir": ".",
-        "outDir": "dist",
-        "allowImportingTsExtensions": true,
-        "rewriteRelativeImportExtensions": true,
-        "declaration": true,
-        "declarationMap": true,
-        "sourceMap": true,
-        "strict": true,
-        "noImplicitOverride": true,
-        "noFallthroughCasesInSwitch": true,
-        "isolatedModules": true,
-        "verbatimModuleSyntax": true,
-        "esModuleInterop": true,
-        "forceConsistentCasingInFileNames": true,
-        "skipLibCheck": true,
-        "types": ["node"]
+        "composite": false,
+        "noEmit": true,
+        // Only the CLI's drawing surface is JSX, but this program covers it too,
+        // so the setting has to be here as well as in packages/cli.
+        "jsx": "react-jsx",
+        "jsxImportSource": "react",
+        "types": ["node", "react"]
     },
-    "include": ["src/**/*.ts", "test/**/*.ts", "examples/**/*.ts", "vitest.config.ts"]
+    "include": [
+        "packages/*/src/**/*.ts",
+        "packages/*/src/**/*.tsx",
+        "packages/*/test/**/*.ts",
+        "examples/**/*.ts",
+        "vitest.config.ts"
+    ]
 }

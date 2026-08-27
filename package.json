@@ -1,49 +1,37 @@
 {
-    "name": "zenera-neo",
-    "version": "0.1.0",
-    "description": "ZeneraNeo TypeScript library.",
+    "name": "zenera-monorepo",
+    "version": "0.0.0",
+    "description": "ZeneraNeo workspace: the library and its command-line front end.",
     "license": "MIT",
-    "type": "module",
-    "main": "./dist/index.js",
-    "types": "./dist/index.d.ts",
-    "exports": {
-        ".": {
-            "types": "./dist/index.d.ts",
-            "default": "./dist/index.js"
-        },
-        "./payload-stores": {
-            "types": "./dist/payload-stores/index.d.ts",
-            "default": "./dist/payload-stores/index.js"
-        },
-        "./memory-stores": {
-            "types": "./dist/memory-stores/index.d.ts",
-            "default": "./dist/memory-stores/index.js"
-        },
-        "./skill-providers": {
-            "types": "./dist/skill-providers/index.d.ts",
-            "default": "./dist/skill-providers/index.js"
-        },
-        "./project": {
-            "types": "./dist/project/index.d.ts",
-            "default": "./dist/project/index.js"
-        }
+    "author": "Andrey Ryabov",
+    "homepage": "https://github.com/andreyryabov/ZeneraNeo#readme",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/andreyryabov/ZeneraNeo.git"
     },
-    "files": [
-        "dist"
+    "bugs": "https://github.com/andreyryabov/ZeneraNeo/issues",
+    "private": true,
+    "type": "module",
+    "workspaces": [
+        "packages/*"
     ],
     "engines": {
         "node": ">=24"
     },
     "scripts": {
-        "build": "tsc -p tsconfig.build.json",
-        "clean": "rm -rf dist coverage .dev .out",
+        "build": "tsc -b tsconfig.build.json",
+        "build:watch": "tsc -b tsconfig.build.json --watch",
+        "clean": "tsc -b tsconfig.build.json --clean && rm -rf packages/*/dist coverage .dev .out",
         "format": "prettier . --write",
         "format:check": "prettier . --check",
         "test": "node --env-file=.env ./node_modules/vitest/vitest.mjs run",
         "test:watch": "node --env-file=.env ./node_modules/vitest/vitest.mjs",
         "test:coverage": "node --env-file=.env ./node_modules/vitest/vitest.mjs run --coverage",
-        "typecheck": "tsc -p tsconfig.json --noEmit",
+        "typecheck": "npm run build && tsc -p tsconfig.json --noEmit",
         "typecheck:watch": "tsc -p tsconfig.json --noEmit --watch",
+        "cli": "npm run build --silent && node packages/cli/dist/main.js",
+        "cli:link": "npm run build && npm link -w packages/cli",
+        "cli:unlink": "npm rm -g zenera-cli",
         "check:node": "node -e \"if (+process.versions.node.split('.')[0] < 24) { console.error('Node >=24 required (running ' + process.version + '). Run: nvm use'); process.exit(1); }\"",
         "demo:simple": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/demo.ts'",
         "demo:fanout": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/fanout.ts'",
@@ -53,36 +41,13 @@
         "demo:handbook": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/handbook.ts'",
         "demo:locked": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/locked.ts'",
         "demo:project": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/project.ts'",
-        "demo:all": "npm run demo:simple && npm run demo:fanout && npm run demo:triage && npm run demo:review && npm run demo:inspect && npm run demo:handbook && npm run demo:locked && npm run demo:project",
-        "prepublishOnly": "npm run clean && npm run build"
-    },
-    "dependencies": {
-        "yaml": "^2.9.0",
-        "zod": "^4.4.3"
-    },
-    "peerDependencies": {
-        "@anthropic-ai/sdk": "^0.120.0",
-        "@google/genai": "^2.18.0",
-        "openai": "^6.0.0"
-    },
-    "peerDependenciesMeta": {
-        "@anthropic-ai/sdk": {
-            "optional": true
-        },
-        "@google/genai": {
-            "optional": true
-        },
-        "openai": {
-            "optional": true
-        }
+        "demo:all": "npm run demo:simple && npm run demo:fanout && npm run demo:triage && npm run demo:review && npm run demo:inspect && npm run demo:handbook && npm run demo:locked && npm run demo:project"
     },
     "devDependencies": {
-        "@anthropic-ai/sdk": "^0.120.0",
-        "@google/genai": "^2.18.0",
         "@types/node": "^24.0.0",
+        "@types/react": "^19.2.18",
         "@vitest/coverage-v8": "^4.1.11",
         "boxen": "^8.0.1",
-        "openai": "^6.0.0",
         "picocolors": "^1.1.1",
         "prettier": "^3.9.6",
         "typescript": "^5.9.3",

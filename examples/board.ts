@@ -1,7 +1,7 @@
 import pc from 'picocolors';
-import type { AgentEvent, RunStream } from '../src/events.ts';
-import type { RunResult } from '../src/state.ts';
-import type { JoinNode } from '../src/trajectory.ts';
+import type { AgentEvent, RunStream } from '../packages/neo/src/events.ts';
+import type { RunResult } from '../packages/neo/src/state.ts';
+import type { JoinNode } from '../packages/neo/src/trajectory.ts';
 import { lane, secs, WIDTH, type Lap } from './ui.ts';
 
 // ---------------------------------------------------------------------------

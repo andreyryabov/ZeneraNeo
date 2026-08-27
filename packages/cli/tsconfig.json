@@ -1,0 +1,15 @@
+{
+    "extends": "../../tsconfig.base.json",
+    "compilerOptions": {
+        "rootDir": "src",
+        "outDir": "dist",
+        // Only the drawing surface is JSX, and only tsc ever sees it: Node's
+        // type stripping does not handle JSX, so the TUI is one of the reasons
+        // the CLI ships compiled rather than as source.
+        "jsx": "react-jsx",
+        "jsxImportSource": "react",
+        "types": ["node", "react"]
+    },
+    "include": ["src/**/*.ts", "src/**/*.tsx"],
+    "references": [{ "path": "../neo" }]
+}

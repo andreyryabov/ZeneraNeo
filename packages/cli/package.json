@@ -1,0 +1,62 @@
+{
+    "name": "zenera-cli",
+    "version": "0.1.0",
+    "description": "Command-line front end for zenera-neo: agentic projects you can run, share and commit.",
+    "keywords": [
+        "agents",
+        "ai-agents",
+        "cli",
+        "llm",
+        "agent-runtime",
+        "tui"
+    ],
+    "license": "MIT",
+    "author": "Andrey Ryabov",
+    "homepage": "https://github.com/andreyryabov/ZeneraNeo#readme",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/andreyryabov/ZeneraNeo.git",
+        "directory": "packages/cli"
+    },
+    "bugs": "https://github.com/andreyryabov/ZeneraNeo/issues",
+    "private": true,
+    "type": "module",
+    "bin": {
+        "zen": "./dist/main.js",
+        "zn": "./dist/main.js",
+        "zenera": "./dist/main.js"
+    },
+    "files": [
+        "dist",
+        "templates"
+    ],
+    "engines": {
+        "node": ">=24"
+    },
+    "scripts": {
+        "build": "tsc -b",
+        "clean": "tsc -b --clean && rm -rf dist"
+    },
+    "dependencies": {
+        "@inkjs/ui": "^2.0.0",
+        "ink": "^7.1.1",
+        "react": "^19.2.8",
+        "zenera-neo": "0.1.0"
+    },
+    "peerDependencies": {
+        "@anthropic-ai/sdk": "^0.120.0",
+        "@google/genai": "^2.18.0",
+        "openai": "^6.0.0"
+    },
+    "peerDependenciesMeta": {
+        "@anthropic-ai/sdk": {
+            "optional": true
+        },
+        "@google/genai": {
+            "optional": true
+        },
+        "openai": {
+            "optional": true
+        }
+    }
+}

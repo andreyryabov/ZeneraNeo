@@ -19,7 +19,7 @@ providers: {} # named connections
 provider: openai # which provider a bare model id belongs to
 models: {} # named model configurations
 model: fast # fallback for agents that do not pin their own
-skills: .agents/skills # one directory, or a list
+skills: agents/skills # one directory, or a list
 
 agents:
     - name: intake
@@ -52,6 +52,7 @@ they should be unambiguous in both.
 | `models`    | map of name → model    | Named model configurations                                 |
 | `model`     | model ref              | Fallback for agents that do not pin their own              |
 | `skills`    | string or string[]     | Skill directories, merged into one catalog                 |
+| `sandbox`   | sandbox                | The container `run_command` and friends execute in         |
 | `agents`    | agent[]                | At least one                                               |
 
 ---
@@ -221,16 +222,111 @@ client, and a bad ref raises its error once, at the agent that wrote it.
 ## `skills:`
 
 ```yaml
-skills: .agents/skills
+skills: agents/skills
 # or
 skills:
-    - .agents/skills
+    - agents/skills
     - ../shared/skills
 ```
 
 Directories are relative to the project root and may not escape it. Several
 directories are merged into a single catalog with the provider id `project`.
-If the key is absent and `.agents/skills` exists, it is used.
+If the key is absent and `agents/skills` exists, it is used.
+
+---
+
+## `sandbox:`
+
+Where `run_command` runs. Command-line tools execute in a Linux container with
+the session's workspace bind-mounted at `/workspace`; nothing else of the host
+is reachable, and the container is the boundary rather than any inspection of
+what the model wrote.
+
+```yaml
+sandbox:
+    image: docker.io/library/python:3.13-slim
+    cpus: 4
+    memory: 4096
+    network: bridge
+    timeout: 300
+    env: [HTTPS_PROXY, NO_PROXY]
+```
+
+| Field     | Type                   | Default                                  | Meaning                                             |
+| --------- | ---------------------- | ---------------------------------------- | --------------------------------------------------- |
+| `image`   | string                 | `docker.io/library/debian:bookworm-slim` | The base image commands run in                      |
+| `cpus`    | number                 | the host's                               | Fractional cores, as podman's `--cpus`              |
+| `memory`  | integer, MiB           | the host's                               | As podman's `--memory`                              |
+| `network` | `bridge`/`none`/`host` | `bridge`                                 | `none` for a project that must not reach out        |
+| `workdir` | absolute path          | `/workspace`                             | Where the workspace is mounted, and the default cwd |
+| `timeout` | integer, seconds       | `120`                                    | Per command, unless a call asks for less            |
+| `user`    | string                 | the image's                              | uid, name, or `uid:gid`                             |
+| `persist` | boolean                | `false`                                  | Keep the container between sessions                 |
+| `env`     | string[]               | none                                     | Host variables to forward, **by name**              |
+
+`cpus` and `memory` do two jobs on macOS and Windows: they cap the container,
+and they size the Podman virtual machine if the CLI has to create one. On
+Linux there is no machine and they only cap the container.
+
+### What survives, and what does not
+
+The container is removed when the session closes, so anything installed into
+its root filesystem is gone. Two directories are bind mounts and do survive:
+
+| Inside        | On the host                                              |
+| ------------- | -------------------------------------------------------- |
+| `/workspace`  | the session's workspace                                  |
+| `/home/agent` | `<session>/.data/sandbox/home`, and `$HOME` points at it |
+
+`/workspace` is the same directory the file tools work in, and they are told so:
+`read_file`, `apply_patch` and the rest accept `/workspace/src/a.ts` as well as
+`src/a.ts`. A path copied out of a compiler error or a stack trace can be handed
+straight to a file tool without the model having to translate it. Changing
+`workdir` moves both names together.
+
+So `pip install --user`, `npm config`, `~/.cache` and anything else an agent
+puts in its home directory are still there when the session is opened again,
+and they travel with the session directory when it is copied. A `pip install`
+into the system site-packages does not. `persist: true` keeps the whole
+container instead — stopped, not running — at the cost of a rootfs that no
+longer matches the config that made it.
+
+Changing any field here changes the container's name, so a project that bumps
+its image gets a new container rather than an old one quietly persisting with
+the wrong contents.
+
+### `env:` names, never values
+
+A value in this file would be a secret in the repository, so only names are
+accepted and the host's environment supplies the value. Names that read like a
+credential — anything containing `KEY`, `TOKEN`, `SECRET`, `PASSWORD` or
+`CREDENTIAL` — are refused at load. The CLI materialises its keyring into its
+own environment before loading a project, so forwarding one would hand every
+model key to whatever the agent decided to run.
+
+### `agents[].sandbox`
+
+Agents share one container by default. They already share the workspace, and a
+hand-off is meant to be continuous: whatever the first agent installed should
+still be there when the second takes over.
+
+An agent that needs a different image says so, and gets its own:
+
+```yaml
+sandbox:
+    image: docker.io/library/debian:bookworm-slim
+
+agents:
+    - name: analyst
+      tools: [sandbox:*]
+      sandbox:
+          image: docker.io/library/python:3.13-slim
+    - name: writer
+      tools: [sandbox:*] # shares the project's container
+```
+
+The fields are the same, merged over the top-level block. Two agents that
+resolve to the same configuration still share one container.
 
 ---
 
@@ -240,7 +336,7 @@ If the key is absent and `.agents/skills` exists, it is used.
 agents:
     - name: intake
       description: Takes the first message, gets the claim reference, routes the case.
-      system: .agents/prompts/intake.md
+      system: agents/prompts/intake.md
       model: router
       tools: [policy_lookup]
       handoffs: [adjuster]
@@ -253,20 +349,61 @@ agents:
           preload: [house_style]
 ```
 
-| Field         | Meaning                                                                                               |
-| ------------- | ----------------------------------------------------------------------------------------------------- |
-| `name`        | **Required.** See [Names](#names)                                                                     |
-| `description` | What a sibling agent's `transfer_to_<name>` tool tells the model. Write it for the model              |
-| `system`      | Path to a markdown file, relative to the root. Defaults to `.agents/prompts/<name>.md` if that exists |
-| `model`       | A `models:` name or a shorthand. Falls back to the top-level `model:`                                 |
-| `tools`       | Names resolved against `ProjectOptions.tools` — code cannot live in yaml                              |
-| `handoffs`    | Agent names this one may transfer to                                                                  |
-| `skills`      | Skill binding; see below                                                                              |
-| `default`     | `true` marks the entry point, if no top-level `default:`                                              |
+| Field         | Meaning                                                                                              |
+| ------------- | ---------------------------------------------------------------------------------------------------- |
+| `name`        | **Required.** See [Names](#names)                                                                    |
+| `description` | What a sibling agent's `transfer_to_<name>` tool tells the model. Write it for the model             |
+| `system`      | Path to a markdown file, relative to the root. Defaults to `agents/prompts/<name>.md` if that exists |
+| `model`       | A `models:` name or a shorthand. Falls back to the top-level `model:`                                |
+| `tools`       | Tool selectors resolved against `ProjectOptions.tools` — code cannot live in yaml                    |
+| `handoffs`    | Agent names this one may transfer to                                                                 |
+| `skills`      | Skill binding; see below                                                                             |
+| `fork`        | `true`, or a binding — opt-in to parallel branches; see below                                        |
+| `sandbox`     | Overrides on the top-level `sandbox:`; see below                                                     |
+| `default`     | `true` marks the entry point, if no top-level `default:`                                             |
 
 `handoffs` takes bare strings by design, not objects. A hand-off carries no
 configuration in this version, so there is nothing for an object form to hold,
 and accepting one would mean accepting keys nothing honours.
+
+### `agents[].tools`
+
+An entry is a tool name, or a selector:
+
+| Selector    | Selects                                                     |
+| ----------- | ----------------------------------------------------------- |
+| `read_file` | that one tool                                               |
+| `group:*`   | every tool in a group — `workspace:*` is all the file tools |
+| `'*'`       | everything the host passed to `loadProject`                 |
+| `-<any>`    | removes what it matches from the selection so far           |
+
+Quote a lone `'*'`: unquoted, YAML reads it as an alias and refuses the file.
+`workspace:*` needs no quoting.
+
+Selectors are applied in the order written, so subtraction reads as an
+exception to the line above it:
+
+```yaml
+tools: [workspace:*, -delete_file, -move_file, policy_lookup]
+```
+
+Groups come from the tool, not from config: `workspaceTools()` tags its seven
+with `workspace`, `sandboxTools()` tags its four with `sandbox`, and a host's
+own tools can carry any `group` they like. The model never sees a group — it
+gets the same flat list of names either way.
+
+The same grammar resolves a skill's `tools:` frontmatter against the tools
+registered on its provider.
+
+The two groups the CLI registers:
+
+| Group         | Tools                                                                                          |
+| ------------- | ---------------------------------------------------------------------------------------------- |
+| `workspace:*` | `read_file`, `list_dir`, `find_files`, `write_file`, `apply_patch`, `move_file`, `delete_file` |
+| `sandbox:*`   | `run_command`, `run_command_background`, `read_command_output`, `stop_command`                 |
+
+Naming `sandbox:*` is what makes a project need a container engine. See
+[`sandbox:`](#sandbox).
 
 ### `agents[].skills`
 
@@ -294,6 +431,33 @@ active. Because activation lands at the head of the transcript and never moves,
 it sits inside the cached prefix instead of being appended after the first
 reply.
 
+### `agents[].fork`
+
+Without the key an agent has no `fork` tool at all: it can only work in its own
+conversation. `fork: true` gives it the unrestricted form, and the object form
+narrows it.
+
+| Field         | Default              | Meaning                              |
+| ------------- | -------------------- | ------------------------------------ |
+| `agents`      | every declared agent | Which agents a branch may run        |
+| `maxBranches` | unlimited            | Cap on branches per call (minimum 2) |
+
+```yaml
+- name: trunk
+  fork:
+      agents: [lens] # every branch runs the specialist
+      maxBranches: 4
+```
+
+`agents` may include the forking agent itself — one role fanned out over ten
+regions is the common shape, and unlike `handoffs` that is not an error. The
+list reaches the model as an `enum` on each branch's `agent` field, so a name
+outside it cannot be decoded rather than merely being told off afterwards.
+
+Nesting is capped independently: a branch may fork again, but only while
+`forkDepth` is below the run's `maxForkDepth` (2 by default, a `RunOptions`
+field), so a fan-out cannot recurse without bound.
+
 ---
 
 ## Errors caught at load
@@ -301,9 +465,12 @@ reply.
 - Unknown key anywhere (strict schema)
 - A name that breaks the name pattern
 - `models.<alias>.provider` naming an undeclared provider
-- `agents[].tools` naming a tool not passed to `loadProject`
+- `agents[].tools` naming a tool not passed to `loadProject`, or a group with
+  nothing in it
 - `agents[].handoffs` naming an unknown agent, or the agent itself
 - `agents[].skills.provider` naming an unknown catalog
 - `agents[].skills.allow` / `.preload` naming a skill not in the catalog
 - A `preload` entry absent from `allow`
+- `agents[].fork.agents` naming an unknown agent, or being empty
+- `agents[].fork.maxBranches` below 2, which no valid call could satisfy
 - `system:` pointing at a missing file, or outside the project root

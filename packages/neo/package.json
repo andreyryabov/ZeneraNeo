@@ -1,0 +1,88 @@
+{
+    "name": "zenera-neo",
+    "version": "0.1.0",
+    "description": "A multi-agent runtime for Node.js: agents, models, tools, skills, memory and an append-only trajectory.",
+    "keywords": [
+        "agents",
+        "ai-agents",
+        "multi-agent",
+        "llm",
+        "agent-runtime",
+        "tool-calling",
+        "openai",
+        "anthropic",
+        "gemini",
+        "typescript"
+    ],
+    "license": "MIT",
+    "author": "Andrey Ryabov",
+    "homepage": "https://github.com/andreyryabov/ZeneraNeo#readme",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/andreyryabov/ZeneraNeo.git",
+        "directory": "packages/neo"
+    },
+    "bugs": "https://github.com/andreyryabov/ZeneraNeo/issues",
+    "type": "module",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        },
+        "./payload-stores": {
+            "types": "./dist/payload-stores/index.d.ts",
+            "default": "./dist/payload-stores/index.js"
+        },
+        "./memory-stores": {
+            "types": "./dist/memory-stores/index.d.ts",
+            "default": "./dist/memory-stores/index.js"
+        },
+        "./skill-providers": {
+            "types": "./dist/skill-providers/index.d.ts",
+            "default": "./dist/skill-providers/index.js"
+        },
+        "./project": {
+            "types": "./dist/project/index.d.ts",
+            "default": "./dist/project/index.js"
+        },
+        "./package.json": "./package.json"
+    },
+    "sideEffects": false,
+    "files": [
+        "dist"
+    ],
+    "engines": {
+        "node": ">=24"
+    },
+    "scripts": {
+        "build": "tsc -b",
+        "clean": "tsc -b --clean && rm -rf dist"
+    },
+    "dependencies": {
+        "yaml": "^2.9.0",
+        "zod": "^4.4.3"
+    },
+    "peerDependencies": {
+        "@anthropic-ai/sdk": "^0.120.0",
+        "@google/genai": "^2.18.0",
+        "openai": "^6.0.0"
+    },
+    "peerDependenciesMeta": {
+        "@anthropic-ai/sdk": {
+            "optional": true
+        },
+        "@google/genai": {
+            "optional": true
+        },
+        "openai": {
+            "optional": true
+        }
+    },
+    "devDependencies": {
+        "@anthropic-ai/sdk": "^0.120.0",
+        "@google/genai": "^2.18.0",
+        "openai": "^6.0.0"
+    }
+}
