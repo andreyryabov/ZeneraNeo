@@ -18,21 +18,12 @@ export const META = 'zenera.json';
 export interface ProjectMeta {
     version: 1;
     name: string;
-    /** directory name of the version a bare `zen run` uses */
-    activeVersion: string;
 }
 
 /** A project resolved on disk. */
 export interface Project {
     dir: string;
     meta: ProjectMeta;
-}
-
-const VERSION = /^v(\d+)$/;
-
-export function versionNumber(name: string): number | undefined {
-    const m = VERSION.exec(name);
-    return m ? Number(m[1]) : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -45,50 +36,14 @@ export async function readMeta(dir: string): Promise<ProjectMeta | undefined> {
         return undefined;
     }
     const meta = await readJson<Partial<ProjectMeta>>(path, {});
-    if (!meta.name || !meta.activeVersion) {
-        throw invalidError(`${path} is missing "name" or "activeVersion"`);
+    if (!meta.name) {
+        throw invalidError(`${path} is missing "name"`);
     }
-    return { version: 1, name: meta.name, activeVersion: meta.activeVersion };
+    return { version: 1, name: meta.name };
 }
 
 export function writeMeta(dir: string, meta: ProjectMeta): void {
     writeJson(join(dir, META), meta, 0o644);
-}
-
-/** Version directories, oldest first. Anything not `v<n>` is not one. */
-export function versions(dir: string): string[] {
-    if (!existsSync(dir)) {
-        return [];
-    }
-    return readdirSync(dir, { withFileTypes: true })
-        .filter((e) => e.isDirectory() && VERSION.test(e.name))
-        .map((e) => e.name)
-        .sort((a, b) => (versionNumber(a) ?? 0) - (versionNumber(b) ?? 0));
-}
-
-export function nextVersion(dir: string): string {
-    const highest = versions(dir).reduce((max, v) => Math.max(max, versionNumber(v) ?? 0), 0);
-    return `v${highest + 1}`;
-}
-
-/**
- * Resolves a version name to a directory, rejecting anything that is not one.
- * The value reaches here from `--version-dir` and becomes a path segment.
- */
-export function versionDir(project: Project, name?: string): string {
-    const chosen = name ?? project.meta.activeVersion;
-    if (!VERSION.test(chosen)) {
-        throw usageError(`"${chosen}" is not a version`, 'versions are named v1, v2, …');
-    }
-    const dir = join(project.dir, chosen);
-    if (!existsSync(dir)) {
-        const known = versions(project.dir);
-        throw invalidError(
-            `${project.meta.name} has no ${chosen}`,
-            known.length ? `it has ${known.join(', ')}` : 'run: zen init',
-        );
-    }
-    return dir;
 }
 
 // ---------------------------------------------------------------------------
@@ -250,8 +205,6 @@ export interface ProjectSummary {
     path: string;
     /** false when the directory has gone away since it was registered */
     present: boolean;
-    activeVersion?: string;
-    versions: number;
     sessions: number;
     runs: number;
     lastRunAt?: string;
@@ -264,7 +217,6 @@ export async function summarize(entry: RegistryEntry): Promise<ProjectSummary> {
         name: entry.name,
         path: entry.path,
         present: false,
-        versions: 0,
         sessions: 0,
         runs: 0,
         busy: false,
@@ -279,27 +231,19 @@ export async function summarize(entry: RegistryEntry): Promise<ProjectSummary> {
         return base;
     }
 
-    const all = versions(entry.path);
-    const summary: ProjectSummary = {
-        ...base,
-        present: true,
-        activeVersion: meta.activeVersion,
-        versions: all.length,
-    };
+    const summary: ProjectSummary = { ...base, present: true };
 
-    for (const v of all) {
-        for (const session of sessionIds(join(entry.path, v))) {
-            summary.sessions++;
-            const dir = join(entry.path, v, 'sessions', session);
-            if (isBusy(dir)) {
-                summary.busy = true;
-            }
-            const ids = runIds(dir);
-            summary.runs += ids.length;
-            const newest = ids.at(-1);
-            if (newest && (!summary.lastRunAt || newest > summary.lastRunAt)) {
-                summary.lastRunAt = newest;
-            }
+    for (const session of sessionIds(entry.path)) {
+        summary.sessions++;
+        const dir = join(entry.path, 'sessions', session);
+        if (isBusy(dir)) {
+            summary.busy = true;
+        }
+        const ids = runIds(dir);
+        summary.runs += ids.length;
+        const newest = ids.at(-1);
+        if (newest && (!summary.lastRunAt || newest > summary.lastRunAt)) {
+            summary.lastRunAt = newest;
         }
     }
     return summary;
@@ -313,11 +257,11 @@ export async function summarize(entry: RegistryEntry): Promise<ProjectSummary> {
 // pulling in the runtime.
 // ---------------------------------------------------------------------------
 
-export const sessionsDir = (versionDir: string): string => join(versionDir, 'sessions');
+export const sessionsDir = (projectDir: string): string => join(projectDir, 'sessions');
 
 /** Session ids, oldest first. Only well-formed stamps count as sessions. */
-export function sessionIds(versionDir: string): string[] {
-    return stampedChildren(sessionsDir(versionDir));
+export function sessionIds(projectDir: string): string[] {
+    return stampedChildren(sessionsDir(projectDir));
 }
 
 export function runIds(sessionDir: string): string[] {

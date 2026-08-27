@@ -2,7 +2,6 @@ import { readProjectConfig } from 'zenera-neo';
 import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { ensurePodmanReady, ownedContainers, podmanStatus, removeContainers } from '../podman.ts';
-import * as Projects from '../projects.ts';
 import { project as findProject } from '../resolve.ts';
 import { bold, dim, green, json, note, red, usageError, write, yellow } from '../term.ts';
 
@@ -10,7 +9,6 @@ const USAGE = 'zen sandbox [status|up|pull|clean] [options]';
 
 interface Flags {
     project?: string;
-    'version-dir'?: string;
     image?: string;
 }
 
@@ -34,7 +32,6 @@ export const sandbox: Command = {
         '  clean                  Remove every container this CLI created.',
         '',
         '  --project <name|dir>   Which project the image comes from.',
-        '  --version-dir <vN>     Which version.',
         '  --image <ref>          Use this image instead of the project\u2019s.',
         '',
         'None of this is required. A run does all of it on its own, the first',
@@ -45,7 +42,6 @@ export const sandbox: Command = {
             ctx.args,
             {
                 project: { type: 'string' },
-                'version-dir': { type: 'string' },
                 image: { type: 'string' },
             },
             USAGE,
@@ -83,8 +79,7 @@ export const sandbox: Command = {
 async function projectImage(cwd: string, values: Flags): Promise<string | undefined> {
     try {
         const found = await findProject({ cwd, project: values.project, yes: true });
-        const versionDir = Projects.versionDir(found, values['version-dir']);
-        return readProjectConfig(versionDir).config.sandbox?.image;
+        return readProjectConfig(found.dir).config.sandbox?.image;
     } catch {
         return undefined;
     }

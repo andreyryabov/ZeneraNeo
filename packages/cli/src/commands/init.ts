@@ -1,11 +1,11 @@
 import { existsSync, readdirSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { one, parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { ensureHome } from '../home.ts';
 import { KeyStore, PROVIDERS, SHAPES } from '../keys.ts';
-import { META, Registry, nextVersion, readMeta, writeMeta } from '../projects.ts';
-import { copilotInstructions, editorSettings, scaffold } from '../scaffold.ts';
+import { META, Registry, readMeta, writeMeta } from '../projects.ts';
+import { scaffold } from '../scaffold.ts';
 import { bold, cyan, dim, green, invalidError, json, note, usageError, write } from '../term.ts';
 
 const USAGE = 'zen init [dir] [--name <name>] [--model <ref>] [--force]';
@@ -40,8 +40,8 @@ export const init: Command = {
     summary: 'Create a project here, or in <dir>, and register it.',
     usage: USAGE,
     details: [
-        'Writes AGENTS.md, agents.yaml and agents/ into v1, then records the',
-        'directory so `zen list` and `zen go` can find it by name. Editor files',
+        'Writes AGENTS.md, agents.yaml and agents/, then records the directory',
+        'so `zen list` and `zen go` can find it by name. Editor files',
         '(.vscode/settings.json, .github/copilot-instructions.md) are written',
         'alongside, and never overwritten.',
     ],
@@ -60,7 +60,7 @@ export const init: Command = {
         const name = values.name ?? basename(dir);
 
         if (await readMeta(dir)) {
-            throw invalidError(`${dir} is already a project`, 'add a version with: zen fork');
+            throw invalidError(`${dir} is already a project`);
         }
         if (existsSync(dir) && readdirSync(dir).length > 0 && !values.force) {
             throw usageError(`${dir} is not empty`, 'pass --force to write into it anyway');
@@ -68,24 +68,17 @@ export const init: Command = {
 
         ensureHome();
         const store = await KeyStore.open();
-        const version = nextVersion(dir);
-        const versionDir = join(dir, version);
-        const written = scaffold({ dir: versionDir, model: values.model ?? suggestModel(store) });
-        writeMeta(dir, { version: 1, name, activeVersion: version });
+        const written = scaffold({ dir, model: values.model ?? suggestModel(store) });
+        writeMeta(dir, { version: 1, name });
 
-        // A second copy at the top, for `zen open --root` and for anyone who
-        // opens the project rather than the version: the editor only reads the
-        // settings and instructions of the folder it was opened on.
-        const files = [META, ...written.map((f) => join(version, f))];
-        const root = [editorSettings(dir), copilotInstructions(dir)].filter((f) => f !== undefined);
-        files.splice(1, 0, ...root);
+        const files = [META, ...written];
 
         const registry = await Registry.open();
         registry.add(name, dir);
         registry.save();
 
         if (ctx.json) {
-            json({ name, path: dir, version, files });
+            json({ name, path: dir, files });
             return;
         }
 

@@ -47,7 +47,6 @@ import { CliError, EXIT, invalidError, warn } from './term.ts';
 
 export interface EngineOptions {
     project: Project;
-    versionDir: string;
     session: SessionPaths;
     readOnly?: boolean;
     /** default model override — `--model` */
@@ -85,7 +84,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
     // Said before the load, because the load stops at the first model it cannot
     // build: one SDK's words about one model, when the useful answer is which
     // of the project's models are reachable and which are not.
-    for (const issue of auditModels(opts.versionDir, keys)) {
+    for (const issue of auditModels(opts.project.dir, keys)) {
         warn(describeIssue(issue));
     }
 
@@ -103,7 +102,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
     let sandbox: SandboxSetup;
     let project: AgentProject;
     try {
-        const { config } = readProjectConfig(opts.versionDir);
+        const { config } = readProjectConfig(opts.project.dir);
         sandbox = buildSandbox({
             config,
             session: opts.session,
@@ -111,7 +110,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
             readOnly: opts.readOnly,
             image: opts.image,
         });
-        project = await loadProject(opts.versionDir, {
+        project = await loadProject(opts.project.dir, {
             tools: [
                 // Both groups are pointed at one directory, so both are told the
                 // one name for it: whatever `run_command` prints a path as,
@@ -129,7 +128,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
     } catch (err) {
         throw invalidError(
             err instanceof Error ? err.message : String(err),
-            `while loading ${opts.versionDir}`,
+            `while loading ${opts.project.dir}`,
         );
     }
 

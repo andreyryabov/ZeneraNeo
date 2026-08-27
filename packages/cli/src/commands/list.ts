@@ -3,7 +3,7 @@ import type { Command } from '../command.ts';
 // Run ids are timestamps by construction, so the newest id *is* the last-run
 // time — no file has to be opened to learn it.
 import { stampInstant } from '../ids.ts';
-import { openDir, Registry, summarize, versionDir, type ProjectSummary } from '../projects.ts';
+import { openDir, Registry, summarize, type ProjectSummary } from '../projects.ts';
 import { listSessions } from '../session.ts';
 import { ago, bold, count, dim, json, note, table, write, writeAll, yellow } from '../term.ts';
 
@@ -15,7 +15,7 @@ interface Flags {
 }
 
 export const list: Command = {
-    summary: 'Every known project: version, sessions, last run, whether one is live.',
+    summary: 'Every known project: sessions, last run, whether one is live.',
     usage: USAGE,
     details: [
         'The registry is an index, not the truth. An entry whose directory has',
@@ -55,20 +55,12 @@ export const list: Command = {
         }
 
         const rows: string[][] = [
-            [
-                bold('NAME'),
-                bold('VERSION'),
-                bold('SESSIONS'),
-                bold('RUNS'),
-                bold('LAST'),
-                bold('PATH'),
-            ],
+            [bold('NAME'), bold('SESSIONS'), bold('RUNS'), bold('LAST'), bold('PATH')],
         ];
         for (const s of summaries) {
             const style = s.present ? (x: string) => x : dim;
             rows.push([
                 style(s.name) + (s.busy ? yellow(' •') : ''),
-                style(s.activeVersion ?? '—'),
                 style(String(s.sessions)),
                 style(String(s.runs)),
                 style(ago(s.lastRunAt ? stampInstant(s.lastRunAt) : undefined)),
@@ -109,7 +101,7 @@ function stampToIso(id: string): string | undefined {
 
 async function sessionRows(summary: ProjectSummary): Promise<string[]> {
     const project = await openDir(summary.path);
-    const sessions = await listSessions(versionDir(project));
+    const sessions = await listSessions(project.dir);
     if (sessions.length === 0) {
         return [dim('  no sessions')];
     }
@@ -132,7 +124,7 @@ async function withSessions(summaries: ProjectSummary[]): Promise<unknown[]> {
             continue;
         }
         const project = await openDir(s.path);
-        out.push({ ...s, sessionList: await listSessions(versionDir(project)) });
+        out.push({ ...s, sessionList: await listSessions(project.dir) });
     }
     return out;
 }

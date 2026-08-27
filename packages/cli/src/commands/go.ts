@@ -1,15 +1,9 @@
 import { one, parse } from '../args.ts';
 import type { Command } from '../command.ts';
-import { versionDir } from '../projects.ts';
 import { project as resolveProject } from '../resolve.ts';
 import { json, note, usageError, write } from '../term.ts';
 
-const USAGE = 'zen go [project] [--version-dir <vN>] [--root]';
-
-interface Flags {
-    'version-dir'?: string;
-    root?: boolean;
-}
+const USAGE = 'zen go [project]';
 
 /**
  * A child process cannot change its parent's working directory, so this prints
@@ -18,27 +12,23 @@ interface Flags {
  * for the same reason.
  */
 export const go: Command = {
-    summary: "Print a project's active version directory, for the shell to cd to.",
+    summary: "Print a project's directory, for the shell to cd to.",
     usage: USAGE,
     details: [
         'Add the wrapper to your shell to make it change directory:',
         '    eval "$(zen shell-init zsh)"',
     ],
     run: async (ctx) => {
-        const { values, positionals } = parse<Flags>(
-            ctx.args,
-            { 'version-dir': { type: 'string' }, root: { type: 'boolean' } },
-            USAGE,
-        );
+        const { positionals } = parse(ctx.args, {}, USAGE);
 
         const found = await resolveProject({
             cwd: ctx.cwd,
             project: one(positionals, 'project', USAGE),
         });
-        const dir = values.root ? found.dir : versionDir(found, values['version-dir']);
+        const dir = found.dir;
 
         if (ctx.json) {
-            json({ name: found.meta.name, path: dir, root: found.dir });
+            json({ name: found.meta.name, path: dir });
             return;
         }
         write(dir);

@@ -54,40 +54,36 @@ reported as stale, not treated as an error.
 
 ### 3.2 A project
 
-A project is a directory of **versions**. A version is a complete, immutable-ish
-agent definition together with the sessions that ran against it, so changing the
-prompt never silently reinterprets old runs.
+A project is a directory: one complete agent definition together with the
+sessions that ran against it.
 
 ```
 <project>/
-    zenera.json                  { name, activeVersion } — the project's own truth
-    v1/
-        AGENTS.md
-        agents.yaml
-        agents/
-            prompts/
-            skills/
-        sessions/
-            20260825-143012-a7f3/
-                workspace/       what the agent can see and write
-                .data/
-                    state.json   the live, resumable session state
-                    memory/      MemoryStore (file)
-                    blobs/       PayloadStore (file)
-                .lock            present only while a run holds it
-                runs/
-                    20260825-143012-b104/
-                        input.md
-                        output.md
-                        state.json    immutable snapshot of this run
-                        report.html   `renderReportHtml` output
-                        meta.json     model, usage, duration, exit
-    v2/
-        …
+    zenera.json                  { name } — the project's own truth
+    AGENTS.md
+    agents.yaml
+    agents/
+        prompts/
+        skills/
+    sessions/
+        20260825-143012-a7f3/
+            workspace/           what the agent can see and write
+            .data/
+                state.json       the live, resumable session state
+                memory/          MemoryStore (file)
+                blobs/           PayloadStore (file)
+            .lock                present only while a run holds it
+            runs/
+                20260825-143012-b104/
+                    input.md
+                    output.md
+                    state.json    immutable snapshot of this run
+                    report.html   `renderReportHtml` output
+                    meta.json     model, usage, duration, exit
 ```
 
 `zenera.json` at the top rather than only in the registry: the project stays
-self-describing, so moving the directory does not lose the active version.
+self-describing, so moving the directory does not lose its name.
 
 Two `state.json` files, deliberately. The one under `.data/` is mutable — it is
 what `zen run` resumes from. The one under `runs/<id>/` is a snapshot taken when
@@ -117,10 +113,9 @@ two.
 | Command   | Does                                                                     |
 | --------- | ------------------------------------------------------------------------ |
 | `init`    | Creates a project here, or in `<dir>`, and registers it.                 |
-| `list`    | Every known project: version, sessions, last run, whether one is live.   |
-| `go`      | Prints a project's active version directory, for the shell to `cd` to.   |
+| `list`    | Every known project: sessions, last run, whether one is live.            |
+| `go`      | Prints a project's directory, for the shell to `cd` to.                  |
 | `open`    | Opens a project in your editor.                                          |
-| `fork`    | Copies the active version to the next one and makes it active.           |
 | `key`     | The credential store (§6).                                               |
 | `run`     | Runs the project — the TUI on a terminal, one shot otherwise (§7).       |
 | `inspect` | Opens or rebuilds a run's `report.html`.                                 |
@@ -140,7 +135,7 @@ point, and a flag says that better than a command does.
 
 ### 5.1 `zen init [dir]`
 
-Scaffolds `v1` — an empty `AGENTS.md`, a minimal `agents.yaml` naming one
+Scaffolds the project — an empty `AGENTS.md`, a minimal `agents.yaml` naming one
 `default` agent, and empty `agents/prompts/` and `agents/skills/` — writes
 `zenera.json`, and adds the path to `projects.json`.
 
@@ -149,8 +144,7 @@ silently merging into someone's source tree. The project name defaults to the
 directory's, and `--name` overrides it; a name already in the registry pointing
 somewhere else is a usage error, not a silent overwrite.
 
-It also writes `.vscode/settings.json`, in the version **and** at the project
-root:
+It also writes `.vscode/settings.json`:
 
 ```json
 {
@@ -160,7 +154,7 @@ root:
 ```
 
 VS Code reads an `AGENTS.md` at the root of an open folder and feeds it to its
-own assistant as always-on instructions. A version's `AGENTS.md` is the house
+own assistant as always-on instructions. The project's `AGENTS.md` is the house
 rules for _this project's_ agents — addressed to them, about their tools and
 their workspace — and `zen open` opens exactly that directory, so left alone the
 two would be confused every single time.
@@ -168,16 +162,13 @@ two would be confused every single time.
 `chat.useAgentsMdFile` defaults to true, so switching it off is the part that
 does the work. `chat.useNestedAgentsMdFiles` is already false by default and is
 written anyway: it is opt-in globally, and someone who turned it on would
-otherwise pull in every version's `AGENTS.md` at once from the project root.
+otherwise pull in every nested `AGENTS.md` at once.
 Both are _restricted_ settings, so they apply only in a trusted workspace, which
 is the right way round — an untrusted folder is not one to be running agents in
 either.
 
-Two copies rather than one because an editor only reads the settings of the
-folder it was opened on, and both `zen open` and `zen open --root` are ordinary
-things to do. Neither is ever overwritten: an existing `settings.json` is
-somebody's, and a directory may well predate the project. `fork` carries the
-file forward with the rest of the version.
+It is never overwritten: an existing `settings.json` is somebody's, and a
+directory may well predate the project.
 
 ### 5.2 `zen list`
 
@@ -255,17 +246,6 @@ editor's own wait flag — `--wait`, `-w`, or `open -W`.
 
 A named editor that is not on `PATH` is resolved and rejected _before_ anything
 is spawned — an ENOENT on a detached child is a failure nobody would ever see.
-
-### 5.5 `zen fork`
-
-`v<n>` → `v<n+1>`: copies `AGENTS.md`, `agents.yaml` and `agents/`, and copies
-**no sessions**, then points `zenera.json` at the new version. Editing prompts
-in place stays legal; `fork` is for when you want the old runs to keep meaning
-what they meant.
-
-Not called `version` because that name is taken by the CLI's own, and overloading
-it would make `zen version` ambiguous in exactly the situation you most want a
-straight answer.
 
 ## 6. Credentials — `zen key`
 
@@ -354,7 +334,6 @@ hangs on a prompt.
 | Question  | Flag                      | Inferred from                               | Otherwise      |
 | --------- | ------------------------- | ------------------------------------------- | -------------- |
 | Project   | `--project <name\|dir>`   | `zenera.json` at or above the cwd           | Pick from list |
-| Version   | `--version-dir <vN>`      | `zenera.json`'s `activeVersion`             | —              |
 | Session   | `--session <id>`, `--new` | The most recent session, resumed            | Pick or create |
 | Workspace | `--workspace <dir>`       | `sessions/<id>/workspace` for a new session | Ask            |
 
@@ -470,10 +449,11 @@ How it becomes available:
 | Project dependency | `npx zen …`, or `zen` inside an npm script                                       |
 | This repo          | `npm install` at the root links `node_modules/.bin/zen` at the workspace symlink |
 
-The package is still `private: true`; publishing means dropping that flag. Until
-then the only path is the workspace link or `npm link packages/cli`.
+The package is published as `zenera-cli`; `npm pack --dry-run -w packages/cli`
+shows the exact tarball before it leaves the machine. For working on the CLI
+itself, the workspace link below beats reinstalling.
 
-### 8.1 Before publishing
+### 8.1 Developing against the workspace
 
 `npm run cli:link` builds and then `npm link -w packages/cli`, which puts a
 symlink — not a copy — in the global prefix:
@@ -486,11 +466,11 @@ symlink — not a copy — in the global prefix:
 So `zen` picks up every rebuild with no reinstall, and `zenera-neo` resolves
 through the workspace: Node takes the realpath of the shim's target before
 walking up for `node_modules`, so the lookup starts inside the repo and finds
-the workspace symlink. The unpublished exact-version dependency is never fetched.
+the workspace symlink — the published library is never fetched.
 
 `npm i -g ./packages/cli` is the wrong tool here — it copies the directory out of
-the workspace and then tries to install `zenera-neo@0.1.0` from the registry,
-which does not exist yet.
+the workspace, so `zenera-neo` comes from the registry and your local edits to
+the library are invisible.
 
 `npm run cli:unlink` removes it.
 

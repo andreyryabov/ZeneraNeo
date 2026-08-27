@@ -2,7 +2,6 @@ import { loadProject, type AgentProject } from 'zenera-neo';
 import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { KeyStore, PROVIDERS, SHAPES } from '../keys.ts';
-import { versionDir } from '../projects.ts';
 import { project as resolveProject } from '../resolve.ts';
 import {
     bold,
@@ -19,11 +18,10 @@ import {
     yellow,
 } from '../term.ts';
 
-const USAGE = 'zen models [--project <name|dir>] [--version-dir <vN>]';
+const USAGE = 'zen models [--project <name|dir>]';
 
 interface Flags {
     project?: string;
-    'version-dir'?: string;
 }
 
 /**
@@ -36,14 +34,10 @@ export const models: Command = {
     summary: 'Resolve providers and models and validate the config, calling nothing.',
     usage: USAGE,
     run: async (ctx) => {
-        const { values } = parse<Flags>(
-            ctx.args,
-            { project: { type: 'string' }, 'version-dir': { type: 'string' } },
-            USAGE,
-        );
+        const { values } = parse<Flags>(ctx.args, { project: { type: 'string' } }, USAGE);
 
         const found = await resolveProject({ cwd: ctx.cwd, project: values.project });
-        const dir = versionDir(found, values['version-dir']);
+        const dir = found.dir;
 
         const store = await KeyStore.open();
         // Asked before materialising, because materialising is exactly what
@@ -87,7 +81,6 @@ export const models: Command = {
         if (ctx.json) {
             json({
                 project: found.meta.name,
-                version: values['version-dir'] ?? found.meta.activeVersion,
                 source: project.source,
                 providers: project.models.names(),
                 agents,

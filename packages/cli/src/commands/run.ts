@@ -13,7 +13,6 @@ const USAGE = 'zen run [project] [prompt] [options]';
 
 interface Flags {
     project?: string;
-    'version-dir'?: string;
     session?: string;
     new?: boolean;
     workspace?: string;
@@ -32,7 +31,6 @@ export const run: Command = {
     usage: USAGE,
     details: [
         '  --project <name|dir>   Which project. Inferred from the directory.',
-        '  --version-dir <vN>     Which version. Defaults to the active one.',
         '  --session <id>         Continue a particular session.',
         '  --new                  Start a fresh one.',
         '  --workspace <dir>      What the agent can read and write.',
@@ -56,7 +54,6 @@ export const run: Command = {
             ctx.args,
             {
                 project: { type: 'string' },
-                'version-dir': { type: 'string' },
                 session: { type: 'string' },
                 new: { type: 'boolean' },
                 workspace: { type: 'string' },
@@ -91,7 +88,6 @@ export const run: Command = {
         const where = await target({
             cwd: ctx.cwd,
             project: values.project ?? (named ? head : undefined),
-            version: values['version-dir'],
             session: values.session,
             fresh: values.new,
             workspace: values.workspace,
@@ -100,7 +96,6 @@ export const run: Command = {
 
         const engine = await Engine.open({
             project: where.project,
-            versionDir: where.versionDir,
             session: where.session,
             readOnly: values['read-only'],
             model: values.model,

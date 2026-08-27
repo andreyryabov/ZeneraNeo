@@ -100,10 +100,10 @@ function credential(need: ModelRequirement): { env: string; present: boolean } {
  * Call *after* `KeyStore.materialize()`, so the keyring's keys are as visible
  * here as they will be to the library.
  */
-export function auditModels(versionDir: string, store: KeyStore): ModelIssue[] {
+export function auditModels(projectDir: string, store: KeyStore): ModelIssue[] {
     let config: ProjectConfig;
     try {
-        config = readProjectConfig(versionDir).config;
+        config = readProjectConfig(projectDir).config;
     } catch {
         return [];
     }

@@ -23,7 +23,6 @@ import { ago, choose, confirm, dim, isInteractive, usageError, warn, yellow } fr
 
 export interface Wanted {
     project?: string;
-    version?: string;
     session?: string;
     fresh?: boolean;
     workspace?: string;
@@ -33,7 +32,6 @@ export interface Wanted {
 
 export interface Target {
     project: Projects.Project;
-    versionDir: string;
     session: SessionPaths;
     /** true when this call created the session */
     created: boolean;
@@ -72,7 +70,7 @@ export async function project(want: Wanted): Promise<Projects.Project> {
 
 export async function target(want: Wanted): Promise<Target> {
     const found = await project(want);
-    const versionDir = Projects.versionDir(found, want.version);
+    const dir = found.dir;
 
     if (want.session && want.fresh) {
         throw usageError('--session and --new contradict each other');
@@ -80,18 +78,17 @@ export async function target(want: Wanted): Promise<Target> {
     if (want.session) {
         return {
             project: found,
-            versionDir,
-            session: requireSession(versionDir, want.session),
+            session: requireSession(dir, want.session),
             created: false,
         };
     }
     if (!want.fresh) {
-        const existing = await pickExisting(versionDir);
+        const existing = await pickExisting(dir);
         if (existing) {
-            return { project: found, versionDir, session: existing, created: false };
+            return { project: found, session: existing, created: false };
         }
     }
-    return { project: found, versionDir, session: await create(versionDir, want), created: true };
+    return { project: found, session: await create(dir, want), created: true };
 }
 
 /**
@@ -99,14 +96,14 @@ export async function target(want: Wanted): Promise<Target> {
  * With one session it is taken without asking; with several, the others are
  * offered, because "the most recent" is only usually what you meant.
  */
-async function pickExisting(versionDir: string): Promise<SessionPaths | undefined> {
-    const sessions = await listSessions(versionDir);
+async function pickExisting(projectDir: string): Promise<SessionPaths | undefined> {
+    const sessions = await listSessions(projectDir);
     if (sessions.length === 0) {
         return undefined;
     }
     if (!isInteractive()) {
-        const newest = newestSession(versionDir);
-        return newest ? sessionPaths(versionDir, newest) : undefined;
+        const newest = newestSession(projectDir);
+        return newest ? sessionPaths(projectDir, newest) : undefined;
     }
     const choice = await choose<string | undefined>('Session', [
         ...sessions.map((s) => ({
@@ -118,7 +115,7 @@ async function pickExisting(versionDir: string): Promise<SessionPaths | undefine
         })),
         { label: dim('New session…'), value: undefined },
     ]);
-    return choice ? sessionPaths(versionDir, choice) : undefined;
+    return choice ? sessionPaths(projectDir, choice) : undefined;
 }
 
 /**
@@ -126,11 +123,11 @@ async function pickExisting(versionDir: string): Promise<SessionPaths | undefine
  * asked against the real paths — and so a cancelled answer leaves no directory
  * behind.
  */
-async function create(versionDir: string, want: Wanted): Promise<SessionPaths> {
+async function create(projectDir: string, want: Wanted): Promise<SessionPaths> {
     const id = stamp();
-    const planned = sessionPaths(versionDir, id);
+    const planned = sessionPaths(projectDir, id);
     const workspace = await chooseWorkspace(planned, want);
-    return createSession(versionDir, id, workspace);
+    return createSession(projectDir, id, workspace);
 }
 
 // ---------------------------------------------------------------------------

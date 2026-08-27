@@ -33,11 +33,11 @@ export interface SessionPaths {
     meta: string;
 }
 
-export function sessionPaths(versionDir: string, id: string): SessionPaths {
+export function sessionPaths(projectDir: string, id: string): SessionPaths {
     if (!isStamp(id)) {
         throw usageError(`"${id}" is not a session id`, 'ids look like 20260825-143012-a7f3');
     }
-    const dir = join(sessionsDir(versionDir), id);
+    const dir = join(sessionsDir(projectDir), id);
     const data = join(dir, '.data');
     return {
         id,
@@ -71,8 +71,8 @@ export interface SessionMeta {
 // Creating and finding
 // ---------------------------------------------------------------------------
 
-export function createSession(versionDir: string, id: string, workspace: string): SessionPaths {
-    const p = sessionPaths(versionDir, id);
+export function createSession(projectDir: string, id: string, workspace: string): SessionPaths {
+    const p = sessionPaths(projectDir, id);
     mkdirSync(p.data, { recursive: true });
     mkdirSync(p.runs, { recursive: true });
     mkdirSync(resolve(workspace), { recursive: true });
@@ -114,10 +114,10 @@ export interface SessionSummary {
 }
 
 /** Newest first — the order a picker wants. */
-export async function listSessions(versionDir: string): Promise<SessionSummary[]> {
+export async function listSessions(projectDir: string): Promise<SessionSummary[]> {
     const out: SessionSummary[] = [];
-    for (const id of sessionIds(versionDir).reverse()) {
-        const p = sessionPaths(versionDir, id);
+    for (const id of sessionIds(projectDir).reverse()) {
+        const p = sessionPaths(projectDir, id);
         const meta = await readSessionMeta(p);
         const ids = runIds(p.dir);
         out.push({
@@ -132,12 +132,12 @@ export async function listSessions(versionDir: string): Promise<SessionSummary[]
     return out;
 }
 
-export function newestSession(versionDir: string): string | undefined {
-    return sessionIds(versionDir).at(-1);
+export function newestSession(projectDir: string): string | undefined {
+    return sessionIds(projectDir).at(-1);
 }
 
-export function requireSession(versionDir: string, id: string): SessionPaths {
-    const p = sessionPaths(versionDir, id);
+export function requireSession(projectDir: string, id: string): SessionPaths {
+    const p = sessionPaths(projectDir, id);
     if (!existsSync(p.dir)) {
         throw invalidError(`no session ${id}`, 'see: zen list --sessions');
     }

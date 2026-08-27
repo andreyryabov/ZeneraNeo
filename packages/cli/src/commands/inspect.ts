@@ -13,7 +13,6 @@ import {
 } from 'zenera-neo';
 import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
-import { versionDir } from '../projects.ts';
 import { project as resolveProject } from '../resolve.ts';
 import {
     display,
@@ -31,7 +30,6 @@ const USAGE = 'zen inspect [run] [--session <id>] [--open] [--rebuild] [--serve 
 
 interface Flags {
     project?: string;
-    'version-dir'?: string;
     session?: string;
     open?: boolean;
     rebuild?: boolean;
@@ -50,7 +48,6 @@ export const inspect: Command = {
             ctx.args,
             {
                 project: { type: 'string' },
-                'version-dir': { type: 'string' },
                 session: { type: 'string' },
                 open: { type: 'boolean' },
                 rebuild: { type: 'boolean' },
@@ -60,7 +57,7 @@ export const inspect: Command = {
         );
 
         const found = await resolveProject({ cwd: ctx.cwd, project: values.project });
-        const dir = versionDir(found, values['version-dir']);
+        const dir = found.dir;
         const session = pickSession(dir, values.session);
         const run = pickRun(session, positionals[0]);
 

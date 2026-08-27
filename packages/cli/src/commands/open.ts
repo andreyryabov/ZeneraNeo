@@ -4,17 +4,14 @@ import { homedir } from 'node:os';
 import { delimiter, join, resolve, sep } from 'node:path';
 import { one, parse } from '../args.ts';
 import type { Command } from '../command.ts';
-import { versionDir } from '../projects.ts';
 import { project as resolveProject } from '../resolve.ts';
 import { copilotInstructions, editorSettings } from '../scaffold.ts';
 import { CliError, cyan, dim, EXIT, json, note, usageError } from '../term.ts';
 
-const USAGE = 'zen open [project] [--editor <cmd>] [--version-dir <vN>] [--root] [--wait]';
+const USAGE = 'zen open [project] [--editor <cmd>] [--wait]';
 
 interface Flags {
     editor?: string;
-    'version-dir'?: string;
-    root?: boolean;
     wait?: boolean;
 }
 
@@ -29,7 +26,6 @@ export const open: Command = {
     summary: 'Open a project in your editor.',
     usage: USAGE,
     details: [
-        'The version directory by default, the project root with --root.',
         'Editor: --editor, then $ZENERA_EDITOR, then the editor this terminal',
         'belongs to, then $VISUAL or $EDITOR, then a known editor on PATH or',
         'installed, then the platform opener.',
@@ -42,8 +38,6 @@ export const open: Command = {
             ctx.args,
             {
                 editor: { type: 'string' },
-                'version-dir': { type: 'string' },
-                root: { type: 'boolean' },
                 wait: { type: 'boolean' },
             },
             USAGE,
@@ -53,7 +47,7 @@ export const open: Command = {
             cwd: ctx.cwd,
             project: one(positionals, 'project', USAGE),
         });
-        const dir = values.root ? found.dir : versionDir(found, values['version-dir']);
+        const dir = found.dir;
         const editor = choose(values.editor, values.wait === true);
         verify(editor);
 

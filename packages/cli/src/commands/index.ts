@@ -1,5 +1,4 @@
 import type { Command } from '../command.ts';
-import { fork } from './fork.ts';
 import { go, shellInit } from './go.ts';
 import { init } from './init.ts';
 import { inspect } from './inspect.ts';
@@ -22,7 +21,6 @@ export const COMMANDS: Record<string, Command> = {
     run,
     go,
     open,
-    fork,
     key,
     models,
     inspect,

@@ -20,7 +20,7 @@ Two pieces:
 | Directory      | Published as | What it is                                                      |
 | -------------- | ------------ | --------------------------------------------------------------- |
 | `packages/neo` | `zenera-neo` | the library — agents, models, tools, skills, memory, trajectory |
-| `packages/cli` | _private_    | `zen`, the command line: projects, sessions, credentials, a TUI |
+| `packages/cli` | `zenera-cli` | `zen`, the command line: projects, sessions, credentials, a TUI |
 
 ## Quickstart
 
@@ -54,18 +54,16 @@ repositories are shareable.**
 
 ```
 my-project/
-    zenera.json                  name + active version
-    v1/
-        AGENTS.md                house rules, prepended to every agent
-        agents.yaml              who exists, what they may reach for
-        agents/
-            prompts/<name>.md    each agent's own brief
-            skills/<name>/       knowledge loaded on demand, not always-on
-        sessions/                one workspace, memory and trajectory each
-            <id>/
-                workspace/       what the agents can read and write
-                runs/<id>/       input, output, state, report.html, meta
-    v2/                          `zen fork` — old runs keep meaning what they meant
+    zenera.json                  the project's own name
+    AGENTS.md                    house rules, prepended to every agent
+    agents.yaml                  who exists, what they may reach for
+    agents/
+        prompts/<name>.md        each agent's own brief
+        skills/<name>/           knowledge loaded on demand, not always-on
+    sessions/                    one workspace, memory and trajectory each
+        <id>/
+            workspace/           what the agents can read and write
+            runs/<id>/           input, output, state, report.html, meta
 ```
 
 The whole system is that `agents.yaml`:
@@ -128,7 +126,7 @@ opaque.
 ### What is different about it
 
 - **The project is the artefact.** Not a script that happens to call a model —
-  a directory with versions, sessions and recorded runs, safe to commit.
+  a directory with sessions and recorded runs, safe to commit.
 - **Nothing is hidden.** No orchestration layer, no framework magic: an agent is
   an instruction, a model, tools, skills, handoffs and fork. That is the list.
 - **Everything is recorded.** Every run writes its input, output, state and a
@@ -147,7 +145,7 @@ npm run cli:link     # build + npm link → `zen` on your PATH
 
 ```sh
 zen key add openai < key.txt   # credentials, never in the project
-zen init my-project            # scaffold v1 and register it
+zen init my-project            # scaffold the project and register it
 cd "$(zen go my-project)"
 zen run                        # TUI on a terminal
 zen run "summarise this repo"  # one shot; stdout is the answer
@@ -159,10 +157,9 @@ zen inspect                    # open the last run's report.html
 | Command   | Does                                                                     |
 | --------- | ------------------------------------------------------------------------ |
 | `init`    | Creates a project here, or in `<dir>`, and registers it.                 |
-| `list`    | Every known project: version, sessions, last run, whether one is live.   |
-| `go`      | Prints a project's active version directory, for the shell to `cd` to.   |
+| `list`    | Every known project: sessions, last run, whether one is live.            |
+| `go`      | Prints a project's directory, for the shell to `cd` to.                  |
 | `open`    | Opens a project in your editor.                                          |
-| `fork`    | Copies the active version to the next one and makes it active.           |
 | `key`     | The credential keyring — add, check, switch, remove.                     |
 | `run`     | Runs the project — the TUI on a terminal, one shot otherwise.            |
 | `inspect` | Opens or rebuilds a run's `report.html`.                                 |
@@ -176,11 +173,9 @@ credential, `5` sandbox unavailable.
 
 ### Concepts
 
-- **Project** — a named directory of versions. Self-describing: `zenera.json`
-  travels with it, so moving or cloning it loses nothing.
-- **Version** (`v1`, `v2`, …) — a complete agent definition plus the sessions
-  that ran against it. `zen fork` starts the next one, so editing a prompt never
-  retroactively reinterprets old runs.
+- **Project** — a named directory holding a complete agent definition and the
+  sessions that ran against it. Self-describing: `zenera.json` travels with it,
+  so moving or cloning it loses nothing.
 - **Session** — a context that persists: one workspace, one memory, one blob
   store, one accumulating trajectory. Resumable.
 - **Run** — one prompt in, one answer out, inside a session. Recorded in full,

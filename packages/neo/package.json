@@ -51,14 +51,16 @@
     },
     "sideEffects": false,
     "files": [
-        "dist"
+        "dist",
+        "src"
     ],
     "engines": {
         "node": ">=24"
     },
     "scripts": {
         "build": "tsc -b",
-        "clean": "tsc -b --clean && rm -rf dist"
+        "clean": "tsc -b --clean && rm -rf dist",
+        "prepack": "tsc -b"
     },
     "dependencies": {
         "yaml": "^2.9.0",

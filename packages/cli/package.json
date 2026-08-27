@@ -19,7 +19,6 @@
         "directory": "packages/cli"
     },
     "bugs": "https://github.com/andreyryabov/ZeneraNeo/issues",
-    "private": true,
     "type": "module",
     "bin": {
         "zen": "./dist/main.js",
@@ -28,6 +27,7 @@
     },
     "files": [
         "dist",
+        "src",
         "templates"
     ],
     "engines": {
@@ -35,13 +35,14 @@
     },
     "scripts": {
         "build": "tsc -b",
-        "clean": "tsc -b --clean && rm -rf dist"
+        "clean": "tsc -b --clean && rm -rf dist",
+        "prepack": "tsc -b"
     },
     "dependencies": {
         "@inkjs/ui": "^2.0.0",
         "ink": "^7.1.1",
         "react": "^19.2.8",
-        "zenera-neo": "0.1.0"
+        "zenera-neo": "^0.1.0"
     },
     "peerDependencies": {
         "@anthropic-ai/sdk": "^0.120.0",
