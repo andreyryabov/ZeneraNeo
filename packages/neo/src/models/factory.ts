@@ -432,9 +432,9 @@ export class ModelRegistry {
             apiKeyEnv,
             satisfied: Boolean(
                 apiKey ??
-                    provider.token ??
-                    (spec.client || provider.client) ??
-                    defaults.keyOptional,
+                provider.token ??
+                (spec.client || provider.client) ??
+                defaults.keyOptional,
             ),
             keyOptional: Boolean(defaults.keyOptional),
         };

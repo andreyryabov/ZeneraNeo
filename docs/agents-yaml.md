@@ -52,6 +52,7 @@ they should be unambiguous in both.
 | `models`    | map of name → model    | Named model configurations                                 |
 | `model`     | model ref              | Fallback for agents that do not pin their own              |
 | `skills`    | string or string[]     | Skill directories, merged into one catalog                 |
+| `sandbox`   | sandbox                | The container `run_command` and friends execute in         |
 | `agents`    | agent[]                | At least one                                               |
 
 ---
@@ -234,6 +235,95 @@ If the key is absent and `agents/skills` exists, it is used.
 
 ---
 
+## `sandbox:`
+
+Where `run_command` runs. Command-line tools execute in a Linux container with
+the session's workspace bind-mounted at `/workspace`; nothing else of the host
+is reachable, and the container is the boundary rather than any inspection of
+what the model wrote.
+
+```yaml
+sandbox:
+    image: docker.io/library/python:3.13-slim
+    cpus: 4
+    memory: 4096
+    network: bridge
+    timeout: 300
+    env: [HTTPS_PROXY, NO_PROXY]
+```
+
+| Field     | Type                   | Default                                  | Meaning                                             |
+| --------- | ---------------------- | ---------------------------------------- | --------------------------------------------------- |
+| `image`   | string                 | `docker.io/library/debian:bookworm-slim` | The base image commands run in                      |
+| `cpus`    | number                 | the host's                               | Fractional cores, as podman's `--cpus`              |
+| `memory`  | integer, MiB           | the host's                               | As podman's `--memory`                              |
+| `network` | `bridge`/`none`/`host` | `bridge`                                 | `none` for a project that must not reach out        |
+| `workdir` | absolute path          | `/workspace`                             | Where the workspace is mounted, and the default cwd |
+| `timeout` | integer, seconds       | `120`                                    | Per command, unless a call asks for less            |
+| `user`    | string                 | the image's                              | uid, name, or `uid:gid`                             |
+| `persist` | boolean                | `false`                                  | Keep the container between sessions                 |
+| `env`     | string[]               | none                                     | Host variables to forward, **by name**              |
+
+`cpus` and `memory` do two jobs on macOS and Windows: they cap the container,
+and they size the Podman virtual machine if the CLI has to create one. On
+Linux there is no machine and they only cap the container.
+
+### What survives, and what does not
+
+The container is removed when the session closes, so anything installed into
+its root filesystem is gone. Two directories are bind mounts and do survive:
+
+| Inside        | On the host                                              |
+| ------------- | -------------------------------------------------------- |
+| `/workspace`  | the session's workspace                                  |
+| `/home/agent` | `<session>/.data/sandbox/home`, and `$HOME` points at it |
+
+So `pip install --user`, `npm config`, `~/.cache` and anything else an agent
+puts in its home directory are still there when the session is opened again,
+and they travel with the session directory when it is copied. A `pip install`
+into the system site-packages does not. `persist: true` keeps the whole
+container instead — stopped, not running — at the cost of a rootfs that no
+longer matches the config that made it.
+
+Changing any field here changes the container's name, so a project that bumps
+its image gets a new container rather than an old one quietly persisting with
+the wrong contents.
+
+### `env:` names, never values
+
+A value in this file would be a secret in the repository, so only names are
+accepted and the host's environment supplies the value. Names that read like a
+credential — anything containing `KEY`, `TOKEN`, `SECRET`, `PASSWORD` or
+`CREDENTIAL` — are refused at load. The CLI materialises its keyring into its
+own environment before loading a project, so forwarding one would hand every
+model key to whatever the agent decided to run.
+
+### `agents[].sandbox`
+
+Agents share one container by default. They already share the workspace, and a
+hand-off is meant to be continuous: whatever the first agent installed should
+still be there when the second takes over.
+
+An agent that needs a different image says so, and gets its own:
+
+```yaml
+sandbox:
+    image: docker.io/library/debian:bookworm-slim
+
+agents:
+    - name: analyst
+      tools: [sandbox:*]
+      sandbox:
+          image: docker.io/library/python:3.13-slim
+    - name: writer
+      tools: [sandbox:*] # shares the project's container
+```
+
+The fields are the same, merged over the top-level block. Two agents that
+resolve to the same configuration still share one container.
+
+---
+
 ## `agents:`
 
 ```yaml
@@ -263,6 +353,7 @@ agents:
 | `handoffs`    | Agent names this one may transfer to                                                                 |
 | `skills`      | Skill binding; see below                                                                             |
 | `fork`        | `true`, or a binding — opt-in to parallel branches; see below                                        |
+| `sandbox`     | Overrides on the top-level `sandbox:`; see below                                                     |
 | `default`     | `true` marks the entry point, if no top-level `default:`                                             |
 
 `handoffs` takes bare strings by design, not objects. A hand-off carries no
@@ -291,11 +382,22 @@ tools: [workspace:*, -delete_file, -move_file, policy_lookup]
 ```
 
 Groups come from the tool, not from config: `workspaceTools()` tags its seven
-with `workspace`, and a host's own tools can carry any `group` they like. The
-model never sees a group — it gets the same flat list of names either way.
+with `workspace`, `sandboxTools()` tags its four with `sandbox`, and a host's
+own tools can carry any `group` they like. The model never sees a group — it
+gets the same flat list of names either way.
 
 The same grammar resolves a skill's `tools:` frontmatter against the tools
 registered on its provider.
+
+The two groups the CLI registers:
+
+| Group         | Tools                                                                                          |
+| ------------- | ---------------------------------------------------------------------------------------------- |
+| `workspace:*` | `read_file`, `list_dir`, `find_files`, `write_file`, `apply_patch`, `move_file`, `delete_file` |
+| `sandbox:*`   | `run_command`, `run_command_background`, `read_command_output`, `stop_command`                 |
+
+Naming `sandbox:*` is what makes a project need a container engine. See
+[`sandbox:`](#sandbox).
 
 ### `agents[].skills`
 

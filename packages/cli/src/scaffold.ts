@@ -35,8 +35,13 @@ agents:
       #
       # workspace:* is every file tool at once. Name them one by one to be
       # narrower, or subtract: [workspace:*, -delete_file]
+      #
+      # Add sandbox:* to let it run shell commands in a container. That needs
+      # podman on this machine — check with \`zen sandbox status\`, and see the
+      # sandbox: block in docs/agents-yaml.md to size or pin it.
       tools:
           - workspace:*
+          # - sandbox:*
 `;
 
 const PROMPT = `You are a helpful assistant working inside a project workspace.

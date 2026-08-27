@@ -9,7 +9,9 @@ import {
     buildRunReport,
     lastText,
     loadProject,
+    readProjectConfig,
     renderReportHtml,
+    sandboxTools,
     turns,
     workspaceTools,
     type AgentEvent,
@@ -22,6 +24,7 @@ import { auditModels, describeIssue } from './audit.ts';
 import { readJson, writeJson } from './home.ts';
 import { KeyStore, assertUsable } from './keys.ts';
 import type { Project } from './projects.ts';
+import { buildSandbox, preflight, teardown, usesSandbox, type SandboxSetup } from './sandbox.ts';
 import {
     acquire,
     createRun,
@@ -48,6 +51,10 @@ export interface EngineOptions {
     readOnly?: boolean;
     /** default model override — `--model` */
     model?: string;
+    /** sandbox image override — `--image` */
+    image?: string;
+    /** answer the sandbox's install question without asking — `--yes` */
+    yes?: boolean;
 }
 
 export interface Engine {
@@ -58,8 +65,10 @@ export interface Engine {
     session: SessionPaths;
     /** the session's accumulated state, when it has one */
     state?: AgentState;
+    /** the containers this session may start; present whether or not it does */
+    sandbox: SandboxSetup;
     lock: Held;
-    close(): void;
+    close(): Promise<void>;
 }
 
 /**
@@ -85,10 +94,27 @@ export async function open(opts: EngineOptions): Promise<Engine> {
     const payloads = new FilePayloadStore({ dir: opts.session.blobs, id: 'file' });
     const memory = [new FileMemoryStore({ dir: opts.session.memory, id: 'file' })];
 
+    // The config is read before the project is loaded because the sandbox is
+    // configured by it and the tools have to exist before selectors can be
+    // resolved against them. They are always registered, whether or not anyone
+    // selects them: a project that names `sandbox:*` against an empty tool list
+    // fails to load with "unknown tool", which would be a lie.
+    let sandbox: SandboxSetup;
     let project: AgentProject;
     try {
+        const { config } = readProjectConfig(opts.versionDir);
+        sandbox = buildSandbox({
+            config,
+            session: opts.session,
+            workspace,
+            readOnly: opts.readOnly,
+            image: opts.image,
+        });
         project = await loadProject(opts.versionDir, {
-            tools: workspaceTools({ root: workspace, readOnly: opts.readOnly }),
+            tools: [
+                ...workspaceTools({ root: workspace, readOnly: opts.readOnly }),
+                ...sandboxTools(sandbox.pool),
+            ],
             payloads,
             memory,
         });
@@ -97,6 +123,13 @@ export async function open(opts: EngineOptions): Promise<Engine> {
             err instanceof Error ? err.message : String(err),
             `while loading ${opts.versionDir}`,
         );
+    }
+
+    // Asked here rather than at the first `run_command`, so a host with no
+    // container engine costs an error instead of a round trip. Nothing is
+    // started: the container itself waits until something actually runs.
+    if (usesSandbox(project)) {
+        await preflight(sandbox, opts.yes);
     }
 
     // `recordRequests` is what makes the report show the exact bytes sent
@@ -121,8 +154,12 @@ export async function open(opts: EngineOptions): Promise<Engine> {
         workspace,
         session: opts.session,
         state,
+        sandbox,
         lock,
-        close: () => lock.release(),
+        close: async () => {
+            await teardown(sandbox.pool);
+            lock.release();
+        },
     };
 }
 

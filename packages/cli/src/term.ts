@@ -12,7 +12,14 @@ import { styleText } from 'node:util';
 // so there is no flag to thread through and no piped output to garble.
 // ---------------------------------------------------------------------------
 
-export const EXIT = { ok: 0, failed: 1, usage: 2, invalid: 3, credentials: 4 } as const;
+export const EXIT = {
+    ok: 0,
+    failed: 1,
+    usage: 2,
+    invalid: 3,
+    credentials: 4,
+    sandbox: 5,
+} as const;
 
 export type ExitCode = (typeof EXIT)[keyof typeof EXIT];
 

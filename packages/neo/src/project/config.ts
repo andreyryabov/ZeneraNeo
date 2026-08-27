@@ -111,6 +111,56 @@ const forkBinding = z
     })
     .strict();
 
+/**
+ * The container command-line tools run in.
+ *
+ * Everything here is a *resource* decision — which image, how much of the
+ * machine, whether the network is reachable — because those are the decisions
+ * that differ between a laptop and CI and cannot be baked into an image.
+ *
+ * `env` names host variables to forward, and only names: values never appear
+ * in the config, so a repository never carries one. Names that read like a
+ * credential are refused outright. The CLI materialises the keyring into its
+ * own environment before loading a project, so an unguarded passthrough would
+ * hand every model key to whatever the agent decided to run.
+ */
+const SECRETISH = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)/i;
+
+const sandbox = z
+    .object({
+        /** the base image, e.g. `docker.io/library/python:3.13-slim` */
+        image: z.string().min(1).optional(),
+        /** fractional cores the container may use */
+        cpus: z.number().positive().optional(),
+        /** MiB the container may use */
+        memory: z.int().positive().optional(),
+        network: z.enum(['bridge', 'none', 'host']).optional(),
+        /** where the workspace is mounted, and the default working directory */
+        workdir: z.string().min(1).optional(),
+        /** seconds one command may take before it is killed */
+        timeout: z.int().positive().optional(),
+        /** uid, name or `uid:gid`; unset means the image's own user */
+        user: z.string().min(1).optional(),
+        /** keep the container between sessions instead of removing it */
+        persist: z.boolean().optional(),
+        /** host variables to forward, by name */
+        env: z.array(z.string().min(1)).optional(),
+    })
+    .strict()
+    .superRefine((value, ctx) => {
+        for (const [i, name] of (value.env ?? []).entries()) {
+            if (SECRETISH.test(name)) {
+                ctx.addIssue({
+                    code: 'custom',
+                    path: ['env', i],
+                    message:
+                        `refusing to forward ${name} into the sandbox — it reads like a ` +
+                        'credential, and the sandbox runs whatever the model writes',
+                });
+            }
+        }
+    });
+
 const agent = z
     .object({
         name,
@@ -130,6 +180,12 @@ const agent = z
         skills: skillsBinding.optional(),
         /** parallel sub-agents; `true` is the unrestricted form */
         fork: z.union([z.boolean(), forkBinding]).optional(),
+        /**
+         * Overrides on the project's sandbox. An agent that overrides nothing
+         * shares the container with everyone else, which is what a hand-off
+         * usually wants; an agent that names its own image gets its own.
+         */
+        sandbox: sandbox.optional(),
         /** entrypoint, when no top-level `default` is given */
         default: z.boolean().optional(),
     })
@@ -150,6 +206,8 @@ export const projectSchema = z
         model: modelRef.optional(),
         /** one directory, or several merged into one catalog */
         skills: z.union([z.string().min(1), z.array(z.string().min(1))]).optional(),
+        /** the container `run_command` and friends execute in */
+        sandbox: sandbox.optional(),
         agents: z.array(agent).min(1),
     })
     .strict();
@@ -158,6 +216,7 @@ export type ProjectConfig = z.infer<typeof projectSchema>;
 export type AgentConfig = ProjectConfig['agents'][number];
 export type ProviderConfig = z.infer<typeof provider>;
 export type ModelConfig = z.infer<typeof modelSpec>;
+export type SandboxConfig = z.infer<typeof sandbox>;
 
 /**
  * Re-renders a zod failure as `agents.yaml: agents[1].skills.discovery — …`.

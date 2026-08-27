@@ -8,6 +8,7 @@ import { list } from './list.ts';
 import { models } from './models.ts';
 import { open } from './open.ts';
 import { run } from './run.ts';
+import { sandbox } from './sandbox.ts';
 import { version } from './version.ts';
 
 /**
@@ -25,6 +26,7 @@ export const COMMANDS: Record<string, Command> = {
     key,
     models,
     inspect,
+    sandbox,
     'shell-init': shellInit,
     version,
 };

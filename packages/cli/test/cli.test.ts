@@ -1,12 +1,14 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import type { ProcResult, runProcess } from 'zenera-neo';
 import { extract, split } from '../src/args.ts';
 import { auditModels } from '../src/audit.ts';
 import { isStamp, stamp, stampInstant } from '../src/ids.ts';
 import { mask, parseRef, type KeyStore } from '../src/keys.ts';
-import { pad, table } from '../src/term.ts';
+import { ensurePodmanReady } from '../src/podman.ts';
+import { EXIT, pad, table } from '../src/term.ts';
 import { windowOf, wrap } from '../src/tui/wrap.ts';
 
 // ---------------------------------------------------------------------------
@@ -193,5 +195,145 @@ describe('the credential audit', () => {
     /** A config nothing can read is the loader's to complain about, in its own words. */
     it('stays quiet when there is no config to read', () => {
         expect(auditModels(join(dir, 'nowhere'), store)).toEqual([]);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// The pre-flight
+//
+// Every process is injected, so what is under test is the order of the
+// questions and what each answer leads to — which is the whole of this module.
+// Each successful case uses its own image so it gets its own memo entry; a run
+// only ever asks these questions once.
+// ---------------------------------------------------------------------------
+
+describe('the podman pre-flight', () => {
+    const onLinux = platform() === 'linux';
+
+    interface Fake {
+        run: typeof runProcess;
+        seen: string[];
+        reply(match: string, res: Partial<ProcResult>): void;
+    }
+
+    const fake = (): Fake => {
+        const seen: string[] = [];
+        const replies: { match: string; res: Partial<ProcResult> }[] = [];
+        return {
+            seen,
+            reply: (match, res) => void replies.push({ match, res }),
+            run: (bin, args) => {
+                const line = `${bin} ${args.join(' ')}`;
+                seen.push(line);
+                const i = replies.findIndex((r) => line.includes(r.match));
+                const res = i >= 0 ? replies.splice(i, 1)[0].res : {};
+                return Promise.resolve({
+                    code: 0,
+                    stdout: '',
+                    stderr: '',
+                    truncated: false,
+                    timedOut: false,
+                    ...res,
+                });
+            },
+        };
+    };
+
+    /** One machine, up and running, so only the step under test is interesting. */
+    const running = (f: Fake): Fake => {
+        f.reply('machine list', {
+            stdout: JSON.stringify([{ Name: 'podman-machine-default', Running: true }]),
+        });
+        return f;
+    };
+
+    it('asks in order: binary, machine, socket, image', async () => {
+        const f = running(fake());
+        await ensurePodmanReady({ image: 'img-order', yes: true, exec: f.run });
+
+        const verbs = f.seen.map((l) => l.replace('podman ', ''));
+        expect(verbs[0]).toBe('--version');
+        expect(verbs.at(-2)).toBe('info');
+        expect(verbs.at(-1)).toBe('image exists img-order');
+        expect(verbs.includes('machine list --format json')).toBe(!onLinux);
+    });
+
+    it('fails with the install command for this platform, rather than hanging', async () => {
+        const f = fake();
+        f.reply('--version', { code: 127, stderr: 'not found' });
+        await expect(
+            ensurePodmanReady({ image: 'img-missing', yes: true, exec: f.run }),
+        ).rejects.toMatchObject({
+            code: EXIT.sandbox,
+            hint: expect.stringContaining('install it'),
+        });
+    });
+
+    it('creates a machine when there is none, sized as configured', async () => {
+        if (onLinux) {
+            return;
+        }
+        const f = fake();
+        f.reply('machine list', { stdout: '[]' });
+        await ensurePodmanReady({
+            image: 'img-init',
+            cpus: 4,
+            memory: 8192,
+            yes: true,
+            exec: f.run,
+        });
+        expect(f.seen).toContain('podman machine init --cpus 4 --memory 8192');
+        expect(f.seen.some((l) => l.startsWith('podman machine start'))).toBe(true);
+    });
+
+    it('starts a machine that exists but is stopped, and leaves a running one alone', async () => {
+        if (onLinux) {
+            return;
+        }
+        const stopped = fake();
+        stopped.reply('machine list', {
+            stdout: JSON.stringify([{ Name: 'other', Running: false, Starting: false }]),
+        });
+        await ensurePodmanReady({ image: 'img-stopped', yes: true, exec: stopped.run });
+        expect(stopped.seen).toContain('podman machine start other');
+        expect(stopped.seen).not.toContain('podman machine init');
+
+        const up = running(fake());
+        await ensurePodmanReady({ image: 'img-up', yes: true, exec: up.run });
+        expect(up.seen.some((l) => l.includes('machine start'))).toBe(false);
+    });
+
+    it('pulls the image only when it is not already there', async () => {
+        const absent = running(fake());
+        absent.reply('image exists', { code: 1 });
+        await ensurePodmanReady({ image: 'img-absent', yes: true, exec: absent.run });
+        expect(absent.seen).toContain('podman pull img-absent');
+
+        const present = running(fake());
+        await ensurePodmanReady({ image: 'img-present', yes: true, exec: present.run });
+        expect(present.seen.some((l) => l.includes('pull'))).toBe(false);
+    });
+
+    it('says the engine is wedged rather than blaming the image', async () => {
+        const f = running(fake());
+        f.reply('info', { code: 125, stderr: 'cannot connect to podman socket' });
+        await expect(
+            ensurePodmanReady({ image: 'img-wedged', yes: true, exec: f.run }),
+        ).rejects.toMatchObject({
+            code: EXIT.sandbox,
+            message: expect.stringMatching(/responding/),
+        });
+    });
+
+    /** Treating unreadable output as "no machines" would try to create a second one. */
+    it('refuses to guess when machine list is not json', async () => {
+        if (onLinux) {
+            return;
+        }
+        const f = fake();
+        f.reply('machine list', { stdout: 'podman: unknown flag --format' });
+        await expect(
+            ensurePodmanReady({ image: 'img-garbage', yes: true, exec: f.run }),
+        ).rejects.toThrow(/machine list/);
     });
 });

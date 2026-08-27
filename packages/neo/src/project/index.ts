@@ -4,7 +4,8 @@ export {
     type AgentConfig,
     type ModelConfig,
     type ProjectConfig,
-    type ProviderConfig
+    type ProviderConfig,
+    type SandboxConfig
 } from './config.ts';
 export {
     AgentProject,

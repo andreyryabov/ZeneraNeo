@@ -18,6 +18,7 @@ interface Flags {
     new?: boolean;
     workspace?: string;
     model?: string;
+    image?: string;
     'read-only'?: boolean;
     yes?: boolean;
     quiet?: boolean;
@@ -36,6 +37,7 @@ export const run: Command = {
         '  --new                  Start a fresh one.',
         '  --workspace <dir>      What the agent can read and write.',
         '  --model <ref>          Override the default model.',
+        '  --image <ref>          Override the sandbox image commands run in.',
         '  --read-only            Give the agent no way to write.',
         '  --quiet                Answer only; no narration.',
         '  --plain                One shot, even on a terminal.',
@@ -59,6 +61,7 @@ export const run: Command = {
                 new: { type: 'boolean' },
                 workspace: { type: 'string' },
                 model: { type: 'string' },
+                image: { type: 'string' },
                 'read-only': { type: 'boolean' },
                 yes: { type: 'boolean' },
                 quiet: { type: 'boolean' },
@@ -101,6 +104,8 @@ export const run: Command = {
             session: where.session,
             readOnly: values['read-only'],
             model: values.model,
+            image: values.image,
+            yes: values.yes || ctx.json,
         });
 
         try {
@@ -129,7 +134,7 @@ export const run: Command = {
             }
             await once(engine, prompt, values, ctx.json, ctx.cwd);
         } finally {
-            engine.close();
+            await engine.close();
         }
     },
 };

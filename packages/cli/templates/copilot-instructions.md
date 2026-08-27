@@ -473,7 +473,43 @@ this group:
 - `list_dir` before guessing a path; `find_files` when the name is known but the
   location is not.
 
-### 3.7 The host (`src/main.ts`)
+### 3.7 The sandbox tools (`sandbox:*`)
+
+The second group `zen run` builds. These run a shell command in a Linux
+container with the same workspace mounted at `/workspace`, so an agent can
+build, test, install and inspect rather than only read and write.
+
+| Tool                     | What it does                                                             |
+| ------------------------ | ------------------------------------------------------------------------ |
+| `run_command`            | Runs to completion. Returns exit code, stdout, stderr, duration          |
+| `run_command_background` | Starts a long process (a server, a watch build) and returns a `job_id`   |
+| `read_command_output`    | A window of a job's output from `start_line`, plus whether it still runs |
+| `stop_command`           | Signals a job's process group                                            |
+
+The container is the boundary. Nothing inspects the command — there is no
+allow-list of binaries and no pattern matching on what the model wrote, because
+both are trivially defeated and neither survives a shell. What holds is that
+only the workspace and the session's `/home/agent` are mounted, the container
+is removed at the end of the session, and the command is never a shell argument
+on the host: it travels on stdin to `/bin/sh` inside.
+
+Configure it with `sandbox:` in `agents.yaml` — image, `cpus`, `memory`,
+`network`, `timeout`, and an `env` allow-list of host variable **names** that
+refuses anything credential-shaped. Agents share one container unless one of
+them declares its own `sandbox:` block. See `docs/agents-yaml.md`.
+
+Granting the group is what makes the project need Podman: `zen run` checks the
+engine before the first turn and exits `5` with an install command if it is
+missing. `zen sandbox status` answers the same question on its own.
+
+**Prompting for them.** Two lines earn their place:
+
+- The workspace is at `/workspace` and is the same directory the file tools
+  see — an edit made with `apply_patch` is what a command will compile.
+- Anything that does not return, returns — use `run_command_background` for a
+  server, not `run_command` with a large timeout.
+
+### 3.8 The host (`src/main.ts`)
 
 ```ts
 import { loadProject } from 'zenera-neo';
@@ -516,7 +552,7 @@ const project = await loadProject('.', {
 });
 ```
 
-### 3.8 `.env`
+### 3.9 `.env`
 
 ```
 OPENAI_API_KEY=...

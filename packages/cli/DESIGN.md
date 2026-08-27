@@ -125,12 +125,13 @@ two.
 | `run`     | Runs the project — the TUI on a terminal, one shot otherwise (§7).       |
 | `inspect` | Opens or rebuilds a run's `report.html`.                                 |
 | `models`  | Resolves providers and models and validates the config, calling nothing. |
+| `sandbox` | Checks and prepares the container command-line tools run in (§9).        |
 | `version` | CLI, library and Node versions.                                          |
 
 Global flags: `-h/--help`, `-v/--version`, `--json`, `-C <dir>`.
 
 Exit codes: `0` ok, `1` the run failed, `2` the invocation was wrong, `3` the
-project is invalid, `4` no usable credential.
+project is invalid, `4` no usable credential, `5` the sandbox is unavailable.
 
 There is no `chat` and no `resume`. Both were `run` with a different starting
 point, and a flag says that better than a command does.
@@ -493,7 +494,49 @@ which does not exist yet.
 
 `npm run cli:unlink` removes it.
 
-## 9. Not here
+## 9. The sandbox — `zen sandbox`
+
+Command-line tools run in a container, and containers are native on Linux and a
+background virtual machine everywhere else. "Is the engine ready" is therefore
+four questions, not one — is the binary installed, does the machine exist, is it
+running, is the image pulled — and asked late each of them surfaces as a
+different opaque failure in the middle of a turn the user is already paying for.
+
+So they are asked first, in that order, by
+[podman.ts](packages/cli/src/podman.ts), and everything that can be fixed
+without a decision is fixed without asking: the machine is created at the
+project's `cpus`/`memory`, started, and the image pulled with progress on
+stderr. Installing Podman itself _is_ a decision, so it is the one step that
+prompts — Homebrew on macOS, on a terminal, once. Off a terminal, or under
+`--json` or `--yes`, it fails with exit code `5` and the exact command to run,
+because a CLI that hangs in CI is worse than one that fails in CI.
+
+The pre-flight runs only when it is needed. After the project loads, the CLI
+looks at the _resolved_ tool lists — not at the config's selectors, since
+`sandbox:*`, `'*'` and a bare tool name all mean the same thing by then — and a
+project whose agents cannot reach a shell never asks any of it. The container
+itself is lazier still: it is created on the first `run_command`, so a session
+that only asks a question leaves nothing behind at all.
+
+`zen sandbox` exposes the same steps on their own, because the slow machine-wide
+half of a run is the half most likely to fail and debugging it should not cost a
+model call:
+
+| Subcommand | Does                                                        |
+| ---------- | ----------------------------------------------------------- |
+| `status`   | What is installed, running and pulled. Changes nothing      |
+| `up`       | The whole pre-flight: install, machine, socket, image       |
+| `pull`     | Just the image                                              |
+| `clean`    | Removes every container this CLI created (`label=zenera=1`) |
+
+Two directories are bind-mounted into every container: the session's workspace
+at `/workspace`, and `sessions/<id>/.data/sandbox/home` as `$HOME`. The second
+is what makes a session self-contained the way the rest of it already is — a
+`pip install --user` is still there when the session is reopened, and travels
+with the directory when it is copied. Everything outside the two mounts is
+thrown away when the session closes, unless `sandbox.persist` says otherwise.
+
+## 10. Not here
 
 - **No daemon.** Nothing runs between commands. "Is a run live" is answered by a
   lockfile holding a pid, not by a service that has to be kept alive to answer.
