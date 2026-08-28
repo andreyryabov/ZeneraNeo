@@ -74,12 +74,7 @@ function sdk<T>(pkg: string, kind: ProviderKind): T {
  * provider, an id, and knobs.
  */
 export type ProviderKind =
-    | 'openai'
-    | 'google'
-    | 'vertex'
-    | 'anthropic'
-    | 'openrouter'
-    | 'openai-compatible';
+    'openai' | 'google' | 'vertex' | 'anthropic' | 'openrouter' | 'openai-compatible';
 
 export type OpenAIApi = 'chat' | 'responses';
 
