@@ -76,33 +76,6 @@ Both packages have a `prepack: tsc -b`, so a stale or missing `dist` cannot be p
 Both ship `dist` **and** `src`, so the `../src/*.ts` references inside the `.js.map` and
 `.d.ts.map` files resolve inside the tarball.
 
-## One-time setup
-
-### Claiming the names
-
-npm's trusted publishing is configured on an existing package, so the first ever publish
-of each name is done by hand, from a clean checkout of the tag:
-
-```bash
-npm run release:check
-npm publish -w packages/neo --access public
-npm publish -w packages/cli --access public
-```
-
-### Authenticating CI
-
-Pick one:
-
-- **A granular access token (what this repository uses).** Create one with write access to
-  both packages and store it as the `NPM_TOKEN` secret of a repository environment named
-  `npm`. Adding a required reviewer to that environment means a tag push cannot publish
-  unattended.
-- **Trusted publishing (preferred once the repository is public).** On npmjs.com, for each
-  package: _Settings → Trusted publisher → GitHub Actions_, repository
-  `andreyryabov/ZeneraNeo`, workflow `release.yml`, environment `npm`. Then delete the two
-  `NODE_AUTH_TOKEN` blocks — the OIDC token from `id-token: write` replaces them.
-
-Either way, keep the `npm i -g npm@latest` step: trusted publishing needs npm >= 11.5.1.
 
 ## Publishing by hand
 
