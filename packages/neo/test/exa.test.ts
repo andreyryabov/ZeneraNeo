@@ -186,7 +186,9 @@ describe('the web tools', () => {
                 citations: [{ title: 'The Guardian', url: 'https://g.example', author: 'D' }],
                 costDollars: { total: 0.005 },
             });
-            const out = await run(toolset({ apiKey: 'k', fetch }).web_answer, { query: 'how much' });
+            const out = await run(toolset({ apiKey: 'k', fetch }).web_answer, {
+                query: 'how much',
+            });
             expect(out.answer).toBe('$350 billion.');
             expect(out.sources).toEqual([
                 {

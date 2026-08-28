@@ -314,7 +314,8 @@ export function exaTools<TCtx = unknown>(opts: ExaOptions = {}): AnyTool<TCtx>[]
             properties: {
                 query: {
                     type: 'string',
-                    description: 'What is wanted, in a sentence. Do not use site: or other ' +
+                    description:
+                        'What is wanted, in a sentence. Do not use site: or other ' +
                         'search operators; use include_domains instead.',
                 },
                 num_results: {
@@ -402,76 +403,81 @@ export function exaTools<TCtx = unknown>(opts: ExaOptions = {}): AnyTool<TCtx>[]
             }),
     });
 
-    const webRead = tool<{ urls: string[]; max_characters?: number; max_age_hours?: number }, TCtx>({
-        name: 'web_read',
-        group: EXA_GROUP,
-        description:
-            'Fetches the text of web pages, several at once. Returns the readable content ' +
-            'with navigation and boilerplate stripped, served from a cache when it is fresh ' +
-            'enough and crawled live when it is not. Pages that could not be fetched are ' +
-            'reported alongside the ones that were, so a single bad url does not lose the rest.',
-        parameters: {
-            type: 'object',
-            properties: {
-                urls: {
-                    type: 'array',
-                    items: { type: 'string' },
-                    description: `Absolute page urls, at most ${MAX_URLS} of them.`,
-                },
-                max_characters: {
-                    type: 'integer',
-                    description:
-                        `How much of each page to return. Default ${defaultCharacters}, ` +
-                        `at most ${MAX_CHARACTERS}. Text is cut at the cap and \`truncated\` ` +
-                        'says so.',
-                },
-                max_age_hours: {
-                    type: 'integer',
-                    description:
-                        'How stale a cached copy may be. 0 forces a live fetch, which is ' +
-                        'slower; omit it unless the page changes by the hour.',
-                },
-            },
-            required: ['urls'],
-            additionalProperties: false,
-        },
-        execute: ({ urls, max_characters, max_age_hours }, tc) =>
-            attempt(async () => {
-                const wanted = (urls ?? []).map((u) => u?.trim()).filter(Boolean);
-                if (wanted.length === 0) {
-                    return { error: 'urls is required', hint: 'give at least one absolute url' };
-                }
-                const limit = clamp(max_characters ?? defaultCharacters, 1, MAX_CHARACTERS);
-                const body = await exa.post<ContentsResponse>(
-                    '/contents',
-                    {
-                        urls: wanted.slice(0, MAX_URLS),
-                        text: { maxCharacters: limit },
-                        maxAgeHours: pick(max_age_hours),
+    const webRead = tool<{ urls: string[]; max_characters?: number; max_age_hours?: number }, TCtx>(
+        {
+            name: 'web_read',
+            group: EXA_GROUP,
+            description:
+                'Fetches the text of web pages, several at once. Returns the readable content ' +
+                'with navigation and boilerplate stripped, served from a cache when it is fresh ' +
+                'enough and crawled live when it is not. Pages that could not be fetched are ' +
+                'reported alongside the ones that were, so a single bad url does not lose the rest.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    urls: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description: `Absolute page urls, at most ${MAX_URLS} of them.`,
                     },
-                    tc.signal,
-                );
+                    max_characters: {
+                        type: 'integer',
+                        description:
+                            `How much of each page to return. Default ${defaultCharacters}, ` +
+                            `at most ${MAX_CHARACTERS}. Text is cut at the cap and \`truncated\` ` +
+                            'says so.',
+                    },
+                    max_age_hours: {
+                        type: 'integer',
+                        description:
+                            'How stale a cached copy may be. 0 forces a live fetch, which is ' +
+                            'slower; omit it unless the page changes by the hour.',
+                    },
+                },
+                required: ['urls'],
+                additionalProperties: false,
+            },
+            execute: ({ urls, max_characters, max_age_hours }, tc) =>
+                attempt(async () => {
+                    const wanted = (urls ?? []).map((u) => u?.trim()).filter(Boolean);
+                    if (wanted.length === 0) {
+                        return {
+                            error: 'urls is required',
+                            hint: 'give at least one absolute url',
+                        };
+                    }
+                    const limit = clamp(max_characters ?? defaultCharacters, 1, MAX_CHARACTERS);
+                    const body = await exa.post<ContentsResponse>(
+                        '/contents',
+                        {
+                            urls: wanted.slice(0, MAX_URLS),
+                            text: { maxCharacters: limit },
+                            maxAgeHours: pick(max_age_hours),
+                        },
+                        tc.signal,
+                    );
 
-                const budget = new Budget(MAX_TOTAL_CHARACTERS);
-                const pages = (body.results ?? []).map((r) => {
-                    const { text, truncated } = budget.take(r.text, limit);
-                    return { ...source(r), text, truncated: truncated || undefined };
-                });
-                const failed = (body.statuses ?? [])
-                    .filter((s) => s.status === 'error')
-                    .map((s) => ({
-                        url: s.id,
-                        error: s.error?.tag ?? 'could not be fetched',
-                        status: pick(s.error?.httpStatusCode),
-                    }));
-                return {
-                    pages,
-                    failed: failed.length ? failed : undefined,
-                    skipped: wanted.length > MAX_URLS ? wanted.slice(MAX_URLS) : undefined,
-                    cost_usd: body.costDollars?.total,
-                };
-            }),
-    });
+                    const budget = new Budget(MAX_TOTAL_CHARACTERS);
+                    const pages = (body.results ?? []).map((r) => {
+                        const { text, truncated } = budget.take(r.text, limit);
+                        return { ...source(r), text, truncated: truncated || undefined };
+                    });
+                    const failed = (body.statuses ?? [])
+                        .filter((s) => s.status === 'error')
+                        .map((s) => ({
+                            url: s.id,
+                            error: s.error?.tag ?? 'could not be fetched',
+                            status: pick(s.error?.httpStatusCode),
+                        }));
+                    return {
+                        pages,
+                        failed: failed.length ? failed : undefined,
+                        skipped: wanted.length > MAX_URLS ? wanted.slice(MAX_URLS) : undefined,
+                        cost_usd: body.costDollars?.total,
+                    };
+                }),
+        },
+    );
 
     const webAnswer = tool<{ query: string; model?: string }, TCtx>({
         name: 'web_answer',
