@@ -1,0 +1,69 @@
+name: Release
+
+# Tag-driven: `npm run release -- patch` writes the versions and cuts the tag,
+# `git push --follow-tags` starts this. The tag is the only trigger that can
+# publish, so nothing reaches npm without a commit that names the version.
+on:
+    push:
+        tags: ["v*.*.*"]
+    workflow_dispatch:
+        inputs:
+            tag:
+                description: An existing tag to (re)publish, e.g. v1.0.1
+                required: true
+
+permissions:
+    contents: read
+
+jobs:
+    publish:
+        runs-on: ubuntu-latest
+        environment: npm
+        permissions:
+            contents: write # create the GitHub release
+            id-token: write # npm provenance / trusted publishing
+        steps:
+            - uses: actions/checkout@v5
+              with:
+                  ref: ${{ inputs.tag || github.ref }}
+                  fetch-depth: 0
+
+            - uses: actions/setup-node@v5
+              with:
+                  node-version: 24
+                  cache: npm
+                  registry-url: https://registry.npmjs.org
+
+            # Trusted publishing (OIDC) and --provenance need npm >= 11.5.1.
+            - run: npm i -g npm@latest
+
+            - run: npm ci
+
+            - name: The tag must match the versions in the tree
+              run: node scripts/release.mjs verify "${{ inputs.tag || github.ref_name }}"
+
+            - run: npm run format:check
+            - run: npm run typecheck
+            # Live tests talk to real providers and need credentials; they are
+            # excluded here rather than skipped, so a missing key is not a pass.
+            - run: npx vitest run --exclude '**/live-*'
+
+            - name: Pack both packages (dry run)
+              run: npm pack --dry-run -w packages/neo -w packages/cli
+
+            # Order matters: the CLI's `zenera-neo` dependency must resolve.
+            - name: Publish zenera-neo
+              run: npm publish -w packages/neo --access public --provenance
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+            - name: Publish zenera-cli
+              run: npm publish -w packages/cli --access public --provenance
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+            - name: GitHub release
+              run: gh release create "$TAG" --generate-notes --title "$TAG"
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  TAG: ${{ inputs.tag || github.ref_name }}
