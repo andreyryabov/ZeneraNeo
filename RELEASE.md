@@ -62,9 +62,15 @@ Pushing the tag is what publishes. Until then nothing has left the machine.
    Live tests need real provider credentials and are excluded rather than skipped, so a
    missing key cannot pass as green.
 3. `npm pack --dry-run` for both packages.
-4. `npm publish -w packages/neo --access public --provenance`, then the same for
-   `packages/cli`.
+4. `npm publish -w packages/neo --access public`, then the same for `packages/cli`.
 5. `gh release create <tag> --generate-notes`.
+
+> **No `--provenance` while this repository is private.** npm verifies the signed provenance
+> bundle against the source repository and rejects it with
+> `422 … Unsupported GitHub Actions source repository visibility: "private"`. The publish gets
+> that far — the statement is already in the sigstore transparency log — and then fails, so
+> nothing lands on npm. Add `--provenance` back to both publish steps if the repository is
+> ever made public.
 
 Both packages have a `prepack: tsc -b`, so a stale or missing `dist` cannot be published.
 Both ship `dist` **and** `src`, so the `../src/*.ts` references inside the `.js.map` and
@@ -87,17 +93,16 @@ npm publish -w packages/cli --access public
 
 Pick one:
 
-- **Trusted publishing (preferred, no secret to leak).** On npmjs.com, for each package:
-  _Settings → Trusted publisher → GitHub Actions_, repository `andreyryabov/ZeneraNeo`,
-  workflow `release.yml`, environment `npm`. Then delete the two `NODE_AUTH_TOKEN` blocks
-  from the workflow — the OIDC token in `id-token: write` replaces them.
-- **A granular access token.** Create one with write access to both packages and store it
-  as the `NPM_TOKEN` secret of a repository environment named `npm`. Adding a required
-  reviewer to that environment means a tag push cannot publish unattended.
+- **A granular access token (what this repository uses).** Create one with write access to
+  both packages and store it as the `NPM_TOKEN` secret of a repository environment named
+  `npm`. Adding a required reviewer to that environment means a tag push cannot publish
+  unattended.
+- **Trusted publishing (preferred once the repository is public).** On npmjs.com, for each
+  package: _Settings → Trusted publisher → GitHub Actions_, repository
+  `andreyryabov/ZeneraNeo`, workflow `release.yml`, environment `npm`. Then delete the two
+  `NODE_AUTH_TOKEN` blocks — the OIDC token from `id-token: write` replaces them.
 
-Either way, keep the `npm i -g npm@latest` step: trusted publishing and `--provenance`
-need npm >= 11.5.1, and `--provenance` needs `id-token: write` plus the `repository` field
-that both `package.json` files already carry.
+Either way, keep the `npm i -g npm@latest` step: trusted publishing needs npm >= 11.5.1.
 
 ## Publishing by hand
 
