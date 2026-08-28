@@ -41,7 +41,7 @@ npx zenera-cli --help
 ```sh
 zen key add openai < key.txt    # credentials, never in the project
 zen init my-project             # scaffolds the project + a brief for your coding agent
-cd "$(zen go my-project)"
+cd my-project
 zen run                         # a TUI on a terminal, one shot when piped
 zen check                       # validate the project and every file it names
 zen inspect                     # open the last run's report.html
@@ -82,7 +82,6 @@ you are not expected to hand-author `agents.yaml`.
 | --------- | ------------------------------------------------------------------------ |
 | `init`    | Creates a project here, or in `<dir>`, and registers it.                 |
 | `list`    | Every known project: sessions, last run, whether one is live.            |
-| `go`      | Prints a project's directory, for the shell to `cd` to.                  |
 | `open`    | Opens a project in your editor.                                          |
 | `key`     | The credential keyring — add, check, switch, remove.                     |
 | `run`     | Runs the project — the TUI on a terminal, one shot otherwise.            |

@@ -16,11 +16,10 @@ interface Flags {
 }
 
 /**
- * The companion to `zen go`: same resolution, but the path is handed to an
- * editor instead of to the shell. It exists because `code "$(zen go)"` is the
- * thing everybody types second, and because getting the editor right — which
- * one, with which arguments, attached or detached — is fiddly enough to be
- * worth settling once.
+ * A project is resolved by name or from the cwd, and the path is handed to an
+ * editor. It exists because opening the project is the thing everybody does
+ * second, and because getting the editor right — which one, with which
+ * arguments, attached or detached — is fiddly enough to be worth settling once.
  */
 export const open: Command = {
     summary: 'Open a project in your editor.',

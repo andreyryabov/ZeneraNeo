@@ -48,7 +48,7 @@ nothing but the convenience of being listed.
 and what CI uses to get an empty one.
 
 `projects.json` is derived: every entry can be rebuilt by pointing `zen` at the
-directory again. It exists so `zen list` and `zen go` do not have to search the
+directory again. It exists so `zen list` and `zen open` do not have to search the
 filesystem, and it is allowed to be wrong — an entry whose path has vanished is
 reported as stale, not treated as an error.
 
@@ -115,7 +115,6 @@ two.
 | --------- | ------------------------------------------------------------------------ |
 | `init`    | Creates a project here, or in `<dir>`, and registers it.                 |
 | `list`    | Every known project: sessions, last run, whether one is live.            |
-| `go`      | Prints a project's directory, for the shell to `cd` to.                  |
 | `open`    | Opens a project in your editor.                                          |
 | `key`     | The credential store (§6).                                               |
 | `run`     | Runs the project — the TUI on a terminal, one shot otherwise (§7).       |
@@ -192,28 +191,11 @@ on the next run, which is the only reason it records a pid at all.
 Stale entries — path missing — are listed dimmed, and `zen list --prune` drops
 them.
 
-### 5.3 `zen go <project>`
+### 5.3 `zen open [project]`
 
-**A process cannot change its parent shell's directory.** So `zen go` does the
-only honest thing: it prints the resolved path to stdout and exits. `cd "$(zen go
-foo)"` works everywhere, immediately, with no setup.
-
-For the ergonomic version, `zen shell-init [zsh|bash|fish]` emits a shell
-function that shadows `zen`, intercepts `go`, and `cd`s for you, passing
-everything else through:
-
-```sh
-eval "$(zen shell-init zsh)"    # in ~/.zshrc
-```
-
-This is the standard shape — `zoxide`, `nvm` and `direnv` all do it — and it
-keeps the binary free of any assumption about the shell it was called from.
-
-### 5.4 `zen open [project]`
-
-The same resolution as `go`, but the path is handed to an editor rather than to
-the shell. It exists because `code "$(zen go)"` is what everyone types second,
-and because choosing the editor has more corners than it looks like.
+A project is resolved by name or from the current directory, and the path is
+handed to an editor. It exists because opening the project is what everyone does
+second, and because choosing the editor has more corners than it looks like.
 
 The editor is the first of: `--editor`, `$ZENERA_EDITOR`, **the editor whose
 integrated terminal this is**, `$VISUAL`, `$EDITOR`, the first of
@@ -440,9 +422,6 @@ use. `zn` is an abbreviation for people who type it fifty times a day, and
 with something. All three point at the same file — the CLI never branches on
 `argv[0]`, so there is no behaviour to keep in step between them, and nothing to
 choose between when reading someone else's script.
-
-`zen shell-init` emits its wrapper for both short names, defining `zn` as a call
-to the `zen` function rather than a second copy of it.
 
 Three things have to hold or the shim is broken, and all three do:
 

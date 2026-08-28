@@ -1,6 +1,5 @@
 import type { Command } from '../command.ts';
 import { check } from './check.ts';
-import { go, shellInit } from './go.ts';
 import { init } from './init.ts';
 import { inspect } from './inspect.ts';
 import { key } from './key.ts';
@@ -20,14 +19,12 @@ export const COMMANDS: Record<string, Command> = {
     init,
     list,
     run,
-    go,
     open,
     key,
     models,
     check,
     inspect,
     sandbox,
-    'shell-init': shellInit,
     version,
 };
 

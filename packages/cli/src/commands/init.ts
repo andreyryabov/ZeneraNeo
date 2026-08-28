@@ -78,7 +78,7 @@ export const init: Command = {
     usage: USAGE,
     details: [
         'Writes INSTRUCTIONS.md, agents.yaml and agents/, then records the',
-        'directory so `zen list` and `zen go` can find it by name. Editor files',
+        'directory so `zen list` and `zen open` can find it by name. Editor files',
         '(.vscode/settings.json, .github/copilot-instructions.md) are written',
         'alongside, and never overwritten.',
         '',

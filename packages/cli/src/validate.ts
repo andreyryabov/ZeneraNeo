@@ -261,7 +261,7 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
             code: 'project.unregistered',
             where: root,
             message:
-                'this directory is not registered, so `zen go` and `zen list` will not ' +
+                'this directory is not registered, so `zen open` and `zen list` will not ' +
                 'find it by name (naming it by path, as now, works either way)',
             fix: `register it: zen init ${root} --force`,
         });

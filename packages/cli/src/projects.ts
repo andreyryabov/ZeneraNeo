@@ -12,7 +12,7 @@ import { invalidError, usageError } from './term.ts';
 // beside it — that would be a second thing to keep in sync, holding a name the
 // directory already has.
 //
-// `~/.zenera/neo/projects.json` is an index so that `zen list` and `zen go` do
+// `~/.zenera/neo/projects.json` is an index so that `zen list` and `zen open` do
 // not have to search the filesystem, and it is allowed to be wrong: every entry
 // can be rebuilt by pointing `zen` at the directory again, and an entry whose
 // path has vanished is reported, not fatal.
