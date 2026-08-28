@@ -73,7 +73,13 @@ function sdk<T>(pkg: string, kind: ProviderKind): T {
  * name is built once and shared, and a model spec becomes vendor-neutral: a
  * provider, an id, and knobs.
  */
-export type ProviderKind = 'openai' | 'google' | 'vertex' | 'anthropic' | 'openai-compatible';
+export type ProviderKind =
+    | 'openai'
+    | 'google'
+    | 'vertex'
+    | 'anthropic'
+    | 'openrouter'
+    | 'openai-compatible';
 
 export type OpenAIApi = 'chat' | 'responses';
 
@@ -201,15 +207,22 @@ interface KindDefaults {
 }
 
 /**
- * Only one of these needs no adapter of its own.
+ * Only three of these need no adapter of their own.
  *
- * `openai-compatible` is the shim kind — vLLM, OpenRouter, a gateway — and the
+ * `openai-compatible` is the shim kind — vLLM, a self-hosted gateway — and the
  * OpenAI client is exactly right for it. Everything else gets its vendor's own
  * SDK, because the compatibility endpoints each vendor publishes are porting
  * aids: Google's drops thinking budgets, thought signatures and cached-content
  * accounting, Anthropic's drops cache accounting and extended thinking. Those
  * are the things this runtime is built around, so paying for two more
  * dependencies is the cheaper trade.
+ *
+ * `openrouter` is that shim with the two constants filled in. It speaks chat
+ * completions verbatim, so it earns no adapter and no fourth SDK — what it
+ * earns is a name, which is the difference between four lines of base url and
+ * key env in every project and none. Its own SDK is ESM-only and would force
+ * `createRequire` above to become an `await import`, for a wire format the
+ * OpenAI client already produces byte for byte.
  *
  * `google` and `vertex` differ only in how the client authenticates and which
  * backend it addresses; both speak the same API through the same adapter.
@@ -242,6 +255,13 @@ const KINDS: Record<ProviderKind, KindDefaults> = {
         apiKeyEnv: 'ANTHROPIC_API_KEY',
         baseURLEnv: 'ANTHROPIC_BASE_URL',
         apis: [],
+    },
+    openrouter: {
+        protocol: 'openai',
+        apiKeyEnv: 'OPENROUTER_API_KEY',
+        baseURLEnv: 'OPENROUTER_BASE_URL',
+        baseURL: 'https://openrouter.ai/api/v1',
+        apis: ['chat'],
     },
     'openai-compatible': {
         protocol: 'openai',

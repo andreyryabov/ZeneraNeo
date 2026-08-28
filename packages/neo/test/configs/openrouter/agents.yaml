@@ -1,0 +1,63 @@
+# One key and one endpoint in front of every vendor.
+#
+# The gateway speaks chat completions verbatim, so it earns no adapter and no
+# SDK of its own: `kind: openrouter` is the `openai-compatible` shim with its
+# two constants — the base url and the key env — already filled in. What it
+# buys over writing that shim out by hand is that there is nothing to write.
+version: 1
+
+providers:
+    # Declared only to carry the attribution headers OpenRouter credits apps
+    # by. There is no dedicated field for them and there does not need to be:
+    # `headers:` is already "sent on every request".
+    attributed:
+        kind: openrouter
+        headers:
+            HTTP-Referer: https://zenera.example
+            X-Title: Zenera Neo
+
+    # A second key against the same gateway, declared the way any vendor takes
+    # one — a separate name is a separate client.
+    spare:
+        kind: openrouter
+        apiKey: ${ZN_OPENROUTER_KEY}
+
+models:
+    sonnet:
+        provider: attributed
+        model: anthropic/claude-sonnet-4.5
+        # Forwarded as `reasoning_effort`. One spelling covers vendors that
+        # each name the dial differently, because the gateway maps it onto
+        # whatever the destination model understands — a pass-through for
+        # OpenAI's models, a fraction of the thinking budget for the rest.
+        reasoningEffort: high
+
+    nano:
+        # `openrouter` is undeclared above, and resolves anyway: a built-in
+        # kind is usable as a provider *name*. This entry is complete.
+        provider: openrouter
+        # Accepted because `chat` is one of this kind's APIs — it is simply the
+        # only one, so naming it documents the wire format rather than choosing
+        # it. `responses` here would be a load error; see invalid/.
+        api: chat
+        model: openai/gpt-5.4-nano
+
+agents:
+    - name: careful
+      model: sonnet
+
+    - name: cheap
+      model: nano
+
+    # Ids are `vendor/model`, and the vendor prefix is part of the *id* — the
+    # provider is what precedes the first colon, not what precedes the slash.
+    - name: bare
+      model: openrouter:google/gemini-3.5-flash
+
+    # A variant suffix (`:free`, `:nitro`, `:floor`) carries a colon of its
+    # own and survives the shorthand, because only the first colon separates.
+    - name: free
+      model: openrouter:z-ai/glm-5.2:free
+
+    - name: spare-key
+      model: spare:x-ai/grok-4:nitro

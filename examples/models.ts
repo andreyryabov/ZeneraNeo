@@ -10,15 +10,16 @@ import { createModel, type ModelSpec } from '../packages/neo/src/models/factory.
 // a *tier* — how much thinking the step deserves — and the vendor is chosen
 // once, from the environment:
 //
-//   npm run demo:all                       # gemini (default)
-//   DEMO_VENDOR=openai    npm run demo:all
-//   DEMO_VENDOR=anthropic npm run demo:all
+//   npm run demo:all                        # gemini (default)
+//   DEMO_VENDOR=openai     npm run demo:all
+//   DEMO_VENDOR=anthropic  npm run demo:all
+//   DEMO_VENDOR=openrouter npm run demo:all
 //
 // The one demo this does not cover is ./project.ts: its models are declared in
 // assets/project/agents.yaml, because that is the point of that example.
 // ---------------------------------------------------------------------------
 
-export type Vendor = 'gemini' | 'openai' | 'anthropic';
+export type Vendor = 'gemini' | 'openai' | 'anthropic' | 'openrouter';
 
 /**
  * What a step is worth, not what it costs. The demos care about the shape of
@@ -33,13 +34,6 @@ export type Tier = 'fast' | 'thinking' | 'deep';
  * on a vendor is a demo problem rather than a stale id.
  */
 export const PRESETS: Record<Vendor, Record<Tier, ModelSpec>> = {
-    // Vertex needs no api key: the GenAI SDK resolves Application Default
-    // Credentials itself (GOOGLE_APPLICATION_CREDENTIALS), which is also where
-    // the project id comes from.
-    //
-    // `includeThoughts` is the adapter default, named here because the demos
-    // depend on it: without it Gemini still spends (and bills) thinking tokens
-    // but never emits a `thinking_delta` for the trace to render.
     gemini: {
         fast: {
             provider: 'vertex',
@@ -60,9 +54,6 @@ export const PRESETS: Record<Vendor, Record<Tier, ModelSpec>> = {
             includeThoughts: true,
         },
     },
-    // The Responses API is this vendor's default in the runtime; it is named
-    // anyway so the spec says which wire format the demos ran on.
-    // `reasoningSummary` is the counterpart to Gemini's `includeThoughts`.
     openai: {
         fast: {
             provider: 'openai',
@@ -85,13 +76,30 @@ export const PRESETS: Record<Vendor, Record<Tier, ModelSpec>> = {
             reasoningSummary: 'auto',
         },
     },
-    // Extended thinking stays off across all three tiers on purpose: it does
-    // not survive a multi-turn tool round trip, which is what most of these
-    // demos are. The tiers differ only in how much output they may produce.
     anthropic: {
         fast: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001', maxTokens: 2048 },
         thinking: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001', maxTokens: 4096 },
         deep: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001', maxTokens: 8192 },
+    },
+    openrouter: {
+        fast: {
+            provider: 'openrouter',
+            api: 'chat',
+            model: 'inclusionai/ling-3.0-flash-fin:free',
+            reasoningEffort: 'low',
+        },
+        thinking: {
+            provider: 'openrouter',
+            api: 'chat',
+            model: 'inclusionai/ling-3.0-flash-fin:free',
+            reasoningEffort: 'medium',
+        },
+        deep: {
+            provider: 'openrouter',
+            api: 'chat',
+            model: 'inclusionai/ling-3.0-flash-fin:free',
+            reasoningEffort: 'high',
+        },
     },
 };
 

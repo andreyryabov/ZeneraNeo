@@ -233,18 +233,19 @@ agents: # the only required key; at least one entry
 **Providers** — a provider is a _connection_, not a model. One client is built
 per name and shared, so five agents on one key open one connection pool.
 
-| Field                     | Meaning                                                                                   |
-| ------------------------- | ----------------------------------------------------------------------------------------- |
-| `kind`                    | `openai` \| `google` \| `vertex` \| `anthropic` \| `openai-compatible` (default `openai`) |
-| `apiKey` / `apiKeyEnv`    | Literal, `${VAR}`, or the name of the env var holding it                                  |
-| `baseURL` / `baseURLEnv`  | For gateways and compatible endpoints                                                     |
-| `project` / `location`    | **vertex only** — GCP project id and region (or `global`)                                 |
-| `headers`                 | Sent on every request: routing, attribution, api versions                                 |
-| `timeoutMs`, `maxRetries` | Per-request timeout and retry count                                                       |
+| Field                     | Meaning                                                                                                   |
+| ------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `kind`                    | `openai` \| `google` \| `vertex` \| `anthropic` \| `openrouter` \| `openai-compatible` (default `openai`) |
+| `apiKey` / `apiKeyEnv`    | Literal, `${VAR}`, or the name of the env var holding it                                                  |
+| `baseURL` / `baseURLEnv`  | For gateways and compatible endpoints                                                                     |
+| `project` / `location`    | **vertex only** — GCP project id and region (or `global`)                                                 |
+| `headers`                 | Sent on every request: routing, attribution, api versions                                                 |
+| `timeoutMs`, `maxRetries` | Per-request timeout and retry count                                                                       |
 
-`openai`, `google`, `vertex`, `anthropic` and `openai-compatible` are usable as
-provider _names_ with no declaration at all. Declare a `providers:` entry only
-when it says something the default does not — a second key, a region, a base url.
+`openai`, `google`, `vertex`, `anthropic`, `openrouter` and `openai-compatible`
+are usable as provider _names_ with no declaration at all. Declare a
+`providers:` entry only when it says something the default does not — a second
+key, a region, a base url.
 
 `${VAR}` and `${VAR:-fallback}` expand from the environment, compose inside
 longer values (`https://${GATEWAY}/v1`), and are **lazy**: a declared-but-unused
@@ -938,15 +939,15 @@ over one connection.
 
 ### 7.4 Vendor knobs
 
-| Field                  | Applies to        | Notes                                                                   |
-| ---------------------- | ----------------- | ----------------------------------------------------------------------- |
-| `reasoningEffort`      | openai            | Free string on purpose — the API is the authority on validity           |
-| `reasoningSummary`     | openai            | `auto` \| `concise` \| `detailed`. **Needs `api: responses`** — §7.5    |
-| `maxTokens`            | anthropic, gemini | Anthropic **requires** one (default 8192) and bills thinking against it |
-| `thinkingBudgetTokens` | anthropic         | Extended thinking budget                                                |
-| `thinkingBudget`       | gemini 2.5        | Tokens: `0` off, `-1` auto                                              |
-| `thinkingLevel`        | gemini 3          | `minimal` \| `low` \| `medium` \| `high`                                |
-| `includeThoughts`      | gemini            | Thought summaries; default `true`                                       |
+| Field                  | Applies to        | Notes                                                                        |
+| ---------------------- | ----------------- | ---------------------------------------------------------------------------- |
+| `reasoningEffort`      | openai            | Free string on purpose — the API is the authority on validity                |
+| `reasoningSummary`     | openai            | `auto` \| `concise` \| `detailed`. **Needs `api: responses`** — §7.6         |
+| `maxTokens`            | anthropic, gemini | Cap on **output** tokens, not context. Anthropic requires one (default 8192) |
+| `thinkingBudgetTokens` | anthropic         | Extended thinking budget                                                     |
+| `thinkingBudget`       | gemini 2.5        | Tokens: `0` off, `-1` auto                                                   |
+| `thinkingLevel`        | gemini 3          | `minimal` \| `low` \| `medium` \| `high`                                     |
+| `includeThoughts`      | gemini            | Thought summaries; default `true`                                            |
 
 Knobs that do not apply to the chosen vendor are ignored, not rejected.
 `api:` exists only for the OpenAI protocol — naming it on a Gemini or Anthropic
@@ -955,9 +956,80 @@ model is an error.
 Each vendor's own SDK is used rather than its OpenAI-compatible endpoint, because
 those endpoints drop exactly what this runtime is built on: thinking budgets,
 thought signatures, cache accounting. `openai-compatible` is the shim kind — vLLM,
-OpenRouter, a gateway.
+a self-hosted gateway — and `openrouter` is that shim with its base url
+(`https://openrouter.ai/api/v1`) and key env (`OPENROUTER_API_KEY`) already
+filled in. It speaks `chat` only — §7.5.
 
-### 7.5 Turning reasoning on
+### 7.5 OpenRouter
+
+A gateway: one key and one endpoint in front of several hundred models from
+every vendor. Useful when a project wants to compare families without holding
+four accounts, and when a cheap tier should be swappable by editing one id.
+
+The whole declaration is the kind — `baseURL` and `OPENROUTER_API_KEY` are its
+defaults, and built-in kinds are usable as provider names, so a `providers:`
+entry is only worth writing when it adds something:
+
+```yaml
+agents:
+    - name: triage
+      model: openrouter:anthropic/claude-sonnet-4.5
+```
+
+**Model ids** are `vendor/model` and may carry a variant suffix after a colon —
+`:free`, `:nitro` (throughput-routed), `:floor` (price-routed), `:online` (web
+search). Both survive the shorthand, because only the _first_ colon separates:
+
+| Ref                              | Provider     | Model                 |
+| -------------------------------- | ------------ | --------------------- |
+| `openrouter:openai/gpt-5.4-nano` | `openrouter` | `openai/gpt-5.4-nano` |
+| `openrouter:z-ai/glm-5.2:free`   | `openrouter` | `z-ai/glm-5.2:free`   |
+
+The `vendor/` prefix is part of the _id_, not a provider name: what precedes the
+first colon is the provider, and the `provider/api` slash is only read there.
+
+**`chat` only.** OpenRouter's responses endpoint is alpha, so this kind declares
+one API and `openrouter/responses:…` is a load error naming the provider, rather
+than a 404 from the gateway at the first request. Reasoning therefore arrives the
+chat-completions way — on the message, read into `thinking` deltas — and
+`reasoningSummary` does nothing here. `reasoningEffort` **is** forwarded, and the
+gateway maps it onto whatever the destination model understands.
+
+**Attribution** goes in `headers:`; there is no dedicated field because that one
+already means "sent on every request":
+
+```yaml
+providers:
+    openrouter:
+        kind: openrouter
+        headers:
+            HTTP-Referer: https://example.com
+            X-Title: My Agent
+```
+
+**Check capabilities before pinning an id.** A gateway routes to whoever serves
+that model, so a request can fail on a capability rather than on the model
+existing (`404 No endpoints found that support image input`). The catalog is
+public and needs no key:
+
+```bash
+curl -s https://openrouter.ai/api/v1/models | jq -r '
+  .data[] | select(.id == "z-ai/glm-5.2:free")
+  | "modalities: \(.architecture.input_modalities | join("+"))",
+    "params:     \(.supported_parameters | join(","))"'
+```
+
+`input_modalities` decides whether images may be sent at all;
+`supported_parameters` decides whether `tools`, `tool_choice` and
+`reasoning_effort` are honoured. An agent with tools needs `tools` in that list.
+
+**Not modelled yet:** provider routing preferences, fallback chains,
+`transforms`, `usage.include`. `models:` entries are strict, so writing one is a
+load error rather than a key that is silently dropped.
+
+**Keys:** `zen key add openrouter` stores it under `OPENROUTER_API_KEY`.
+
+### 7.6 Turning reasoning on
 
 Ask two separate questions: does the model **reason**, and does it **say what it
 reasoned**. They are different knobs, and the second is off by default on every
@@ -978,9 +1050,11 @@ models:
         reasoningSummary: auto # whether you get to see it
 ```
 
-**Anthropic** — `thinkingBudgetTokens` turns extended thinking on, and it is
-billed against `maxTokens`, so raise that too. Read §7.6 first: this combination
-is unsafe for tool-using agents.
+**Anthropic** — `thinkingBudgetTokens` turns extended thinking on, and it is spent
+_out of_ `maxTokens`, so raise that too or the answer has no room left after the
+thinking. The runtime keeps 1024 tokens of headroom whatever you write, so a cap
+below the budget is corrected rather than rejected. Read §7.7 first: this
+combination is unsafe for tool-using agents.
 
 ```yaml
 models:
@@ -1010,9 +1084,9 @@ so turning summaries off costs visibility, not the audit trail.
 
 The cost is real — a summary is extra output tokens on every call — so leave it
 on where someone is watching and reach for a cheaper tier before turning effort
-up (§7.7).
+up (§7.8).
 
-### 7.6 Known traps
+### 7.7 Known traps
 
 - **Anthropic + `thinkingBudgetTokens` + multi-turn tool use** — thinking-block
   signatures are not replayed, and the API rejects the follow-up. Leave extended
@@ -1023,7 +1097,7 @@ up (§7.7).
   gcloud user credentials and metadata-server credentials carry no project id, so
   those deployments must set the variable.
 
-### 7.7 How to choose, in practice
+### 7.8 How to choose, in practice
 
 1. Start every agent on `balanced`.
 2. Demote to `router` any agent whose job is classification, extraction, or a
@@ -1141,7 +1215,7 @@ Before finishing any change here:
 | Forks when the steps actually depend       | Prompt line: branches cannot see each other                |
 | Slow and expensive on trivial cases        | Demote that agent's model tier / reasoning effort          |
 | Fails only on genuinely hard cases         | Promote that agent's tier, or split the hard path out      |
-| Shows no reasoning while it works          | Turn summaries on for that model — §7.5                    |
+| Shows no reasoning while it works          | Turn summaries on for that model — §7.6                    |
 | Forgets across conversations               | Continue the session rather than starting a new one        |
 | Breaks at load with a named path           | Read the message — it names the exact key                  |
 
@@ -1179,7 +1253,7 @@ Update it when:
 
 - the layout changes (a new directory, a moved catalog)
 - a model alias is added, retired or repointed — §7.2 must match `agents.yaml`
-- a vendor trap is discovered — add it to §7.6
+- a vendor trap is discovered — add it to §7.7
 - a recurring review comment appears twice — turn it into a checklist line in §9
 - a runtime capability is added — describe it here, or it will not be used
 

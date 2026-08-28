@@ -43,7 +43,9 @@ const credentials = {
 const provider = z
     .object({
         ...credentials,
-        kind: z.enum(['openai', 'google', 'vertex', 'anthropic', 'openai-compatible']).optional(),
+        kind: z
+            .enum(['openai', 'google', 'vertex', 'anthropic', 'openrouter', 'openai-compatible'])
+            .optional(),
         /** vertex only: the GCP project and region the endpoint is addressed by */
         project: z.string().min(1).optional(),
         location: z.string().min(1).optional(),

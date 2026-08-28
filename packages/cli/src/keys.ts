@@ -18,7 +18,7 @@ import { CliError, EXIT, credentialError, usageError } from './term.ts';
 // ---------------------------------------------------------------------------
 
 /** The vendors a key can belong to — the library's provider kinds, verbatim. */
-export const PROVIDERS = ['openai', 'anthropic', 'google', 'vertex'] as const;
+export const PROVIDERS = ['openai', 'anthropic', 'google', 'vertex', 'openrouter'] as const;
 
 export type Provider = (typeof PROVIDERS)[number];
 
@@ -62,6 +62,12 @@ export const SHAPES: Record<Provider, ProviderShape> = {
         holds: 'file',
         label: 'Vertex AI',
         where: 'a service-account JSON key from the GCP console',
+    },
+    openrouter: {
+        env: 'OPENROUTER_API_KEY',
+        holds: 'secret',
+        label: 'OpenRouter',
+        where: 'https://openrouter.ai/settings/keys',
     },
 };
 

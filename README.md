@@ -6,7 +6,7 @@ by the coding agent you already have open.**
 [![CI](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
-[![OpenAI · Anthropic · Gemini](https://img.shields.io/badge/models-OpenAI%20%C2%B7%20Anthropic%20%C2%B7%20Gemini-8957e5.svg)](#the-library)
+[![OpenAI · Anthropic · Gemini · OpenRouter](https://img.shields.io/badge/models-OpenAI%20%C2%B7%20Anthropic%20%C2%B7%20Gemini%20%C2%B7%20OpenRouter-8957e5.svg)](#the-library)
 
 An agent runtime for Node.js 24+ (ESM), and a command line over it.
 
@@ -28,7 +28,7 @@ Two pieces:
 git clone https://github.com/andreyryabov/ZeneraNeo.git && cd ZeneraNeo
 npm i && npm run cli:link       # builds both packages, puts `zen` on your PATH
 
-zen key add openai < key.txt    # or: anthropic, vertex, google
+zen key add openai < key.txt    # or: anthropic, vertex, google, openrouter
 zen init my-project             # scaffolds v1 + a brief for your coding agent
 cd "$(zen go my-project)"
 zen run                         # a TUI on a terminal, one shot when piped
@@ -222,8 +222,9 @@ What it gives you:
 
 - **Agents** — an instruction, a model, tools, skills, plus handoffs and fork.
   There is no hidden orchestration layer.
-- **Models** — OpenAI, Anthropic and Google/Vertex behind one interface, with
-  named providers and model aliases resolved from config or from the host.
+- **Models** — OpenAI, Anthropic and Google/Vertex behind one interface, each
+  through its own SDK, plus OpenRouter and any OpenAI-compatible endpoint.
+  Named providers and model aliases resolve from config or from the host.
 - **Tools** — plain typed functions, selectable per agent by name, group or
   wildcard. Workspace file tools and a Podman sandbox ship with the library.
 - **Skills** — instruction bundles discovered and loaded on demand instead of
