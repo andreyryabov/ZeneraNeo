@@ -48,6 +48,10 @@ export const run: Command = {
         '',
         'The prompt comes from the argument, or stdin, or the TUI. There is no',
         '`resume`: a session continues itself, because its state is what it is.',
+        '',
+        'With a prompt on the command line nothing is asked: a fresh session, the',
+        'directory you are in as the workspace, writable. --session, --workspace',
+        'and --read-only override that; the TUI still asks.',
     ],
     run: async (ctx) => {
         const { values, positionals } = parse<Flags>(
@@ -85,13 +89,21 @@ export const run: Command = {
             throw usageError(`unknown theme: ${values.theme}`, 'dark, light or auto');
         }
 
+        // A prompt on the command line is a request for an answer, not a
+        // conversation to pick up. So it answers the three questions itself:
+        // a fresh session, the directory it was typed in as the workspace,
+        // and no confirmation for it — `zen run acme "what changed?"` should
+        // read the code that is right there. Every flag still wins, and the
+        // TUI, where there is someone to ask, still asks.
+        const shot = Boolean(prompt);
+
         const where = await target({
             cwd: ctx.cwd,
             project: values.project ?? (named ? head : undefined),
             session: values.session,
-            fresh: values.new,
-            workspace: values.workspace,
-            yes: values.yes,
+            fresh: values.new || (shot && !values.session),
+            workspace: values.workspace ?? (shot ? ctx.cwd : undefined),
+            yes: values.yes || shot,
         });
 
         const engine = await Engine.open({

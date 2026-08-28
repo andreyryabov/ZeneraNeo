@@ -47,6 +47,17 @@ zen check                       # validate the project and every file it names
 zen inspect                     # open the last run's report.html
 ```
 
+Or ask a question from wherever you are and get an answer back:
+
+```sh
+cd ~/code/some-repo
+zen run my-project "summarise this repo and write NOTES.md"
+```
+
+A prompt on the command line asks nothing: a fresh session, the directory you
+are standing in as the workspace, writable. `--session`, `--workspace` and
+`--read-only` override that.
+
 Then open the folder in your editor and tell your coding agent what the system
 should do. It writes the agents; `zen run` runs them; `zen inspect` shows you
 every request, tool call and token it spent.
@@ -108,8 +119,9 @@ The binary is installed under three names: `zen`, `zn` and `zenera`.
   store, one accumulating trajectory. Resumable.
 - **Run** — one prompt in, one answer out, inside a session. Recorded in full,
   whether or not you were watching.
-- **Workspace** — the directory the agents may read and write. Defaults to the
-  session's own empty folder; pointing it anywhere else is confirmed explicitly.
+- **Workspace** — the directory the agents may read and write. A prompt given on
+  the command line uses the current directory; the TUI offers the session's own
+  empty folder and confirms anything outside it.
 - **Keyring** — `~/.zenera/neo`, mode `0700`. Keys are materialised into the
   environment just before a run, so a real env var always wins and a project
   checked out on a machine without `zen` still runs.

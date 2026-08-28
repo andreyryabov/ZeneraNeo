@@ -153,7 +153,7 @@ reviewable rather than opaque.
 ```sh
 zen run my-project                        # a TUI on a terminal, with nothing to say yet
 zen run my-project "summarise this repo"  # one shot; stdout is the answer
-zen run my-project --new                  # a fresh session instead of continuing the last
+zen run my-project --session <id>         # continue a particular session
 zen run my-project --read-only            # give the agent no way to write
 echo "triage this" | zen run my-project --quiet | jq
 ```
@@ -163,6 +163,17 @@ the folder, plain `zen run` means the project you are in — `zen` walks up from
 the working directory looking for `agents.yaml`. The first word is read as the
 project when it names one and as the first word of the prompt when it does not,
 and `--project <name|dir>` settles it either way.
+
+A prompt on the command line asks nothing at all. It starts a **fresh session**
+with the **directory you are standing in** as the workspace, writable — so
+
+```sh
+cd ~/code/some-repo
+zen run my-project "find the dead exports and delete them"
+```
+
+is a complete instruction. `--session`, `--workspace` and `--read-only` override
+that; the TUI, where there is someone to ask, still asks.
 
 A **session** is a context that persists: one workspace, one memory, one
 accumulating trajectory. It continues itself — there is no `resume`, because its
