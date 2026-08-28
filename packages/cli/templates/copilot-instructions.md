@@ -939,15 +939,16 @@ over one connection.
 
 ### 7.4 Vendor knobs
 
-| Field                  | Applies to        | Notes                                                                        |
-| ---------------------- | ----------------- | ---------------------------------------------------------------------------- |
-| `reasoningEffort`      | openai            | Free string on purpose — the API is the authority on validity                |
-| `reasoningSummary`     | openai            | `auto` \| `concise` \| `detailed`. **Needs `api: responses`** — §7.6         |
-| `maxTokens`            | anthropic, gemini | Cap on **output** tokens, not context. Anthropic requires one (default 8192) |
-| `thinkingBudgetTokens` | anthropic         | Extended thinking budget                                                     |
-| `thinkingBudget`       | gemini 2.5        | Tokens: `0` off, `-1` auto                                                   |
-| `thinkingLevel`        | gemini 3          | `minimal` \| `low` \| `medium` \| `high`                                     |
-| `includeThoughts`      | gemini            | Thought summaries; default `true`                                            |
+| Field                   | Applies to                    | Notes                                                                          |
+| ----------------------- | ----------------------------- | ------------------------------------------------------------------------------ |
+| `reasoningEffort`       | openai, openrouter            | Free string on purpose — the API is the authority on validity                  |
+| `reasoningSummary`      | openai, openrouter            | `auto` \| `concise` \| `detailed`. On openai **needs `api: responses`** — §7.6 |
+| `maxTokens`             | anthropic, gemini, openrouter | Cap on **output** tokens, not context. Anthropic requires one (default 8192)   |
+| `thinkingBudgetTokens`  | anthropic                     | Extended thinking budget                                                       |
+| `thinkingBudget`        | gemini 2.5                    | Tokens: `0` off, `-1` auto                                                     |
+| `thinkingLevel`         | gemini 3                      | `minimal` \| `low` \| `medium` \| `high`                                       |
+| `includeThoughts`       | gemini                        | Thought summaries; default `true`                                              |
+| `routing` / `fallbacks` | openrouter                    | Upstream provider preferences, and models to fall back to — §7.5               |
 
 Knobs that do not apply to the chosen vendor are ignored, not rejected.
 `api:` exists only for the OpenAI protocol — naming it on a Gemini or Anthropic
@@ -956,9 +957,10 @@ model is an error.
 Each vendor's own SDK is used rather than its OpenAI-compatible endpoint, because
 those endpoints drop exactly what this runtime is built on: thinking budgets,
 thought signatures, cache accounting. `openai-compatible` is the shim kind — vLLM,
-a self-hosted gateway — and `openrouter` is that shim with its base url
-(`https://openrouter.ai/api/v1`) and key env (`OPENROUTER_API_KEY`) already
-filled in. It speaks `chat` only — §7.5.
+a self-hosted gateway. `openrouter` used to be that shim with its base url
+(`https://openrouter.ai/api/v1`) and key env (`OPENROUTER_API_KEY`) filled in; it
+now has its own SDK, which is what makes provider routing and fallback chains
+available — §7.5.
 
 ### 7.5 OpenRouter
 
@@ -988,12 +990,33 @@ search). Both survive the shorthand, because only the _first_ colon separates:
 The `vendor/` prefix is part of the _id_, not a provider name: what precedes the
 first colon is the provider, and the `provider/api` slash is only read there.
 
-**`chat` only.** OpenRouter's responses endpoint is alpha, so this kind declares
-one API and `openrouter/responses:…` is a load error naming the provider, rather
-than a 404 from the gateway at the first request. Reasoning therefore arrives the
-chat-completions way — on the message, read into `thinking` deltas — and
-`reasoningSummary` does nothing here. `reasoningEffort` **is** forwarded, and the
-gateway maps it onto whatever the destination model understands.
+**No api to choose.** This kind speaks one protocol, its own, so `api: responses`
+and `openrouter/responses:…` are both a load error ("has one api, so … means
+nothing here") rather than a 404 from the gateway at the first request. Reasoning
+arrives on the message and is read into `thinking` deltas; `reasoningEffort` and
+`reasoningSummary` are both forwarded, and the gateway maps effort onto whatever
+the destination model understands.
+
+**Routing and fallbacks** are the reason this kind has an SDK. `routing` picks
+the upstream provider (OpenRouter's `provider` field, renamed because `provider:`
+already means the connection); `fallbacks` lists models to try when none can
+serve it (its `models` field):
+
+```yaml
+models:
+    routed:
+        provider: openrouter
+        model: openai/gpt-5.4-nano
+        routing:
+            order: [azure, openai]
+            requireParameters: true
+            sort: throughput
+        fallbacks: [anthropic/claude-sonnet-4.5]
+```
+
+`routing` keys: `order`, `only`, `ignore`, `sort`, `allowFallbacks`,
+`requireParameters`, `dataCollection`, `quantizations`, `zdr`. `serviceTier` is
+accepted alongside. `plugins` is code-only and has no schema entry.
 
 **Attribution** goes in `headers:`; there is no dedicated field because that one
 already means "sent on every request":

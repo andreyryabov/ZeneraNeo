@@ -1,6 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import type { ClientOptions as AnthropicOptions } from '@anthropic-ai/sdk';
 import type { GoogleGenAI, GoogleGenAIOptions } from '@google/genai';
+import type { HTTPClient, OpenRouter, SDKOptions as OpenRouterOptions } from '@openrouter/sdk';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import type OpenAI from 'openai';
@@ -10,23 +11,26 @@ import { AnthropicModel, type AnthropicModelOptions } from './anthropic.ts';
 import { GeminiModel, type GeminiModelOptions } from './gemini.ts';
 import { OpenAIModel } from './openai-chat.ts';
 import { OpenAIResponsesModel, type OpenAIResponsesModelOptions } from './openai-responses.ts';
+import { OpenRouterModel, type OpenRouterModelOptions } from './openrouter.ts';
 
 // ---------------------------------------------------------------------------
 // The vendor SDKs
 //
-// All three are *optional peer dependencies*: an application installs the one
+// All four are *optional peer dependencies*: an application installs the one
 // vendor it talks to and pays for nothing else — which matters most for
 // `@google/genai`, whose own tree carries google-auth-library and protobufjs.
 //
-// That only holds if importing this library does not reach for all three, so
+// That only holds if importing this library does not reach for all four, so
 // nothing above is a value import: the SDKs are pulled in here, when a client
 // of that protocol is first built, and never at module scope.
 //
 // `createRequire` rather than `await import()` because it is synchronous, and
 // so `createModel()` and `ModelRegistry.client()` keep handing back a usable
 // object instead of a promise — which is also what keeps a bad credential
-// throwing at the call that named it rather than at some later request. Every
-// one of the three publishes a CommonJS build, so it costs nothing.
+// throwing at the call that named it rather than at some later request. Three
+// of the four publish a CommonJS build; `@openrouter/sdk` is ESM-only, which
+// `require` has loaded since Node 22 for module graphs without a top-level
+// await, and this library already requires Node 24.
 // ---------------------------------------------------------------------------
 
 const requirePeer = createRequire(import.meta.url);
@@ -39,6 +43,10 @@ interface AnthropicModule {
 }
 interface GenAIModule {
     GoogleGenAI: new (options: GoogleGenAIOptions) => GoogleGenAI;
+}
+interface OpenRouterModule {
+    OpenRouter: new (options: OpenRouterOptions) => OpenRouter;
+    HTTPClient: new () => HTTPClient;
 }
 
 /**
@@ -83,10 +91,10 @@ export type OpenAIApi = 'chat' | 'responses';
  * incidentally, the SDK. Not the same axis as `ProviderKind`: `openai` and
  * `openai-compatible` are two connections speaking one protocol.
  */
-type Protocol = 'openai' | 'anthropic' | 'gemini';
+type Protocol = 'openai' | 'anthropic' | 'gemini' | 'openrouter';
 
 /** The vendor client behind a provider name. */
-export type ProviderClient = OpenAI | Anthropic | GoogleGenAI;
+export type ProviderClient = OpenAI | Anthropic | GoogleGenAI | OpenRouter;
 
 /**
  * How to reach a provider. Every field has an env fallback so a spec can stay
@@ -144,7 +152,12 @@ export interface ProviderSpec extends Credentials {
  * warrant a declared provider. Using them opts out of the shared client.
  */
 export interface ModelSpec
-    extends Credentials, OpenAIResponsesModelOptions, AnthropicModelOptions, GeminiModelOptions {
+    extends
+        Credentials,
+        OpenAIResponsesModelOptions,
+        AnthropicModelOptions,
+        GeminiModelOptions,
+        OpenRouterModelOptions {
     /**
      * Registered provider name. The built-in providers are named after their
      * kind, so `provider: 'google'` works with nothing declared. Defaults to
@@ -202,7 +215,7 @@ interface KindDefaults {
 }
 
 /**
- * Only three of these need no adapter of their own.
+ * Only two of these need no adapter of their own.
  *
  * `openai-compatible` is the shim kind — vLLM, a self-hosted gateway — and the
  * OpenAI client is exactly right for it. Everything else gets its vendor's own
@@ -212,12 +225,13 @@ interface KindDefaults {
  * are the things this runtime is built around, so paying for two more
  * dependencies is the cheaper trade.
  *
- * `openrouter` is that shim with the two constants filled in. It speaks chat
- * completions verbatim, so it earns no adapter and no fourth SDK — what it
- * earns is a name, which is the difference between four lines of base url and
- * key env in every project and none. Its own SDK is ESM-only and would force
- * `createRequire` above to become an `await import`, for a wire format the
- * OpenAI client already produces byte for byte.
+ * `openrouter` used to be that shim with the two constants filled in, which
+ * cost nothing until the parts of OpenRouter worth having turned out to be the
+ * parts chat completions cannot say: which upstream provider serves a request,
+ * what to fall back to when it cannot, and what the call actually cost. Its
+ * own SDK carries those as first-class fields, so it now gets an adapter like
+ * every other vendor. `openai-compatible` against the same base url is still
+ * there for anyone who wants the older, laxer client back.
  *
  * `google` and `vertex` differ only in how the client authenticates and which
  * backend it addresses; both speak the same API through the same adapter.
@@ -252,11 +266,11 @@ const KINDS: Record<ProviderKind, KindDefaults> = {
         apis: [],
     },
     openrouter: {
-        protocol: 'openai',
+        protocol: 'openrouter',
         apiKeyEnv: 'OPENROUTER_API_KEY',
         baseURLEnv: 'OPENROUTER_BASE_URL',
         baseURL: 'https://openrouter.ai/api/v1',
-        apis: ['chat'],
+        apis: [],
     },
     'openai-compatible': {
         protocol: 'openai',
@@ -401,9 +415,14 @@ export class ModelRegistry {
                     `provider "${name}" (${kind}) has one api, so "${spec.api}" means nothing here`,
                 );
             }
-            return defaults.protocol === 'anthropic'
-                ? new AnthropicModel(spec.model, client as Anthropic, spec)
-                : new GeminiModel(spec.model, client as GoogleGenAI, spec);
+            switch (defaults.protocol) {
+                case 'anthropic':
+                    return new AnthropicModel(spec.model, client as Anthropic, spec);
+                case 'gemini':
+                    return new GeminiModel(spec.model, client as GoogleGenAI, spec);
+                case 'openrouter':
+                    return new OpenRouterModel(spec.model, client as OpenRouter, spec);
+            }
         }
 
         const api = spec.api ?? defaults.apis[0];
@@ -534,6 +553,9 @@ function buildClient(
     if (defaults.protocol === 'gemini') {
         return buildGenAI(kind, apiKey, baseURL, headers, opts, where);
     }
+    if (defaults.protocol === 'openrouter') {
+        return buildOpenRouter(kind, apiKey, baseURL, headers, opts);
+    }
 
     const common = {
         apiKey: apiKey ?? OAUTH_PLACEHOLDER,
@@ -549,6 +571,46 @@ function buildClient(
     }
     const { OpenAI } = sdk<OpenAIModule>('openai', kind);
     return new OpenAI(common);
+}
+
+/**
+ * OpenRouter's client takes its base url as `serverURL` and its retry policy as
+ * a strategy object rather than a count, so the shared `common` shape does not
+ * fit — but the two things that usually need a custom `fetch` are cheaper here.
+ *
+ * A `token` callback goes straight in as `apiKey`, which this SDK accepts in
+ * callable form and re-invokes per request; there is nothing to intercept.
+ * Default headers have no constructor slot at all, so they are added by a
+ * `beforeRequest` hook — the same seam the SDK uses for tracing headers.
+ */
+function buildOpenRouter(
+    kind: ProviderKind,
+    apiKey: string | undefined,
+    baseURL: string | undefined,
+    headers: Record<string, string> | undefined,
+    opts: ProviderSpec,
+): OpenRouter {
+    const { OpenRouter, HTTPClient } = sdk<OpenRouterModule>('@openrouter/sdk', kind);
+    let httpClient: HTTPClient | undefined;
+    if (headers) {
+        httpClient = new HTTPClient();
+        httpClient.addHook('beforeRequest', (req) => {
+            for (const [key, value] of Object.entries(headers)) {
+                req.headers.set(key, value);
+            }
+            return req;
+        });
+    }
+    const { token } = opts;
+    return new OpenRouter({
+        apiKey: token ? async () => token() : apiKey,
+        serverURL: baseURL,
+        timeoutMs: opts.timeoutMs,
+        // A count of zero is the one value that has to change shape: this SDK
+        // says "do not retry" with a strategy, not with a number.
+        retryConfig: opts.maxRetries === 0 ? { strategy: 'none' } : undefined,
+        httpClient,
+    });
 }
 
 /**

@@ -1,10 +1,10 @@
-# The responses api, asked of the one openai-protocol kind that lacks it.
+# An api named in the *shorthand*, on a kind that has only one.
 #
-# OpenRouter's responses endpoint is alpha, so `openrouter` declares `chat`
-# alone. Unlike invalid/unknown-api, the ref itself is well formed — the
-# shorthand parser knows `responses` — so this survives parsing and fails when
-# the model is built, naming the provider and what it does support. Listing the
-# api here instead would trade that for a 404 from the gateway.
+# `openrouter` speaks its own protocol, so there is no api to choose. Unlike
+# invalid/api-on-single-api-vendor, which says so with an `api:` key, the
+# mistake here is inside a ref — and the shorthand parser knows the word
+# `responses`, so this survives parsing and fails when the model is built.
+# Listing an api here instead would trade that for a 404 from the gateway.
 version: 1
 
 agents:

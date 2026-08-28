@@ -47,6 +47,7 @@
     "peerDependencies": {
         "@anthropic-ai/sdk": "^0.120.0",
         "@google/genai": "^2.18.0",
+        "@openrouter/sdk": "^1.2.80",
         "openai": "^6.0.0"
     },
     "peerDependenciesMeta": {
@@ -54,6 +55,9 @@
             "optional": true
         },
         "@google/genai": {
+            "optional": true
+        },
+        "@openrouter/sdk": {
             "optional": true
         },
         "openai": {

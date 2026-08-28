@@ -21,7 +21,7 @@ read.
 | `named-models`       | The `models:` map, agent pinning, the top-level fallback, memoization       |
 | `providers`          | Two keys for one vendor, a gateway, transport settings on the connection    |
 | `vendors`            | One agent per protocol: openai chat + responses, Gemini API, Vertex, Claude |
-| `openrouter`         | The gateway kind: filled-in defaults, prefixed ids, variants, attribution   |
+| `openrouter`         | The gateway kind: filled-in defaults, prefixed ids, variants, routing       |
 | `tuning`             | Every vendor knob the schema accepts, on the vendor it belongs to           |
 | `env`                | `${VAR}`, `${VAR:-default}`, composition, and how late they are read        |
 | `inline-credentials` | A one-off key on the model, opting out of the shared client                 |
@@ -37,7 +37,7 @@ Each of these fails at load, with the offending key named.
 | `unused-alias-typo`        | A typo in a `models:` entry no agent uses — still caught  |
 | `api-on-single-api-vendor` | `api:` on a vendor that speaks only one                   |
 | `unknown-api`              | An API the openai protocol does not speak                 |
-| `openrouter-responses`     | An API the protocol speaks but the _kind_ does not        |
+| `openrouter-responses`     | An api named in a _ref_, on a kind that has none          |
 | `missing-model`            | A model entry with no `model:`                            |
 | `unknown-kind`             | A vendor with no adapter                                  |
 | `unknown-key`              | A strict-schema violation on a provider                   |

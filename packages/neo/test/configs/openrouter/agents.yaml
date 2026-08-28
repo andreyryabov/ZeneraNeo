@@ -1,9 +1,10 @@
 # One key and one endpoint in front of every vendor.
 #
-# The gateway speaks chat completions verbatim, so it earns no adapter and no
-# SDK of its own: `kind: openrouter` is the `openai-compatible` shim with its
-# two constants — the base url and the key env — already filled in. What it
-# buys over writing that shim out by hand is that there is nothing to write.
+# `kind: openrouter` is a protocol of its own, not the `openai-compatible` shim
+# with two constants filled in: the gateway's own SDK carries the things chat
+# completions cannot say — which upstream provider serves a request, what to
+# try when it cannot, and what the call cost — so it gets its own adapter.
+# Point `openai-compatible` at the same base url for the older, laxer client.
 version: 1
 
 providers:
@@ -26,21 +27,35 @@ models:
     sonnet:
         provider: attributed
         model: anthropic/claude-sonnet-4.5
-        # Forwarded as `reasoning_effort`. One spelling covers vendors that
-        # each name the dial differently, because the gateway maps it onto
-        # whatever the destination model understands — a pass-through for
-        # OpenAI's models, a fraction of the thinking budget for the rest.
+        # Sent as `reasoning.effort`. One spelling covers vendors that each
+        # name the dial differently, because the gateway maps it onto whatever
+        # the destination model understands — a pass-through for OpenAI's
+        # models, a fraction of the thinking budget for the rest.
         reasoningEffort: high
 
     nano:
         # `openrouter` is undeclared above, and resolves anyway: a built-in
         # kind is usable as a provider *name*. This entry is complete.
         provider: openrouter
-        # Accepted because `chat` is one of this kind's APIs — it is simply the
-        # only one, so naming it documents the wire format rather than choosing
-        # it. `responses` here would be a load error; see invalid/.
-        api: chat
+        # There is no `api:` here, and naming one is a load error: this kind
+        # speaks one protocol, its own. See invalid/.
         model: openai/gpt-5.4-nano
+
+    # The two knobs the gateway exists for, and the reason it is no longer a
+    # shim: `routing` says who may serve the request, `fallbacks` says what to
+    # try when none of them can.
+    routed:
+        provider: openrouter
+        model: openai/gpt-5.4-nano
+        routing:
+            order: [azure, openai]
+            # Refuse a provider that would quietly ignore a parameter rather
+            # than serving a request that means something else than it says.
+            requireParameters: true
+            sort: throughput
+        fallbacks:
+            - anthropic/claude-sonnet-4.5
+            - google/gemini-3.5-flash
 
 agents:
     - name: careful
@@ -48,6 +63,9 @@ agents:
 
     - name: cheap
       model: nano
+
+    - name: routed
+      model: routed
 
     # Ids are `vendor/model`, and the vendor prefix is part of the *id* — the
     # provider is what precedes the first colon, not what precedes the slash.

@@ -14,7 +14,7 @@ an append-only trajectory.**
 ## Install
 
 Node.js 24+, ESM only. Runtime dependencies are `yaml` and `zod` and nothing
-else; the three vendor SDKs are **optional peer dependencies**, not loaded until
+else; the four vendor SDKs are **optional peer dependencies**, not loaded until
 a client for that vendor is first built, so an OpenAI-only application never
 pays for the others.
 
@@ -22,6 +22,7 @@ pays for the others.
 npm i zenera-neo openai
 npm i zenera-neo @anthropic-ai/sdk
 npm i zenera-neo @google/genai
+npm i zenera-neo @openrouter/sdk
 ```
 
 ## Use

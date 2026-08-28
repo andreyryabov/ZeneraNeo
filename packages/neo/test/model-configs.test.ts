@@ -5,6 +5,7 @@ import { AnthropicModel } from '../src/models/anthropic.ts';
 import { GeminiModel } from '../src/models/gemini.ts';
 import { OpenAIModel } from '../src/models/openai-chat.ts';
 import { OpenAIResponsesModel } from '../src/models/openai-responses.ts';
+import { OpenRouterModel } from '../src/models/openrouter.ts';
 import { loadProject, type AgentProject } from '../src/project/index.ts';
 
 // ---------------------------------------------------------------------------
@@ -29,7 +30,7 @@ function load(dir: string): Promise<AgentProject> {
 }
 
 /**
- * The three SDKs describe a connection with three different shapes, and the
+ * The four SDKs describe a connection with four different shapes, and the
  * GenAI one does not declare its fields publicly at all. Reaching through a
  * cast is the price of asserting on what was actually built rather than on
  * what we asked for.
@@ -43,6 +44,17 @@ interface Conn {
 }
 
 const conn = (client: unknown): Conn => client as Conn;
+
+/**
+ * OpenRouter's client is the one that does not expose its connection at all:
+ * the resolved options sit behind `_options`, and the base url is called
+ * `serverURL` there. Kept separate from `conn` rather than folded into it
+ * because the OpenAI client also has an `_options`, holding something else.
+ */
+const orConn = (client: unknown): Conn => {
+    const { _options } = client as { _options: { apiKey?: string; serverURL?: string } };
+    return { apiKey: _options.apiKey, baseURL: _options.serverURL };
+};
 
 function modelOf(project: AgentProject, agent: string): Model {
     const model = project.registry.get(agent).model;
@@ -255,17 +267,29 @@ describe('configs/openrouter', () => {
         const p = await load('openrouter');
 
         // `openrouter` is never declared in that fixture.
-        const built = conn(p.models.client('openrouter'));
+        const built = orConn(p.models.client('openrouter'));
         expect(built.baseURL).toBe('https://openrouter.ai/api/v1');
         expect(built.apiKey).toBe('sk-openrouter');
     });
 
-    it('speaks chat completions, whether or not the api is named', async () => {
+    it('speaks its own protocol, and refuses to be asked for an api', async () => {
         const p = await load('openrouter');
 
-        expect(modelOf(p, 'careful')).toBeInstanceOf(OpenAIModel);
-        expect(modelOf(p, 'cheap')).toBeInstanceOf(OpenAIModel);
-        expect(modelOf(p, 'bare')).toBeInstanceOf(OpenAIModel);
+        expect(modelOf(p, 'careful')).toBeInstanceOf(OpenRouterModel);
+        expect(modelOf(p, 'cheap')).toBeInstanceOf(OpenRouterModel);
+        expect(modelOf(p, 'bare')).toBeInstanceOf(OpenRouterModel);
+    });
+
+    it('carries routing and fallbacks through to the spec', async () => {
+        const p = await load('openrouter');
+
+        // The two knobs that are the reason this kind has an adapter at all:
+        // neither has anywhere to go in a chat-completions request.
+        expect(p.config.models?.routed).toMatchObject({
+            routing: { order: ['azure', 'openai'], requireParameters: true, sort: 'throughput' },
+            fallbacks: ['anthropic/claude-sonnet-4.5', 'google/gemini-3.5-flash'],
+        });
+        expect(modelOf(p, 'routed')).toBeInstanceOf(OpenRouterModel);
     });
 
     it('keeps the vendor prefix and the variant suffix inside the model id', async () => {
@@ -281,8 +305,8 @@ describe('configs/openrouter', () => {
     it('gives a second key against one gateway a second client', async () => {
         const p = await load('openrouter');
 
-        expect(conn(p.models.client('spare')).apiKey).toBe('sk-openrouter-spare');
-        expect(conn(p.models.client('spare')).baseURL).toBe('https://openrouter.ai/api/v1');
+        expect(orConn(p.models.client('spare')).apiKey).toBe('sk-openrouter-spare');
+        expect(orConn(p.models.client('spare')).baseURL).toBe('https://openrouter.ai/api/v1');
         expect(p.models.client('spare')).not.toBe(p.models.client('openrouter'));
     });
 
@@ -360,8 +384,8 @@ describe('configs/invalid', () => {
         ['unused-alias-typo', /models\.careful\.provider: unknown provider "openai-ue"/],
         ['api-on-single-api-vendor', /has one api, so "chat" means nothing here/],
         ['unknown-api', /unknown api "completions"/],
-        // Well formed, and still refused: the api exists, the kind lacks it.
-        ['openrouter-responses', /"openrouter" \(openrouter\) does not speak the "responses" api/],
+        // Well formed, and still refused: the word parses, the kind has no apis.
+        ['openrouter-responses', /has one api, so "responses" means nothing here/],
         ['missing-model', /models\.broken/],
         ['unknown-kind', /providers\.mistral\.kind/],
         ['unknown-key', /providers\.house[\s\S]*retries/],

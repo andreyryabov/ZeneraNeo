@@ -84,19 +84,16 @@ export const PRESETS: Record<Vendor, Record<Tier, ModelSpec>> = {
     openrouter: {
         fast: {
             provider: 'openrouter',
-            api: 'chat',
             model: 'inclusionai/ling-3.0-flash-fin:free',
             reasoningEffort: 'low',
         },
         thinking: {
             provider: 'openrouter',
-            api: 'chat',
             model: 'inclusionai/ling-3.0-flash-fin:free',
             reasoningEffort: 'medium',
         },
         deep: {
             provider: 'openrouter',
-            api: 'chat',
             model: 'inclusionai/ling-3.0-flash-fin:free',
             reasoningEffort: 'high',
         },
