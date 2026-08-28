@@ -495,7 +495,7 @@ function entrypoint(config: ProjectConfig, add: Add): string | null {
 // Agents
 // ---------------------------------------------------------------------------
 
-function availableTools(root: string, config: ProjectConfig): AnyTool<unknown>[] {
+export function availableTools(root: string, config: ProjectConfig): AnyTool<unknown>[] {
     // Constructed, not started: a pool creates its container on the first
     // command, so naming one here costs nothing and needs no container engine.
     return [

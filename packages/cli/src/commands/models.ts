@@ -1,4 +1,4 @@
-import { loadProject, type AgentProject } from 'zenera-neo';
+import { loadProject, readProjectConfig, type AgentProject } from 'zenera-neo';
 import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { KeyStore, PROVIDERS, SHAPES } from '../keys.ts';
@@ -17,6 +17,7 @@ import {
     writeAll,
     yellow,
 } from '../term.ts';
+import { availableTools } from '../validate.ts';
 
 const USAGE = 'zen models [--project <name|dir>]';
 
@@ -48,7 +49,13 @@ export const models: Command = {
 
         let project: AgentProject;
         try {
-            project = await loadProject(dir);
+            // The same tools a run would register. Without them every
+            // `workspace:*` or `sandbox:*` selector in the config resolves
+            // against an empty list and the project fails to load with
+            // "no tools in group" — a report about this command, not about
+            // the project.
+            const { config } = readProjectConfig(dir);
+            project = await loadProject(dir, { tools: availableTools(dir, config) });
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             // Constructing a client needs a credential, so a keyless machine

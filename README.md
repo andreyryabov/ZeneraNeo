@@ -68,7 +68,8 @@ history and in CI logs. Piped stdin or the echo-off prompt are the only ways in.
 
 ```sh
 zen init my-project             # scaffolds the project and registers it
-cd "$(zen go my-project)"
+zen open my-project             # opens it in your editor
+cd "$(zen go my-project)"       # `zen go` prints the path, for the shell to cd to
 ```
 
 `zen init` picks a model from a credential this machine can actually reach
@@ -151,12 +152,18 @@ reviewable rather than opaque.
 ## 5 · Run them
 
 ```sh
-zen run                         # a TUI on a terminal, with nothing to say yet
-zen run "summarise this repo"   # one shot; stdout is the answer
-zen run --new                   # a fresh session instead of continuing the last
-zen run --read-only             # give the agent no way to write
-echo "triage this" | zen run --quiet | jq
+zen run my-project                        # a TUI on a terminal, with nothing to say yet
+zen run my-project "summarise this repo"  # one shot; stdout is the answer
+zen run my-project --new                  # a fresh session instead of continuing the last
+zen run my-project --read-only            # give the agent no way to write
+echo "triage this" | zen run my-project --quiet | jq
 ```
+
+The project is named here for clarity, but it rarely has to be: standing inside
+the folder, plain `zen run` means the project you are in — `zen` walks up from
+the working directory looking for `agents.yaml`. The first word is read as the
+project when it names one and as the first word of the prompt when it does not,
+and `--project <name|dir>` settles it either way.
 
 A **session** is a context that persists: one workspace, one memory, one
 accumulating trajectory. It continues itself — there is no `resume`, because its
@@ -166,11 +173,16 @@ session, recorded in full whether or not you were watching.
 ## 6 · See what it did
 
 ```sh
-zen check                       # validate the project and every file it names
-zen models                      # resolve providers, models and credentials, calling nothing
-zen inspect --open              # the last run's report.html
-zen list --sessions             # every project, its sessions and last run
+zen check my-project                      # validate the project and every file it names
+zen models --project my-project           # resolve providers, models and credentials, calling nothing
+zen inspect --project my-project --open   # the last run's report.html
+zen list --sessions                       # every project, its sessions and last run
 ```
+
+Named for clarity again: drop the flag and each of these reads the project you
+are standing in. `check` takes a bare directory too, so an unregistered
+checkout can be validated before it is ever run. `list` is the one command that
+is about all of them at once.
 
 Every run writes a self-contained `report.html`: the agent graph, every request,
 every tool call, every token.
