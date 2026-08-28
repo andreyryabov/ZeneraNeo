@@ -18,6 +18,4 @@ jobs:
             - run: npm ci
             - run: npm run format:check
             - run: npm run typecheck
-            # Live tests talk to real providers and need credentials; they are
-            # excluded here rather than skipped, so a missing key is not a pass.
             - run: npx vitest run --exclude '**/live-*'
