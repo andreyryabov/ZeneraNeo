@@ -2,6 +2,7 @@ import { basename, resolve } from 'node:path';
 import { one, parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { KeyStore } from '../keys.ts';
+import { Registry } from '../projects.ts';
 import { project as resolveProject } from '../resolve.ts';
 import {
     bold,
@@ -79,12 +80,14 @@ export const check: Command = {
         // a scaffold in progress — can be checked at all. `--project` goes
         // through the registry, like everywhere else.
         const here = one(positionals, 'directory', USAGE);
-        const target = here
-            ? { dir: resolve(ctx.cwd, here), name: basename(resolve(ctx.cwd, here)) }
-            : await resolveProject({ cwd: ctx.cwd, project: values.project }).then((p) => ({
-                  dir: p.dir,
-                  name: p.name,
-              }));
+        const dir = here
+            ? resolve(ctx.cwd, here)
+            : await resolveProject({ cwd: ctx.cwd, project: values.project }).then((p) => p.dir);
+
+        // Being listed is the registry's answer, not the directory's, so it is
+        // read here and handed to the check rather than looked up inside it.
+        const entry = (await Registry.open()).findPath(dir);
+        const name = entry?.name ?? basename(dir);
 
         // Materialised first, so the credential verdicts are the ones a run
         // would reach: a key in the environment and a key in the keyring are
@@ -92,7 +95,12 @@ export const check: Command = {
         const keys = await KeyStore.open();
         keys.materialize();
 
-        const report = await validateProject({ dir: target.dir, name: target.name, keys });
+        const report = await validateProject({
+            dir,
+            name,
+            registered: entry !== undefined,
+            keys,
+        });
 
         if (ctx.json) {
             json(report);
@@ -107,7 +115,7 @@ export const check: Command = {
             report.counts.errors > 0 || (Boolean(values.strict) && report.counts.warnings > 0);
         if (failed) {
             throw invalidError(
-                `${target.name ?? target.dir}: ${count(report.counts.errors, 'error')}` +
+                `${name}: ${count(report.counts.errors, 'error')}` +
                     (values.strict ? `, ${count(report.counts.warnings, 'warning')}` : ''),
                 'the report above says what to change',
             );

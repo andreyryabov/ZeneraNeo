@@ -16,7 +16,6 @@ import {
 } from 'zenera-neo';
 import { auditModels, credentialFor, type ModelIssue } from './audit.ts';
 import type { KeyStore } from './keys.ts';
-import { Registry } from './projects.ts';
 
 // ---------------------------------------------------------------------------
 // The project check
@@ -157,6 +156,12 @@ export interface ValidateOptions {
     /** the registered name, when there is one */
     name?: string;
     /**
+     * Whether the registry knows this path. Passed in rather than looked up,
+     * because nothing in this check may depend on `$HOME` being readable: the
+     * machine that is not set up yet is the one that most needs the report.
+     */
+    registered?: boolean;
+    /**
      * The keyring, materialised. Given, every model the project names is
      * checked for a credential; omitted, that section says `unknown` and no
      * finding is raised — a project is not invalid because this laptop cannot
@@ -189,7 +194,7 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
     let configPath: string | null = null;
     let shadowed: string[] = [];
     let entry: string | null = null;
-    let registered = false;
+    let registered = opts.registered ?? false;
     let name = opts.name ?? null;
 
     const add = (f: Finding): void => {
@@ -248,12 +253,8 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
     }
 
     // A project is a directory the loader can read; being *listed* is a
-    // separate question, answered by the registry rather than by anything in
-    // the directory. Unregistered is a warning at most: checking by path, as
-    // this call is doing, works either way.
-    const entryInRegistry = (await Registry.open()).findPath(root);
-    registered = entryInRegistry !== undefined;
-    name = opts.name ?? entryInRegistry?.name ?? null;
+    // separate question, and one the caller has already answered — the registry
+    // lives in `$HOME`, which this check does not read.
     if (!registered) {
         add({
             severity: 'warning',
