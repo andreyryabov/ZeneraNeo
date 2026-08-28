@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // ---------------------------------------------------------------------------
@@ -18,14 +18,64 @@ constraints, what to do when the answer is not knowable.
 Replace this with yours.
 `;
 
-const AGENTS_YAML = (model: string): string => `# Who exists, and what they may reach for.
+/**
+ * The `model:` section, which is one line until it has to say more.
+ *
+ * A shorthand cannot carry options, and the object form cannot carry a
+ * shorthand — its `model:` is the bare id the API is sent — so asking for
+ * reasoning means splitting the ref back into the two fields and giving the
+ * configuration a name to be referred to by.
+ */
+const MODEL_SECTION = (ref: string, options?: string): string => {
+    const colon = ref.indexOf(':');
+    if (!options || colon < 0) {
+        return (
+            '# The model an agent uses when it does not pin its own. Change it here and the\n' +
+            '# whole project moves. The prefix is the *provider* name, not the vendor — drop\n' +
+            '# it and the id goes to the default provider, whatever the id looks like.\n' +
+            `model: ${ref}`
+        );
+    }
+    const indented = options
+        .trimEnd()
+        .split('\n')
+        .map((line) => (line ? `        ${line}` : ''))
+        .join('\n');
+    return (
+        '# The model an agent uses when it does not pin its own. Change it here and the\n' +
+        '# whole project moves. A named configuration is what gives the knobs below\n' +
+        '# somewhere to live; a bare `model: <provider>:<id>` works when there are none.\n' +
+        'models:\n' +
+        '    main:\n' +
+        `        provider: ${ref.slice(0, colon)}\n` +
+        `        model: ${ref.slice(colon + 1)}\n` +
+        `${indented}\n` +
+        '\n' +
+        'model: main'
+    );
+};
+/**
+ * Added above the tool list when the project is scaffolded with web access.
+ * The group is registered whether or not a key exists, so this only ever
+ * changes what the agent is allowed to reach for.
+ */
+const EXA_NOTE = `
+      #
+      # exa:* is web search and page reading, here because this machine has an
+      # Exa key. The key is read from the environment when a tool is called,
+      # so a clone of this project without one still loads and only the call
+      # fails.`;
+
+const AGENTS_YAML = (
+    model: string,
+    options?: string,
+    web?: boolean,
+): string => `# Who exists, and what they may reach for.
 #
 # Reference: docs/agents-yaml.md
 version: 1
 
-# The model an agent uses when it does not pin its own. Change it here and the
-# whole project moves.
-model: ${model}
+${MODEL_SECTION(model, options)}
 
 # The container \`sandbox:*\` commands run in. \`persist: true\` keeps it between
 # runs instead of throwing it away, so what the agent installs is still there
@@ -48,10 +98,10 @@ agents:
       # sandbox:* runs commands in a container, not on this machine, so it
       # needs podman — \`zen run\` installs and starts what it can on its own,
       # and \`zen sandbox status\` says where that got to. Drop the line if you
-      # would rather this agent never reached a shell.
+      # would rather this agent never reached a shell.${web ? EXA_NOTE : ''}
       tools:
           - workspace:*
-          - sandbox:*
+          - sandbox:*${web ? '\n          - exa:*' : ''}
 `;
 
 const PROMPT = `You are a helpful assistant working inside a project workspace.
@@ -95,20 +145,23 @@ sessions/
 // ---------------------------------------------------------------------------
 
 const VSCODE_SETTINGS = `{
-    "chat.useNestedAgentsMdFiles": false
+    "chat.useNestedAgentsMdFiles": false,
+    "chat.tools.terminal.autoApprove": {
+        "zen": true
+    }
 }
 `;
 
 /**
- * Writes `.vscode/settings.json` under `dir` unless one is already there — an
- * existing file is somebody's, and a project directory may predate the project.
- * Returns the relative path when it wrote one.
+ * Writes `.vscode/settings.json` under `dir`, replacing what is there. The file
+ * is ours: it says how the editor is to treat a directory the agents write
+ * into, and a stale copy of that answer is worse than none. Returns the
+ * relative path.
  */
-export function editorSettings(dir: string): string | undefined {
+export function editorSettings(dir: string): string {
     const rel = join('.vscode', 'settings.json');
-    if (existsSync(join(dir, rel))) return undefined;
     mkdirSync(join(dir, '.vscode'), { recursive: true });
-    writeFileSync(join(dir, rel), VSCODE_SETTINGS, { flag: 'wx' });
+    writeFileSync(join(dir, rel), VSCODE_SETTINGS);
     return rel;
 }
 
@@ -127,14 +180,14 @@ export function editorSettings(dir: string): string | undefined {
 const COPILOT_TEMPLATE = new URL('../templates/copilot-instructions.md', import.meta.url);
 
 /**
- * Writes `.github/copilot-instructions.md` under `dir` unless one is already
- * there. Returns the relative path when it wrote one.
+ * Writes `.github/copilot-instructions.md` under `dir`, replacing what is
+ * there — it describes the file formats of the version of `zen` in hand, so
+ * the current one is the only one worth having. Returns the relative path.
  */
-export function copilotInstructions(dir: string): string | undefined {
+export function copilotInstructions(dir: string): string {
     const rel = join('.github', 'copilot-instructions.md');
-    if (existsSync(join(dir, rel))) return undefined;
     mkdirSync(join(dir, '.github'), { recursive: true });
-    writeFileSync(join(dir, rel), readFileSync(COPILOT_TEMPLATE, 'utf8'), { flag: 'wx' });
+    writeFileSync(join(dir, rel), readFileSync(COPILOT_TEMPLATE, 'utf8'));
     return rel;
 }
 
@@ -142,9 +195,17 @@ export interface ScaffoldOptions {
     /** the project directory */
     dir: string;
     model: string;
+    /** extra lines for the model's configuration; their presence picks the object form */
+    modelOptions?: string;
+    /** give the default agent `exa:*` — set when a key for it is on hand */
+    web?: boolean;
 }
 
-/** Writes a project. Never overwrites: the caller decides whether it may. */
+/**
+ * Writes a project. Never overwrites the project's own files: the caller
+ * decides whether it may. The editor files are the exception — they are ours,
+ * and are replaced.
+ */
 export function scaffold(opts: ScaffoldOptions): string[] {
     const written: string[] = [];
     const put = (rel: string, body: string): void => {
@@ -159,14 +220,12 @@ export function scaffold(opts: ScaffoldOptions): string[] {
     mkdirSync(join(opts.dir, 'sessions'), { recursive: true });
 
     put('INSTRUCTIONS.md', INSTRUCTIONS_MD);
-    put('agents.yaml', AGENTS_YAML(opts.model));
+    put('agents.yaml', AGENTS_YAML(opts.model, opts.modelOptions, opts.web));
     put(join('agents', 'prompts', 'default.md'), PROMPT);
     put('.gitignore', GITIGNORE);
 
     // The project directory is what `zen open` opens, so this is where the
     // editor actually reads them.
-    for (const rel of [editorSettings(opts.dir), copilotInstructions(opts.dir)]) {
-        if (rel !== undefined) written.push(rel);
-    }
+    written.push(editorSettings(opts.dir), copilotInstructions(opts.dir));
     return written;
 }

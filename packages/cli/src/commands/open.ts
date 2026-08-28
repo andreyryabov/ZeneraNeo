@@ -29,8 +29,8 @@ export const open: Command = {
         'belongs to, then $VISUAL or $EDITOR, then a known editor on PATH or',
         'installed, then the platform opener.',
         'The editor files `zen init` writes (.vscode/settings.json,',
-        '.github/copilot-instructions.md) are added to the directory being',
-        'opened if they are missing, and never overwritten.',
+        '.github/copilot-instructions.md) are refreshed in the directory being',
+        'opened; edits to them do not survive.',
         'VS Code and its forks are launched with --disable-workspace-trust so',
         'the settings written there apply to the window straight away.',
     ],
@@ -53,12 +53,10 @@ export const open: Command = {
         verify(editor);
 
         // The editor reads the settings and instructions of the folder it was
-        // opened on, and a project may predate either file — or predate them
-        // existing at all. Write whichever is missing before the window is
-        // there to read it; neither is ever overwritten.
-        const written = [editorSettings(dir), copilotInstructions(dir)].filter(
-            (f) => f !== undefined,
-        );
+        // opened on, and a project may predate either file — or the version of
+        // them this `zen` writes. Both are ours, so both are written fresh
+        // before the window is there to read them.
+        const written = [editorSettings(dir), copilotInstructions(dir)];
 
         if (ctx.json) {
             json({
@@ -71,7 +69,7 @@ export const open: Command = {
         } else {
             note(`opening ${cyan(dir)} with ${editor.label} ${dim(`(${editor.from})`)}`);
             for (const file of written) {
-                note(`  ${dim(`added ${file}`)}`);
+                note(`  ${dim(`wrote ${file}`)}`);
             }
         }
         await launch(editor, dir);

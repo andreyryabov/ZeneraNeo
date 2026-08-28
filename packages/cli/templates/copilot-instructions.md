@@ -202,7 +202,7 @@ version: 1 # schema version, defaults to 1
 default: intake # entry agent; wins over any `default: true`
 
 providers: {} # named connections (credentials + endpoint)
-provider: openai # provider a bare model id belongs to
+provider: openai # the provider an unprefixed model id belongs to — §7.3
 models: {} # named model configurations
 model: fast # fallback for agents that do not pin their own
 skills: agents/skills # one directory, or a list
@@ -261,6 +261,11 @@ provider with a missing key does not fail loading.
 - a `preload:` entry missing from `allow:`
 - `agents[].fork.agents` naming an unknown agent, or being empty; `maxBranches` below 2
 - `system:` pointing at a missing file, or outside the project root
+
+**Not caught at load** — a model id whose prefix is missing and so resolves to the
+wrong provider (§7.3), and any combination of knobs the vendor rejects at request
+time, such as OpenAI reasoning on chat completions (§7.6). Both surface on the
+first call, so read §7 before writing a `models:` entry.
 
 ### 3.2 `INSTRUCTIONS.md`
 
@@ -1005,9 +1010,19 @@ agents:
 `gpt-4o` · `openai:gpt-4o` · `openai/responses:o3` · `vertex:gemini-3.5-flash`
 
 Only the **first** colon separates, so a fine-tuned id must name its provider:
-`openai:ft:gpt-4o:acme::a1b2`. The first segment is a provider _name_, not a
-vendor. Anything the shorthand cannot express (keys, base urls, reasoning knobs)
-needs the object form.
+`openai:ft:gpt-4o:acme::a1b2`.
+
+**Always write the prefix.** The first segment is a provider _name_, not a vendor
+hint — nothing reads `gemini-3.5-flash` and infers Google. An unprefixed id goes
+to the default provider, which is `openai` unless a top-level `provider:` says
+otherwise, so a bare `gemini-3.5-flash` asks OpenAI for a Google model and fails
+with `OPENAI_API_KEY is not set`. The message names the provider it resolved to;
+read it as "the prefix is missing", not "the key is missing".
+
+Anything the shorthand cannot express (keys, base urls, `api:`, reasoning knobs)
+needs the object form. The object form does **not** re-parse a shorthand: its
+`model:` is the bare id and the provider goes in `provider:` beside it. Writing
+`model: openai:gpt-5.4-mini` there sends that whole string to the API.
 
 Resolution order for any `model:` value: `zen run --model` → this file's
 `models:` → the shorthand parser. Two agents naming `balanced` share one model
@@ -1015,16 +1030,16 @@ over one connection.
 
 ### 7.4 Vendor knobs
 
-| Field                   | Applies to                    | Notes                                                                          |
-| ----------------------- | ----------------------------- | ------------------------------------------------------------------------------ |
-| `reasoningEffort`       | openai, openrouter            | Free string on purpose — the API is the authority on validity                  |
-| `reasoningSummary`      | openai, openrouter            | `auto` \| `concise` \| `detailed`. On openai **needs `api: responses`** — §7.6 |
-| `maxTokens`             | anthropic, gemini, openrouter | Cap on **output** tokens, not context. Anthropic requires one (default 8192)   |
-| `thinkingBudgetTokens`  | anthropic                     | Extended thinking budget                                                       |
-| `thinkingBudget`        | gemini 2.5                    | Tokens: `0` off, `-1` auto                                                     |
-| `thinkingLevel`         | gemini 3                      | `minimal` \| `low` \| `medium` \| `high`                                       |
-| `includeThoughts`       | gemini                        | Thought summaries; default `true`                                              |
-| `routing` / `fallbacks` | openrouter                    | Upstream provider preferences, and models to fall back to — §7.5               |
+| Field                   | Applies to                    | Notes                                                                                                      |
+| ----------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `reasoningEffort`       | openai, openrouter            | Free string on purpose — the API is the authority on validity. On openai **needs `api: responses`** — §7.6 |
+| `reasoningSummary`      | openai, openrouter            | `auto` \| `concise` \| `detailed`. On openai **needs `api: responses`** — §7.6                             |
+| `maxTokens`             | anthropic, gemini, openrouter | Cap on **output** tokens, not context. Anthropic requires one (default 8192)                               |
+| `thinkingBudgetTokens`  | anthropic                     | Extended thinking budget                                                                                   |
+| `thinkingBudget`        | gemini 2.5                    | Tokens: `0` off, `-1` auto                                                                                 |
+| `thinkingLevel`         | gemini 3                      | `minimal` \| `low` \| `medium` \| `high`                                                                   |
+| `includeThoughts`       | gemini                        | Thought summaries; default `true`                                                                          |
+| `routing` / `fallbacks` | openrouter                    | Upstream provider preferences, and models to fall back to — §7.5                                           |
 
 Knobs that do not apply to the chosen vendor are ignored, not rejected.
 `api:` exists only for the OpenAI protocol — naming it on a Gemini or Anthropic
@@ -1168,14 +1183,17 @@ vendor except Gemini — which is why a reasoning model can burn thousands of
 thinking tokens while the CLI shows no progress at all.
 
 **OpenAI** — reasoning text only exists on the **responses** API, and only as a
-summary. `api: responses` is therefore not optional here: on chat completions
-there is nothing to stream.
+summary. `api: responses` is not optional here, and not only for visibility:
+chat completions is the default, and it **refuses `reasoningEffort` together with
+function tools** — `400 Function tools with reasoning_effort are not supported
+for <model> in /v1/chat/completions`. So any OpenAI agent that both reasons and
+holds tools — which is nearly all of them — must name the api.
 
 ```yaml
 models:
     default:
         provider: openai
-        api: responses # required — chat completions exposes no reasoning
+        api: responses # required — chat completions refuses tools + reasoning
         model: gpt-5.4-nano
         reasoningEffort: medium # how hard it thinks
         reasoningSummary: auto # whether you get to see it
@@ -1219,6 +1237,12 @@ up (§7.8).
 
 ### 7.7 Known traps
 
+- **A model id with no provider prefix** — `gemini-3.5-flash` resolves to the
+  default provider, not to Google, and the failure reads as a missing OpenAI key.
+  Write `google:gemini-3.5-flash` — §7.3.
+- **OpenAI reasoning without `api: responses`** — chat completions rejects
+  `reasoningEffort` alongside function tools with a `400`, and exposes no
+  reasoning summary even without tools — §7.6.
 - **Anthropic + `thinkingBudgetTokens` + multi-turn tool use** — thinking-block
   signatures are not replayed, and the API rejects the follow-up. Leave extended
   thinking off for tool-using agents.

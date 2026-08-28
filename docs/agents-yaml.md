@@ -375,9 +375,17 @@ models:
 `gpt-4o` · `openai:gpt-4o` · `openai/responses:o3` · `vertex:gemini-3.5-flash`
 
 Only the **first** colon separates, so a fine-tuned id keeps its own — it just
-has to name its provider: `openai:ft:gpt-4o:acme::a1b2`. The first segment is a
-provider _name_, not a vendor. Anything the shorthand cannot express (keys, base
-urls, reasoning knobs) needs the object form.
+has to name its provider: `openai:ft:gpt-4o:acme::a1b2`.
+
+**Always write the prefix.** The first segment is a provider _name_, not a vendor
+hint — nothing reads `gemini-3.5-flash` and infers Google. An unprefixed id goes
+to the default provider, which is `openai` unless a top-level `provider:` says
+otherwise, so a bare `gemini-3.5-flash` asks OpenAI for a Google model and fails
+with `OPENAI_API_KEY is not set`.
+
+Anything the shorthand cannot express (keys, base urls, reasoning knobs) needs
+the object form — which does **not** re-parse a shorthand: its `model:` is the
+bare id, with `provider:` beside it.
 
 ### Object fields
 
@@ -385,7 +393,7 @@ urls, reasoning knobs) needs the object form.
 | ------------------------ | ----------------------------- | ------------------------------------------------------------------------------- |
 | `model`                  | all                           | **Required.** The vendor's model id                                             |
 | `provider`               | all                           | A `providers:` name, or a built-in kind                                         |
-| `api`                    | openai                        | `chat` or `responses`                                                           |
+| `api`                    | openai                        | `chat` or `responses`. Reasoning needs `responses` — see note below             |
 | `apiKey` / `apiKeyEnv`   | all                           | One-off credentials; opts out of the shared client                              |
 | `baseURL` / `baseURLEnv` | all                           | Same                                                                            |
 | `reasoningEffort`        | openai, openrouter            | Free string — see note below                                                    |
@@ -408,6 +416,12 @@ discriminate on.
 changes faster than this schema would, and the request that carries a bad value
 is the authority on rejecting it; an enum here would mean a config the API
 accepts failing to load.
+
+**OpenAI reasoning needs `api: responses`.** The default is `chat`, which
+exposes no reasoning summary and rejects `reasoningEffort` outright when the
+request also carries function tools: `400 Function tools with reasoning_effort
+are not supported for <model> in /v1/chat/completions`. Nothing catches this at
+load — the API is the one to say no.
 
 ### Resolution order
 
