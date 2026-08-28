@@ -5,7 +5,7 @@ name: Release
 # publish, so nothing reaches npm without a commit that names the version.
 on:
     push:
-        tags: ["v*.*.*"]
+        tags: ['v*.*.*']
     workflow_dispatch:
         inputs:
             tag:
