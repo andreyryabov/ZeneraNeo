@@ -6,51 +6,74 @@ by the coding agent you already have open.**
 [![CI](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
-[![OpenAI · Anthropic · Gemini · OpenRouter](https://img.shields.io/badge/models-OpenAI%20%C2%B7%20Anthropic%20%C2%B7%20Gemini%20%C2%B7%20OpenRouter-8957e5.svg)](#the-library)
+[![OpenAI · Anthropic · Gemini · OpenRouter](https://img.shields.io/badge/models-OpenAI%20%C2%B7%20Anthropic%20%C2%B7%20Gemini%20%C2%B7%20OpenRouter-8957e5.svg)](#the-library-underneath)
 
-An agent runtime for Node.js 24+ (ESM), and a command line over it.
+`zen` is a command line for building and running multi-agent systems. An
+**agentic project is a folder**: prompts, agent wiring, skills and tool
+selections are Markdown and YAML files, not code buried inside an application.
+Commit it, review it in a pull request, hand it to a colleague — it runs the
+same everywhere, and it never carries your keys with it.
 
 > **This is an open-source side project for experimentation and chore work.**
 > It is **not** the official Zenera AI Platform, and it carries no support or
 > stability promises. Use it to try ideas, to automate your own drudgery, and to
 > see how a multi-agent runtime is put together.
 
-Two pieces:
+---
 
-| Directory      | Published as | What it is                                                      |
-| -------------- | ------------ | --------------------------------------------------------------- |
-| `packages/neo` | `zenera-neo` | the library — agents, models, tools, skills, memory, trajectory |
-| `packages/cli` | `zenera-cli` | `zen`, the command line: projects, sessions, credentials, a TUI |
+## 1 · Install
 
-## Quickstart
+Node.js 24+. Install the CLI together with at least one vendor SDK — they are
+**optional peer dependencies**, so you only pay for the ones you use.
+
+```sh
+npm i -g zenera-cli openai
+#                or @anthropic-ai/sdk, @google/genai, @openrouter/sdk — any mix
+```
+
+Or try it without installing anything: `npx zenera-cli --help`.
+
+The binary is installed under three names: `zen`, `zn` and `zenera`.
+
+<details>
+<summary>From a clone of this repository</summary>
 
 ```sh
 git clone https://github.com/andreyryabov/ZeneraNeo.git && cd ZeneraNeo
 npm i && npm run cli:link       # builds both packages, puts `zen` on your PATH
-
-zen key add openai < key.txt    # or: anthropic, vertex, google, openrouter
-zen init my-project             # scaffolds v1 + a brief for your coding agent
-cd "$(zen go my-project)"
-zen run                         # a TUI on a terminal, one shot when piped
 ```
 
-Then open the folder in your editor and tell your coding agent what the system
-should do. It writes the agents; `zen run` runs them; `zen inspect` shows you
-every request, tool call and token it spent.
+`npm run cli:unlink` removes it again. Use the link rather than
+`npm i -g ./packages/cli` — the symlink is what keeps your local library edits
+visible to the CLI.
 
----
+</details>
 
-## The idea
+## 2 · Add a credential
 
-An **agentic project is a folder**. Prompts, agent wiring, skills and tool
-selections are files — Markdown and YAML — not code buried inside an
-application. That folder can be committed, copied to another machine, reviewed
-in a pull request, and handed to someone else who runs it with one command.
-Nothing about it is tied to the machine it was written on: credentials live in
-`$HOME`, so the project never contains a secret.
+Keys live in `~/.zenera/neo` (mode `0700`), never in the project. They are
+materialised into the environment just before a run, so a real environment
+variable always wins, and a project checked out on a machine without `zen` still
+runs.
 
-That is the point of the CLI: **it makes agentic systems shareable the way
-repositories are shareable.**
+```sh
+zen key add openai < key.txt    # or: anthropic, google, vertex, openrouter
+zen key ls --check              # what is stored, and whether it still works
+```
+
+The secret never comes from argv — a command line lands in `ps`, in shell
+history and in CI logs. Piped stdin or the echo-off prompt are the only ways in.
+
+## 3 · Create a project
+
+```sh
+zen init my-project             # scaffolds the project and registers it
+cd "$(zen go my-project)"
+```
+
+`zen init` picks a model from a credential this machine can actually reach
+(override with `--model`), writes the scaffold, and records the directory so
+`zen list` and `zen go` can find it by name:
 
 ```
 my-project/
@@ -65,7 +88,13 @@ my-project/
             runs/<id>/           input, output, state, report.html, meta
 ```
 
-The whole system is that `agents.yaml`:
+Nothing here is tied to the machine it was written on, which is the point of the
+CLI: **it makes agentic systems shareable the way repositories are shareable.**
+
+## 4 · Write the agents
+
+The whole system is `agents.yaml`. An agent is an instruction, a model, some
+tools, some skills, and who it may hand work to:
 
 ```yaml
 default: intake
@@ -93,10 +122,16 @@ It is validated strictly at load: an unknown tool, a handoff to nobody, a
 missing prompt file — each fails immediately, naming the offending key, instead
 of surfacing three turns into a run as a confused model.
 
-### AI writes the AI
+`agents/prompts/intake.md` is that agent's brief, in prose.
+`agents/skills/<name>/SKILL.md` is knowledge it can pull in mid-run instead of
+carrying in every prompt. `INSTRUCTIONS.md` is prepended to all of them.
 
-You are not expected to hand-author `agents.yaml`. `zen init` scaffolds the
-project **and** writes `.github/copilot-instructions.md` — a standing brief that
+Full reference: [docs/agents-yaml.md](docs/agents-yaml.md) ·
+[docs/projects.md](docs/projects.md).
+
+### You are not expected to hand-author this
+
+`zen init` also writes `.github/copilot-instructions.md` — a standing brief that
 explains this runtime to whatever coding agent you have open in that folder.
 From then on the loop is:
 
@@ -106,71 +141,66 @@ From then on the loop is:
 4. The report and the trajectory are read back — by you, or by an agent — and
    the project is edited again.
 
-Tools, skills and agents are generated, run, inspected and corrected by AI.
-**AI creates AI, in a loop, verified by AI.** The artefacts stay human-readable
-prose the whole way through, which is what keeps the loop reviewable rather than
-opaque.
+`zen check` is written to be read by a model as much as by a person: every
+finding carries a code, a location and the fix for it, so "fix my project" is a
+single instruction. Tools, skills and agents are generated, run, inspected and
+corrected by AI. **AI creates AI, in a loop, verified by AI.** The artefacts
+stay human-readable prose the whole way through, which is what keeps the loop
+reviewable rather than opaque.
 
-### What people build with it
+## 5 · Run them
 
-- **Deep research agents** — a planner that forks into parallel branches, each
-  with its own tools and skills, joined back into one report.
-- **Coding agents shaped to your case** — file tools scoped to a workspace, a
-  container sandbox for commands, and house rules that are actually yours rather
-  than a vendor's defaults.
-- **Custom agentic systems for daily work** — triage, review, intake,
-  reconciliation: the recurring chores that are too specific for a product and
-  too tedious to keep doing by hand.
+```sh
+zen run                         # a TUI on a terminal, with nothing to say yet
+zen run "summarise this repo"   # one shot; stdout is the answer
+zen run --new                   # a fresh session instead of continuing the last
+zen run --read-only             # give the agent no way to write
+echo "triage this" | zen run --quiet | jq
+```
 
-### What is different about it
+A **session** is a context that persists: one workspace, one memory, one
+accumulating trajectory. It continues itself — there is no `resume`, because its
+state is what it is. A **run** is one prompt in, one answer out inside a
+session, recorded in full whether or not you were watching.
 
-- **The project is the artefact.** Not a script that happens to call a model —
-  a directory with sessions and recorded runs, safe to commit.
-- **Nothing is hidden.** No orchestration layer, no framework magic: an agent is
-  an instruction, a model, tools, skills, handoffs and fork. That is the list.
-- **Everything is recorded.** Every run writes its input, output, state and a
-  self-contained `report.html` — the graph, every request, every token.
-- **Two runtime dependencies.** `yaml` and `zod`. The vendor SDKs are optional
-  peers, loaded only when you actually talk to that vendor.
+## 6 · See what it did
+
+```sh
+zen check                       # validate the project and every file it names
+zen models                      # resolve providers, models and credentials, calling nothing
+zen inspect --open              # the last run's report.html
+zen list --sessions             # every project, its sessions and last run
+```
+
+Every run writes a self-contained `report.html`: the agent graph, every request,
+every tool call, every token.
 
 ---
 
 ## The CLI
 
-```sh
-npm i                # in this repo
-npm run cli:link     # build + npm link → `zen` on your PATH
-```
-
-```sh
-zen key add openai < key.txt   # credentials, never in the project
-zen init my-project            # scaffold the project and register it
-cd "$(zen go my-project)"
-zen run                        # TUI on a terminal
-zen run "summarise this repo"  # one shot; stdout is the answer
-zen check                      # validate the project and every file it names
-zen inspect                    # open the last run's report.html
-```
-
-### Commands
-
-| Command   | Does                                                                     |
-| --------- | ------------------------------------------------------------------------ |
-| `init`    | Creates a project here, or in `<dir>`, and registers it.                 |
-| `list`    | Every known project: sessions, last run, whether one is live.            |
-| `go`      | Prints a project's directory, for the shell to `cd` to.                  |
-| `open`    | Opens a project in your editor.                                          |
-| `key`     | The credential keyring — add, check, switch, remove.                     |
-| `run`     | Runs the project — the TUI on a terminal, one shot otherwise.            |
-| `check`   | Validates `agents.yaml` and every file it names, and reports in full.    |
-| `inspect` | Opens or rebuilds a run's `report.html`.                                 |
-| `models`  | Resolves providers and models and validates the config, calling nothing. |
-| `sandbox` | Checks and prepares the container that command-line tools run in.        |
-| `version` | CLI, library and Node versions.                                          |
+| Command      | Does                                                                     |
+| ------------ | ------------------------------------------------------------------------ |
+| `init`       | Creates a project here, or in `<dir>`, and registers it.                 |
+| `list`       | Every known project: sessions, last run, whether one is live.            |
+| `run`        | Runs the project — the TUI on a terminal, one shot otherwise.            |
+| `go`         | Prints a project's directory, for the shell to `cd` to.                  |
+| `open`       | Opens a project in your editor.                                          |
+| `key`        | The credential keyring — add, check, switch, remove.                     |
+| `models`     | Resolves providers and models and validates the config, calling nothing. |
+| `check`      | Validates `agents.yaml` and every file it names, and reports in full.    |
+| `inspect`    | Opens or rebuilds a run's `report.html`.                                 |
+| `sandbox`    | Checks and prepares the container that command-line tools run in.        |
+| `shell-init` | Emits the shell wrapper that makes `zen go` actually `cd`.               |
+| `version`    | CLI, library and Node versions.                                          |
 
 Global flags: `-h/--help`, `-v/--version`, `--json`, `-C <dir>`. Exit codes: `0`
 ok, `1` the run failed, `2` bad invocation, `3` invalid project, `4` no usable
-credential, `5` sandbox unavailable.
+credential, `5` sandbox unavailable. `zen help <command>` prints the flags of
+one command.
+
+`stdout` is the answer, `stderr` is the narration, and `--json` is on every
+command — so `zen run … | jq` is a supported way to use it, not an accident.
 
 ### Concepts
 
@@ -183,20 +213,45 @@ credential, `5` sandbox unavailable.
   whether or not you were watching.
 - **Workspace** — the directory the agents may read and write. Defaults to the
   session's own empty folder; pointing it anywhere else is confirmed explicitly.
+- **Sandbox** — a Podman container per session, with the workspace mounted at
+  `/workspace`. Prepared on the first command an agent runs; `zen sandbox up`
+  does it ahead of time.
 - **Keyring** — `~/.zenera/neo`, mode `0700`. Keys are materialised into the
   environment just before a run, so a real env var always wins and a project
   checked out on a machine without `zen` still runs.
-
-`stdout` is the answer, `stderr` is the narration, and `--json` is on every
-command — so `zen run … | jq` is a supported way to use it, not an accident.
 
 Full specification: [packages/cli/DESIGN.md](packages/cli/DESIGN.md).
 
 ---
 
-## The library
+## What people build with it
 
-`zenera-neo` is the runtime the CLI is a shell over, and it is usable on its own.
+- **Deep research agents** — a planner that forks into parallel branches, each
+  with its own tools and skills, joined back into one report.
+- **Coding agents shaped to your case** — file tools scoped to a workspace, a
+  container sandbox for commands, and house rules that are actually yours rather
+  than a vendor's defaults.
+- **Custom agentic systems for daily work** — triage, review, intake,
+  reconciliation: the recurring chores that are too specific for a product and
+  too tedious to keep doing by hand.
+
+## What is different about it
+
+- **The project is the artefact.** Not a script that happens to call a model —
+  a directory with sessions and recorded runs, safe to commit.
+- **Nothing is hidden.** No orchestration layer, no framework magic: an agent is
+  an instruction, a model, tools, skills, handoffs and fork. That is the list.
+- **Everything is recorded.** Every run writes its input, output, state and a
+  self-contained `report.html` — the graph, every request, every token.
+- **Two runtime dependencies.** `yaml` and `zod`. The vendor SDKs are optional
+  peers, loaded only when you actually talk to that vendor.
+
+---
+
+## The library underneath
+
+The CLI is a shell over `zenera-neo`, and the library is usable on its own —
+when you want the runtime inside your own application rather than on a terminal.
 
 ```sh
 npm i zenera-neo openai
@@ -204,9 +259,9 @@ npm i zenera-neo @anthropic-ai/sdk
 npm i zenera-neo @google/genai
 ```
 
-Runtime dependencies are `yaml` and `zod` and nothing else; the three vendor
-SDKs are **optional peer dependencies**, not loaded until a client for that
-vendor is first built, so an OpenAI-only application never pays for the others.
+Runtime dependencies are `yaml` and `zod` and nothing else; the vendor SDKs are
+**optional peer dependencies**, not loaded until a client for that vendor is
+first built, so an OpenAI-only application never pays for the others.
 
 ```ts
 import { loadProject } from 'zenera-neo';
@@ -240,6 +295,13 @@ What it gives you:
 Reference: [DESIGN.md](DESIGN.md), [docs/projects.md](docs/projects.md),
 [docs/agents-yaml.md](docs/agents-yaml.md), and `examples/` for eight worked
 demos, from a single agent to a project loaded entirely from a folder.
+
+## Packages
+
+| Directory      | Published as | What it is                                                      |
+| -------------- | ------------ | --------------------------------------------------------------- |
+| `packages/cli` | `zenera-cli` | `zen`, the command line: projects, sessions, credentials, a TUI |
+| `packages/neo` | `zenera-neo` | the library — agents, models, tools, skills, memory, trajectory |
 
 ---
 
