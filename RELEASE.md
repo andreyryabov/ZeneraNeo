@@ -76,7 +76,6 @@ Both packages have a `prepack: tsc -b`, so a stale or missing `dist` cannot be p
 Both ship `dist` **and** `src`, so the `../src/*.ts` references inside the `.js.map` and
 `.d.ts.map` files resolve inside the tarball.
 
-
 ## Publishing by hand
 
 Only when CI cannot ([release:publish](package.json) is the same two commands):

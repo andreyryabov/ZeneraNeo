@@ -26,7 +26,8 @@ Node.js 24+. Install the CLI together with at least one vendor SDK — they are
 **optional peer dependencies**, so you only pay for the ones you use.
 
 ```sh
-npm i -g zenera-cli openai              # or @anthropic-ai/sdk, @google/genai
+npm i -g zenera-cli openai
+#                or @anthropic-ai/sdk, @google/genai, @openrouter/sdk — any mix of them
 ```
 
 Or without installing anything:
