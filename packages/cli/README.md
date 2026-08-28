@@ -1,7 +1,16 @@
 # zenera-cli
 
-**`zen` — agentic projects you can run, share and commit, written for you by the
-coding agent you already have open.**
+**`zen` — put a team of AI agents to work on your problem, in one command.**
+
+Describe the job in plain language and you get back a working multi-agent
+system: specialists that reason, read and write files, run real commands, look
+things up when they need to, and hand work to each other until the job is done.
+No framework to learn, no application to build, no glue code to maintain.
+
+The system is a folder — so it is yours. Commit it, review it, improve it, send
+it to a colleague, or start from one someone else already built and make it your
+own. It runs the same everywhere, on whichever models you prefer, and it never
+carries your keys with it.
 
 [![npm](https://img.shields.io/npm/v/zenera-cli.svg)](https://www.npmjs.com/package/zenera-cli)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
