@@ -1,0 +1,12 @@
+# The responses api, asked of the one openai-protocol kind that lacks it.
+#
+# OpenRouter's responses endpoint is alpha, so `openrouter` declares `chat`
+# alone. Unlike invalid/unknown-api, the ref itself is well formed — the
+# shorthand parser knows `responses` — so this survives parsing and fails when
+# the model is built, naming the provider and what it does support. Listing the
+# api here instead would trade that for a 404 from the gateway.
+version: 1
+
+agents:
+    - name: solo
+      model: openrouter/responses:openai/gpt-5.4-nano

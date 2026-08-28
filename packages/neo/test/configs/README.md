@@ -21,6 +21,7 @@ read.
 | `named-models`       | The `models:` map, agent pinning, the top-level fallback, memoization       |
 | `providers`          | Two keys for one vendor, a gateway, transport settings on the connection    |
 | `vendors`            | One agent per protocol: openai chat + responses, Gemini API, Vertex, Claude |
+| `openrouter`         | The gateway kind: filled-in defaults, prefixed ids, variants, attribution   |
 | `tuning`             | Every vendor knob the schema accepts, on the vendor it belongs to           |
 | `env`                | `${VAR}`, `${VAR:-default}`, composition, and how late they are read        |
 | `inline-credentials` | A one-off key on the model, opting out of the shared client                 |
@@ -36,6 +37,7 @@ Each of these fails at load, with the offending key named.
 | `unused-alias-typo`        | A typo in a `models:` entry no agent uses — still caught  |
 | `api-on-single-api-vendor` | `api:` on a vendor that speaks only one                   |
 | `unknown-api`              | An API the openai protocol does not speak                 |
+| `openrouter-responses`     | An API the protocol speaks but the _kind_ does not        |
 | `missing-model`            | A model entry with no `model:`                            |
 | `unknown-kind`             | A vendor with no adapter                                  |
 | `unknown-key`              | A strict-schema violation on a provider                   |
@@ -46,9 +48,9 @@ Each of these fails at load, with the offending key named.
 ## Environment
 
 The fixtures reference `ZN_`-prefixed variables plus the conventional
-`OPENAI_API_KEY`, `ANTHROPIC_API_KEY` and `GOOGLE_CLOUD_PROJECT`. The test stubs
-all of them, so the suite behaves identically with or without real credentials
-in `.env`.
+`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY` and
+`GOOGLE_CLOUD_PROJECT`. The test stubs all of them, so the suite behaves
+identically with or without real credentials in `.env`.
 
 Nothing here touches the network: building a client constructs an SDK object
 and resolves credentials, and no request is ever made.

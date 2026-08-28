@@ -84,28 +84,34 @@ providers:
 
 ### Fields
 
-| Field        | Meaning                                                                                      |
-| ------------ | -------------------------------------------------------------------------------------------- |
-| `kind`       | `openai` \| `google` \| `vertex` \| `anthropic` \| `openai-compatible`. Defaults to `openai` |
-| `apiKey`     | Literal key or `${VAR}`. Wins over any env lookup                                            |
-| `apiKeyEnv`  | Env var holding the key; defaults to the kind's conventional name                            |
-| `baseURL`    | Literal url or `${VAR}`, for gateways and compatible endpoints                               |
-| `baseURLEnv` | Env var holding the base url                                                                 |
-| `project`    | **vertex only** — GCP project id                                                             |
-| `location`   | **vertex only** — a region, or `global`                                                      |
-| `headers`    | Sent on every request: gateway routing, attribution, api versions                            |
-| `timeoutMs`  | Per-request timeout                                                                          |
-| `maxRetries` | Retry count                                                                                  |
+| Field        | Meaning                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------------ |
+| `kind`       | `openai` \| `google` \| `vertex` \| `anthropic` \| `openrouter` \| `openai-compatible`. Defaults to `openai` |
+| `apiKey`     | Literal key or `${VAR}`. Wins over any env lookup                                                            |
+| `apiKeyEnv`  | Env var holding the key; defaults to the kind's conventional name                                            |
+| `baseURL`    | Literal url or `${VAR}`, for gateways and compatible endpoints                                               |
+| `baseURLEnv` | Env var holding the base url                                                                                 |
+| `project`    | **vertex only** — GCP project id                                                                             |
+| `location`   | **vertex only** — a region, or `global`                                                                      |
+| `headers`    | Sent on every request: gateway routing, attribution, api versions                                            |
+| `timeoutMs`  | Per-request timeout                                                                                          |
+| `maxRetries` | Retry count                                                                                                  |
 
 ### Kinds and their defaults
 
-| Kind                | Protocol / SDK      | Key env             | Base url env         | APIs                |
-| ------------------- | ------------------- | ------------------- | -------------------- | ------------------- |
-| `openai`            | OpenAI              | `OPENAI_API_KEY`    | `OPENAI_BASE_URL`    | `chat`, `responses` |
-| `openai-compatible` | OpenAI              | `OPENAI_API_KEY`    | `OPENAI_BASE_URL`    | `chat`, `responses` |
-| `google`            | `@google/genai`     | `GEMINI_API_KEY`    | `GEMINI_BASE_URL`    | one                 |
-| `vertex`            | `@google/genai`     | `VERTEX_API_KEY`    | `VERTEX_BASE_URL`    | one                 |
-| `anthropic`         | `@anthropic-ai/sdk` | `ANTHROPIC_API_KEY` | `ANTHROPIC_BASE_URL` | one                 |
+| Kind                | Protocol / SDK      | Key env              | Base url env          | APIs                |
+| ------------------- | ------------------- | -------------------- | --------------------- | ------------------- |
+| `openai`            | OpenAI              | `OPENAI_API_KEY`     | `OPENAI_BASE_URL`     | `chat`, `responses` |
+| `openai-compatible` | OpenAI              | `OPENAI_API_KEY`     | `OPENAI_BASE_URL`     | `chat`, `responses` |
+| `openrouter`        | OpenAI              | `OPENROUTER_API_KEY` | `OPENROUTER_BASE_URL` | `chat`              |
+| `google`            | `@google/genai`     | `GEMINI_API_KEY`     | `GEMINI_BASE_URL`     | one                 |
+| `vertex`            | `@google/genai`     | `VERTEX_API_KEY`     | `VERTEX_BASE_URL`     | one                 |
+| `anthropic`         | `@anthropic-ai/sdk` | `ANTHROPIC_API_KEY`  | `ANTHROPIC_BASE_URL`  | one                 |
+
+`openrouter` defaults its base url to `https://openrouter.ai/api/v1`, so a
+provider entry needs nothing but the kind. Model ids carry the vendor prefix
+(`anthropic/claude-sonnet-4.5`), which the shorthand handles because only the
+first colon separates: `openrouter:anthropic/claude-sonnet-4.5`.
 
 `kind` selects a _protocol_, which picks the SDK and the adapter. Only the
 OpenAI protocol speaks more than one API, so naming `api:` on a Gemini or Claude
@@ -115,15 +121,141 @@ Each vendor's own SDK is used rather than its OpenAI-compatible endpoint,
 because those endpoints are porting aids and drop exactly what this runtime is
 built on: Google's loses thinking budgets, thought signatures and cached-content
 accounting; Anthropic's loses cache accounting and extended thinking.
-`openai-compatible` is the shim kind — vLLM, OpenRouter, a gateway — where the
-OpenAI client is exactly right.
+`openai-compatible` is the shim kind — vLLM, a self-hosted gateway — where the
+OpenAI client is exactly right, and `openrouter` is that shim with its base url
+and key env already filled in.
+
+### OpenRouter
+
+OpenRouter is a gateway: one key and one endpoint in front of several hundred
+models from every vendor. It speaks chat completions verbatim, so it needs no
+adapter and no SDK of its own — `kind: openrouter` is the `openai-compatible`
+shim with its two constants already filled in.
+
+The whole declaration is therefore the kind:
+
+```yaml
+providers:
+    openrouter:
+        kind: openrouter
+
+agents:
+    - name: triage
+      model: openrouter:anthropic/claude-sonnet-4.5
+```
+
+`baseURL` defaults to `https://openrouter.ai/api/v1` and the key is read from
+`OPENROUTER_API_KEY`. Since the built-in kinds are usable as provider names, the
+`providers:` block above says nothing the default does not and can be deleted
+outright.
+
+#### Model ids
+
+Ids are `vendor/model`, and may carry a **variant suffix** after a colon —
+`:free`, `:nitro` (throughput-routed), `:floor` (price-routed), `:online` (web
+search). Both survive the shorthand, because only the _first_ colon separates:
+
+| Ref                              | Provider     | Model                 |
+| -------------------------------- | ------------ | --------------------- |
+| `openrouter:openai/gpt-5.4-nano` | `openrouter` | `openai/gpt-5.4-nano` |
+| `openrouter:z-ai/glm-5.2:free`   | `openrouter` | `z-ai/glm-5.2:free`   |
+| `openrouter:x-ai/grok-4:nitro`   | `openrouter` | `x-ai/grok-4:nitro`   |
+
+A slash in the id is not ambiguous either: the slash that splits `provider/api`
+is only read inside the prefix, before the first colon.
+
+#### `chat` only
+
+Unlike `openai` and `openai-compatible`, this kind declares one API. OpenRouter's
+responses endpoint is alpha, so listing it would turn "not supported yet" into a
+404 from the gateway instead of an error that names the provider:
+
+```
+provider "openrouter" (openrouter) does not speak the "responses" api
+(supported: chat)
+```
+
+That is raised when the model is _built_, not when the ref is parsed — so it
+surfaces from `zen models` and `zen check` rather than at the first request.
+
+The practical consequence is that reasoning arrives the chat-completions way, on
+the message as `reasoning` / `reasoning_content`, which the adapter reads into
+`thinking` deltas. `reasoningSummary` is a Responses-API knob and does nothing
+here.
+
+#### Attribution
+
+OpenRouter credits apps by two headers, and `headers:` already carries anything
+that belongs on every request — there is no dedicated field, and does not need
+to be one:
+
+```yaml
+providers:
+    openrouter:
+        kind: openrouter
+        headers:
+            HTTP-Referer: https://example.com
+            X-Title: My Agent
+```
+
+#### What is not modelled yet
+
+OpenRouter's distinctive request fields — provider routing preferences
+(`order`, `only`, `ignore`, `sort`, `zdr`), fallback chains (`models`,
+`route`), `transforms`, and `usage.include` for per-request cost — have no
+schema entry. `models:` entries are `.strict()`, so writing one is a load
+error rather than a silently ignored key.
+
+`reasoningEffort` **is** forwarded, as `reasoning_effort`. The gateway maps it
+onto whatever the destination model understands: for OpenAI models it passes
+through, and for others it becomes a fraction of the thinking budget. Whether a
+given model accepts it at all is listed as `reasoning_effort` in its
+`supported_parameters`.
+
+#### Check capabilities before pinning an id
+
+A gateway routes to whatever provider serves that model, so a request can fail
+on a capability rather than on the model existing:
+
+```
+404 No endpoints found that support image input
+```
+
+The catalog is public and needs no key, which makes this cheap to check up
+front:
+
+```bash
+curl -s https://openrouter.ai/api/v1/models | jq -r '
+  .data[] | select(.id == "z-ai/glm-5.2:free")
+  | "modalities: \(.architecture.input_modalities | join("+"))",
+    "params:     \(.supported_parameters | join(","))"'
+```
+
+`input_modalities` decides whether images may be sent at all;
+`supported_parameters` decides whether `tools`, `tool_choice` and
+`reasoning_effort` are honoured. An agent with tools needs `tools` in that list.
+
+#### Keys
+
+```bash
+zen key add openrouter
+```
+
+The keyring stores it under `OPENROUTER_API_KEY` and materialises it into the
+environment before a project loads, so `${OPENROUTER_API_KEY}` in a config keeps
+working either way.
+
+`zen key check` authenticates against `/api/v1/key` rather than listing models,
+because the model catalog answers `200` to a request carrying no key at all —
+listing it would report every credential live, including a revoked one.
 
 ### Built-in names
 
-`openai`, `google`, `vertex`, `anthropic` and `openai-compatible` are usable as
-provider _names_ with no declaration at all. A `providers:` entry is only needed
-when it says something the default does not — a second key, a region, a base
-url. A project can have no `providers:` block and still name `vertex`.
+`openai`, `google`, `vertex`, `anthropic`, `openrouter` and `openai-compatible`
+are usable as provider _names_ with no declaration at all. A `providers:` entry
+is only needed when it says something the default does not — a second key, a
+region, a base url. A project can have no `providers:` block and still name
+`vertex`.
 
 `vertex` is the one kind that needs no key: the GenAI SDK resolves and refreshes
 Application Default Credentials itself. It needs a project id, taken from

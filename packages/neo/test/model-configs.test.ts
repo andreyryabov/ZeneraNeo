@@ -60,8 +60,10 @@ function modelOf(project: AgentProject, agent: string): Model {
 const ENV: Record<string, string> = {
     OPENAI_API_KEY: 'sk-openai',
     ANTHROPIC_API_KEY: 'sk-anthropic',
+    OPENROUTER_API_KEY: 'sk-openrouter',
     GOOGLE_CLOUD_PROJECT: 'zn-default-project',
     ZN_OPENAI_EU_KEY: 'sk-openai-eu',
+    ZN_OPENROUTER_KEY: 'sk-openrouter-spare',
     ZN_KEY_ONE: 'sk-one',
     ZN_KEY_TWO: 'sk-two',
     ZN_GATEWAY_KEY: 'sk-gateway',
@@ -248,6 +250,52 @@ describe('configs/tuning', () => {
     });
 });
 
+describe('configs/openrouter', () => {
+    it('needs nothing but the kind: the base url and key env are its defaults', async () => {
+        const p = await load('openrouter');
+
+        // `openrouter` is never declared in that fixture.
+        const built = conn(p.models.client('openrouter'));
+        expect(built.baseURL).toBe('https://openrouter.ai/api/v1');
+        expect(built.apiKey).toBe('sk-openrouter');
+    });
+
+    it('speaks chat completions, whether or not the api is named', async () => {
+        const p = await load('openrouter');
+
+        expect(modelOf(p, 'careful')).toBeInstanceOf(OpenAIModel);
+        expect(modelOf(p, 'cheap')).toBeInstanceOf(OpenAIModel);
+        expect(modelOf(p, 'bare')).toBeInstanceOf(OpenAIModel);
+    });
+
+    it('keeps the vendor prefix and the variant suffix inside the model id', async () => {
+        const p = await load('openrouter');
+
+        // The slash belongs to the id; only the first colon separates, so a
+        // `:free` or `:nitro` variant survives the shorthand intact.
+        expect(modelOf(p, 'bare').id).toBe('google/gemini-3.5-flash');
+        expect(modelOf(p, 'free').id).toBe('z-ai/glm-5.2:free');
+        expect(modelOf(p, 'spare-key').id).toBe('x-ai/grok-4:nitro');
+    });
+
+    it('gives a second key against one gateway a second client', async () => {
+        const p = await load('openrouter');
+
+        expect(conn(p.models.client('spare')).apiKey).toBe('sk-openrouter-spare');
+        expect(conn(p.models.client('spare')).baseURL).toBe('https://openrouter.ai/api/v1');
+        expect(p.models.client('spare')).not.toBe(p.models.client('openrouter'));
+    });
+
+    it('carries attribution as ordinary headers on the connection', async () => {
+        const p = await load('openrouter');
+
+        expect(p.config.providers?.attributed?.headers).toMatchObject({
+            'HTTP-Referer': 'https://zenera.example',
+            'X-Title': 'Zenera Neo',
+        });
+    });
+});
+
 describe('configs/env', () => {
     it('substitutes ${VAR}, and falls back to ${VAR:-default}', async () => {
         const p = await load('env');
@@ -312,6 +360,8 @@ describe('configs/invalid', () => {
         ['unused-alias-typo', /models\.careful\.provider: unknown provider "openai-ue"/],
         ['api-on-single-api-vendor', /has one api, so "chat" means nothing here/],
         ['unknown-api', /unknown api "completions"/],
+        // Well formed, and still refused: the api exists, the kind lacks it.
+        ['openrouter-responses', /"openrouter" \(openrouter\) does not speak the "responses" api/],
         ['missing-model', /models\.broken/],
         ['unknown-kind', /providers\.mistral\.kind/],
         ['unknown-key', /providers\.house[\s\S]*retries/],

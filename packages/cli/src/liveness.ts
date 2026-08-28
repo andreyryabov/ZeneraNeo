@@ -77,8 +77,7 @@ export async function probe(store: KeyStore, entry: KeyEntry): Promise<KeyCheck>
     try {
         const registry = new ModelRegistry();
         registry.provider('probe', { kind: entry.provider });
-        const client = registry.client('probe') as ListsModels;
-        await list(entry.provider, client);
+        await authenticate(entry.provider, registry.client('probe'));
         return { state: 'live', at: new Date().toISOString() };
     } catch (err) {
         return classify(err);
@@ -92,22 +91,36 @@ export async function probe(store: KeyStore, entry: KeyEntry): Promise<KeyCheck>
 }
 
 /**
- * All three SDKs expose `models.list`, but they disagree about the argument and
- * about what comes back, so the shape is described structurally rather than by
- * importing three sets of types the CLI otherwise has no use for.
+ * Every vendor SDK here exposes `models.list`, but they disagree about the
+ * argument and about what comes back, so the shapes are described structurally
+ * rather than by importing sets of types the CLI otherwise has no use for.
  */
 interface ListsModels {
     models: { list(args?: unknown): unknown };
 }
 
-async function list(provider: Provider, client: ListsModels): Promise<void> {
+/** The OpenAI client's escape hatch to a path the resource layer does not model. */
+interface GetsPaths {
+    get(path: string): Promise<unknown>;
+}
+
+async function authenticate(provider: Provider, client: unknown): Promise<void> {
+    // OpenRouter's model catalog is *public*: it answers 200 to a request
+    // carrying no key at all, so listing it would report every credential live,
+    // including a revoked one. `/key` describes the key that asked and is the
+    // only cheap call that actually looks at it.
+    if (provider === 'openrouter') {
+        await (client as GetsPaths).get('/key');
+        return;
+    }
+
     const args =
         provider === 'anthropic'
             ? { limit: 1 }
             : provider === 'google' || provider === 'vertex'
               ? { config: { pageSize: 1 } }
               : undefined;
-    const result = await client.models.list(args);
+    const result = await (client as ListsModels).models.list(args);
     // OpenAI and Anthropic resolve to a page; the GenAI SDK resolves to a lazy
     // pager whose first fetch has already happened by the time we get here.
     void result;

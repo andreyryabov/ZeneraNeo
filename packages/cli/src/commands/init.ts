@@ -34,6 +34,7 @@ const DEFAULT_MODEL: Record<Provider, string> = {
     anthropic: 'claude-sonnet-4-5',
     google: 'gemini-3.5-flash',
     vertex: 'gemini-3.5-flash',
+    openrouter: 'openrouter:inclusionai/ling-3.0-flash-fin:free',
 };
 
 /**
