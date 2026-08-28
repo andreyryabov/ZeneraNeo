@@ -7,6 +7,14 @@ import {
     type GoogleGenAI,
     type Part,
 } from '@google/genai';
+import type { OpenRouter } from '@openrouter/sdk';
+import type {
+    ChatAssistantMessage,
+    ChatContentItems,
+    ChatRequest,
+    ChatResult,
+    ChatUsage,
+} from '@openrouter/sdk/models';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,6 +23,7 @@ import type { StreamDelta } from '../src/events.ts';
 import type { ModelRequest } from '../src/model.ts';
 import { expandEnv, ModelRegistry } from '../src/models/factory.ts';
 import { GeminiModel } from '../src/models/gemini.ts';
+import { OpenRouterModel } from '../src/models/openrouter.ts';
 import { text, type Message } from '../src/types.ts';
 
 // ---------------------------------------------------------------------------
@@ -558,5 +567,116 @@ describe('gemini wire', () => {
         expect(sent[0].config?.toolConfig?.functionCallingConfig?.mode).toBe(
             FunctionCallingConfigMode.ANY,
         );
+    });
+});
+
+describe('openrouter wire', () => {
+    /** The same recorder as above, against the gateway's own client. */
+    function stubOpenRouter(...replies: Partial<ChatResult>[]) {
+        const sent: ChatRequest[] = [];
+        const client = {
+            chat: {
+                send: async ({ chatRequest }: { chatRequest: ChatRequest }) => {
+                    sent.push(chatRequest);
+                    return { choices: [], ...(replies[sent.length - 1] ?? {}) } as ChatResult;
+                },
+            },
+        };
+        return { client: client as unknown as OpenRouter, sent };
+    }
+
+    const said = (message: Partial<ChatAssistantMessage>): Partial<ChatResult> => ({
+        choices: [{ index: 0, finishReason: 'stop', message }] as ChatResult['choices'],
+    });
+
+    const ask = (rest: Partial<ModelRequest> = {}): ModelRequest => ({
+        messages: [{ role: 'user', content: [text('hi')] }],
+        tools: [],
+        ...rest,
+    });
+
+    it('renames the routing knobs to the fields the gateway reads', async () => {
+        const { client, sent } = stubOpenRouter();
+        await new OpenRouterModel('openai/gpt-5.4-nano', client, {
+            routing: { order: ['azure'], requireParameters: true },
+            fallbacks: ['anthropic/claude-sonnet-4.5'],
+            serviceTier: 'priority',
+            maxTokens: 2048,
+        }).generate(ask());
+
+        // `routing` and `fallbacks` are this runtime's names; on the wire they
+        // are `provider` and `models`, and the output cap is spelled in full.
+        expect(sent[0]).toMatchObject({
+            provider: { order: ['azure'], requireParameters: true },
+            models: ['anthropic/claude-sonnet-4.5'],
+            serviceTier: 'priority',
+            maxCompletionTokens: 2048,
+        });
+    });
+
+    it('asks for reasoning only when a knob says to', async () => {
+        const { client, sent } = stubOpenRouter({}, {});
+        await new OpenRouterModel('openai/gpt-5.4-nano', client).generate(ask());
+        await new OpenRouterModel('openai/gpt-5.4-nano', client, {
+            reasoningEffort: 'low',
+            reasoningSummary: 'concise',
+        }).generate(ask());
+
+        // Sending `reasoning: {}` would ask a model that reasons by default to
+        // stop, so the field is absent rather than empty.
+        expect(sent[0].reasoning).toBeUndefined();
+        expect(sent[1].reasoning).toEqual({ effort: 'low', summary: 'concise' });
+    });
+
+    it('leaves tool choice unsaid when there are no tools', async () => {
+        const { client, sent } = stubOpenRouter({}, {});
+        const model = new OpenRouterModel('openai/gpt-5.4-nano', client);
+        await model.generate(ask());
+        await model.generate(
+            ask({ tools: [{ name: 'forecast', parameters: { type: 'object' } }] }),
+        );
+
+        expect(sent[0].tools).toBeUndefined();
+        expect(sent[0].toolChoice).toBeUndefined();
+        expect(sent[1].toolChoice).toBe('auto');
+    });
+
+    it('reads an answer returned as content parts, not only as a string', async () => {
+        const { client } = stubOpenRouter(
+            said({
+                content: [
+                    { type: 'text', text: '3 ' },
+                    { type: 'text', text: 'nm' },
+                ] as ChatContentItems[],
+                reasoning: 'weigh',
+            }),
+        );
+        const res = await new OpenRouterModel('openai/gpt-5.4-nano', client).generate(ask());
+
+        // Unlike chat completions, this field may be an array — reading it as a
+        // string would silently produce an empty answer.
+        expect(res.text).toBe('3 nm');
+        expect(res.thinking).toBe('weigh');
+    });
+
+    it('counts cache and reasoning as the subsets they are', async () => {
+        const { client } = stubOpenRouter({
+            ...said({ content: 'ok' }),
+            usage: {
+                promptTokens: 100,
+                completionTokens: 10,
+                totalTokens: 110,
+                promptTokensDetails: { cachedTokens: 40 },
+                completionTokensDetails: { reasoningTokens: 5 },
+            } as ChatUsage,
+        });
+        const res = await new OpenRouterModel('openai/gpt-5.4-nano', client).generate(ask());
+
+        expect(res.usage).toMatchObject({
+            inputTokens: 100,
+            cachedInputTokens: 40,
+            outputTokens: 10,
+            reasoningTokens: 5,
+        });
     });
 });

@@ -939,15 +939,16 @@ over one connection.
 
 ### 7.4 Vendor knobs
 
-| Field                  | Applies to        | Notes                                                                        |
-| ---------------------- | ----------------- | ---------------------------------------------------------------------------- |
-| `reasoningEffort`      | openai            | Free string on purpose — the API is the authority on validity                |
-| `reasoningSummary`     | openai            | `auto` \| `concise` \| `detailed`. **Needs `api: responses`** — §7.6         |
-| `maxTokens`            | anthropic, gemini | Cap on **output** tokens, not context. Anthropic requires one (default 8192) |
-| `thinkingBudgetTokens` | anthropic         | Extended thinking budget                                                     |
-| `thinkingBudget`       | gemini 2.5        | Tokens: `0` off, `-1` auto                                                   |
-| `thinkingLevel`        | gemini 3          | `minimal` \| `low` \| `medium` \| `high`                                     |
-| `includeThoughts`      | gemini            | Thought summaries; default `true`                                            |
+| Field                   | Applies to                    | Notes                                                                          |
+| ----------------------- | ----------------------------- | ------------------------------------------------------------------------------ |
+| `reasoningEffort`       | openai, openrouter            | Free string on purpose — the API is the authority on validity                  |
+| `reasoningSummary`      | openai, openrouter            | `auto` \| `concise` \| `detailed`. On openai **needs `api: responses`** — §7.6 |
+| `maxTokens`             | anthropic, gemini, openrouter | Cap on **output** tokens, not context. Anthropic requires one (default 8192)   |
+| `thinkingBudgetTokens`  | anthropic                     | Extended thinking budget                                                       |
+| `thinkingBudget`        | gemini 2.5                    | Tokens: `0` off, `-1` auto                                                     |
+| `thinkingLevel`         | gemini 3                      | `minimal` \| `low` \| `medium` \| `high`                                       |
+| `includeThoughts`       | gemini                        | Thought summaries; default `true`                                              |
+| `routing` / `fallbacks` | openrouter                    | Upstream provider preferences, and models to fall back to — §7.5               |
 
 Knobs that do not apply to the chosen vendor are ignored, not rejected.
 `api:` exists only for the OpenAI protocol — naming it on a Gemini or Anthropic
@@ -956,9 +957,10 @@ model is an error.
 Each vendor's own SDK is used rather than its OpenAI-compatible endpoint, because
 those endpoints drop exactly what this runtime is built on: thinking budgets,
 thought signatures, cache accounting. `openai-compatible` is the shim kind — vLLM,
-a self-hosted gateway — and `openrouter` is that shim with its base url
-(`https://openrouter.ai/api/v1`) and key env (`OPENROUTER_API_KEY`) already
-filled in. It speaks `chat` only — §7.5.
+a self-hosted gateway. `openrouter` used to be that shim with its base url
+(`https://openrouter.ai/api/v1`) and key env (`OPENROUTER_API_KEY`) filled in; it
+now has its own SDK, which is what makes provider routing and fallback chains
+available — §7.5.
 
 ### 7.5 OpenRouter
 
@@ -988,12 +990,57 @@ search). Both survive the shorthand, because only the _first_ colon separates:
 The `vendor/` prefix is part of the _id_, not a provider name: what precedes the
 first colon is the provider, and the `provider/api` slash is only read there.
 
-**`chat` only.** OpenRouter's responses endpoint is alpha, so this kind declares
-one API and `openrouter/responses:…` is a load error naming the provider, rather
-than a 404 from the gateway at the first request. Reasoning therefore arrives the
-chat-completions way — on the message, read into `thinking` deltas — and
-`reasoningSummary` does nothing here. `reasoningEffort` **is** forwarded, and the
-gateway maps it onto whatever the destination model understands.
+**No api to choose.** This kind speaks one protocol, its own, so `api: responses`
+and `openrouter/responses:…` are both a load error ("has one api, so … means
+nothing here") rather than a 404 from the gateway at the first request. Reasoning
+arrives on the message and is read into `thinking` deltas; `reasoningEffort` and
+`reasoningSummary` are both forwarded, and the gateway maps effort onto whatever
+the destination model understands.
+
+**Routing and fallbacks** are the reason this kind has an SDK. `routing` picks
+the upstream provider (OpenRouter's `provider` field, renamed because `provider:`
+already means the connection); `fallbacks` lists other _models_ to try when none
+can serve it (its `models` field). `allowFallbacks`, below, is a third thing
+again — whether the gateway may look past `order`:
+
+```yaml
+models:
+    routed:
+        provider: openrouter
+        model: openai/gpt-5.4-nano
+        routing:
+            order: [azure, openai]
+            requireParameters: true
+            sort: throughput
+        fallbacks: [anthropic/claude-sonnet-4.5]
+```
+
+`routing` belongs to a **model**, not to a `providers:` entry: it is chosen per
+request, not per connection, and the provider schema is strict, so writing it
+there is a load error.
+
+| Key                 | Value                                                                        |
+| ------------------- | ---------------------------------------------------------------------------- |
+| `order`             | Providers to try first — a _preference_, not a restriction                   |
+| `only` / `ignore`   | Restrict serving to, or away from, these                                     |
+| `allowFallbacks`    | May the gateway go beyond `order` — **on** unless set `false`                |
+| `sort`              | `price`, `throughput`, `latency`, `exacto`                                   |
+| `requireParameters` | Skip a provider that would drop a parameter rather than serve it             |
+| `dataCollection`    | `allow` \| `deny`                                                            |
+| `quantizations`     | `int4` `int8` `fp4` `mxfp4` `nvfp4` `fp6` `fp8` `mxfp8` `fp16` `bf16` `fp32` |
+| `zdr`               | Zero-data-retention endpoints only                                           |
+
+`serviceTier` (`auto` \| `default` \| `fast` \| `flex` \| `priority` \| `scale`)
+sits alongside `routing`, not inside it.
+
+**A typo in `order` is invisible.** Provider names and `sort` are free strings
+for the same reason `reasoningEffort` is — the gateway's list moves faster than a
+schema would — so nothing local rejects them, and since `allowFallbacks` defaults
+on, an unknown name is skipped and the request quietly succeeds somewhere else.
+What _is_ checked is checked by the API rather than at load: a bad `sort` or
+`quantizations` returns `400 provider.sort: Invalid input`. Use `only`, or
+`allowFallbacks: false`, when the constraint is meant to bind — an unroutable
+request is then a 404 instead of a silent reroute.
 
 **Attribution** goes in `headers:`; there is no dedicated field because that one
 already means "sent on every request":
@@ -1023,9 +1070,17 @@ curl -s https://openrouter.ai/api/v1/models | jq -r '
 `supported_parameters` decides whether `tools`, `tool_choice` and
 `reasoning_effort` are honoured. An agent with tools needs `tools` in that list.
 
-**Not modelled yet:** provider routing preferences, fallback chains,
-`transforms`, `usage.include`. `models:` entries are strict, so writing one is a
-load error rather than a key that is silently dropped.
+**Not modelled yet:** `transforms`, `usage.include`, and per-call cost — the
+gateway reports a price on every response, but it is not surfaced in the token
+accounting. `plugins` exists in code only. Four `provider` fields the SDK accepts
+have no yaml spelling either — `maxPrice`, `preferredMaxLatency`,
+`preferredMinThroughput`, `enforceDistillableText` — and `sort` takes the string
+form only, not the `{ by, partition }` object. `models:` entries are strict, so
+writing any of these is a load error rather than a key that is silently dropped.
+
+**`maxRetries` is honoured only as `0`.** This SDK takes a retry _strategy_, not
+a count, so `0` disables retries and any other number leaves the default backoff
+in place. `timeoutMs` and `headers` behave normally.
 
 **Keys:** `zen key add openrouter` stores it under `OPENROUTER_API_KEY`.
 
@@ -1096,6 +1151,14 @@ up (§7.8).
   → the `project_id` inside the key file named by `GOOGLE_APPLICATION_CREDENTIALS`.
   gcloud user credentials and metadata-server credentials carry no project id, so
   those deployments must set the variable.
+- **OpenRouter + a capability the route does not have** — a valid id and a valid
+  key still fail at the first request (`404 No endpoints found that support image
+input`, or tools quietly unused). This is not a config error and `zen check`
+  cannot see it: check the catalog (§7.5). Cheap `:free` tiers are the usual
+  offenders — they are frequently text-only.
+- **Swapping an OpenRouter id is not a like-for-like change.** Two models behind
+  one gateway differ in modalities, tool support and reasoning; re-run the case
+  that uses the capability, not just any case.
 
 ### 7.8 How to choose, in practice
 
@@ -1128,6 +1191,10 @@ There is no compiler for prose. Substitutes, in order of value:
    skill or the prompt path that a rename silently unlinked.
 5. **Watch the token accounting.** A change that doubles prefix size is a
    regression even if the answer improved.
+6. **After changing a model id, exercise the capability it was chosen for** —
+   send an image, force a tool call, ask for reasoning. `zen check` proves the
+   credential resolves, not that the route serves images or honours `tools`; on a
+   gateway that gap is a request-time 404 (§7.5).
 
 CLI (`zen --help` for the authoritative list): `zen init`, `zen run`, `zen check`,
 `zen inspect`, `zen models`, `zen key`, `zen list`. **stdout is the answer, stderr

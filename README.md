@@ -222,8 +222,8 @@ What it gives you:
 
 - **Agents** — an instruction, a model, tools, skills, plus handoffs and fork.
   There is no hidden orchestration layer.
-- **Models** — OpenAI, Anthropic and Google/Vertex behind one interface, each
-  through its own SDK, plus OpenRouter and any OpenAI-compatible endpoint.
+- **Models** — OpenAI, Anthropic, Google/Vertex and OpenRouter behind one
+  interface, each through its own SDK, plus any OpenAI-compatible endpoint.
   Named providers and model aliases resolve from config or from the host.
 - **Tools** — plain typed functions, selectable per agent by name, group or
   wildcard. Workspace file tools and a Podman sandbox ship with the library.

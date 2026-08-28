@@ -103,7 +103,7 @@ providers:
 | ------------------- | ------------------- | -------------------- | --------------------- | ------------------- |
 | `openai`            | OpenAI              | `OPENAI_API_KEY`     | `OPENAI_BASE_URL`     | `chat`, `responses` |
 | `openai-compatible` | OpenAI              | `OPENAI_API_KEY`     | `OPENAI_BASE_URL`     | `chat`, `responses` |
-| `openrouter`        | OpenAI              | `OPENROUTER_API_KEY` | `OPENROUTER_BASE_URL` | `chat`              |
+| `openrouter`        | `@openrouter/sdk`   | `OPENROUTER_API_KEY` | `OPENROUTER_BASE_URL` | one                 |
 | `google`            | `@google/genai`     | `GEMINI_API_KEY`     | `GEMINI_BASE_URL`     | one                 |
 | `vertex`            | `@google/genai`     | `VERTEX_API_KEY`     | `VERTEX_BASE_URL`     | one                 |
 | `anthropic`         | `@anthropic-ai/sdk` | `ANTHROPIC_API_KEY`  | `ANTHROPIC_BASE_URL`  | one                 |
@@ -122,15 +122,18 @@ because those endpoints are porting aids and drop exactly what this runtime is
 built on: Google's loses thinking budgets, thought signatures and cached-content
 accounting; Anthropic's loses cache accounting and extended thinking.
 `openai-compatible` is the shim kind — vLLM, a self-hosted gateway — where the
-OpenAI client is exactly right, and `openrouter` is that shim with its base url
-and key env already filled in.
+OpenAI client is exactly right. `openrouter` used to be that shim with its base
+url and key env filled in; it now has its own SDK, for the same reason as the
+others — provider routing, fallback chains and per-call cost have nowhere to go
+in a chat-completions request.
 
 ### OpenRouter
 
 OpenRouter is a gateway: one key and one endpoint in front of several hundred
-models from every vendor. It speaks chat completions verbatim, so it needs no
-adapter and no SDK of its own — `kind: openrouter` is the `openai-compatible`
-shim with its two constants already filled in.
+models from every vendor. `kind: openrouter` speaks a protocol of its own,
+through `@openrouter/sdk`, which is what makes the routing controls below
+available. Pointing `openai-compatible` at the same base url is still
+supported, and gives the older chat-completions client with none of them.
 
 The whole declaration is therefore the kind:
 
@@ -164,24 +167,20 @@ search). Both survive the shorthand, because only the _first_ colon separates:
 A slash in the id is not ambiguous either: the slash that splits `provider/api`
 is only read inside the prefix, before the first colon.
 
-#### `chat` only
+#### No api to choose
 
-Unlike `openai` and `openai-compatible`, this kind declares one API. OpenRouter's
-responses endpoint is alpha, so listing it would turn "not supported yet" into a
-404 from the gateway instead of an error that names the provider:
+This kind speaks one protocol, its own, so `api:` names nothing:
 
 ```
-provider "openrouter" (openrouter) does not speak the "responses" api
-(supported: chat)
+provider "openrouter" (openrouter) has one api, so "responses" means nothing here
 ```
 
 That is raised when the model is _built_, not when the ref is parsed — so it
 surfaces from `zen models` and `zen check` rather than at the first request.
+The same error covers the shorthand form, `openrouter/responses:…`.
 
-The practical consequence is that reasoning arrives the chat-completions way, on
-the message as `reasoning` / `reasoning_content`, which the adapter reads into
-`thinking` deltas. `reasoningSummary` is a Responses-API knob and does nothing
-here.
+Reasoning arrives on the message as `reasoning`, which the adapter reads into
+`thinking` deltas. Both `reasoningEffort` and `reasoningSummary` are forwarded.
 
 #### Attribution
 
@@ -198,15 +197,84 @@ providers:
             X-Title: My Agent
 ```
 
+#### Routing and fallbacks
+
+The two knobs the SDK exists for. `routing` says which upstream providers may
+serve the request; `fallbacks` says which _models_ to try when none of them
+can:
+
+```yaml
+models:
+    routed:
+        provider: openrouter
+        model: openai/gpt-5.4-nano
+        routing:
+            order: [azure, openai]
+            requireParameters: true
+            sort: throughput
+        fallbacks:
+            - anthropic/claude-sonnet-4.5
+            - google/gemini-3.5-flash
+```
+
+`routing` is OpenRouter's `provider` field, renamed because `provider:` already
+means the connection here; `fallbacks` is its `models` field, named for which
+of the two lists it is. It belongs to a model rather than to a `providers:`
+entry — the choice is made per request, and the provider schema is strict, so
+writing it there is a load error.
+
+| Key                 | Value                                                                        |
+| ------------------- | ---------------------------------------------------------------------------- |
+| `order`             | Providers to try first — a _preference_, not a restriction                   |
+| `only` / `ignore`   | Restrict serving to, or away from, these                                     |
+| `allowFallbacks`    | May OpenRouter go beyond `order` — on unless set `false`                     |
+| `sort`              | `price`, `throughput`, `latency`, `exacto`                                   |
+| `requireParameters` | Skip a provider that would drop a parameter rather than serve it             |
+| `dataCollection`    | `allow` \| `deny`                                                            |
+| `quantizations`     | `int4` `int8` `fp4` `mxfp4` `nvfp4` `fp6` `fp8` `mxfp8` `fp16` `bf16` `fp32` |
+| `zdr`               | Zero-data-retention endpoints only                                           |
+
+`serviceTier` (`auto`, `default`, `fast`, `flex`, `priority`, `scale`) is
+accepted alongside `routing`, not inside it.
+
+`requireParameters: true` is worth knowing: without it a provider that does not
+support a parameter may serve the request having quietly dropped it.
+
+Provider names and `sort` are plain strings here, so a typo in `order` is not
+rejected locally — and because `allowFallbacks` is on by default, it is not
+rejected remotely either: the unknown name is skipped and something else serves
+the request. Values the gateway does check, it checks at request time rather
+than at load, naming the field:
+
+```
+400 provider.sort: Invalid input
+400 provider.quantizations.0: Invalid option: expected one of "int4"|"int8"|…
+```
+
+Use `only`, or `allowFallbacks: false`, when the constraint is meant to bind.
+An unroutable request is then a 404 instead of a quiet reroute.
+
 #### What is not modelled yet
 
-OpenRouter's distinctive request fields — provider routing preferences
-(`order`, `only`, `ignore`, `sort`, `zdr`), fallback chains (`models`,
-`route`), `transforms`, and `usage.include` for per-request cost — have no
-schema entry. `models:` entries are `.strict()`, so writing one is a load
-error rather than a silently ignored key.
+`plugins` (web search, file parsing, moderation) is typed on `ModelSpec` for
+code that builds a spec directly, but has no schema entry, so it cannot be
+written in yaml. `models:` entries are `.strict()`, so an unknown key is a load
+error rather than a silently ignored one.
 
-`reasoningEffort` **is** forwarded, as `reasoning_effort`. The gateway maps it
+Four fields of the SDK's `provider` object have no `routing` spelling either:
+`maxPrice`, `preferredMaxLatency`, `preferredMinThroughput` and
+`enforceDistillableText`. `sort` takes the string form only, not the
+`{ by, partition }` object the SDK also accepts.
+
+Per-call **cost** is returned by this SDK and is not yet surfaced: `TokenUsage`
+counts tokens only.
+
+On the connection, `maxRetries` is honoured only as `0`. This SDK takes a retry
+_strategy_ rather than a count, so `0` disables retries and any other number
+leaves its default backoff in place. `timeoutMs` and `headers` behave as they do
+everywhere else.
+
+`reasoningEffort` **is** forwarded, as `reasoning.effort`. The gateway maps it
 onto whatever the destination model understands: for OpenAI models it passes
 through, and for others it becomes a fraction of the thinking budget. Whether a
 given model accepts it at all is listed as `reasoning_effort` in its
@@ -313,21 +381,24 @@ urls, reasoning knobs) needs the object form.
 
 ### Object fields
 
-| Field                    | Applies to        | Meaning                                                                         |
-| ------------------------ | ----------------- | ------------------------------------------------------------------------------- |
-| `model`                  | all               | **Required.** The vendor's model id                                             |
-| `provider`               | all               | A `providers:` name, or a built-in kind                                         |
-| `api`                    | openai            | `chat` or `responses`                                                           |
-| `apiKey` / `apiKeyEnv`   | all               | One-off credentials; opts out of the shared client                              |
-| `baseURL` / `baseURLEnv` | all               | Same                                                                            |
-| `reasoningEffort`        | openai            | Free string — see note below                                                    |
-| `reasoningSummary`       | openai            | `auto` \| `concise` \| `detailed`                                               |
-| `store`                  | openai            | Whether the provider retains the response                                       |
-| `maxTokens`              | anthropic, gemini | Output cap. Anthropic requires one (default 8192) and bills thinking against it |
-| `thinkingBudgetTokens`   | anthropic         | Extended thinking budget                                                        |
-| `thinkingBudget`         | gemini 2.5        | Token budget: `0` off, `-1` auto                                                |
-| `thinkingLevel`          | gemini 3          | `minimal` \| `low` \| `medium` \| `high`                                        |
-| `includeThoughts`        | gemini            | Return thought summaries (default `true`)                                       |
+| Field                    | Applies to                    | Meaning                                                                         |
+| ------------------------ | ----------------------------- | ------------------------------------------------------------------------------- |
+| `model`                  | all                           | **Required.** The vendor's model id                                             |
+| `provider`               | all                           | A `providers:` name, or a built-in kind                                         |
+| `api`                    | openai                        | `chat` or `responses`                                                           |
+| `apiKey` / `apiKeyEnv`   | all                           | One-off credentials; opts out of the shared client                              |
+| `baseURL` / `baseURLEnv` | all                           | Same                                                                            |
+| `reasoningEffort`        | openai, openrouter            | Free string — see note below                                                    |
+| `reasoningSummary`       | openai, openrouter            | `auto` \| `concise` \| `detailed`                                               |
+| `store`                  | openai                        | Whether the provider retains the response                                       |
+| `maxTokens`              | anthropic, gemini, openrouter | Output cap. Anthropic requires one (default 8192) and bills thinking against it |
+| `thinkingBudgetTokens`   | anthropic                     | Extended thinking budget                                                        |
+| `thinkingBudget`         | gemini 2.5                    | Token budget: `0` off, `-1` auto                                                |
+| `thinkingLevel`          | gemini 3                      | `minimal` \| `low` \| `medium` \| `high`                                        |
+| `includeThoughts`        | gemini                        | Return thought summaries (default `true`)                                       |
+| `routing`                | openrouter                    | Which upstream providers may serve the request                                  |
+| `fallbacks`              | openrouter                    | Models to try when none of them can                                             |
+| `serviceTier`            | openrouter                    | `auto` \| `default` \| `fast` \| `flex` \| `priority` \| `scale`                |
 
 Knobs that do not apply to the chosen vendor are ignored rather than rejected —
 vendor differences live in the provider, so there is nothing here to

@@ -39,7 +39,11 @@ const UNREACHED = [
 
 function classify(err: unknown): KeyCheck {
     const at = new Date().toISOString();
-    const status = (err as { status?: number })?.status;
+    // OpenAI, Anthropic and the GenAI SDK all say `status`; OpenRouter's says
+    // `statusCode`. Reading only the first would classify a revoked key as
+    // *unknown*, which is the one confusion this module exists to prevent.
+    const e = err as { status?: number; statusCode?: number };
+    const status = e?.status ?? e?.statusCode;
     const message = err instanceof Error ? err.message : String(err);
     const haystack = `${status ?? ''} ${message}`.toLowerCase();
 
@@ -99,9 +103,9 @@ interface ListsModels {
     models: { list(args?: unknown): unknown };
 }
 
-/** The OpenAI client's escape hatch to a path the resource layer does not model. */
-interface GetsPaths {
-    get(path: string): Promise<unknown>;
+/** The one `apiKeys` call OpenRouter scopes to the key presenting it. */
+interface DescribesKey {
+    apiKeys: { getCurrentKeyMetadata(): Promise<unknown> };
 }
 
 async function authenticate(provider: Provider, client: unknown): Promise<void> {
@@ -110,7 +114,7 @@ async function authenticate(provider: Provider, client: unknown): Promise<void> 
     // including a revoked one. `/key` describes the key that asked and is the
     // only cheap call that actually looks at it.
     if (provider === 'openrouter') {
-        await (client as GetsPaths).get('/key');
+        await (client as DescribesKey).apiKeys.getCurrentKeyMetadata();
         return;
     }
 

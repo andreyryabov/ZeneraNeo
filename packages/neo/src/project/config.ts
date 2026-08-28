@@ -56,6 +56,34 @@ const provider = z
     .strict();
 
 /**
+ * openrouter only: which upstream provider serves a request.
+ *
+ * Named `routing` because `provider:` in this file already means the
+ * connection. `sort` and the provider names are plain strings for the same
+ * reason `reasoningEffort` is — OpenRouter adds providers continuously, and a
+ * config the API would accept should not fail to load here first.
+ */
+const routing = z
+    .object({
+        /** providers to try, in order */
+        order: z.array(z.string().min(1)).min(1).optional(),
+        /** restricts serving to these, rather than merely preferring them */
+        only: z.array(z.string().min(1)).min(1).optional(),
+        ignore: z.array(z.string().min(1)).min(1).optional(),
+        /** `price`, `throughput`, `latency`, `exacto` */
+        sort: z.string().min(1).optional(),
+        /** may OpenRouter go beyond `order`; on by default */
+        allowFallbacks: z.boolean().optional(),
+        /** skip providers that would silently drop parameters they do not support */
+        requireParameters: z.boolean().optional(),
+        dataCollection: z.enum(['allow', 'deny']).optional(),
+        quantizations: z.array(z.string().min(1)).min(1).optional(),
+        /** zero-data-retention endpoints only */
+        zdr: z.boolean().optional(),
+    })
+    .strict();
+
+/**
  * `reasoningEffort` is a plain string rather than an enum on purpose: the
  * vendor's accepted set changes faster than this file would, and the request
  * that carries a bad value is the authority on rejecting it. An enum here would
@@ -78,6 +106,10 @@ const modelSpec = z
         thinkingBudget: z.int().optional(),
         thinkingLevel: z.enum(['minimal', 'low', 'medium', 'high']).optional(),
         includeThoughts: z.boolean().optional(),
+        /** openrouter only: who serves the request, what to try when they cannot */
+        routing: routing.optional(),
+        fallbacks: z.array(z.string().min(1)).min(1).optional(),
+        serviceTier: z.enum(['auto', 'default', 'fast', 'flex', 'priority', 'scale']).optional(),
     })
     .strict();
 
