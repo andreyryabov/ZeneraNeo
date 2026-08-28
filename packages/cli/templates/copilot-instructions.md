@@ -1046,9 +1046,14 @@ curl -s https://openrouter.ai/api/v1/models | jq -r '
 `supported_parameters` decides whether `tools`, `tool_choice` and
 `reasoning_effort` are honoured. An agent with tools needs `tools` in that list.
 
-**Not modelled yet:** provider routing preferences, fallback chains,
-`transforms`, `usage.include`. `models:` entries are strict, so writing one is a
-load error rather than a key that is silently dropped.
+**Not modelled yet:** `transforms`, `usage.include`, and per-call cost — the
+gateway reports a price on every response, but it is not surfaced in the token
+accounting. `plugins` exists in code only. `models:` entries are strict, so
+writing any of these is a load error rather than a key that is silently dropped.
+
+**`maxRetries` is honoured only as `0`.** This SDK takes a retry _strategy_, not
+a count, so `0` disables retries and any other number leaves the default backoff
+in place. `timeoutMs` and `headers` behave normally.
 
 **Keys:** `zen key add openrouter` stores it under `OPENROUTER_API_KEY`.
 
@@ -1119,6 +1124,14 @@ up (§7.8).
   → the `project_id` inside the key file named by `GOOGLE_APPLICATION_CREDENTIALS`.
   gcloud user credentials and metadata-server credentials carry no project id, so
   those deployments must set the variable.
+- **OpenRouter + a capability the route does not have** — a valid id and a valid
+  key still fail at the first request (`404 No endpoints found that support image
+input`, or tools quietly unused). This is not a config error and `zen check`
+  cannot see it: check the catalog (§7.5). Cheap `:free` tiers are the usual
+  offenders — they are frequently text-only.
+- **Swapping an OpenRouter id is not a like-for-like change.** Two models behind
+  one gateway differ in modalities, tool support and reasoning; re-run the case
+  that uses the capability, not just any case.
 
 ### 7.8 How to choose, in practice
 
@@ -1151,6 +1164,10 @@ There is no compiler for prose. Substitutes, in order of value:
    skill or the prompt path that a rename silently unlinked.
 5. **Watch the token accounting.** A change that doubles prefix size is a
    regression even if the answer improved.
+6. **After changing a model id, exercise the capability it was chosen for** —
+   send an image, force a tool call, ask for reasoning. `zen check` proves the
+   credential resolves, not that the route serves images or honours `tools`; on a
+   gateway that gap is a request-time 404 (§7.5).
 
 CLI (`zen --help` for the authoritative list): `zen init`, `zen run`, `zen check`,
 `zen inspect`, `zen models`, `zen key`, `zen list`. **stdout is the answer, stderr

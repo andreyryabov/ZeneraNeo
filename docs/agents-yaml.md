@@ -236,6 +236,11 @@ error rather than a silently ignored one.
 Per-call **cost** is returned by this SDK and is not yet surfaced: `TokenUsage`
 counts tokens only.
 
+On the connection, `maxRetries` is honoured only as `0`. This SDK takes a retry
+_strategy_ rather than a count, so `0` disables retries and any other number
+leaves its default backoff in place. `timeoutMs` and `headers` behave as they do
+everywhere else.
+
 `reasoningEffort` **is** forwarded, as `reasoning.effort`. The gateway maps it
 onto whatever the destination model understands: for OpenAI models it passes
 through, and for others it becomes a fraction of the thinking budget. Whether a
