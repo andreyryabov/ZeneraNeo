@@ -999,8 +999,9 @@ the destination model understands.
 
 **Routing and fallbacks** are the reason this kind has an SDK. `routing` picks
 the upstream provider (OpenRouter's `provider` field, renamed because `provider:`
-already means the connection); `fallbacks` lists models to try when none can
-serve it (its `models` field):
+already means the connection); `fallbacks` lists other _models_ to try when none
+can serve it (its `models` field). `allowFallbacks`, below, is a third thing
+again — whether the gateway may look past `order`:
 
 ```yaml
 models:
@@ -1014,9 +1015,32 @@ models:
         fallbacks: [anthropic/claude-sonnet-4.5]
 ```
 
-`routing` keys: `order`, `only`, `ignore`, `sort`, `allowFallbacks`,
-`requireParameters`, `dataCollection`, `quantizations`, `zdr`. `serviceTier` is
-accepted alongside. `plugins` is code-only and has no schema entry.
+`routing` belongs to a **model**, not to a `providers:` entry: it is chosen per
+request, not per connection, and the provider schema is strict, so writing it
+there is a load error.
+
+| Key                 | Value                                                                        |
+| ------------------- | ---------------------------------------------------------------------------- |
+| `order`             | Providers to try first — a _preference_, not a restriction                   |
+| `only` / `ignore`   | Restrict serving to, or away from, these                                     |
+| `allowFallbacks`    | May the gateway go beyond `order` — **on** unless set `false`                |
+| `sort`              | `price`, `throughput`, `latency`, `exacto`                                   |
+| `requireParameters` | Skip a provider that would drop a parameter rather than serve it             |
+| `dataCollection`    | `allow` \| `deny`                                                            |
+| `quantizations`     | `int4` `int8` `fp4` `mxfp4` `nvfp4` `fp6` `fp8` `mxfp8` `fp16` `bf16` `fp32` |
+| `zdr`               | Zero-data-retention endpoints only                                           |
+
+`serviceTier` (`auto` \| `default` \| `fast` \| `flex` \| `priority` \| `scale`)
+sits alongside `routing`, not inside it.
+
+**A typo in `order` is invisible.** Provider names and `sort` are free strings
+for the same reason `reasoningEffort` is — the gateway's list moves faster than a
+schema would — so nothing local rejects them, and since `allowFallbacks` defaults
+on, an unknown name is skipped and the request quietly succeeds somewhere else.
+What _is_ checked is checked by the API rather than at load: a bad `sort` or
+`quantizations` returns `400 provider.sort: Invalid input`. Use `only`, or
+`allowFallbacks: false`, when the constraint is meant to bind — an unroutable
+request is then a 404 instead of a silent reroute.
 
 **Attribution** goes in `headers:`; there is no dedicated field because that one
 already means "sent on every request":
@@ -1048,7 +1072,10 @@ curl -s https://openrouter.ai/api/v1/models | jq -r '
 
 **Not modelled yet:** `transforms`, `usage.include`, and per-call cost — the
 gateway reports a price on every response, but it is not surfaced in the token
-accounting. `plugins` exists in code only. `models:` entries are strict, so
+accounting. `plugins` exists in code only. Four `provider` fields the SDK accepts
+have no yaml spelling either — `maxPrice`, `preferredMaxLatency`,
+`preferredMinThroughput`, `enforceDistillableText` — and `sort` takes the string
+form only, not the `{ by, partition }` object. `models:` entries are strict, so
 writing any of these is a load error rather than a key that is silently dropped.
 
 **`maxRetries` is honoured only as `0`.** This SDK takes a retry _strategy_, not

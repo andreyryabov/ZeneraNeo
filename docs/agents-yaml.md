@@ -219,12 +219,40 @@ models:
 
 `routing` is OpenRouter's `provider` field, renamed because `provider:` already
 means the connection here; `fallbacks` is its `models` field, named for which
-of the two lists it is. Its keys are `order`, `only`, `ignore`, `sort`,
-`allowFallbacks`, `requireParameters`, `dataCollection`, `quantizations` and
-`zdr`. `serviceTier` is accepted alongside them.
+of the two lists it is. It belongs to a model rather than to a `providers:`
+entry — the choice is made per request, and the provider schema is strict, so
+writing it there is a load error.
+
+| Key                 | Value                                                                        |
+| ------------------- | ---------------------------------------------------------------------------- |
+| `order`             | Providers to try first — a _preference_, not a restriction                   |
+| `only` / `ignore`   | Restrict serving to, or away from, these                                     |
+| `allowFallbacks`    | May OpenRouter go beyond `order` — on unless set `false`                     |
+| `sort`              | `price`, `throughput`, `latency`, `exacto`                                   |
+| `requireParameters` | Skip a provider that would drop a parameter rather than serve it             |
+| `dataCollection`    | `allow` \| `deny`                                                            |
+| `quantizations`     | `int4` `int8` `fp4` `mxfp4` `nvfp4` `fp6` `fp8` `mxfp8` `fp16` `bf16` `fp32` |
+| `zdr`               | Zero-data-retention endpoints only                                           |
+
+`serviceTier` (`auto`, `default`, `fast`, `flex`, `priority`, `scale`) is
+accepted alongside `routing`, not inside it.
 
 `requireParameters: true` is worth knowing: without it a provider that does not
 support a parameter may serve the request having quietly dropped it.
+
+Provider names and `sort` are plain strings here, so a typo in `order` is not
+rejected locally — and because `allowFallbacks` is on by default, it is not
+rejected remotely either: the unknown name is skipped and something else serves
+the request. Values the gateway does check, it checks at request time rather
+than at load, naming the field:
+
+```
+400 provider.sort: Invalid input
+400 provider.quantizations.0: Invalid option: expected one of "int4"|"int8"|…
+```
+
+Use `only`, or `allowFallbacks: false`, when the constraint is meant to bind.
+An unroutable request is then a 404 instead of a quiet reroute.
 
 #### What is not modelled yet
 
@@ -232,6 +260,11 @@ support a parameter may serve the request having quietly dropped it.
 code that builds a spec directly, but has no schema entry, so it cannot be
 written in yaml. `models:` entries are `.strict()`, so an unknown key is a load
 error rather than a silently ignored one.
+
+Four fields of the SDK's `provider` object have no `routing` spelling either:
+`maxPrice`, `preferredMaxLatency`, `preferredMinThroughput` and
+`enforceDistillableText`. `sort` takes the string form only, not the
+`{ by, partition }` object the SDK also accepts.
 
 Per-call **cost** is returned by this SDK and is not yet surfaced: `TokenUsage`
 counts tokens only.

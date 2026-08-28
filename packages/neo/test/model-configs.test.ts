@@ -250,6 +250,23 @@ describe('configs/tuning', () => {
             maxTokens: 16000,
             thinkingBudgetTokens: 8000,
         });
+        expect(p.config.models?.['router-picky']).toMatchObject({
+            routing: {
+                only: ['azure', 'together'],
+                ignore: ['deepinfra'],
+                allowFallbacks: false,
+                dataCollection: 'deny',
+                quantizations: ['fp8', 'bf16'],
+                zdr: true,
+            },
+            serviceTier: 'priority',
+        });
+        expect(p.config.models?.['router-shared']).toMatchObject({
+            reasoningEffort: 'low',
+            reasoningSummary: 'concise',
+            maxTokens: 2048,
+            fallbacks: ['google/gemini-3.5-flash'],
+        });
     });
 
     it('builds each of them', async () => {
@@ -259,6 +276,7 @@ describe('configs/tuning', () => {
         expect(modelOf(p, 'b')).toBeInstanceOf(GeminiModel);
         expect(modelOf(p, 'e').id).toBe('gemini-3.5-flash-lite');
         expect(modelOf(p, 'g')).toBeInstanceOf(AnthropicModel);
+        expect(modelOf(p, 'h')).toBeInstanceOf(OpenRouterModel);
     });
 });
 

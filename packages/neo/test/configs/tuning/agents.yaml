@@ -63,6 +63,34 @@ models:
         maxTokens: 16000
         thinkingBudgetTokens: 8000
 
+    # --- openrouter -------------------------------------------------------
+    router-picky:
+        provider: openrouter
+        model: openai/gpt-5.4-nano
+        # The gateway chooses an upstream provider per request; this is how
+        # that choice is constrained. `order` is covered by configs/openrouter
+        # — these are the rest of the schema's surface.
+        routing:
+            only: [azure, together]
+            ignore: [deepinfra]
+            # Beyond `only` is out of bounds rather than a silent widening.
+            allowFallbacks: false
+            dataCollection: deny
+            quantizations: [fp8, bf16]
+            zdr: true
+        serviceTier: priority
+
+    router-shared:
+        provider: openrouter
+        model: anthropic/claude-sonnet-4.5
+        # The three knobs this vendor shares with others, on this vendor: the
+        # effort dial rides as `reasoning.effort`, and the cap as
+        # `maxCompletionTokens`.
+        reasoningEffort: low
+        reasoningSummary: concise
+        maxTokens: 2048
+        fallbacks: [google/gemini-3.5-flash]
+
 agents:
     - name: a
       model: openai-reasoning
@@ -78,3 +106,7 @@ agents:
       model: claude-plain
     - name: g
       model: claude-thinking
+    - name: h
+      model: router-picky
+    - name: i
+      model: router-shared
