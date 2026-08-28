@@ -3,7 +3,7 @@ import { basename, resolve } from 'node:path';
 import { one, parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { ensureHome } from '../home.ts';
-import { KeyStore, PROVIDERS, SHAPES, type Provider } from '../keys.ts';
+import { isProvider, KeyStore, PROVIDERS, SHAPES, type Provider } from '../keys.ts';
 import { probeAll } from '../liveness.ts';
 import { isProjectDir, Registry } from '../projects.ts';
 import { scaffold } from '../scaffold.ts';
@@ -70,7 +70,11 @@ async function reachableProvider(store: KeyStore): Promise<Provider | undefined>
 
     const chosen =
         checks.find(([, c]) => c.state === 'live') ?? checks.find(([, c]) => c.state === 'unknown');
-    return chosen?.[0].provider;
+    // `active` was built from PROVIDERS, so this only ever holds a model
+    // provider; the guard says so to the type system rather than a cast
+    // asserting it, which would survive `SERVICES` growing into this list.
+    const provider = chosen?.[0].provider;
+    return provider !== undefined && isProvider(provider) ? provider : undefined;
 }
 
 export const init: Command = {

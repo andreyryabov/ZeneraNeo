@@ -8,6 +8,7 @@ import {
     SANDBOX_MOUNT,
     assertState,
     buildRunReport,
+    exaTools,
     lastText,
     loadProject,
     readProjectConfig,
@@ -121,6 +122,11 @@ export async function open(opts: EngineOptions): Promise<Engine> {
                     mount: sandbox.spec.workdir ?? SANDBOX_MOUNT,
                 }),
                 ...sandboxTools(sandbox.pool),
+                // Registered whether or not a key exists: the credential is
+                // read when a tool is called, so a project that names `exa:*`
+                // loads on a machine that cannot yet search, and says so on the
+                // turn that tried.
+                ...exaTools(),
             ],
             payloads,
             memory,

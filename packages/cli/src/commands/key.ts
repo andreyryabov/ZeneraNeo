@@ -8,12 +8,12 @@ import {
     keyId,
     KeyStore,
     mask,
+    OWNERS,
     parseRef,
-    PROVIDERS,
     SHAPES,
     type KeyEntry,
+    type KeyOwner,
     type Liveness,
-    type Provider,
 } from '../keys.ts';
 import { probe, probeAll } from '../liveness.ts';
 import {
@@ -58,7 +58,7 @@ function rows(store: KeyStore): string[] {
     const out: string[][] = [
         [bold(''), bold('KEY'), bold('VALUE'), bold('STATE'), bold('CHECKED')],
     ];
-    for (const provider of PROVIDERS) {
+    for (const provider of OWNERS) {
         for (const entry of store.for(provider)) {
             const shadowed = Boolean(process.env[SHAPES[provider].env]);
             out.push([
@@ -113,7 +113,7 @@ const ls: Sub = async (ctx, args) => {
     }
     writeAll(rows(store));
 
-    const missing = PROVIDERS.filter((p) => !store.active(p) && !process.env[SHAPES[p].env]);
+    const missing = OWNERS.filter((p) => !store.active(p) && !process.env[SHAPES[p].env]);
     if (missing.length) {
         note('');
         note(dim(`no key for: ${missing.join(', ')}`));
@@ -134,7 +134,7 @@ const add: Sub = async (ctx, args) => {
 
     const ref = positionals[0];
     if (!ref) {
-        throw usageError('which provider?', `one of: ${PROVIDERS.join(', ')}`);
+        throw usageError('which provider?', `one of: ${OWNERS.join(', ')}`);
     }
     const parsed = parseRef(ref);
     const provider = parsed.provider;
@@ -343,11 +343,11 @@ const env: Sub = async (ctx, args) => {
     const { positionals } = parse(args, {}, 'zen key env [provider …]');
     const store = await KeyStore.open();
     const only = positionals.length
-        ? positionals.map((p) => parseRef(p).provider as Provider)
+        ? positionals.map((p) => parseRef(p).provider as KeyOwner)
         : undefined;
     // Ignore what is already exported: the point is to produce the exports.
     const vars: Record<string, string> = {};
-    for (const provider of only ?? PROVIDERS) {
+    for (const provider of only ?? OWNERS) {
         const entry = store.active(provider);
         if (entry) {
             vars[SHAPES[provider].env] = store.reveal(entry);
@@ -382,6 +382,9 @@ export const key: Command = {
     details: [
         'Keys live in ~/.zenera/neo/keys.json (0600) and are materialised into',
         'the environment before a run. A real environment variable always wins.',
+        '',
+        'Model providers: openai, anthropic, google, vertex, openrouter.',
+        'Services the tools call: exa.',
         '',
         '  zen key ls [--check]              Everything stored, and its state.',
         '  zen key add <provider>[/name]     Read a key from stdin, or ask for it.',

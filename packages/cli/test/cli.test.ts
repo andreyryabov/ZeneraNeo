@@ -6,7 +6,7 @@ import type { ProcResult, runProcess } from 'zenera-neo';
 import { extract, split } from '../src/args.ts';
 import { auditModels } from '../src/audit.ts';
 import { isStamp, stamp, stampInstant } from '../src/ids.ts';
-import { mask, parseRef, type KeyStore } from '../src/keys.ts';
+import { assertUsable, mask, parseRef, type KeyEntry, type KeyStore } from '../src/keys.ts';
 import { ensurePodmanReady } from '../src/podman.ts';
 import { EXIT, pad, table } from '../src/term.ts';
 import { windowOf, wrap } from '../src/tui/wrap.ts';
@@ -76,6 +76,43 @@ describe('keys', () => {
     it('shows enough of a secret to recognise it and no more', () => {
         expect(mask('sk-proj-abcdefghijklmnop')).toBe('sk-p…mnop');
         expect(mask('short')).not.toContain('short');
+    });
+
+    // A key that a tool spends is held the same way a model key is, and is
+    // named the same way on the command line. What it must not do is answer
+    // the question the run gate asks, which is whether anything here can
+    // reach a model.
+    describe('a service key', () => {
+        const kept = { ...process.env };
+        afterEach(() => {
+            process.env = { ...kept };
+        });
+
+        const only = (provider: string): KeyStore => {
+            const entry = { provider, name: 'default', holds: 'secret', value: 'k' };
+            return {
+                active: (p: string) => (p === provider ? (entry as KeyEntry) : undefined),
+            } as unknown as KeyStore;
+        };
+
+        const blank = (): void => {
+            for (const name of Object.keys(process.env)) {
+                if (/_API_KEY$|^GOOGLE_APPLICATION_CREDENTIALS$/.test(name)) {
+                    delete process.env[name];
+                }
+            }
+        };
+
+        it('is a name the reference parser knows', () => {
+            expect(parseRef('exa')).toEqual({ provider: 'exa', name: undefined });
+            expect(parseRef('exa/work')).toEqual({ provider: 'exa', name: 'work' });
+        });
+
+        it('does not make a keyring usable on its own', () => {
+            blank();
+            expect(() => assertUsable(only('exa'))).toThrow(/no credentials/);
+            expect(() => assertUsable(only('openai'))).not.toThrow();
+        });
     });
 });
 

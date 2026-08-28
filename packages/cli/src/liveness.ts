@@ -1,5 +1,12 @@
-import { ModelRegistry } from 'zenera-neo';
-import { SHAPES, type KeyCheck, type KeyEntry, type KeyStore, type Provider } from './keys.ts';
+import { EXA_BASE_URL, ModelRegistry } from 'zenera-neo';
+import {
+    SHAPES,
+    type KeyCheck,
+    type KeyEntry,
+    type KeyStore,
+    type Provider,
+    type Service,
+} from './keys.ts';
 
 // ---------------------------------------------------------------------------
 // Liveness
@@ -76,12 +83,15 @@ const firstLine = (s: string): string => s.split('\n')[0].slice(0, 160);
  */
 export async function probe(store: KeyStore, entry: KeyEntry): Promise<KeyCheck> {
     const shape = SHAPES[entry.provider];
+    if (shape.kind === 'service') {
+        return probeService(entry.provider as Service, store.reveal(entry));
+    }
     const previous = process.env[shape.env];
     process.env[shape.env] = store.reveal(entry);
     try {
         const registry = new ModelRegistry();
-        registry.provider('probe', { kind: entry.provider });
-        await authenticate(entry.provider, registry.client('probe'));
+        registry.provider('probe', { kind: entry.provider as Provider });
+        await authenticate(entry.provider as Provider, registry.client('probe'));
         return { state: 'live', at: new Date().toISOString() };
     } catch (err) {
         return classify(err);
@@ -91,6 +101,59 @@ export async function probe(store: KeyStore, entry: KeyEntry): Promise<KeyCheck>
         } else {
             process.env[shape.env] = previous;
         }
+    }
+}
+
+/**
+ * A service has no model catalog to list, and its cheapest endpoint is one that
+ * bills. So the question is asked with a request that cannot succeed: an empty
+ * body. Authentication is checked before the body is, which makes the two
+ * refusals say different things — a rejected key never gets far enough to be
+ * told its body is wrong, and a good key is told nothing else.
+ *
+ *   401 INVALID_API_KEY     → dead
+ *   400 INVALID_REQUEST_BODY → live, and free
+ *
+ * Anything else is left to `classify`, which already knows how to tell a
+ * refusal from an unreachable host.
+ */
+async function probeService(service: Service, key: string): Promise<KeyCheck> {
+    const at = new Date().toISOString();
+    // One service so far, and a switch rather than an `if`, so the next one is
+    // added where it belongs instead of alongside.
+    const url = { exa: `${EXA_BASE_URL}/contents` }[service];
+    try {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-api-key': key },
+            body: '{}',
+            signal: AbortSignal.timeout(15_000),
+        });
+        if (res.status === 401 || res.status === 403) {
+            return { state: 'dead', at, detail: `${res.status} ${await said(res)}` };
+        }
+        // 402 is a key the vendor recognised and then declined to serve. It
+        // authenticated; the account behind it is out of money, which is a
+        // different problem and one no amount of rotating the key will fix.
+        if (res.status === 402) {
+            return { state: 'live', at, detail: await said(res) };
+        }
+        if (res.status === 400 || res.ok) {
+            return { state: 'live', at };
+        }
+        return { state: 'unknown', at, detail: `${res.status} ${await said(res)}` };
+    } catch (err) {
+        return classify(err);
+    }
+}
+
+/** The vendor's own sentence about a refusal, when the body carries one. */
+async function said(res: Response): Promise<string> {
+    try {
+        const body = (await res.json()) as { error?: string };
+        return firstLine(body.error ?? res.statusText);
+    } catch {
+        return res.statusText;
     }
 }
 
