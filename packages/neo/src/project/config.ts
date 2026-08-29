@@ -129,6 +129,8 @@ const embeddingSpec = z
         dimensions: z.int().positive().optional(),
         /** gemini only: a document title the retrieval task type takes into account */
         title: z.string().min(1).optional(),
+        /** gemini only: texts per request; every `gemini-embedding-*` model takes one */
+        maxBatch: z.int().positive().optional(),
         /** openrouter only: who serves the request */
         routing: routing.optional(),
     })

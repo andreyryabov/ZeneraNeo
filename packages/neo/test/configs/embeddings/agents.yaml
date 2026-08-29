@@ -32,11 +32,15 @@ embeddings:
 
     # Google spells the width `outputDimensionality` and takes a document
     # title alongside its retrieval task type; the adapter translates both.
+    # `embedContent` takes one document per request for every gemini-embedding
+    # model, so a batch is split across requests — `maxBatch` raises that only
+    # for the older text-embedding ids, which accept more.
     gemini:
         provider: google
         model: gemini-embedding-001
         dimensions: 768
         title: policy handbook
+        maxBatch: 1
 
     # OpenRouter's reason to exist here is routing: which upstream provider
     # serves the request, and in what order.

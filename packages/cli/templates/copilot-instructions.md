@@ -205,6 +205,8 @@ providers: {} # named connections (credentials + endpoint)
 provider: openai # the provider an unprefixed model id belongs to — §7.3
 models: {} # named model configurations
 model: fast # fallback for agents that do not pin their own
+embeddings: {} # named vectorisers — §3.1.1
+embedding: small # the one `AgentProject.embedder()` returns when asked for no name
 skills: agents/skills # one directory, or a list
 
 agents: # the only required key; at least one entry
@@ -255,6 +257,7 @@ provider with a missing key does not fail loading.
 
 - any unknown key; any name breaking the pattern
 - `models.<alias>.provider` naming an undeclared provider
+- `embeddings.<alias>.provider` naming an undeclared provider
 - `agents[].tools` naming a tool the runtime does not provide, or a group with nothing in it
 - `agents[].handoffs` naming an unknown agent, or the agent itself
 - `agents[].skills.provider` / `.allow` / `.preload` naming something absent
@@ -266,6 +269,62 @@ provider with a missing key does not fail loading.
 wrong provider (§7.3), and any combination of knobs the vendor rejects at request
 time, such as OpenAI reasoning on chat completions (§7.6). Both surface on the
 first call, so read §7 before writing a `models:` entry.
+
+### 3.1.1 `embeddings:`
+
+A vectoriser turns text into a vector, for retrieval rather than for answering.
+It resolves through the **same `providers:`**, so a key declared once generates
+and embeds without being written twice.
+
+```yaml
+providers:
+    house:
+        apiKey: ${ACME_OPENAI_KEY}
+
+embeddings:
+    small: openai:text-embedding-3-small # a shorthand string...
+    large: # ...or the object form
+        provider: house
+        model: text-embedding-3-large
+        dimensions: 256
+
+embedding: small
+```
+
+| Field                    | Meaning                                                                  |
+| ------------------------ | ------------------------------------------------------------------------ |
+| `provider`               | A `providers:` name or a built-in kind. Defaults to the default provider |
+| `model`                  | **Required.** The bare id — the object form never re-parses a shorthand  |
+| `dimensions`             | Truncate to this width, where the model supports it                      |
+| `apiKey` / `baseURL` / … | The same credential fields a provider takes, for a one-off connection    |
+| `title`                  | **gemini only** — a document title the retrieval task type weighs        |
+| `maxBatch`               | **gemini only** — texts per request; see below                           |
+| `routing`                | **openrouter only** — which upstream provider serves the request         |
+
+Four things differ from `models:` and are worth knowing before you write one:
+
+- **No `api:` field.** `/v1/responses` has no embeddings endpoint, so naming an
+  api means nothing on any protocol. The shorthand is `[provider:]model`.
+- **`kind: anthropic` has no embeddings API at all.** Anthropic publishes none
+  and points at third parties; an `embeddings:` entry on an Anthropic provider
+  fails at load. Use another provider — the connection need not be the one the
+  agents talk through.
+- **Not a per-agent key.** Nothing in the runtime consumes a vectoriser yet, so
+  there is no `agents[].embedding:`. A TypeScript host reaches one with
+  `project.embedder()` for the default, or `project.embedder('large')` by name.
+- **Vectors come back unit length**, so cosine and dot product agree. This is a
+  guarantee of the runtime, not of the vendor: truncating with `dimensions:` is a
+  raw slice and only some models rescale afterwards — `gemini-embedding-2` does,
+  `gemini-embedding-001` returns |v| ≈ 0.58 at 768 of its 3072. Pass
+  `normalize: false` on a call to see what the model actually said.
+
+Google's `embedContent` takes one document per request for every
+`gemini-embedding-*` model, and the adapter splits a batch across requests to
+hide that. `maxBatch` therefore defaults to `1`; raise it only for a
+`text-embedding-*` model, which accepts more.
+
+`zen check` and `zen models` report every declared embedding beside the models,
+with the credential each one would need.
 
 ### 3.2 `INSTRUCTIONS.md`
 
@@ -1259,6 +1318,10 @@ input`, or tools quietly unused). This is not a config error and `zen check`
 - **Swapping an OpenRouter id is not a like-for-like change.** Two models behind
   one gateway differ in modalities, tool support and reasoning; re-run the case
   that uses the capability, not just any case.
+- **An `embeddings:` entry on an Anthropic provider** fails at load: that vendor
+  publishes no embeddings API. Point it at another provider — §3.1.1.
+- **Changing `dimensions:` on an embedding invalidates every stored vector.**
+  Widths are not comparable, so anything already indexed has to be re-embedded.
 
 ### 7.8 How to choose, in practice
 

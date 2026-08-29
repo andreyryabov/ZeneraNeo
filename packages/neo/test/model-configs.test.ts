@@ -1,5 +1,8 @@
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { GeminiEmbedder } from '../src/embeddings/gemini.ts';
+import { OpenAIEmbedder } from '../src/embeddings/openai.ts';
+import { OpenRouterEmbedder } from '../src/embeddings/openrouter.ts';
 import type { Model } from '../src/model.ts';
 import { AnthropicModel } from '../src/models/anthropic.ts';
 import { GeminiModel } from '../src/models/gemini.ts';
@@ -80,6 +83,7 @@ const ENV: Record<string, string> = {
     ZN_KEY_TWO: 'sk-two',
     ZN_GATEWAY_KEY: 'sk-gateway',
     ZN_GEMINI_KEY: 'sk-gemini',
+    GEMINI_API_KEY: 'sk-gemini-default',
     ZN_ANTHROPIC_KEY: 'sk-claude',
     ZN_GCP_PROJECT: 'zn-eu-project',
     ZN_ENV_KEY: 'sk-env',
@@ -388,9 +392,40 @@ describe('configs/default-provider', () => {
     });
 });
 
+describe('configs/embeddings', () => {
+    it('resolves an alias, and the default for a caller that names none', async () => {
+        const p = await load('embeddings');
+
+        expect(p.embedder()?.id).toBe('text-embedding-3-large');
+        expect(p.embedder('small')).toBeInstanceOf(OpenAIEmbedder);
+        expect(p.embedder('small')?.id).toBe('text-embedding-3-small');
+    });
+
+    it('picks the adapter from the provider, as `models:` does', async () => {
+        const p = await load('embeddings');
+
+        expect(p.embedder('gemini')).toBeInstanceOf(GeminiEmbedder);
+        expect(p.embedder('gemini')?.id).toBe('gemini-embedding-001');
+        expect(p.embedder('routed')).toBeInstanceOf(OpenRouterEmbedder);
+    });
+
+    it('memoizes, and shares one client with the models on that provider', async () => {
+        const p = await load('embeddings');
+
+        expect(p.embedder('large')).toBe(p.embedder('large'));
+        // `model: house:gpt-4o` and the `large` embedding name one provider,
+        // so they are one connection rather than two.
+        expect(conn(p.models.client('house')).apiKey).toBe('sk-one');
+    });
+
+    it('falls through to the shorthand for a name the map does not hold', async () => {
+        const p = await load('embeddings');
+        expect(p.embedder('openai:text-embedding-3-small')?.id).toBe('text-embedding-3-small');
+    });
+});
+
 // ---------------------------------------------------------------------------
-// The ones that must not load
-//
+// The ones that must not load//
 // Every failure below is a load-time failure: a broken configuration is caught
 // at startup, with the offending key named, rather than three turns into a
 // production run as a model error nobody can act on.
@@ -412,6 +447,8 @@ describe('configs/invalid', () => {
         ['unknown-model-key', /models\.hot/],
         ['missing-key', /no api key[\s\S]*ZN_NO_SUCH_KEY/],
         ['bad-name', /agents\[0\]\.name[\s\S]*lower-case/],
+        // Not an omission in this library: Anthropic publishes no such endpoint.
+        ['embedding-without-vendor', /has no embeddings api/],
     ];
 
     it.each(cases)('rejects %s', async (dir, message) => {
