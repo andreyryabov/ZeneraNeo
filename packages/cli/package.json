@@ -27,7 +27,7 @@
     },
     "files": [
         "dist",
-        "src",
+        "!dist/**/*.map",
         "templates"
     ],
     "engines": {

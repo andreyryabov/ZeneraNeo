@@ -73,8 +73,9 @@ Pushing the tag is what publishes. Until then nothing has left the machine.
 > ever made public.
 
 Both packages have a `prepack: tsc -b`, so a stale or missing `dist` cannot be published.
-Both ship `dist` **and** `src`, so the `../src/*.ts` references inside the `.js.map` and
-`.d.ts.map` files resolve inside the tarball.
+Neither ships `src`, and the `.js.map` / `.d.ts.map` files are excluded with it — their
+`../src/*.ts` references would not resolve inside the tarball. Maps are still emitted into
+`dist` for local work; they are only kept out of the published files.
 
 ## Publishing by hand
 

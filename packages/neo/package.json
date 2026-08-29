@@ -52,7 +52,7 @@
     "sideEffects": false,
     "files": [
         "dist",
-        "src"
+        "!dist/**/*.map"
     ],
     "engines": {
         "node": ">=24"
