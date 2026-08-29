@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
     projectRegistry,
     readProjectConfig,
+    type EmbeddingRef,
     type ModelRef,
     type ModelRequirement,
     type ProjectConfig,
@@ -23,9 +24,14 @@ import { bold, dim } from './term.ts';
 // the answer arrives whether the load then succeeds or not.
 // ---------------------------------------------------------------------------
 
+/** Which key of the config named a reference: `model:`/`models:` or `embedding:`/`embeddings:`. */
+export type DeclaredRole = 'model' | 'embedding';
+
 export interface ModelIssue {
     /** the model as the config names it: an alias, or the ref itself */
     name: string;
+    /** what the config declared it for */
+    role: DeclaredRole;
     /** the provider it resolves to */
     provider: string;
     /** the variable that would carry the credential */
@@ -44,24 +50,37 @@ export interface ModelIssue {
  * The `models:` table comes first so a declared alias keeps its own name in the
  * report; a `model:` that names one collapses onto it rather than appearing
  * twice, and a `model:` that names no alias is a shorthand standing for itself.
+ *
+ * Embeddings are walked the same way and kept in their own list: an alias may
+ * legitimately appear under both keys meaning two different things, and they
+ * are two credentials to check either way.
  */
-function declared(config: ProjectConfig): Map<string, ModelRef> {
+function declared(config: ProjectConfig): Map<DeclaredRole, Map<string, ModelRef | EmbeddingRef>> {
     // The schema widens `reasoningEffort` to `string` on purpose, which is the
     // one thing keeping a config's model spec from being a `ModelSpec`. The
     // loader hands the same cast to `models.model()` for the same reason.
-    const found = new Map<string, ModelRef>(
+    const models = new Map<string, ModelRef>(
         Object.entries(config.models ?? {}) as [string, ModelRef][],
     );
-    const add = (ref: string | undefined): void => {
-        if (ref && !found.has(ref)) {
-            found.set(ref, ref);
+    const add = (into: Map<string, ModelRef | EmbeddingRef>, ref: string | undefined): void => {
+        if (ref && !into.has(ref)) {
+            into.set(ref, ref);
         }
     };
-    add(config.model);
+    add(models, config.model);
     for (const agent of config.agents) {
-        add(agent.model);
+        add(models, agent.model);
     }
-    return found;
+
+    const embeddings = new Map<string, EmbeddingRef>(
+        Object.entries(config.embeddings ?? {}) as [string, EmbeddingRef][],
+    );
+    add(embeddings, config.embedding);
+
+    return new Map([
+        ['model', models],
+        ['embedding', embeddings],
+    ]);
 }
 
 /**
@@ -115,36 +134,46 @@ export function auditModels(projectDir: string, store: KeyStore): ModelIssue[] {
     const registry = projectRegistry(config);
     const issues: ModelIssue[] = [];
 
-    for (const [name, ref] of declared(config)) {
-        let need: ModelRequirement;
-        try {
-            need = registry.requirement(ref);
-        } catch {
-            continue;
-        }
+    for (const [role, refs] of declared(config)) {
+        for (const [name, ref] of refs) {
+            let need: ModelRequirement;
+            try {
+                need = registry.requirement(ref);
+            } catch {
+                continue;
+            }
 
-        const { env, present } = credentialFor(need);
-        const provider = isProvider(need.kind) ? need.kind : undefined;
+            const { env, present } = credentialFor(need);
+            const provider = isProvider(need.kind) ? need.kind : undefined;
 
-        if (!present) {
-            issues.push({ name, provider: need.provider, env, reason: 'missing', add: provider });
-            continue;
-        }
+            if (!present) {
+                issues.push({
+                    name,
+                    role,
+                    provider: need.provider,
+                    env,
+                    reason: 'missing',
+                    add: provider,
+                });
+                continue;
+            }
 
-        // A key that the provider itself rejected last time it was asked. Said
-        // as a warning rather than an error because a key can be reinstated
-        // between the check and the run, and a stale verdict must not be the
-        // thing that stops a run from being attempted.
-        const check = provider ? store.active(provider)?.check : undefined;
-        if (check?.state === 'dead') {
-            issues.push({
-                name,
-                provider: need.provider,
-                env,
-                reason: 'dead',
-                detail: check.detail,
-                add: provider,
-            });
+            // A key that the provider itself rejected last time it was asked.
+            // Said as a warning rather than an error because a key can be
+            // reinstated between the check and the run, and a stale verdict must
+            // not be the thing that stops a run from being attempted.
+            const check = provider ? store.active(provider)?.check : undefined;
+            if (check?.state === 'dead') {
+                issues.push({
+                    name,
+                    role,
+                    provider: need.provider,
+                    env,
+                    reason: 'dead',
+                    detail: check.detail,
+                    add: provider,
+                });
+            }
         }
     }
 
@@ -157,7 +186,7 @@ export function auditModels(projectDir: string, store: KeyStore): ModelIssue[] {
  * look up.
  */
 export function describeIssue(issue: ModelIssue): string {
-    const what = `${bold(issue.name)} (${issue.provider})`;
+    const what = `${bold(issue.name)} (${issue.provider}${issue.role === 'embedding' ? ', embedding' : ''})`;
     if (issue.reason === 'missing') {
         const fix = issue.add ? `zen key add ${issue.add}` : `set ${issue.env}`;
         return `${what} has no credential — ${issue.env} is not set; ${dim(fix)}`;

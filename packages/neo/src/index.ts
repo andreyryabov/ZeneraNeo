@@ -1,5 +1,7 @@
 export * from './agent.ts';
 export * from './architecture.ts';
+export * from './embedding.ts';
+export * from './embeddings/index.ts';
 export * from './events.ts';
 export * from './ids.ts';
 export * from './inspect/index.ts';

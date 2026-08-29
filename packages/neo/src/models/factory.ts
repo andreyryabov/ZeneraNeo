@@ -6,6 +6,10 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import type OpenAI from 'openai';
 import type { ClientOptions as OpenAIOptions } from 'openai';
+import type { Embedder } from '../embedding.ts';
+import { GeminiEmbedder, type GeminiEmbedderOptions } from '../embeddings/gemini.ts';
+import { OpenAIEmbedder, type OpenAIEmbedderOptions } from '../embeddings/openai.ts';
+import { OpenRouterEmbedder, type OpenRouterEmbedderOptions } from '../embeddings/openrouter.ts';
 import type { Model } from '../model.ts';
 import { AnthropicModel, type AnthropicModelOptions } from './anthropic.ts';
 import { GeminiModel, type GeminiModelOptions } from './gemini.ts';
@@ -181,6 +185,26 @@ export interface ModelSpec
  * form.
  */
 export type ModelRef = ModelSpec | string;
+
+/**
+ * The same idea one layer down: which vectoriser, and of whom.
+ *
+ * A separate type from `ModelSpec` rather than a flag on it, because the two
+ * share only their connection. There is no `api` field — `/v1/responses` has no
+ * embeddings endpoint, so naming one would be meaningless on every protocol,
+ * not just the three that already have a single API.
+ */
+export interface EmbeddingSpec
+    extends Credentials, OpenAIEmbedderOptions, GeminiEmbedderOptions, OpenRouterEmbedderOptions {
+    /** registered provider name; defaults to the registry's default provider */
+    provider?: string;
+    model: string;
+    /** pre-built client — bypasses provider resolution entirely */
+    client?: ProviderClient;
+}
+
+/** Shorthand: `[provider:]model`, e.g. `text-embedding-3-small`, `google:gemini-embedding-001`. */
+export type EmbeddingRef = EmbeddingSpec | string;
 
 /**
  * What a ref *would* connect with. `model()` answers the same question by
@@ -438,11 +462,43 @@ export class ModelRegistry {
     }
 
     /**
+     * Turns a shorthand or a spec into an `Embedder`, over the same providers
+     * and the same shared clients as `model()` — an `openai` key declared once
+     * generates and embeds without being mentioned twice.
+     */
+    embedder(ref: EmbeddingRef): Embedder {
+        const spec = typeof ref === 'string' ? this.#parseEmbedding(ref) : ref;
+        const name = spec.provider ?? this.#default;
+        const provider = this.#spec(name);
+        const kind = this.kindOf(name);
+
+        const client =
+            spec.client ??
+            (hasCredentials(spec) ? buildClient(name, kind, spec, provider) : this.client(name));
+
+        switch (KINDS[kind].protocol) {
+            case 'openai':
+                return new OpenAIEmbedder(spec.model, client as OpenAI, spec);
+            case 'gemini':
+                return new GeminiEmbedder(spec.model, client as GoogleGenAI, spec);
+            case 'openrouter':
+                return new OpenRouterEmbedder(spec.model, client as OpenRouter, spec);
+            case 'anthropic':
+                // Not an omission to be filled in later: Anthropic publishes no
+                // embeddings API at all, and points at third parties instead.
+                throw new TypeError(
+                    `provider "${name}" (${kind}) has no embeddings api — ` +
+                        `declare a provider of another kind for \`embeddings:\``,
+                );
+        }
+    }
+
+    /**
      * What a ref needs to reach its vendor, resolved but not contacted. An
      * unknown provider still throws: that is a broken config, not a missing
      * credential, and the two want different words.
      */
-    requirement(ref: ModelRef): ModelRequirement {
+    requirement(ref: ModelRef | EmbeddingRef): ModelRequirement {
         const spec = typeof ref === 'string' ? this.parse(ref) : ref;
         const name = spec.provider ?? this.#default;
         const provider = this.#spec(name);
@@ -497,6 +553,16 @@ export class ModelRegistry {
             throw new TypeError(`unknown api "${api}" in "${ref}" (expected chat or responses)`);
         }
         return { provider, api, model };
+    }
+
+    #parseEmbedding(ref: string): EmbeddingSpec {
+        const { provider, api, model } = this.parse(ref);
+        if (api) {
+            throw new TypeError(
+                `"${ref}": embeddings have one api, so "${api}" means nothing here`,
+            );
+        }
+        return { provider, model };
     }
 
     #spec(name: string): ProviderSpec {
@@ -720,7 +786,7 @@ function expandHeaders(
     );
 }
 
-function hasCredentials(spec: ModelSpec): boolean {
+function hasCredentials(spec: Credentials): boolean {
     return Boolean(spec.apiKey || spec.apiKeyEnv || spec.baseURL || spec.baseURLEnv);
 }
 
@@ -743,4 +809,12 @@ export const defaultModels = new ModelRegistry();
  */
 export function createModel(ref: ModelRef, registry: ModelRegistry = defaultModels): Model {
     return registry.model(ref);
+}
+
+/** `createModel`'s counterpart for vectors, over the same registry and clients. */
+export function createEmbedder(
+    ref: EmbeddingRef,
+    registry: ModelRegistry = defaultModels,
+): Embedder {
+    return registry.embedder(ref);
 }

@@ -113,6 +113,27 @@ const modelSpec = z
     })
     .strict();
 
+/**
+ * A vectoriser. Deliberately much smaller than `modelSpec`: an embedding call
+ * has no conversation, no tools and no reasoning, so a connection, an id and a
+ * width is all there is to say. `taskType` is absent because it describes the
+ * *text*, not the model, and so belongs to the call.
+ */
+const embeddingSpec = z
+    .object({
+        ...credentials,
+        /** a name from `providers:`, or a built-in kind */
+        provider: z.string().min(1).optional(),
+        model: z.string().min(1),
+        /** truncate to this width, where the model supports it */
+        dimensions: z.int().positive().optional(),
+        /** gemini only: a document title the retrieval task type takes into account */
+        title: z.string().min(1).optional(),
+        /** openrouter only: who serves the request */
+        routing: routing.optional(),
+    })
+    .strict();
+
 const skillsBinding = z
     .object({
         /** provider id; defaults to the project's sole provider */
@@ -238,6 +259,14 @@ export const projectSchema = z
         models: z.record(name, z.union([modelRef, modelSpec])).optional(),
         /** fallback for agents that do not pin their own */
         model: modelRef.optional(),
+        /**
+         * Named vectorisers. Not a per-agent key: nothing in the runtime
+         * consumes an embedder yet, and a key nothing honours is worse than a
+         * key that is not there.
+         */
+        embeddings: z.record(name, z.union([modelRef, embeddingSpec])).optional(),
+        /** the vectoriser `AgentProject.embedder()` hands back when asked for none */
+        embedding: modelRef.optional(),
         /** one directory, or several merged into one catalog */
         skills: z.union([z.string().min(1), z.array(z.string().min(1))]).optional(),
         /** the container `run_command` and friends execute in */
@@ -250,6 +279,7 @@ export type ProjectConfig = z.infer<typeof projectSchema>;
 export type AgentConfig = ProjectConfig['agents'][number];
 export type ProviderConfig = z.infer<typeof provider>;
 export type ModelConfig = z.infer<typeof modelSpec>;
+export type EmbeddingConfig = z.infer<typeof embeddingSpec>;
 export type SandboxConfig = z.infer<typeof sandbox>;
 
 /**

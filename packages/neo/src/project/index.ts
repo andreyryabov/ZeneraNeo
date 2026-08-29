@@ -2,6 +2,7 @@ export {
     parseConfig,
     projectSchema,
     type AgentConfig,
+    type EmbeddingConfig,
     type ModelConfig,
     type ProjectConfig,
     type ProviderConfig,

@@ -1,10 +1,16 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Agent, AgentRegistry, type ForkOptions } from '../agent.ts';
+import type { Embedder } from '../embedding.ts';
 import { RunStream } from '../events.ts';
 import type { MemoryStore } from '../memory.ts';
 import type { Model } from '../model.ts';
-import { ModelRegistry, type ModelRef, type ProviderSpec } from '../models/factory.ts';
+import {
+    ModelRegistry,
+    type EmbeddingRef,
+    type ModelRef,
+    type ProviderSpec,
+} from '../models/factory.ts';
 import type { PayloadStore } from '../payload.ts';
 import { promptFile, type PromptPart } from '../prompt.ts';
 import { AgentRunner, type RunOptions, type RunnerOptions } from '../runner.ts';
@@ -55,6 +61,8 @@ export interface ProjectOptions<TCtx = unknown> {
      * `models:` map; a name in neither falls through to the shorthand.
      */
     models?: Record<string, ModelRef>;
+    /** the same, for `embeddings:` — host last, for the same reason */
+    embeddings?: Record<string, EmbeddingRef>;
     /**
      * A registry to populate and use instead of a fresh one. Share it across
      * projects and they share clients; pre-load it with a stub provider and the
@@ -133,6 +141,11 @@ export async function loadProject<TCtx = unknown>(
 
     validate(config, registry, providers, catalogs, models);
 
+    const embedders = embedderResolver(config, opts, models);
+    // The default is resolved here rather than on first use, so a broken
+    // `embedding:` fails at load like a broken `model:` does.
+    embedders(config.embedding, 'embedding');
+
     return new AgentProject<TCtx>({
         root,
         source,
@@ -141,6 +154,7 @@ export async function loadProject<TCtx = unknown>(
         registry,
         skillProviders: providers,
         models,
+        embedders,
         options: opts,
     });
 }
@@ -153,6 +167,7 @@ interface ProjectParts<TCtx> {
     registry: AgentRegistry<TCtx>;
     skillProviders: SkillProvider[];
     models: ModelRegistry;
+    embedders: (ref: string | undefined, where: string) => Embedder | undefined;
     options: ProjectOptions<TCtx>;
 }
 
@@ -180,6 +195,7 @@ export class AgentProject<TCtx = unknown> {
     readonly skillProviders: readonly SkillProvider[];
     /** the providers this project declared, and the clients behind them */
     readonly models: ModelRegistry;
+    readonly #embedders: (ref: string | undefined, where: string) => Embedder | undefined;
     readonly #options: ProjectOptions<TCtx>;
     #runner?: AgentRunner<TCtx>;
 
@@ -191,11 +207,21 @@ export class AgentProject<TCtx = unknown> {
         this.registry = parts.registry;
         this.skillProviders = parts.skillProviders;
         this.models = parts.models;
+        this.#embedders = parts.embedders;
         this.#options = parts.options;
     }
 
     get agents(): readonly Agent<TCtx>[] {
         return [...this.registry.agents.values()];
+    }
+
+    /**
+     * A declared vectoriser, memoized. Named or not: with no argument this is
+     * the project's `embedding:`, and `undefined` when it declares none.
+     */
+    embedder(name?: string): Embedder | undefined {
+        const ref = name ?? this.config.embedding;
+        return this.#embedders(ref, name ? `embeddings.${name}` : 'embedding');
     }
 
     /**
@@ -336,6 +362,38 @@ function modelResolver<TCtx>(
     };
 }
 
+/**
+ * `embeddings:` values, resolved the same way `model:` values are — through the
+ * alias tables, memoized, and with the offending key named when a ref will not
+ * resolve.
+ */
+function embedderResolver<TCtx>(
+    config: ProjectConfig,
+    opts: ProjectOptions<TCtx>,
+    models: ModelRegistry,
+): (ref: string | undefined, where: string) => Embedder | undefined {
+    const cache = new Map<string, Embedder>();
+    return (ref, where) => {
+        if (!ref) {
+            return undefined;
+        }
+        const cached = cache.get(ref);
+        if (cached) {
+            return cached;
+        }
+        const resolved = opts.embeddings?.[ref] ?? config.embeddings?.[ref] ?? ref;
+        try {
+            // `routing` is widened to plain strings by the schema on purpose
+            // (see config.ts); the request is the authority on rejecting one.
+            const embedder = models.embedder(resolved as EmbeddingRef);
+            cache.set(ref, embedder);
+            return embedder;
+        } catch (e) {
+            throw new Error(`${where}: ${(e as Error).message}`);
+        }
+    };
+}
+
 function toolsFor<TCtx>(spec: AgentConfig, available: AnyTool<TCtx>[]): AnyTool<TCtx>[] {
     if (!spec.tools?.length) {
         return [];
@@ -442,6 +500,16 @@ function validate<TCtx>(
         if (named && !models.has(named)) {
             throw new Error(
                 `models.${alias}.provider: unknown provider "${named}" ` +
+                    `(known: ${models.names().join(', ')})`,
+            );
+        }
+    }
+
+    for (const [alias, spec] of Object.entries(config.embeddings ?? {})) {
+        const named = typeof spec === 'string' ? undefined : spec.provider;
+        if (named && !models.has(named)) {
+            throw new Error(
+                `embeddings.${alias}.provider: unknown provider "${named}" ` +
                     `(known: ${models.names().join(', ')})`,
             );
         }
