@@ -25,6 +25,12 @@
         "zn": "./dist/main.js",
         "zenera": "./dist/main.js"
     },
+    "exports": {
+        "./lib": {
+            "types": "./dist/lib.d.ts",
+            "default": "./dist/lib.js"
+        }
+    },
     "files": [
         "dist",
         "!dist/**/*.map",

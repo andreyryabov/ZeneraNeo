@@ -1,0 +1,36 @@
+swagger: '2.0'
+info:
+    title: Legacy
+    version: 1.0.0
+basePath: /api/v1
+paths:
+    /orders/{order_id}:
+        get:
+            operationId: getOrder
+            parameters:
+                - name: order_id
+                  in: path
+                  required: true
+                  type: string
+                - name: limit
+                  in: query
+                  required: false
+                  type: integer
+                  minimum: 1
+                  exclusiveMinimum: true
+            responses:
+                '200':
+                    description: the order
+                    schema:
+                        $ref: '#/definitions/Order'
+definitions:
+    Order:
+        type: object
+        required: [order_id]
+        properties:
+            order_id:
+                type: string
+            lines:
+                type: array
+                items:
+                    type: string

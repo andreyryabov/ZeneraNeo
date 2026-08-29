@@ -29,6 +29,7 @@ export const paths = {
     projects: (): string => join(home(), 'projects.json'),
     keys: (): string => join(home(), 'keys.json'),
     keyDir: (): string => join(home(), 'keys'),
+    faker: (): string => join(home(), 'faker'),
 };
 
 /** Creates a directory owner-only, and leaves an existing one's mode alone. */
