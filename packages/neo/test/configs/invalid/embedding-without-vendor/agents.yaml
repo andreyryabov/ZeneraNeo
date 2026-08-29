@@ -1,0 +1,23 @@
+# An embedding names a vendor that publishes no embeddings API.
+#
+# Fails at load with `embedding: provider "claude" (anthropic) has no embeddings
+# api`. Not an omission in this library: Anthropic publishes no such endpoint
+# and points at third parties instead, so the fix is another provider, not
+# another adapter.
+version: 1
+
+providers:
+    claude:
+        kind: anthropic
+        apiKey: ${ZN_ANTHROPIC_KEY}
+
+embeddings:
+    vectors:
+        provider: claude
+        model: claude-embedding
+
+embedding: vectors
+
+agents:
+    - name: solo
+      model: claude:claude-haiku-4-5

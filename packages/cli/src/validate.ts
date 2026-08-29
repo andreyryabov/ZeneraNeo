@@ -12,11 +12,12 @@ import {
     workspaceTools,
     type AgentConfig,
     type AnyTool,
+    type EmbeddingRef,
     type ModelRef,
     type ProjectConfig,
     type SkillSummary,
 } from 'zenera-neo';
-import { auditModels, credentialFor, type ModelIssue } from './audit.ts';
+import { auditModels, credentialFor, type DeclaredRole, type ModelIssue } from './audit.ts';
 import { SHAPES, type KeyStore, type Service } from './keys.ts';
 
 // ---------------------------------------------------------------------------
@@ -112,6 +113,8 @@ export interface SkillReport {
 export interface ModelReport {
     /** the alias it is declared under, or the reference itself */
     name: string;
+    /** what the config declared it for */
+    role: DeclaredRole;
     /** the provider it resolves to */
     provider?: string;
     kind?: string;
@@ -1126,17 +1129,25 @@ function checkModels(
     }
 
     // A verdict per model, from the same audit `zen run` prints as a warning.
+    // Keyed by role too: an alias may name a model and an embedding at once.
     const issues = new Map<string, ModelIssue>();
     if (keys) {
         for (const issue of auditModels(root, keys)) {
-            issues.set(issue.name, issue);
+            issues.set(`${issue.role}:${issue.name}`, issue);
         }
     }
 
     const models: ModelReport[] = [];
-    for (const [name, { ref, usedBy }] of declared) {
+
+    const describe = (
+        role: DeclaredRole,
+        name: string,
+        ref: ModelRef | EmbeddingRef,
+        usedBy: string[],
+    ): void => {
         const report: ModelReport = {
             name,
+            role,
             credential: keys ? 'present' : 'unknown',
             usedBy,
         };
@@ -1152,21 +1163,20 @@ function checkModels(
         } catch (err) {
             add({
                 severity: 'error',
-                code: 'model.unresolvable',
-                where: config.models?.[name]
-                    ? `models.${name}`
-                    : usedBy.length && usedBy[0] !== '(project default)'
-                      ? `agents.${usedBy[0]}.model`
-                      : 'model',
+                code: `${role}.unresolvable`,
+                where: whereFor(config, role, name, usedBy),
                 message: err instanceof Error ? err.message : String(err),
-                fix: 'a reference is `[provider[/api]:]model`; see docs/agents-yaml.md',
+                fix:
+                    role === 'embedding'
+                        ? 'a reference is `[provider:]model`; see docs/agents-yaml.md'
+                        : 'a reference is `[provider[/api]:]model`; see docs/agents-yaml.md',
             });
             report.credential = 'unknown';
             models.push(report);
-            continue;
+            return;
         }
 
-        const issue = issues.get(name);
+        const issue = issues.get(`${role}:${name}`);
         if (issue) {
             report.credential = issue.reason === 'missing' ? 'missing' : 'rejected';
             report.env = issue.env;
@@ -1176,7 +1186,7 @@ function checkModels(
             add({
                 severity: 'warning',
                 code: `credential.${issue.reason}`,
-                where: `model "${name}" (${issue.provider})`,
+                where: `${role} "${name}" (${issue.provider})`,
                 message:
                     issue.reason === 'missing'
                         ? `nothing to authenticate with — ${issue.env} is not set, and the ` +
@@ -1188,9 +1198,39 @@ function checkModels(
             });
         }
         models.push(report);
+    };
+
+    for (const [name, { ref, usedBy }] of declared) {
+        describe('model', name, ref, usedBy);
+    }
+    // `usedBy` stays empty for embeddings: nothing in the runtime consumes one
+    // yet, so there is no agent to attribute it to.
+    for (const [name, spec] of Object.entries(config.embeddings ?? {})) {
+        describe('embedding', name, spec as EmbeddingRef, []);
+    }
+    if (config.embedding && !config.embeddings?.[config.embedding]) {
+        describe('embedding', config.embedding, config.embedding, []);
     }
 
     return { providers: registry.names(), models };
+}
+
+/** The config key a bad reference was written under. */
+function whereFor(
+    config: ProjectConfig,
+    role: DeclaredRole,
+    name: string,
+    usedBy: string[],
+): string {
+    if (role === 'embedding') {
+        return config.embeddings?.[name] ? `embeddings.${name}` : 'embedding';
+    }
+    if (config.models?.[name]) {
+        return `models.${name}`;
+    }
+    return usedBy.length && usedBy[0] !== '(project default)'
+        ? `agents.${usedBy[0]}.model`
+        : 'model';
 }
 
 // ---------------------------------------------------------------------------

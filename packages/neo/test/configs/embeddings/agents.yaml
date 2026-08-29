@@ -1,0 +1,55 @@
+# Vectorisers, declared next to the models that talk.
+#
+# `embeddings:` is the same idea as `models:`, one layer down, and it resolves
+# through the same providers: an `openai` key declared once generates *and*
+# embeds without being mentioned twice.
+#
+# Two things are deliberately missing. There is no `api:` — `/v1/responses` has
+# no embeddings endpoint, so naming one would mean nothing. And there is no
+# per-agent `embedding:`: nothing in the runtime consumes an embedder yet, and
+# a key nothing honours is worse than a key that is not there.
+version: 1
+
+providers:
+    house:
+        apiKey: ${ZN_KEY_ONE}
+    routed:
+        kind: openrouter
+        apiKey: ${ZN_OPENROUTER_KEY}
+
+embeddings:
+    # A name may hold a shorthand string...
+    small: openai:text-embedding-3-small
+
+    # ...or the object form, which is the only way to reach the knobs. `model`
+    # is the only required field; everything else is a connection or a width.
+    large:
+        provider: house
+        model: text-embedding-3-large
+        # Truncated at the vendor, where the model supports it. A request may
+        # override this per call.
+        dimensions: 256
+
+    # Google spells the width `outputDimensionality` and takes a document
+    # title alongside its retrieval task type; the adapter translates both.
+    gemini:
+        provider: google
+        model: gemini-embedding-001
+        dimensions: 768
+        title: policy handbook
+
+    # OpenRouter's reason to exist here is routing: which upstream provider
+    # serves the request, and in what order.
+    routed:
+        provider: routed
+        model: qwen/qwen3-embedding-8b
+        routing:
+            order: [deepinfra]
+
+# The one `AgentProject.embedder()` hands back when asked for no name. A name
+# not in the map above would be read as a shorthand instead.
+embedding: large
+
+model: house:gpt-4o
+agents:
+    - name: solo

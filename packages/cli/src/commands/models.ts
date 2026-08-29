@@ -75,6 +75,20 @@ export const models: Command = {
             handoffs: a.handoffs,
         }));
 
+        // Resolved through the registry, which proves the ref parses and the
+        // provider exists without any call being made.
+        const embeddings = Object.keys(project.config.embeddings ?? {})
+            .concat(
+                project.config.embedding && !project.config.embeddings?.[project.config.embedding]
+                    ? [project.config.embedding]
+                    : [],
+            )
+            .map((name) => ({
+                name,
+                model: project.embedder(name)?.id ?? null,
+                default: name === project.config.embedding,
+            }));
+
         const credentials = PROVIDERS.map((p) => ({
             provider: p,
             env: SHAPES[p].env,
@@ -91,6 +105,7 @@ export const models: Command = {
                 source: project.source,
                 providers: project.models.names(),
                 agents,
+                embeddings,
                 credentials,
             });
             return;
@@ -109,6 +124,19 @@ export const models: Command = {
                 ]),
             ),
         );
+
+        if (embeddings.length) {
+            note('');
+            note(bold('Embeddings'));
+            writeAll(
+                table(
+                    embeddings.map((e) => [
+                        `  ${e.default ? green('→') : ' '} ${e.name}`,
+                        cyan(e.model ?? dim('unresolved')),
+                    ]),
+                ),
+            );
+        }
 
         note('');
         note(bold('Credentials'));

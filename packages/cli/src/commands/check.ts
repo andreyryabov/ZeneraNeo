@@ -206,7 +206,15 @@ function render(report: Report): string[] {
                     dim(m.provider ? `${m.provider} (${m.kind})` : red('unresolved')),
                     dim(m.env ?? ''),
                     credential(m.credential),
-                    dim(m.usedBy.length ? `used by ${m.usedBy.join(', ')}` : 'declared, unused'),
+                    // Nothing consumes an embedding yet, so `usedBy` would
+                    // always read "declared, unused" and say the wrong thing.
+                    dim(
+                        m.role === 'embedding'
+                            ? 'embedding'
+                            : m.usedBy.length
+                              ? `used by ${m.usedBy.join(', ')}`
+                              : 'declared, unused',
+                    ),
                 ]),
             ),
         );

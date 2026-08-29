@@ -190,6 +190,7 @@ describe('the credential audit', () => {
         expect(issues).toEqual([
             {
                 name: 'fast',
+                role: 'model',
                 provider: 'google',
                 env: 'GEMINI_API_KEY',
                 reason: 'missing',
@@ -222,6 +223,7 @@ describe('the credential audit', () => {
         expect(auditModels(project(config), store)).toEqual([
             {
                 name: 'fast',
+                role: 'model',
                 provider: 'vertex',
                 env: 'GOOGLE_APPLICATION_CREDENTIALS',
                 reason: 'missing',
