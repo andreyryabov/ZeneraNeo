@@ -1,4 +1,4 @@
-import type { Message, Model } from 'zenera-neo';
+import type { Message, Model, ModelRequest, ModelResponse } from 'zenera-neo';
 import type { Box } from './box.ts';
 import { echoIssues, probesFor } from './probe.ts';
 import { instruction, retry, SYSTEM } from './prompt.ts';
@@ -49,6 +49,35 @@ export class BuildFailed extends Error {
     }
 }
 
+/**
+ * Why something failed, in one line, including the part that is usually hidden.
+ *
+ * `fetch failed` is undici's word for a dozen different problems — a DNS
+ * miss, a refused connection, a TLS error, a timeout — and which one it was is
+ * only ever in `cause`. Reporting the top-level message alone turns every
+ * network fault into the same useless sentence.
+ */
+export function reason(err: unknown): string {
+    if (err instanceof BuildFailed && err.diagnostics.length > 0) {
+        return `${err.message}: ${err.diagnostics.join(' ')}`;
+    }
+    const parts: string[] = [];
+    const seen = new Set<unknown>();
+    let at: unknown = err;
+
+    while (at instanceof Error && !seen.has(at)) {
+        seen.add(at);
+        const e = at as Error & { code?: string; status?: number; statusCode?: number };
+        const head = [e.status ?? e.statusCode, e.code].filter(Boolean).join(' ');
+        const line = `${head} ${e.message.split('\n')[0].trim()}`.trim();
+        if (line && !parts.includes(line)) {
+            parts.push(line);
+        }
+        at = e.cause;
+    }
+    return parts.join(' — ') || String(err);
+}
+
 export async function build(operation: Operation, opts: BuildOptions): Promise<Built> {
     const limit = Math.max(1, opts.attempts ?? 3);
     const probes = probesFor(operation);
@@ -59,7 +88,7 @@ export async function build(operation: Operation, opts: BuildOptions): Promise<B
     let last: string[] = [];
 
     for (let attempt = 1; attempt <= limit; attempt++) {
-        const answer = await opts.model.generate({
+        const answer = await ask(opts, {
             system: SYSTEM,
             messages,
             tools: [],
@@ -85,6 +114,23 @@ export async function build(operation: Operation, opts: BuildOptions): Promise<B
 
     throw new BuildFailed(operation, last);
 }
+
+/**
+ * Streamed when the adapter can, and every delta is dropped: nothing here
+ * renders progress. It is the *socket* that needs them.
+ *
+ * A generator is a few hundred lines, and a model asked for one in a single
+ * non-streaming call sends nothing at all while it thinks. Something upstream
+ * closes a connection that has been idle for a minute, and the whole attempt
+ * dies with `UND_ERR_SOCKET other side closed` at ~61 s — not a timeout anyone
+ * here set, and not the SDK's, which is ten minutes. Tokens on the wire keep
+ * it open.
+ */
+function ask(opts: BuildOptions, request: ModelRequest): Promise<ModelResponse> {
+    return opts.model.stream ? opts.model.stream(request, discard) : opts.model.generate(request);
+}
+
+const discard = (): void => {};
 
 /** Every probe, run and checked. Empty means the generator is good. */
 async function judge(

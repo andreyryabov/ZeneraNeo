@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SANDBOX_MOUNT, type Model, type ProcResult, type Runner } from 'zenera-neo';
 import { Box } from '../src/box.ts';
 import { Cache } from '../src/cache.ts';
-import { build, BuildFailed, unfence } from '../src/generate.ts';
+import { build, BuildFailed, reason, unfence } from '../src/generate.ts';
 import { loadSpec, type Operation } from '../src/spec.ts';
 import { Checks } from '../src/validate.ts';
 
@@ -185,6 +185,29 @@ describe('the build loop', () => {
         await build(operation, { model: fakeModel(['# fine']), box, checks });
         expect(new Set(seen).size).toBeGreaterThan(1);
     });
+
+    // Not for progress — nothing renders the deltas. A non-streaming call sends
+    // nothing for a minute while the model thinks and the connection gets
+    // closed upstream.
+    it('streams when the adapter can, and falls back when it cannot', async () => {
+        const { box } = boxWith((input) => ({
+            user_id: Number((input.pathParams as Record<string, unknown>).user_id),
+            email: 'a@b.com',
+        }));
+        const plain = fakeModel(['# fine']);
+        const streaming: Model = {
+            id: 'streamer',
+            generate: () => Promise.reject(new Error('should have streamed')),
+            stream: () => Promise.resolve({ text: '# fine', toolCalls: [] }),
+        };
+
+        await expect(build(operation, { model: streaming, box, checks })).resolves.toMatchObject({
+            attempts: 1,
+        });
+        await expect(build(operation, { model: plain, box, checks })).resolves.toMatchObject({
+            attempts: 1,
+        });
+    });
 });
 
 describe('the cache', () => {
@@ -316,5 +339,35 @@ describe('unfencing an answer', () => {
 
     it('strips a fence the model added anyway', () => {
         expect(unfence('```python\nimport sys\n```')).toBe('import sys');
+    });
+});
+
+describe('reporting why something failed', () => {
+    // `fetch failed` is undici's word for a dozen different problems and the
+    // only place the real one appears is `cause`.
+    it('unwraps the cause chain, which is where the real reason hides', () => {
+        const inner = Object.assign(new Error('connect ETIMEDOUT 1.2.3.4:443'), {
+            code: 'ETIMEDOUT',
+        });
+        const outer = new Error('fetch failed', { cause: inner });
+        expect(reason(outer)).toBe('fetch failed — ETIMEDOUT connect ETIMEDOUT 1.2.3.4:443');
+    });
+
+    it('names the status a provider answered with', () => {
+        expect(reason(Object.assign(new Error('Rate limit reached'), { status: 429 }))).toBe(
+            '429 Rate limit reached',
+        );
+    });
+
+    it('carries the diagnostics when the model simply could not do it', async () => {
+        const ops = await loadSpec(join(here, 'specs', 'petstore.yaml'));
+        const failed = new BuildFailed(ops[0], ['- the file exited 1.']);
+        expect(reason(failed)).toContain('the file exited 1.');
+    });
+
+    it('survives a cause that points back at itself', () => {
+        const loop = new Error('round');
+        (loop as Error & { cause?: unknown }).cause = loop;
+        expect(reason(loop)).toBe('round');
     });
 });

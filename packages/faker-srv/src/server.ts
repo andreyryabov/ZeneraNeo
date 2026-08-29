@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net';
 import type { Box } from './box.ts';
 import { BuildFailed, type Cache } from './cache.ts';
 import type { GeneratorInput } from './envelope.ts';
+import { reason } from './generate.ts';
 import type { Router } from './router.ts';
 import type { Operation } from './spec.ts';
 import { describeIssues, issues, type Checks, type Issue } from './validate.ts';
@@ -146,10 +147,11 @@ async function handle(
         generator = await opts.cache.ensure(operation);
     } catch (err) {
         const status = err instanceof BuildFailed ? 501 : 500;
-        const detail = err instanceof Error ? err.message : String(err);
+        const detail = reason(err);
         send(res, status, {
             error: `no generator for ${operation.operationId}`,
             detail,
+            diagnostics: err instanceof BuildFailed ? err.diagnostics : undefined,
         });
         say(status, `no generator: ${detail}`);
         return;

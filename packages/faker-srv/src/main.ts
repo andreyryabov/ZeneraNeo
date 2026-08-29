@@ -25,7 +25,7 @@ import {
     yellow,
 } from 'zenera-cli/lib';
 import { GENERATORS } from './box.ts';
-import { BuildFailed } from './cache.ts';
+import { reason } from './generate.ts';
 import { listen } from './server.ts';
 import { open, type Setup } from './setup.ts';
 import { SpecError } from './spec.ts';
@@ -190,7 +190,7 @@ async function warm(args: readonly string[]): Promise<number> {
                 results.push({
                     operation: id,
                     status: 'failed',
-                    detail: err instanceof BuildFailed ? err.diagnostics.join(' ') : String(err),
+                    detail: reason(err),
                 });
             }
         }
@@ -341,7 +341,7 @@ async function start(
                     : undefined,
             onFail: loud
                 ? ({ operation, error }) =>
-                      note(`  ${red('gave up')} ${dim(operation.operationId)} ${error.message}`)
+                      note(`  ${red('gave up')} ${dim(operation.operationId)} ${reason(error)}`)
                 : undefined,
         },
     });
