@@ -270,6 +270,28 @@ wrong provider (§7.3), and any combination of knobs the vendor rejects at reque
 time, such as OpenAI reasoning on chat completions (§7.6). Both surface on the
 first call, so read §7 before writing a `models:` entry.
 
+**Comments in `agents.yaml`** — this file is the architecture diagram of the
+project, and its comments are read by whoever has to change it next. Write them
+at that level:
+
+- Say **what a block is for** and **why it exists**: what this agent owns, why
+  this one is on the deep tier, why this handoff edge is there.
+- Keep them **short** — one line above a block, a few words at the end of a line.
+  A comment longer than the thing it describes is a design doc in the wrong file.
+- Do **not** restate the runtime. How skills are discovered, how the trajectory
+  is appended, how prompt caching works, what the loader validates — none of that
+  belongs here. It is documented in this file and in `docs/agents-yaml.md`.
+- Do **not** restate the key. `# the model this agent uses` above `model:` is
+  noise; `# cheap: it only classifies` is not.
+- Do not narrate edits (`# added 2026-08`, `# was gpt-4o`). Git owns that.
+
+```yaml
+# Intake classifies and routes; it never answers.
+- name: intake
+  model: router # cheap tier — one sentence in, one handoff out
+  handoffs: [adjuster, escalation]
+```
+
 ### 3.1.1 `embeddings:`
 
 A vectoriser turns text into a vector, for retrieval rather than for answering.
@@ -343,6 +365,23 @@ Put here only what is true for **every** agent:
 Do **not** put here: anything one agent needs and another does not; anything that
 changes weekly; long reference data (that is a skill).
 
+**When writing it, remember what it is: a prefix on every agent's system prompt.**
+It is not a README and not a design document — every line is paid for on every
+call, by every agent, and each one is an instruction the model will try to
+follow. So:
+
+- It is a **prompt**: §4.2 applies in full — second person, imperative, no
+  hedging, no meta-talk about the runtime, failure paths stated.
+- Carry the **shared model of the project**: what this system is, what the agents
+  are collectively for, how the work flows between them, and the vocabulary and
+  identifier formats they all use. Enough for any agent to know where it sits;
+  not a tour of the codebase.
+- Describe the architecture in **one short paragraph or a handful of lines**, in
+  terms the agents can act on ("the adjuster owns coverage decisions; you do
+  not"), not in terms of files, YAML keys or the runtime.
+- Anything only one agent needs goes in that agent's prompt instead. If you find
+  yourself writing "if you are the router…", you are in the wrong file.
+
 Target 20–60 lines. If it exceeds ~100, split the stable half out into a
 preloaded skill.
 
@@ -382,6 +421,12 @@ claimant for anything the message already contains.
 Note what makes it work: it is 9 lines; it names the tool and the handoff
 literally; it states the boundary ("you do not have them") with the _reason_; it
 forbids the specific failure that agent actually exhibits.
+
+Write it as a prompt, under the rules in §4.2 — **instructive and concise**. It
+tells one agent what to do; it never explains the system (`INSTRUCTIONS.md`
+already did, §3.2), never repeats a house rule, and never describes the runtime.
+Every line should be an instruction the model can act on or a boundary it can
+check itself against.
 
 Target 10–40 lines. A 200-line prompt is a skill catalog that has not been split
 yet.
@@ -1378,9 +1423,11 @@ Before finishing any change here:
 - [ ] No self-handoff; no accidental cycle back to the router
 - [ ] Names match `^[a-z0-9]+(?:[-_][a-z0-9]+)*$`
 - [ ] An agent expected to fan out has `fork:`, and its prompt says when to use it
+- [ ] Comments explain the design, not the runtime or the key they sit above
 
 **Prompts**
 
+- [ ] `INSTRUCTIONS.md` carries the shared architecture and nothing agent-specific
 - [ ] Nothing duplicated between `INSTRUCTIONS.md` and an agent prompt
 - [ ] Every tool and agent referenced by its exact name
 - [ ] Failure paths stated for every instruction that can fail
@@ -1465,6 +1512,8 @@ Before finishing any change here:
   versioned, cannot be shared, and is paid for on every call.
 - **Politeness padding.** "Please try your best to be helpful." Costs tokens,
   changes nothing.
+- **Commented implementation notes.** `agents.yaml` explaining how skill
+  discovery or prompt caching works. That is this file's job — §3.1.
 - **Fixing prompts with models.** See §4.4.
 - **The chatty router.** A router that answers before handing off, because its
   prompt never forbade it.
