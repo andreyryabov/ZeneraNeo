@@ -73,6 +73,36 @@ function classify(err: unknown): KeyCheck {
 
 const firstLine = (s: string): string => s.split('\n')[0].slice(0, 160);
 
+// ---------------------------------------------------------------------------
+// Deadline
+//
+// Every SDK here retries, and some of them retry a connection that will never
+// be answered — a proxy that swallows packets, a VPN half up. Left alone that
+// is a `zen key check` which never returns, and a command that hangs teaches
+// nobody anything. The credential question is one round trip; if it has not
+// been answered by now, the honest answer is *unknown*.
+// ---------------------------------------------------------------------------
+
+const DEADLINE_MS = 15_000;
+
+class Deadline extends Error {}
+
+async function within<T>(work: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        return await Promise.race([
+            work,
+            new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Deadline()), DEADLINE_MS);
+                // The abandoned request must not keep the process alive.
+                timer.unref?.();
+            }),
+        ]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 /**
  * The cheapest authenticated call each SDK has. Nothing here reads a model or
  * spends a token: the question is only whether the credential is accepted.
@@ -91,9 +121,16 @@ export async function probe(store: KeyStore, entry: KeyEntry): Promise<KeyCheck>
     try {
         const registry = new ModelRegistry();
         registry.provider('probe', { kind: entry.provider as Provider });
-        await authenticate(entry.provider as Provider, registry.client('probe'));
+        await within(authenticate(entry.provider as Provider, registry.client('probe')));
         return { state: 'live', at: new Date().toISOString() };
     } catch (err) {
+        if (err instanceof Deadline) {
+            return {
+                state: 'unknown',
+                at: new Date().toISOString(),
+                detail: `no answer in ${DEADLINE_MS / 1000}s`,
+            };
+        }
         return classify(err);
     } finally {
         if (previous === undefined) {
@@ -127,7 +164,7 @@ async function probeService(service: Service, key: string): Promise<KeyCheck> {
             method: 'POST',
             headers: { 'content-type': 'application/json', 'x-api-key': key },
             body: '{}',
-            signal: AbortSignal.timeout(15_000),
+            signal: AbortSignal.timeout(DEADLINE_MS),
         });
         if (res.status === 401 || res.status === 403) {
             return { state: 'dead', at, detail: `${res.status} ${await said(res)}` };
@@ -194,7 +231,12 @@ async function authenticate(provider: Provider, client: unknown): Promise<void> 
 }
 
 /**
- * Probes many entries at once — one round trip each, all in flight together.
+ * Probes many entries, one at a time. In flight together would be quicker, but
+ * `probe` reaches the SDKs the only way they can be reached — through
+ * `process.env` — and two probes sharing that variable would each read the
+ * other's key. One at a time is also what makes progress reportable: there is
+ * exactly one answer being waited on, and `onProbe` can name it.
+ *
  * Pairs rather than a map, because the caller needs the entry itself to record
  * the result against, and a map keyed by a string would only have to be
  * un-joined again.
@@ -202,8 +244,12 @@ async function authenticate(provider: Provider, client: unknown): Promise<void> 
 export async function probeAll(
     store: KeyStore,
     entries: readonly KeyEntry[],
+    onProbe?: (entry: KeyEntry, index: number, total: number) => void,
 ): Promise<[KeyEntry, KeyCheck][]> {
-    return Promise.all(
-        entries.map(async (e) => [e, await probe(store, e)] as [KeyEntry, KeyCheck]),
-    );
+    const out: [KeyEntry, KeyCheck][] = [];
+    for (const [index, entry] of entries.entries()) {
+        onProbe?.(entry, index, entries.length);
+        out.push([entry, await probe(store, entry)]);
+    }
+    return out;
 }

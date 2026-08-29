@@ -3,7 +3,7 @@ import { basename, resolve } from 'node:path';
 import { one, parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { ensureHome } from '../home.ts';
-import { isProvider, KeyStore, PROVIDERS, SHAPES, type Provider } from '../keys.ts';
+import { isProvider, keyId, KeyStore, PROVIDERS, SHAPES, type Provider } from '../keys.ts';
 import { probeAll } from '../liveness.ts';
 import { isProjectDir, Registry } from '../projects.ts';
 import { scaffold } from '../scaffold.ts';
@@ -15,6 +15,7 @@ import {
     invalidError,
     json,
     note,
+    progress,
     usageError,
     write,
     yellow,
@@ -92,7 +93,11 @@ async function reachableProvider(store: KeyStore): Promise<Provider | undefined>
         return undefined;
     }
 
-    const checks = await probeAll(store, active);
+    const bar = progress();
+    const checks = await probeAll(store, active, (entry, index, total) =>
+        bar.update(dim(`checking ${keyId(entry)} … ${index + 1}/${total}`)),
+    );
+    bar.done();
     for (const [entry, check] of checks) {
         store.record(entry, check);
     }

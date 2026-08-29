@@ -336,6 +336,10 @@ async function start(
                               ? undefined
                               : note(`  ${green('ready')} ${dim(operation.operationId)}`)
                     : undefined,
+            onFail: loud
+                ? ({ operation, error }) =>
+                      note(`  ${red('gave up')} ${dim(operation.operationId)} ${error.message}`)
+                : undefined,
         },
     });
 }

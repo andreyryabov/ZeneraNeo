@@ -146,11 +146,12 @@ async function handle(
         generator = await opts.cache.ensure(operation);
     } catch (err) {
         const status = err instanceof BuildFailed ? 501 : 500;
+        const detail = err instanceof Error ? err.message : String(err);
         send(res, status, {
             error: `no generator for ${operation.operationId}`,
-            detail: err instanceof Error ? err.message : String(err),
+            detail,
         });
-        say(status, 'no generator');
+        say(status, `no generator: ${detail}`);
         return;
     }
     res.setHeader('x-faker-cache', generator.cached ? 'hit' : 'miss');

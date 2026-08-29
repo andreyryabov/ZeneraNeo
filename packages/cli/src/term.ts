@@ -107,6 +107,33 @@ export function note(line = ''): void {
     process.stderr.write(`${line}\n`);
 }
 
+/**
+ * One line of narration that rewrites itself while work is in flight, so a
+ * command that waits on the network says what it is waiting for. Without a
+ * terminal there is nothing to rewrite over, so each update is its own line —
+ * which is what a CI log wants anyway.
+ */
+export function progress(): { update: (line: string) => void; done: () => void } {
+    const tty = Boolean(process.stderr.isTTY);
+    let painted = false;
+    return {
+        update(line: string): void {
+            if (!tty) {
+                note(line);
+                return;
+            }
+            process.stderr.write(`\r\u001b[2K${line}`);
+            painted = true;
+        },
+        done(): void {
+            if (painted) {
+                process.stderr.write('\r\u001b[2K');
+            }
+            painted = false;
+        },
+    };
+}
+
 export function warn(message: string): void {
     note(`${yellow('warning')} ${message}`);
 }
