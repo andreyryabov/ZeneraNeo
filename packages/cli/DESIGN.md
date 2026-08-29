@@ -178,8 +178,9 @@ someone who turned it on would otherwise have the editor pick up whatever
 in a trusted workspace, which is the right way round — an untrusted folder is not
 one to be running agents in either.
 
-It is never overwritten: an existing `settings.json` is somebody's, and a
-directory may well predate the project.
+It is written over whatever was there. Unlike the rest of the project, this
+file is not the user's: it states how the editor is to treat a directory the
+agents write into, and a stale copy of that answer is worse than none.
 
 ### 5.2 `zen list`
 
@@ -226,10 +227,10 @@ symptom this design is arranged to avoid.
 
 Before the window opens, the editor files from `init` — `.vscode/settings.json`
 and `.github/copilot-instructions.md` — are written into the directory being
-opened if they are not already there. An editor reads only the folder it was
-opened on, and a project may predate either file, so the moment it is about to
-be read is the moment to make sure it exists. Whichever was added is named in
-the narration, and in `files` under `--json`. Neither is ever overwritten.
+opened. An editor reads only the folder it was opened on, and a project may
+predate either file or the version of it this `zen` ships, so the moment it is
+about to be read is the moment to put the current one there. Both are named in
+the narration, and in `files` under `--json`. Edits to either do not survive.
 
 The distinction that decides how it is spawned is whether the editor takes over
 this terminal. `$VISUAL` and `$EDITOR` name one that does by convention, so they

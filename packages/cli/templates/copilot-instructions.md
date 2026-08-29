@@ -202,7 +202,7 @@ version: 1 # schema version, defaults to 1
 default: intake # entry agent; wins over any `default: true`
 
 providers: {} # named connections (credentials + endpoint)
-provider: openai # provider a bare model id belongs to
+provider: openai # the provider an unprefixed model id belongs to — §7.3
 models: {} # named model configurations
 model: fast # fallback for agents that do not pin their own
 skills: agents/skills # one directory, or a list
@@ -261,6 +261,11 @@ provider with a missing key does not fail loading.
 - a `preload:` entry missing from `allow:`
 - `agents[].fork.agents` naming an unknown agent, or being empty; `maxBranches` below 2
 - `system:` pointing at a missing file, or outside the project root
+
+**Not caught at load** — a model id whose prefix is missing and so resolves to the
+wrong provider (§7.3), and any combination of knobs the vendor rejects at request
+time, such as OpenAI reasoning on chat completions (§7.6). Both surface on the
+first call, so read §7 before writing a `models:` entry.
 
 ### 3.2 `INSTRUCTIONS.md`
 
@@ -374,11 +379,11 @@ example letter, a JSON schema. Siblings become `resources` the model can read.
 
 ### 3.5 Tools
 
-A tool is what an agent can _do_ rather than say. `zen run` provides two groups
-— the workspace tools (§3.6) and the sandbox tools (§3.7) — and `agents.yaml`
-decides which agent holds which. Nothing else reaches the machine, so `tools:`
-is the whole permission model: an agent that does not name a tool cannot use it,
-whatever its prompt says.
+A tool is what an agent can _do_ rather than say. `zen run` provides three
+groups — the workspace tools (§3.6), the sandbox tools (§3.7) and the web tools
+(§3.8) — and `agents.yaml` decides which agent holds which. Nothing else reaches
+the machine, so `tools:` is the whole permission model: an agent that does not
+name a tool cannot use it, whatever its prompt says.
 
 Two rules follow:
 
@@ -564,7 +569,82 @@ reference: `docs/agents-yaml.md`.
 - Anything that does not return, returns — use `run_command_background` for a
   server, not `run_command` with a large timeout.
 
-### 3.8 Running it
+### 3.8 The web tools (`exa:*`)
+
+The third group `zen run` builds. These reach the live web through
+[Exa](https://exa.ai) — a search index built for models rather than for people,
+so a query is a sentence describing what is wanted, not a bag of keywords.
+
+| Tool         | What it does                                                                    |
+| ------------ | ------------------------------------------------------------------------------- |
+| `web_search` | Ranked pages for a described query, each with a short excerpt of why it matched |
+| `web_read`   | The readable text of pages, several at once, boilerplate stripped               |
+| `web_answer` | A written answer to a question, with the sources it was drawn from              |
+
+The three are meant to be used in that order: **search to find, read to quote.**
+An excerpt is enough to judge which source to trust and never enough to cite
+from — `web_search` returns the sentences that made a page match, not the page.
+`web_answer` runs a search _and_ a model on the other side, so it is the slowest
+and dearest of the three; it earns its cost when the answer is a fact spread
+over several pages, and wastes it when a specific document is wanted.
+
+```yaml
+agents:
+    - name: researcher
+      tools: [exa:*, workspace:*]
+
+    - name: fact-checker
+      # Find and read, but never let a model on the far side do the reasoning.
+      tools: [web_search, web_read]
+```
+
+**The key.** All three read `$EXA_API_KEY` **when they are called**, not when the
+project loads. So a project naming `exa:*` still loads on a machine that has no
+key — the tools simply refuse, on the turn that tried, saying which variable is
+missing. Get a key from <https://dashboard.exa.ai/api-keys> and hold it in
+either place:
+
+```
+zen key add exa            # the keyring; materialised into the environment per run
+EXA_API_KEY=...            # or .env, which wins over the keyring
+```
+
+`zen check` warns when an agent selects one of these tools and neither place
+holds a key. Unlike a model credential this is a warning, not an error: the
+project is still valid, it just cannot search yet.
+
+**Notable arguments.** Defaults are chosen so that the common call is
+`{ "query": "…" }` and nothing else:
+
+| Argument                                   | On           | Why it exists                                                                   |
+| ------------------------------------------ | ------------ | ------------------------------------------------------------------------------- |
+| `num_results`                              | `web_search` | 8 by default, 25 at most                                                        |
+| `include_domains` / `exclude_domains`      | `web_search` | The replacement for `site:` — operators in the query text do not work here      |
+| `start_published_date` / `end_published_…` | `web_search` | ISO 8601. The only reliable way to exclude a stale answer                       |
+| `category`                                 | `web_search` | `company`, `publication`, `news`, `personal site`, `financial report`, `people` |
+| `max_characters`                           | `web_read`   | 4 000 by default, 10 000 at most; `truncated` says when a page was cut          |
+| `max_age_hours`                            | `web_read`   | `0` forces a live crawl. Omit it unless the page changes by the hour            |
+
+Every reply is bounded — pages are cut at the cap and the whole call at 128 KiB
+of text — so one call cannot flood the context. Each carries `cost_usd`, which
+is what the vendor charged for that call.
+
+A failure is **reported, not raised**: a refused key, an exhausted balance, a
+url nothing serves all come back as `{ error, hint }` for the model to read and
+act on. `web_read` reports per-url failures in `failed` alongside the pages that
+did load, so one bad link does not lose the rest.
+
+**Prompting for them.** Three lines earn their place in any prompt granting this
+group:
+
+- Search with a sentence, not keywords — the query is read by a model.
+- Never quote an excerpt. `web_search` says which page to open; `web_read` says
+  what it contains.
+- Say when the web is allowed to override what the model already believes, and
+  when it is not. Without that line, a retrieved page and a memorised fact carry
+  equal weight.
+
+### 3.9 Running it
 
 `zen run` is what turns this folder into a running system. It reads the
 directory, checks it, builds the workspace and sandbox tools against the
@@ -588,12 +668,13 @@ invocation overrides it.
 A session owns a workspace, a trajectory, memory and whatever the agent wrote,
 under `sessions/`. None of it is source; none of it is committed.
 
-### 3.9 `.env`
+### 3.10 `.env`
 
 ```
 OPENAI_API_KEY=...
 ANTHROPIC_API_KEY=...
 GOOGLE_APPLICATION_CREDENTIALS=./.keys/vertex.json
+EXA_API_KEY=...
 ```
 
 Never commit. Never inline a key into `agents.yaml` — use `${VAR}`. Never print a
@@ -929,9 +1010,19 @@ agents:
 `gpt-4o` · `openai:gpt-4o` · `openai/responses:o3` · `vertex:gemini-3.5-flash`
 
 Only the **first** colon separates, so a fine-tuned id must name its provider:
-`openai:ft:gpt-4o:acme::a1b2`. The first segment is a provider _name_, not a
-vendor. Anything the shorthand cannot express (keys, base urls, reasoning knobs)
-needs the object form.
+`openai:ft:gpt-4o:acme::a1b2`.
+
+**Always write the prefix.** The first segment is a provider _name_, not a vendor
+hint — nothing reads `gemini-3.5-flash` and infers Google. An unprefixed id goes
+to the default provider, which is `openai` unless a top-level `provider:` says
+otherwise, so a bare `gemini-3.5-flash` asks OpenAI for a Google model and fails
+with `OPENAI_API_KEY is not set`. The message names the provider it resolved to;
+read it as "the prefix is missing", not "the key is missing".
+
+Anything the shorthand cannot express (keys, base urls, `api:`, reasoning knobs)
+needs the object form. The object form does **not** re-parse a shorthand: its
+`model:` is the bare id and the provider goes in `provider:` beside it. Writing
+`model: openai:gpt-5.4-mini` there sends that whole string to the API.
 
 Resolution order for any `model:` value: `zen run --model` → this file's
 `models:` → the shorthand parser. Two agents naming `balanced` share one model
@@ -939,16 +1030,16 @@ over one connection.
 
 ### 7.4 Vendor knobs
 
-| Field                   | Applies to                    | Notes                                                                          |
-| ----------------------- | ----------------------------- | ------------------------------------------------------------------------------ |
-| `reasoningEffort`       | openai, openrouter            | Free string on purpose — the API is the authority on validity                  |
-| `reasoningSummary`      | openai, openrouter            | `auto` \| `concise` \| `detailed`. On openai **needs `api: responses`** — §7.6 |
-| `maxTokens`             | anthropic, gemini, openrouter | Cap on **output** tokens, not context. Anthropic requires one (default 8192)   |
-| `thinkingBudgetTokens`  | anthropic                     | Extended thinking budget                                                       |
-| `thinkingBudget`        | gemini 2.5                    | Tokens: `0` off, `-1` auto                                                     |
-| `thinkingLevel`         | gemini 3                      | `minimal` \| `low` \| `medium` \| `high`                                       |
-| `includeThoughts`       | gemini                        | Thought summaries; default `true`                                              |
-| `routing` / `fallbacks` | openrouter                    | Upstream provider preferences, and models to fall back to — §7.5               |
+| Field                   | Applies to                    | Notes                                                                                                      |
+| ----------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `reasoningEffort`       | openai, openrouter            | Free string on purpose — the API is the authority on validity. On openai **needs `api: responses`** — §7.6 |
+| `reasoningSummary`      | openai, openrouter            | `auto` \| `concise` \| `detailed`. On openai **needs `api: responses`** — §7.6                             |
+| `maxTokens`             | anthropic, gemini, openrouter | Cap on **output** tokens, not context. Anthropic requires one (default 8192)                               |
+| `thinkingBudgetTokens`  | anthropic                     | Extended thinking budget                                                                                   |
+| `thinkingBudget`        | gemini 2.5                    | Tokens: `0` off, `-1` auto                                                                                 |
+| `thinkingLevel`         | gemini 3                      | `minimal` \| `low` \| `medium` \| `high`                                                                   |
+| `includeThoughts`       | gemini                        | Thought summaries; default `true`                                                                          |
+| `routing` / `fallbacks` | openrouter                    | Upstream provider preferences, and models to fall back to — §7.5                                           |
 
 Knobs that do not apply to the chosen vendor are ignored, not rejected.
 `api:` exists only for the OpenAI protocol — naming it on a Gemini or Anthropic
@@ -1092,14 +1183,17 @@ vendor except Gemini — which is why a reasoning model can burn thousands of
 thinking tokens while the CLI shows no progress at all.
 
 **OpenAI** — reasoning text only exists on the **responses** API, and only as a
-summary. `api: responses` is therefore not optional here: on chat completions
-there is nothing to stream.
+summary. `api: responses` is not optional here, and not only for visibility:
+chat completions is the default, and it **refuses `reasoningEffort` together with
+function tools** — `400 Function tools with reasoning_effort are not supported
+for <model> in /v1/chat/completions`. So any OpenAI agent that both reasons and
+holds tools — which is nearly all of them — must name the api.
 
 ```yaml
 models:
     default:
         provider: openai
-        api: responses # required — chat completions exposes no reasoning
+        api: responses # required — chat completions refuses tools + reasoning
         model: gpt-5.4-nano
         reasoningEffort: medium # how hard it thinks
         reasoningSummary: auto # whether you get to see it
@@ -1143,6 +1237,12 @@ up (§7.8).
 
 ### 7.7 Known traps
 
+- **A model id with no provider prefix** — `gemini-3.5-flash` resolves to the
+  default provider, not to Google, and the failure reads as a missing OpenAI key.
+  Write `google:gemini-3.5-flash` — §7.3.
+- **OpenAI reasoning without `api: responses`** — chat completions rejects
+  `reasoningEffort` alongside function tools with a `400`, and exposes no
+  reasoning summary even without tools — §7.6.
 - **Anthropic + `thinkingBudgetTokens` + multi-turn tool use** — thinking-block
   signatures are not replayed, and the API rejects the follow-up. Leave extended
   thinking off for tool-using agents.
@@ -1241,6 +1341,8 @@ Before finishing any change here:
 - [ ] The `sandbox:` image carries what the work needs, rather than the prompt
       installing it every run
 - [ ] `sandbox.env` lists names only, and nothing credential-shaped
+- [ ] `exa:*` is granted only where the live web is actually needed, and the
+      prompt says when to trust it over what the model already believes
 - [ ] Every granted tool the prompt expects is named in that prompt
 
 **Models**
@@ -1275,6 +1377,9 @@ Before finishing any change here:
 | Edits files it should only be reading      | Subtract the mutating tools, or `zen run --read-only`      |
 | Cannot run the build or the tests          | Grant `sandbox:*`; pick an `image:` that has the toolchain |
 | Installs the same packages on every run    | `sandbox.persist: true`, or set `sandbox.image` — §3.7     |
+| Answers from stale knowledge of the world  | Grant `web_search` + `web_read`, and say when — §3.8       |
+| Cites a page it only saw the excerpt of    | A prompt line: `web_read` before quoting — §3.8            |
+| Every web call refuses                     | No Exa key: `zen key add exa` — `zen check` warns — §3.8   |
 | Answers instead of routing                 | Router prompt prohibition; check `handoffs:`               |
 | Routes to the wrong specialist             | The target agents' `description:` fields                   |
 | Loses a detail after a handoff             | Say it in the handoff; check the collapse policy           |

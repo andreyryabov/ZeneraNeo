@@ -1,8 +1,10 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import {
+    EXA_GROUP,
     FileSkillProvider,
     SANDBOX_MOUNT,
+    exaTools,
     projectRegistry,
     readProjectConfig,
     sandboxTools,
@@ -15,7 +17,7 @@ import {
     type SkillSummary,
 } from 'zenera-neo';
 import { auditModels, credentialFor, type ModelIssue } from './audit.ts';
-import type { KeyStore } from './keys.ts';
+import { SHAPES, type KeyStore, type Service } from './keys.ts';
 
 // ---------------------------------------------------------------------------
 // The project check
@@ -395,7 +397,49 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
     providers = resolved.providers;
     models.push(...resolved.models);
 
+    checkServices(agents, available, opts.keys, add);
+
     return done();
+}
+
+/**
+ * A tool that needs a key of its own is invisible to the model audit, which
+ * walks `models:` and finds nothing to say about `web_search`. The project is
+ * still valid — the credential is read at call time and a missing one is a
+ * failed turn, not a failed load — so this is a warning, and only when the
+ * keyring was readable at all.
+ */
+function checkServices(
+    agents: AgentReport[],
+    available: AnyTool<unknown>[],
+    keys: KeyStore | undefined,
+    add: Add,
+): void {
+    if (!keys) {
+        return;
+    }
+    const byService: Record<Service, Set<string>> = {
+        exa: new Set(available.filter((t) => t.group === EXA_GROUP).map((t) => t.name)),
+    };
+    for (const [service, names] of Object.entries(byService) as [Service, Set<string>][]) {
+        const users = agents.filter((a) => a.tools.some((t) => names.has(t)));
+        if (users.length === 0) {
+            continue;
+        }
+        const shape = SHAPES[service];
+        if (process.env[shape.env] || keys.active(service)) {
+            continue;
+        }
+        add({
+            severity: 'warning',
+            code: 'service.credential',
+            where: users.map((a) => `agents.${a.name}`).join(', '),
+            message:
+                `uses the ${shape.label} tools, and nothing on this machine holds a ` +
+                `${shape.label} key — those tools will refuse every call`,
+            fix: `zen key add ${service}, or set $${shape.env}`,
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -504,6 +548,7 @@ export function availableTools(root: string, config: ProjectConfig): AnyTool<unk
             mount: config.sandbox?.workdir ?? SANDBOX_MOUNT,
         }),
         ...sandboxTools<unknown>({ root, key: 'check' }),
+        ...exaTools<unknown>(),
     ];
 }
 

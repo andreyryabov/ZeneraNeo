@@ -29,8 +29,10 @@ export const open: Command = {
         'belongs to, then $VISUAL or $EDITOR, then a known editor on PATH or',
         'installed, then the platform opener.',
         'The editor files `zen init` writes (.vscode/settings.json,',
-        '.github/copilot-instructions.md) are added to the directory being',
-        'opened if they are missing, and never overwritten.',
+        '.github/copilot-instructions.md) are refreshed in the directory being',
+        'opened; edits to them do not survive.',
+        'VS Code and its forks are launched with --disable-workspace-trust so',
+        'the settings written there apply to the window straight away.',
     ],
     run: async (ctx) => {
         const { values, positionals } = parse<Flags>(
@@ -51,12 +53,10 @@ export const open: Command = {
         verify(editor);
 
         // The editor reads the settings and instructions of the folder it was
-        // opened on, and a project may predate either file — or predate them
-        // existing at all. Write whichever is missing before the window is
-        // there to read it; neither is ever overwritten.
-        const written = [editorSettings(dir), copilotInstructions(dir)].filter(
-            (f) => f !== undefined,
-        );
+        // opened on, and a project may predate either file — or the version of
+        // them this `zen` writes. Both are ours, so both are written fresh
+        // before the window is there to read them.
+        const written = [editorSettings(dir), copilotInstructions(dir)];
 
         if (ctx.json) {
             json({
@@ -69,7 +69,7 @@ export const open: Command = {
         } else {
             note(`opening ${cyan(dir)} with ${editor.label} ${dim(`(${editor.from})`)}`);
             for (const file of written) {
-                note(`  ${dim(`added ${file}`)}`);
+                note(`  ${dim(`wrote ${file}`)}`);
             }
         }
         await launch(editor, dir);
@@ -80,12 +80,25 @@ export const open: Command = {
 // Choosing one
 // ---------------------------------------------------------------------------
 
+/**
+ * The window would otherwise open untrusted, and the settings `zen init`
+ * writes into the project are restricted ones: they are ignored until someone
+ * clicks through the trust dialog. This is a directory the user just asked to
+ * open by name, so answering that question for them is the point.
+ */
+const TRUST = '--disable-workspace-trust';
+
 /** Guessed only when nothing was asked for, in the order they are tried. */
 const KNOWN: readonly Known[] = [
-    { command: 'code', label: 'VS Code', app: 'Visual Studio Code' },
-    { command: 'cursor', label: 'Cursor', app: 'Cursor' },
-    { command: 'code-insiders', label: 'VS Code Insiders', app: 'Visual Studio Code - Insiders' },
-    { command: 'windsurf', label: 'Windsurf', app: 'Windsurf' },
+    { command: 'code', label: 'VS Code', app: 'Visual Studio Code', trusts: true },
+    { command: 'cursor', label: 'Cursor', app: 'Cursor', trusts: true },
+    {
+        command: 'code-insiders',
+        label: 'VS Code Insiders',
+        app: 'Visual Studio Code - Insiders',
+        trusts: true,
+    },
+    { command: 'windsurf', label: 'Windsurf', app: 'Windsurf', trusts: true },
     { command: 'zed', label: 'Zed', app: 'Zed', waits: '-w' },
     { command: 'subl', label: 'Sublime Text', app: 'Sublime Text', waits: '-w' },
     { command: 'idea', label: 'IntelliJ IDEA', app: 'IntelliJ IDEA' },
@@ -99,6 +112,8 @@ interface Known {
     app?: string;
     /** its flag for "do not return until the window closes" */
     waits?: string;
+    /** whether it is VS Code or a fork of it, and so understands TRUST */
+    trusts?: boolean;
 }
 
 interface Editor {
@@ -146,7 +161,10 @@ function choose(asked: string | undefined, wait: boolean): Editor {
         if (lookup(known.command) !== undefined) {
             return {
                 command: known.command,
-                args: wait ? [known.waits ?? '--wait'] : [],
+                args: [
+                    ...(known.trusts === true ? [TRUST] : []),
+                    ...(wait ? [known.waits ?? '--wait'] : []),
+                ],
                 label: known.label,
                 from: 'PATH',
                 attached: wait,
@@ -208,7 +226,7 @@ function hosting(wait: boolean): Editor | undefined {
         if (!existsSync(candidate)) continue;
         return {
             command: candidate,
-            args: wait ? ['--wait'] : [],
+            args: wait ? [TRUST, '--wait'] : [TRUST],
             label: product.nameLong ?? product.applicationName,
             from: 'this terminal',
             attached: wait,

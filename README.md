@@ -57,12 +57,14 @@ variable always wins, and a project checked out on a machine without `zen` still
 runs.
 
 ```sh
-zen key add openai < key.txt    # or: anthropic, google, vertex, openrouter
+zen key add openai              # or: anthropic, google, vertex, openrouter
 zen key ls --check              # what is stored, and whether it still works
 ```
 
-The secret never comes from argv — a command line lands in `ps`, in shell
-history and in CI logs. Piped stdin or the echo-off prompt are the only ways in.
+It prompts for the key with the echo off. In a script, pipe it instead:
+`zen key add openai < key.txt`. The secret never comes from argv — a command
+line lands in `ps`, in shell history and in CI logs, so piped stdin and the
+prompt are the only ways in.
 
 ## 3 · Create a project
 

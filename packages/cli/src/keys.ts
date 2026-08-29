@@ -1,5 +1,6 @@
 import { chmodSync, copyFileSync, existsSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { EXA_API_KEY_ENV } from 'zenera-neo';
 import { assertPrivate, ensureDir, paths, readJson, writeJson } from './home.ts';
 import { CliError, EXIT, credentialError, usageError } from './term.ts';
 
@@ -17,12 +18,34 @@ import { CliError, EXIT, credentialError, usageError } from './term.ts';
 // still the interface.
 // ---------------------------------------------------------------------------
 
-/** The vendors a key can belong to — the library's provider kinds, verbatim. */
+/** The vendors a *model* can come from — the library's provider kinds, verbatim. */
 export const PROVIDERS = ['openai', 'anthropic', 'google', 'vertex', 'openrouter'] as const;
 
 export type Provider = (typeof PROVIDERS)[number];
 
+/**
+ * Credentials that are not a way to reach a model.
+ *
+ * A tool can need a key as much as a model can, and the reasons a keyring
+ * exists — one place, 0600, materialised into the environment before a run —
+ * do not care which. What does care is everything that reasons about *models*:
+ * a machine holding nothing but an Exa key cannot run an agent, and saying it
+ * can would move the failure from `zen run`'s first line to its first turn.
+ * Hence two lists rather than one longer one, and `kind` on the shape so the
+ * few places that must tell them apart are made to say which they mean.
+ */
+export const SERVICES = ['exa'] as const;
+
+export type Service = (typeof SERVICES)[number];
+
+/** Anything the keyring can hold a credential for. */
+export const OWNERS = [...PROVIDERS, ...SERVICES] as const;
+
+export type KeyOwner = Provider | Service;
+
 interface ProviderShape {
+    /** whether this is somewhere a model lives, or something a tool calls */
+    kind: 'model' | 'service';
     /** environment variable the library reads */
     env: string;
     /** what the value is: a secret string, or a path to a credentials file */
@@ -38,36 +61,48 @@ interface ProviderShape {
  * exported is a path — not a key. Pretending otherwise would mean inventing a
  * credential shape Google does not have.
  */
-export const SHAPES: Record<Provider, ProviderShape> = {
+export const SHAPES: Record<KeyOwner, ProviderShape> = {
     openai: {
+        kind: 'model',
         env: 'OPENAI_API_KEY',
         holds: 'secret',
         label: 'OpenAI',
         where: 'https://platform.openai.com/api-keys',
     },
     anthropic: {
+        kind: 'model',
         env: 'ANTHROPIC_API_KEY',
         holds: 'secret',
         label: 'Anthropic',
         where: 'https://console.anthropic.com/settings/keys',
     },
     google: {
+        kind: 'model',
         env: 'GEMINI_API_KEY',
         holds: 'secret',
         label: 'Google AI Studio',
         where: 'https://aistudio.google.com/apikey',
     },
     vertex: {
+        kind: 'model',
         env: 'GOOGLE_APPLICATION_CREDENTIALS',
         holds: 'file',
         label: 'Vertex AI',
         where: 'a service-account JSON key from the GCP console',
     },
     openrouter: {
+        kind: 'model',
         env: 'OPENROUTER_API_KEY',
         holds: 'secret',
         label: 'OpenRouter',
         where: 'https://openrouter.ai/settings/keys',
+    },
+    exa: {
+        kind: 'service',
+        env: EXA_API_KEY_ENV,
+        holds: 'secret',
+        label: 'Exa',
+        where: 'https://dashboard.exa.ai/api-keys',
     },
 };
 
@@ -75,9 +110,13 @@ export function isProvider(name: string): name is Provider {
     return (PROVIDERS as readonly string[]).includes(name);
 }
 
-export function assertProvider(name: string): Provider {
-    if (!isProvider(name)) {
-        throw usageError(`unknown provider "${name}"`, `known providers: ${PROVIDERS.join(', ')}`);
+export function isOwner(name: string): name is KeyOwner {
+    return (OWNERS as readonly string[]).includes(name);
+}
+
+export function assertOwner(name: string): KeyOwner {
+    if (!isOwner(name)) {
+        throw usageError(`unknown provider "${name}"`, `known providers: ${OWNERS.join(', ')}`);
     }
     return name;
 }
@@ -96,7 +135,7 @@ export interface KeyCheck {
 }
 
 export interface KeyEntry {
-    provider: Provider;
+    provider: KeyOwner;
     /** unique within a provider; `default` unless the user says otherwise */
     name: string;
     holds: 'secret' | 'file';
@@ -110,7 +149,7 @@ interface KeyFile {
     version: 1;
     entries: KeyEntry[];
     /** provider → chosen entry name */
-    active: Partial<Record<Provider, string>>;
+    active: Partial<Record<KeyOwner, string>>;
 }
 
 const EMPTY: KeyFile = { version: 1, entries: [], active: {} };
@@ -124,12 +163,12 @@ export const keyId = (e: Pick<KeyEntry, 'provider' | 'name'>): string => `${e.pr
  * callers cannot accidentally re-split it, and so a name that is not a legal
  * path segment is rejected here, once, before it can become a filename.
  */
-export function parseRef(ref: string): { provider: Provider; name?: string } {
+export function parseRef(ref: string): { provider: KeyOwner; name?: string } {
     const [head, ...rest] = ref.split('/');
     if (rest.length > 1) {
         throw usageError(`"${ref}" is not a key reference`, 'use provider or provider/name');
     }
-    const provider = assertProvider(head);
+    const provider = assertOwner(head);
     const name = rest[0];
     if (name !== undefined && !NAME.test(name)) {
         throw usageError(`"${name}" is not a usable key name`, 'letters, digits, - and _ only');
@@ -160,19 +199,19 @@ export class KeyStore {
     }
 
     /** Every entry for a provider, the active one first. */
-    for(provider: Provider): KeyEntry[] {
+    for(provider: KeyOwner): KeyEntry[] {
         const active = this.#file.active[provider];
         return this.#file.entries
             .filter((e) => e.provider === provider)
             .sort((a, b) => Number(b.name === active) - Number(a.name === active));
     }
 
-    find(provider: Provider, name: string): KeyEntry | undefined {
+    find(provider: KeyOwner, name: string): KeyEntry | undefined {
         return this.#file.entries.find((e) => e.provider === provider && e.name === name);
     }
 
     /** The entry a run would use, or undefined when the provider has none. */
-    active(provider: Provider): KeyEntry | undefined {
+    active(provider: KeyOwner): KeyEntry | undefined {
         const chosen = this.#file.active[provider];
         if (chosen) {
             const hit = this.find(provider, chosen);
@@ -193,7 +232,7 @@ export class KeyStore {
      * original being moved, renamed or cleaned up, and a stored path that
      * silently stops resolving is worse than no store at all.
      */
-    add(provider: Provider, name: string, raw: string): KeyEntry {
+    add(provider: KeyOwner, name: string, raw: string): KeyEntry {
         if (!NAME.test(name)) {
             throw usageError(`"${name}" is not a usable key name`, 'letters, digits, - and _ only');
         }
@@ -215,7 +254,7 @@ export class KeyStore {
         return entry;
     }
 
-    remove(provider: Provider, name: string): boolean {
+    remove(provider: KeyOwner, name: string): boolean {
         const at = this.#file.entries.findIndex((e) => e.provider === provider && e.name === name);
         if (at < 0) {
             return false;
@@ -231,7 +270,7 @@ export class KeyStore {
         return true;
     }
 
-    use(provider: Provider, name: string): KeyEntry {
+    use(provider: KeyOwner, name: string): KeyEntry {
         const entry = this.find(provider, name);
         if (!entry) {
             throw usageError(`no key ${provider}/${name}`, 'see: zen key ls');
@@ -266,10 +305,13 @@ export class KeyStore {
      * What the library would see. Real environment variables win, so CI,
      * `docker run -e` and a one-off `OPENAI_API_KEY=… zen run` all behave
      * exactly as they did before the store existed.
+     *
+     * Services are included by default, because a tool reads its key from the
+     * environment for exactly the same reason a model adapter does.
      */
-    environment(only?: Provider[]): Record<string, string> {
+    environment(only?: KeyOwner[]): Record<string, string> {
         const env: Record<string, string> = {};
-        for (const provider of only ?? PROVIDERS) {
+        for (const provider of only ?? OWNERS) {
             const entry = this.active(provider);
             if (!entry) {
                 continue;
@@ -284,13 +326,13 @@ export class KeyStore {
     }
 
     /** Applies `environment()` to this process. Returns what it set. */
-    materialize(only?: Provider[]): Record<string, string> {
+    materialize(only?: KeyOwner[]): Record<string, string> {
         const env = this.environment(only);
         Object.assign(process.env, env);
         return env;
     }
 
-    #absorb(provider: Provider, name: string, raw: string): string {
+    #absorb(provider: KeyOwner, name: string, raw: string): string {
         const source = resolve(raw);
         if (!existsSync(source) || !statSync(source).isFile()) {
             throw usageError(
@@ -335,6 +377,10 @@ export function describe(store: KeyStore, entry: KeyEntry): string {
 /**
  * Called before a run: says plainly that there is no way to reach a model,
  * rather than letting the SDK raise it three frames deeper as a 401.
+ *
+ * Only model providers count. A keyring holding nothing but an Exa key can
+ * search the web and cannot think, and reporting that as usable would trade
+ * one clear error here for an obscure one on the first turn.
  */
 export function assertUsable(store: KeyStore): void {
     const reachable = PROVIDERS.filter(
