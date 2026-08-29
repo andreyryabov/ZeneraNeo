@@ -5,7 +5,6 @@ import * as Projects from './projects.ts';
 import {
     createSession,
     listSessions,
-    newestSession,
     requireSession,
     sessionPaths,
     type SessionPaths,
@@ -95,15 +94,17 @@ export async function target(want: Wanted): Promise<Target> {
  * Resuming is the default: the common case is continuing what you were doing.
  * With one session it is taken without asking; with several, the others are
  * offered, because "the most recent" is only usually what you meant.
+ *
+ * A session that has never run has nothing to continue — it is indistinguishable
+ * from a fresh one, so it is left out rather than offered as a choice.
  */
 async function pickExisting(projectDir: string): Promise<SessionPaths | undefined> {
-    const sessions = await listSessions(projectDir);
+    const sessions = (await listSessions(projectDir)).filter((s) => s.runs > 0 || s.busy);
     if (sessions.length === 0) {
         return undefined;
     }
     if (!isInteractive()) {
-        const newest = newestSession(projectDir);
-        return newest ? sessionPaths(projectDir, newest) : undefined;
+        return sessionPaths(projectDir, sessions[0]!.id);
     }
     const choice = await choose<string | undefined>('Session', [
         ...sessions.map((s) => ({
