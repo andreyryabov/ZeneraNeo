@@ -192,6 +192,14 @@ function text(schema: Schema, variant: number): string {
 // is still wrong, so schema conformance is not the whole test. Where the
 // response declares a property with a parameter's name, the parameter's value
 // has to be the one that comes back.
+//
+// **Path parameters only.** A path segment identifies the resource, so a
+// mismatch there is a broken mock. A query parameter is usually a control
+// rather than content — `?source=realtime`, `?page_size=50`, `?cursor=…` — and
+// real APIs collide those names with unrelated response properties all the
+// time. Enforcing on them rejected working generators for a rule they were
+// right to ignore. The prompt still asks for query echo where it is meaningful;
+// it is simply not a reason to throw the file away.
 // ---------------------------------------------------------------------------
 
 export function echoIssues(
@@ -205,14 +213,14 @@ export function echoIssues(
     const declared = propertyNames(schema);
     const out: Issue[] = [];
 
-    for (const [name, expected] of Object.entries({ ...input.query, ...input.pathParams })) {
+    for (const [name, expected] of Object.entries(input.pathParams)) {
         if (!declared.has(name) || expected === undefined || expected === null) {
             continue;
         }
         if (!carries(value, name, expected)) {
             out.push({
                 where: `/${name}`,
-                message: `must echo the request value ${JSON.stringify(expected)}, the response schema declares this property`,
+                message: `must echo the path parameter ${JSON.stringify(expected)}, the response schema declares this property`,
             });
         }
     }

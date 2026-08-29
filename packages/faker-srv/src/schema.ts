@@ -123,6 +123,7 @@ function convert(node: Schema, dialect: Dialect, walk: (v: unknown) => unknown):
         widenNullable(node, out);
         fixExclusive(out);
     }
+    fixPattern(out);
     // `type: file` is Swagger 2.0's way of saying "bytes".
     if (out.type === 'file') {
         out.type = 'string';
@@ -131,6 +132,29 @@ function convert(node: Schema, dialect: Dialect, walk: (v: unknown) => unknown):
         delete out.required;
     }
     return out;
+}
+
+/**
+ * `pattern: /^[_a-z0-9-]+$/` — a JavaScript regex *literal*, delimiters and all
+ * — is written in real documents. JSON Schema wants the body alone, and with
+ * the slashes left on, the expression is unsatisfiable: no string both contains
+ * a slash and begins after it. Left alone it makes the endpoint impossible to
+ * answer rather than merely badly specified, so the delimiters come off, and a
+ * pattern that still will not compile is dropped instead of enforced.
+ */
+function fixPattern(out: Schema): void {
+    const raw = out.pattern;
+    if (typeof raw !== 'string') {
+        return;
+    }
+    const literal = /^\/(.+)\/[dgimsuvy]*$/s.exec(raw);
+    const body = literal ? literal[1] : raw;
+    try {
+        new RegExp(body);
+        out.pattern = body;
+    } catch {
+        delete out.pattern;
+    }
 }
 
 /** `nullable: true` is not a 2020-12 keyword; a union type is. */

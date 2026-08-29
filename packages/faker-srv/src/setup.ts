@@ -50,6 +50,8 @@ export interface SetupOptions {
     model?: string;
     image?: string;
     attempts?: number;
+    /** how many generators may be written at once */
+    concurrency?: number;
     rebuild?: boolean;
     ephemeral?: boolean;
     timeout?: number;
@@ -94,11 +96,13 @@ export async function open(opts: SetupOptions): Promise<Setup> {
     const router = new Router(operations);
     const checks = new Checks();
     const box = new Box({ root, image, timeout: opts.timeout });
+    await box.fresh();
     const cache = new Cache({
         box,
         checks,
         model,
         attempts: opts.attempts,
+        concurrency: opts.concurrency,
         rebuild: opts.rebuild,
         ephemeral: opts.ephemeral,
         ...opts.events,

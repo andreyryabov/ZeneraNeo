@@ -48,6 +48,7 @@ interface Flags {
     image?: string;
     cache?: string;
     attempts?: string;
+    concurrency?: string;
     seed?: string;
     timeout?: string;
     'max-body'?: string;
@@ -64,6 +65,7 @@ const OPTIONS = {
     image: { type: 'string' },
     cache: { type: 'string' },
     attempts: { type: 'string' },
+    concurrency: { type: 'string' },
     seed: { type: 'string' },
     timeout: { type: 'string' },
     'max-body': { type: 'string' },
@@ -310,6 +312,7 @@ async function start(
         model: values.model,
         image: values.image,
         attempts: number(values.attempts, 'attempts'),
+        concurrency: number(values.concurrency, 'concurrency'),
         timeout: number(values.timeout, 'timeout'),
         rebuild: values.rebuild,
         ephemeral: values['no-cache'],
@@ -376,6 +379,7 @@ function usage(): void {
             ['  --cache <dir>', dim('Where generators live. Default ~/.zenera/neo/faker.')],
             ['  --seed <n>', dim('Answer the same request the same way every time.')],
             ['  --attempts <n>', dim('Tries per generator before giving up. Default 3.')],
+            ['  --concurrency <n>', dim('Generators written at once. Default 4.')],
             ['  --timeout <s>', dim('Seconds one generator may take. Default 30.')],
             ['  --max-body <n>', dim('Largest request body accepted, in bytes.')],
             ['  --rebuild', dim('Ignore what is cached and write it again.')],

@@ -150,7 +150,7 @@ describe('the build loop', () => {
         await expect(build(operation, { model, box, checks, attempts: 2 })).rejects.toBeInstanceOf(
             BuildFailed,
         );
-        expect(model.seen[1]).toContain('echo the request value');
+        expect(model.seen[1]).toContain('echo the path parameter');
     });
 
     it('feeds stderr back when the file will not run', async () => {
@@ -200,7 +200,7 @@ describe('the cache', () => {
     afterEach(() => rmSync(root, { recursive: true, force: true }));
 
     const good: Behaviour = (input) => ({
-        user_id: Number((input.pathParams as Record<string, unknown>).user_id),
+        user_id: Number((input.pathParams as Record<string, unknown>).user_id ?? 1),
         email: 'a@b.com',
     });
 
@@ -262,6 +262,50 @@ describe('the cache', () => {
         await expect(cache.ensure(operation)).rejects.toBeInstanceOf(BuildFailed);
         await expect(cache.ensure(operation)).rejects.toBeInstanceOf(BuildFailed);
         expect(generate).toHaveBeenCalledTimes(1);
+    });
+
+    // A rate limit is about this minute, not about this operation. Remembering
+    // it would leave the route permanently 500 until the process restarts.
+    it('forgets a transient failure and tries again on the next request', async () => {
+        const engine = fakeEngine(root, good);
+        const box = new Box({ root, image: 'stub', exec: engine.exec });
+        let calls = 0;
+        const model: Model = {
+            id: 'flaky',
+            generate: () => {
+                calls += 1;
+                return calls === 1
+                    ? Promise.reject(Object.assign(new Error('429 rate limited'), { status: 429 }))
+                    : Promise.resolve({ text: '# fine', toolCalls: [] });
+            },
+        };
+        const cache = new Cache({ box, checks: new Checks(), model });
+
+        await expect(cache.ensure(operation)).rejects.toThrow(/rate limited/);
+        await expect(cache.ensure(operation)).resolves.toMatchObject({ cached: false });
+        expect(calls).toBe(2);
+    });
+
+    it('writes no more than `concurrency` generators at once', async () => {
+        const engine = fakeEngine(root, good);
+        const box = new Box({ root, image: 'stub', exec: engine.exec });
+        let inFlight = 0;
+        let peak = 0;
+        const model: Model = {
+            id: 'slow',
+            generate: async () => {
+                inFlight += 1;
+                peak = Math.max(peak, inFlight);
+                await new Promise((r) => setTimeout(r, 5));
+                inFlight -= 1;
+                return { text: '# fine', toolCalls: [] };
+            },
+        };
+        const cache = new Cache({ box, checks: new Checks(), model, concurrency: 2 });
+
+        const many = await loadSpec(join(here, 'specs', 'petstore.yaml'));
+        await Promise.all(many.filter((o) => o.success.schema).map((o) => cache.ensure(o)));
+        expect(peak).toBeLessThanOrEqual(2);
     });
 });
 

@@ -54,6 +54,24 @@ describe('schema normalisation', () => {
         expect(out.definitions).toBeUndefined();
     });
 
+    // Real documents write a JavaScript regex literal here. With the slashes
+    // left on, no string can ever match, so the endpoint becomes impossible
+    // rather than merely badly specified.
+    it('unwraps a regex literal in `pattern`', () => {
+        const out = normalize({ type: 'string', pattern: '/^[_a-z0-9-]+$/' }, 'openapi-3.0');
+        expect(out.pattern).toBe('^[_a-z0-9-]+$');
+    });
+
+    it('keeps a pattern that was already a bare expression', () => {
+        const out = normalize({ type: 'string', pattern: '^[a-z]+$' }, 'openapi-3.0');
+        expect(out.pattern).toBe('^[a-z]+$');
+    });
+
+    it('drops a pattern that will not compile at all', () => {
+        const out = normalize({ type: 'string', pattern: '[unterminated' }, 'openapi-3.0');
+        expect(out.pattern).toBeUndefined();
+    });
+
     // The one that matters: `dereference` hands back cyclic objects, and a
     // cyclic schema cannot be compiled or printed.
     it('breaks a self-reference into a $ref, so the result can be stringified', () => {

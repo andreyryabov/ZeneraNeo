@@ -40,6 +40,13 @@ export interface CacheOptions {
     checks: Checks;
     model: Model;
     attempts?: number;
+    /**
+     * How many generators may be written at once. A client that walks every
+     * route — which is exactly what people do to a new mock — would otherwise
+     * open one model request per operation simultaneously and be rate limited
+     * on all of them.
+     */
+    concurrency?: number;
     /** ignore what is on disk and write fresh */
     rebuild?: boolean;
     /** run generators but keep nothing */
@@ -50,13 +57,19 @@ export interface CacheOptions {
     onFail?: (e: CacheEvent & { error: Error }) => void;
 }
 
+const DEFAULT_CONCURRENCY = 4;
+
 export class Cache {
     readonly #opts: CacheOptions;
     readonly #live = new Map<string, Promise<Generator>>();
     readonly #settled = new Set<string>();
+    readonly #slots: number;
+    readonly #waiting: (() => void)[] = [];
+    #running = 0;
 
     constructor(opts: CacheOptions) {
         this.#opts = opts;
+        this.#slots = Math.max(1, opts.concurrency ?? DEFAULT_CONCURRENCY);
     }
 
     /**
@@ -73,23 +86,39 @@ export class Cache {
         if (running) {
             return already ? running.then((g) => ({ ...g, cached: true })) : running;
         }
-        const started = this.#make(operation).then((g) => {
-            this.#settled.add(operation.key);
-            return g;
-        });
+        const started = this.#make(operation).then(
+            (g) => {
+                this.#settled.add(operation.key);
+                return g;
+            },
+            (err: unknown) => {
+                // A model that tried and could not is remembered: re-asking it
+                // once per request is how a mock server becomes an invoice.
+                // Anything else — a rate limit, a dropped connection — is about
+                // this moment rather than this operation, so it is forgotten
+                // and the next request gets a fresh go.
+                if (!(err instanceof BuildFailed)) {
+                    this.#live.delete(operation.key);
+                }
+                throw err;
+            },
+        );
         this.#live.set(operation.key, started);
         return started;
     }
 
     async #make(operation: Operation): Promise<Generator> {
         const { box, model, checks, rebuild, ephemeral } = this.#opts;
-        const source = this.#opts.rebuild ? undefined : await read(box, operation.key);
+        // Read before queueing: a cache hit costs nothing and must not wait
+        // behind somebody else's model call.
+        const source = rebuild ? undefined : await read(box, operation.key);
 
         if (source !== undefined) {
             this.#opts.onReady?.({ operation, cached: true, attempts: 0 });
             return { key: operation.key, source, cached: true };
         }
 
+        await this.#enter();
         this.#opts.onStart?.({ operation });
         try {
             const built = await build(operation, {
@@ -122,10 +151,28 @@ export class Cache {
         } catch (err) {
             const error = err instanceof Error ? err : new Error(String(err));
             this.#opts.onFail?.({ operation, error });
-            // Kept, not cleared. Asking a model that already failed three times
-            // once per request is how a mock server becomes an invoice.
             throw error;
+        } finally {
+            this.#leave();
         }
+    }
+
+    #enter(): Promise<void> {
+        if (this.#running < this.#slots) {
+            this.#running++;
+            return Promise.resolve();
+        }
+        return new Promise<void>((admit) => this.#waiting.push(admit));
+    }
+
+    /** Hands the slot straight to whoever is next, so the count stays exact. */
+    #leave(): void {
+        const next = this.#waiting.shift();
+        if (next) {
+            next();
+            return;
+        }
+        this.#running--;
     }
 }
 

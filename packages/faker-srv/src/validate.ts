@@ -29,13 +29,22 @@ export interface Issue {
 }
 
 export class Checks {
-    readonly #strict = new Ajv2020({ allErrors: true, strict: false, validateFormats: true });
+    // `logger: false` silences "unknown format … ignored". Real documents are
+    // full of vendor formats (`ip`, `mac-address`) and there is nothing to do
+    // about them; left on, one spec buries the request log in warnings.
+    readonly #strict = new Ajv2020({
+        allErrors: true,
+        strict: false,
+        validateFormats: true,
+        logger: false,
+    });
     readonly #loose = new Ajv2020({
         allErrors: true,
         strict: false,
         coerceTypes: true,
         useDefaults: false,
         validateFormats: true,
+        logger: false,
     });
     readonly #cache = new Map<string, Compiled>();
 

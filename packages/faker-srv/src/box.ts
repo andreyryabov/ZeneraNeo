@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { SANDBOX_MOUNT, SandboxPool, type Runner, type Sandbox } from 'zenera-neo';
+import { SANDBOX_MOUNT, SandboxPool, runProcess, type Runner, type Sandbox } from 'zenera-neo';
 
 // ---------------------------------------------------------------------------
 // Where generators run
@@ -46,10 +46,14 @@ export class Box {
     readonly root: string;
     readonly #pool: SandboxPool;
     readonly #timeout: number;
+    readonly #engine: string;
+    readonly #exec: Runner;
 
     constructor(opts: BoxOptions) {
         this.root = opts.root;
         this.#timeout = opts.timeout ?? 30;
+        this.#engine = opts.engine ?? 'podman';
+        this.#exec = opts.exec ?? runProcess;
         mkdirSync(join(opts.root, GENERATORS), { recursive: true });
         mkdirSync(join(opts.root, IO), { recursive: true });
 
@@ -61,9 +65,16 @@ export class Box {
             network: 'none',
             workdir: SANDBOX_MOUNT,
             timeout: this.#timeout,
-            // Stopped rather than removed between runs, so the image is not
-            // re-resolved on every start.
-            persist: true,
+            // Deliberately NOT persisted, unlike `zen`'s sandbox. A container's
+            // name is a hash of its configuration, which includes the host
+            // path but not the directory behind it — so a cache directory that
+            // is deleted and recreated (`zfake cache clear`, or any rm -rf)
+            // gets a stopped container reattached whose bind mount still points
+            // at the old inode. Everything written here is then invisible
+            // inside, and every generator fails with "can't open file".
+            // `zen` persists to keep `pip install`s; the libraries here are
+            // baked into the image, so there is nothing to keep.
+            persist: false,
             readOnly: false,
             // Deliberately empty: the keyring is in this process's environment
             // and none of it belongs in the container.
@@ -75,6 +86,17 @@ export class Box {
 
     get sandbox(): Sandbox {
         return this.#pool.for();
+    }
+
+    /**
+     * Removes a container of this name left behind by a process that did not
+     * get to clean up. Belt to `persist: false`'s braces: a hard kill never
+     * runs `dispose`, and the leftover is exactly the stale-mount trap above.
+     */
+    async fresh(): Promise<void> {
+        await this.#exec(this.#engine, ['rm', '--force', '--volumes', this.sandbox.name], {
+            timeoutMs: 60_000,
+        }).catch(() => undefined);
     }
 
     /** Host path of a generator's source file. */
