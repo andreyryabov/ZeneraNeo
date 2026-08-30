@@ -68,7 +68,7 @@ export class Box {
             // Deliberately NOT persisted, unlike `zen`'s sandbox. A container's
             // name is a hash of its configuration, which includes the host
             // path but not the directory behind it — so a cache directory that
-            // is deleted and recreated (`zfake cache clear`, or any rm -rf)
+            // is deleted and recreated (`zen faker cache clear`, or any rm -rf)
             // gets a stopped container reattached whose bind mount still points
             // at the old inode. Everything written here is then invisible
             // inside, and every generator fails with "can't open file".

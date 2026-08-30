@@ -3,8 +3,9 @@ import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { extract, invokedAs, split } from './args.ts';
 import { NEO_BANNER, printBanner } from './banner.ts';
-import { ALIASES, COMMANDS } from './commands/index.ts';
+import { ALIASES, COMMANDS, EXTERNAL } from './commands/index.ts';
 import { cliManifest, versionOf } from './commands/version.ts';
+import { hasExternal, loadExternal } from './external.ts';
 import { CliError, EXIT, bold, cyan, dim, fail, note, pad, write } from './term.ts';
 
 /** What the user typed: `zen`, `zn` or `zenera` all arrive here. */
@@ -58,28 +59,33 @@ async function main(argv: readonly string[]): Promise<number> {
         return EXIT.ok;
     }
 
-    // Narration, so `--json` and every pipe are untouched by it.
+    const name = parts.name ? (ALIASES[parts.name] ?? parts.name) : undefined;
+    const command = name ? COMMANDS[name] : undefined;
+    const external = name && !command ? EXTERNAL[name] : undefined;
+
+    // Narration, so `--json` and every pipe are untouched by it. A command
+    // living in another package brings its own brand, but only once it is
+    // actually there — a banner over "not installed" is a claim about nothing.
     if (!json) {
-        printBanner(NEO_BANNER);
+        const brand = external && hasExternal(external) ? external.banner : undefined;
+        printBanner(brand ?? NEO_BANNER);
     }
 
     if (parts.name === 'help') {
-        usage(rest[0]);
+        await usage(rest[0]);
         return EXIT.ok;
     }
-    if (!parts.name) {
-        usage();
+    if (!name) {
+        await usage();
         return values.help ? EXIT.ok : EXIT.usage;
     }
 
-    const name = ALIASES[parts.name] ?? parts.name;
-    const command = COMMANDS[name];
-    if (!command) {
+    if (!command && !external) {
         fail(`unknown command "${parts.name}"`, `run ${bold(`${NAME} --help`)} for the list`);
         return EXIT.usage;
     }
     if (values.help) {
-        usage(name);
+        await usage(name);
         return EXIT.ok;
     }
 
@@ -88,7 +94,8 @@ async function main(argv: readonly string[]): Promise<number> {
     const cwd = resolve(values.directory ?? process.cwd());
 
     try {
-        await command.run({ args: rest, json, cwd });
+        const one = command ?? (await loadExternal(name, external!));
+        await one.run({ args: rest, json, cwd });
         return EXIT.ok;
     } catch (e) {
         if (e instanceof CliError) {
@@ -107,11 +114,23 @@ async function main(argv: readonly string[]): Promise<number> {
 // Help
 // ---------------------------------------------------------------------------
 
-function usage(name?: string): void {
-    const one = name ? COMMANDS[ALIASES[name] ?? name] : undefined;
+async function usage(name?: string): Promise<void> {
+    const resolved = name ? (ALIASES[name] ?? name) : undefined;
+    const ext = resolved ? EXTERNAL[resolved] : undefined;
+    // Asking for one command's help is already asking for that package, so
+    // loading it here costs nothing the reader did not request.
+    const one = resolved
+        ? (COMMANDS[resolved] ??
+          (ext && hasExternal(ext)
+              ? await loadExternal(resolved, ext).catch(() => undefined)
+              : undefined))
+        : undefined;
     if (one) {
         write(bold(spell(one.usage)));
         write(`\n  ${one.summary}`);
+        if (ext) {
+            write(`\n  ${dim(`Provided by ${cyan(ext.package)}.`)}`);
+        }
         if (one.details?.length) {
             write('');
             for (const line of one.details) {
@@ -121,12 +140,25 @@ function usage(name?: string): void {
         return;
     }
 
+    // Not installed: the table is all there is to say, and it is enough.
+    if (ext) {
+        write(bold(spell(ext.usage)));
+        write(`\n  ${ext.summary}`);
+        write(`\n  ${dim(`Provided by ${cyan(ext.package)} — run ${cyan(ext.install)}.`)}`);
+        return;
+    }
+
     write(`${bold(NAME)} ${dim('— run agent projects from the command line')}`);
     write(`\n${bold('Usage')}\n  ${NAME} <command> [options]`);
     write(`\n${bold('Commands')}`);
-    const width = Math.max(...Object.keys(COMMANDS).map((k) => k.length));
+    const names = [...Object.keys(COMMANDS), ...Object.keys(EXTERNAL)];
+    const width = Math.max(...names.map((k) => k.length));
     for (const [key, cmd] of Object.entries(COMMANDS)) {
         write(`  ${pad(key, width)}  ${dim(cmd.summary)}`);
+    }
+    for (const [key, ext] of Object.entries(EXTERNAL)) {
+        const tail = hasExternal(ext) ? '' : dim(` (${ext.install})`);
+        write(`  ${pad(key, width)}  ${dim(ext.summary)}${tail}`);
     }
     write(`\n${bold('Options')}`);
     write(`  -h, --help          ${dim('This, or a command’s own.')}`);

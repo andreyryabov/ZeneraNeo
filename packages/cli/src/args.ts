@@ -15,8 +15,8 @@ type Options = NonNullable<ParseArgsConfig['options']>;
 
 /**
  * The name the program was launched under. One file is reached by several of
- * them — `zen`, `zn`, `zenera`; `zfake`, `zen-faker` — and help that names a
- * command the reader did not type is help about a different program.
+ * them — `zen`, `zn`, `zenera` — and help that names a command the reader did
+ * not type is help about a different program.
  *
  * `argv[1]` keeps the symlink `bin` installed rather than its target, which is
  * exactly the name that was typed. Running the file directly, or through a

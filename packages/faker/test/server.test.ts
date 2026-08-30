@@ -83,7 +83,7 @@ describe('the server', () => {
     });
 
     beforeEach(() => {
-        root = mkdtempSync(join(tmpdir(), 'faker-srv-'));
+        root = mkdtempSync(join(tmpdir(), 'faker-'));
         lastInput = undefined;
     });
 

@@ -8,6 +8,10 @@
 // and a second front end on this machine has to agree with `zen` about all
 // three or the two disagree about which key is active.
 //
+// `Command` is here for the other direction: a sibling package implements it
+// and `zen` loads it by name, so a new package is a subcommand rather than a
+// new binary.
+//
 // So this file, and only this file, is what another package may import. It is
 // deliberately a hand-written list rather than a `export *`: every name here is
 // public API of a published package and is bound by its version, which is a
@@ -20,6 +24,7 @@
 
 export { extract, invokedAs, one, parse, split, type Parsed, type Split } from './args.ts';
 export { printBanner, type BannerText } from './banner.ts';
+export type { Command, Context } from './command.ts';
 export { assertPrivate, ensureDir, ensureHome, home, paths, readJson, writeJson } from './home.ts';
 export {
     assertNotEmpty,
@@ -41,7 +46,7 @@ export {
     type KeyOwner,
     type Liveness,
     type Provider,
-    type Service,
+    type Service
 } from './keys.ts';
 export { probe, probeAll } from './liveness.ts';
 export {
@@ -51,7 +56,7 @@ export {
     removeContainers,
     type OwnedContainer,
     type PodmanOptions,
-    type PodmanStatus,
+    type PodmanStatus
 } from './podman.ts';
 export {
     ago,
@@ -76,5 +81,6 @@ export {
     write,
     writeAll,
     yellow,
-    type ExitCode,
+    type ExitCode
 } from './term.ts';
+

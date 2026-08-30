@@ -1,57 +1,47 @@
-#!/usr/bin/env node
 import { rmSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import {
     bold,
     CliError,
     cyan,
     dim,
     EXIT,
-    fail,
     green,
-    invokedAs,
     json,
     note,
     ownedContainers,
     parse,
     paths,
-    printBanner,
     red,
     removeContainers,
-    split,
     table,
     usageError,
     write,
     writeAll,
     yellow,
-    type BannerText,
+    type Command,
+    type Context,
 } from 'zenera-cli/lib';
 import { GENERATORS } from './box.ts';
 import { reason } from './generate.ts';
 import { listen } from './server.ts';
 import { open, type Setup } from './setup.ts';
-import { SpecError, type Operation } from './spec.ts';
+import { type Operation } from './spec.ts';
 
 // ---------------------------------------------------------------------------
-// zfake — a mock API from a specification
+// zen faker — a mock API from a specification
 //
-// A separate binary rather than a `zen` subcommand. `zen` runs agent projects
-// and everything in it is shaped by that; this is a server, it stays up, and
-// the only thing the two genuinely share is where credentials live. Putting it
-// under `zen` would have meant one command that means two different things.
+// A command in another package rather than a binary of its own: one thing to
+// install, one keyring, one name to remember. `zen` loads this module only when
+// somebody types `zen faker`, so nothing here is on the path of `zen list`.
+//
+// That it stays up is not a problem for the frame — `run` simply does not
+// resolve until a signal arrives, and the process lives as long as the answer
+// takes, which is what every other command already means.
 // ---------------------------------------------------------------------------
 
-/** What the user typed: `zfake`, `zen-fake`, `zen-faker` or `zenera-fake`. */
-const NAME = invokedAs('zfake');
-
-const USAGE = `${NAME} <serve|build|cache> [spec...] [options]`;
-
-const BANNER: BannerText = {
-    head: 'Zenera',
-    accent: 'Faker',
-    subtitle: 'Mock API Server',
-};
+const USAGE = 'zen faker <serve|build|cache> [spec...]';
 
 interface Flags {
     port?: string;
@@ -67,9 +57,10 @@ interface Flags {
     rebuild?: boolean;
     'no-cache'?: boolean;
     quiet?: boolean;
-    json?: boolean;
 }
 
+// `--json` is the frame's, lifted out of the arguments before they arrive; it
+// reaches us as `ctx.json` and must not be declared again or `strict` rejects it.
 const OPTIONS = {
     port: { type: 'string' },
     host: { type: 'string' },
@@ -84,54 +75,64 @@ const OPTIONS = {
     rebuild: { type: 'boolean' },
     'no-cache': { type: 'boolean' },
     quiet: { type: 'boolean' },
-    json: { type: 'boolean' },
 } as const;
 
-async function main(argv: readonly string[]): Promise<number> {
-    const { name, after } = split(argv);
-    if (!name || name === 'help' || name === '--help' || name === '-h') {
-        usage();
-        return name ? EXIT.ok : EXIT.usage;
-    }
+export const command: Command = {
+    summary: 'A mock API from an openapi/swagger document.',
+    usage: USAGE,
+    details: [
+        'Commands',
+        ...table([
+            ['  serve <spec...>', dim('Serve the documents. Generators are written on demand.')],
+            ['  build <spec...>', dim('Write every generator now and exit.')],
+            ['  cache ls|clear', dim('What has been generated, or throw it away.')],
+        ]),
+        '',
+        'Options',
+        ...table([
+            ['  --port <n>', dim('Default 8787.')],
+            ['  --host <h>', dim('Default 127.0.0.1. Anything else is reachable off-machine.')],
+            ['  --model <ref>', dim('Which model writes the generators.')],
+            ['  --image <ref>', dim('Skip the baked image and use this one.')],
+            ['  --cache <dir>', dim('Where generators live. Default ~/.zenera/neo/faker.')],
+            ['  --seed <n>', dim('Answer the same request the same way every time.')],
+            ['  --attempts <n>', dim('Tries per generator before giving up. Default 3.')],
+            ['  --concurrency <n>', dim('Generators written at once. Default 4.')],
+            ['  --timeout <s>', dim('Seconds one generator may take. Default 30.')],
+            ['  --max-body <n>', dim('Largest request body accepted, in bytes.')],
+            ['  --rebuild', dim('Ignore what is cached and write it again.')],
+            ['  --no-cache', dim('Do not record what is written.')],
+            ['  --quiet', dim('No narration.')],
+        ]),
+        '',
+        dim(`Credentials come from the ${cyan('zen')} keyring — try ${cyan('zen key ls')}.`),
+    ],
 
-    try {
+    async run(ctx: Context): Promise<void> {
+        const [name, ...rest] = ctx.args;
         switch (name) {
             case 'serve':
-                return await serve(after);
+                return await serve(rest, ctx);
             case 'build':
-                return await warm(after);
+                return await warm(rest, ctx);
             case 'cache':
-                return await cache(after);
+                return await cache(rest, ctx);
             default:
-                throw usageError(`unknown command "${name}"`, USAGE);
+                throw usageError(name ? `unknown command "${name}"` : 'no command given', USAGE);
         }
-    } catch (err) {
-        if (err instanceof CliError) {
-            fail(err.message, err.hint);
-            return err.code;
-        }
-        if (err instanceof SpecError) {
-            fail(err.message, err.hint);
-            return EXIT.invalid;
-        }
-        fail(err instanceof Error ? err.message : String(err));
-        return EXIT.failed;
-    }
-}
+    },
+};
 
 // ---------------------------------------------------------------------------
 // serve
 // ---------------------------------------------------------------------------
 
-async function serve(args: readonly string[]): Promise<number> {
-    const { values, positionals } = parse<Flags>(args, OPTIONS, `${NAME} serve <spec...>`);
-    const loud = !values.quiet && !values.json;
+async function serve(args: readonly string[], ctx: Context): Promise<void> {
+    const { values, positionals } = parse<Flags>(args, OPTIONS, 'zen faker serve <spec...>');
+    const loud = !values.quiet && !ctx.json;
+    const setup = await start(values, positionals, ctx, 'serve');
     if (loud) {
-        printBanner(BANNER);
-    }
-    const setup = await start(values, positionals, 'serve');
-    if (loud) {
-        printSpecs(setup.router.operations);
+        printSpecs(setup.router.operations, ctx.cwd);
     }
 
     const host = values.host ?? '127.0.0.1';
@@ -168,7 +169,6 @@ async function serve(args: readonly string[]): Promise<number> {
     }
     await listener.close();
     await setup.close();
-    return EXIT.ok;
 }
 
 /** Resolves when one of the signals arrives, and stops listening for them. */
@@ -190,15 +190,12 @@ function until(signals: readonly NodeJS.Signals[]): Promise<void> {
 // build — every generator, up front
 // ---------------------------------------------------------------------------
 
-async function warm(args: readonly string[]): Promise<number> {
-    const { values, positionals } = parse<Flags>(args, OPTIONS, `${NAME} build <spec...>`);
-    const loud = !values.quiet && !values.json;
+async function warm(args: readonly string[], ctx: Context): Promise<void> {
+    const { values, positionals } = parse<Flags>(args, OPTIONS, 'zen faker build <spec...>');
+    const loud = !values.quiet && !ctx.json;
+    const setup = await start(values, positionals, ctx, 'build');
     if (loud) {
-        printBanner(BANNER);
-    }
-    const setup = await start(values, positionals, 'build');
-    if (loud) {
-        printSpecs(setup.router.operations);
+        printSpecs(setup.router.operations, ctx.cwd);
     }
 
     const results: { operation: string; status: string; detail?: string }[] = [];
@@ -224,7 +221,7 @@ async function warm(args: readonly string[]): Promise<number> {
         await setup.close();
     }
 
-    if (values.json) {
+    if (ctx.json) {
         json(results);
     } else {
         writeAll(
@@ -237,7 +234,16 @@ async function warm(args: readonly string[]): Promise<number> {
             ),
         );
     }
-    return results.some((r) => r.status === 'failed') ? EXIT.failed : EXIT.ok;
+
+    // Reported first, then failed: the table is the answer either way.
+    const failed = results.filter((r) => r.status === 'failed').length;
+    if (failed > 0) {
+        throw new CliError(
+            `${failed} of ${results.length} generators failed`,
+            EXIT.failed,
+            'run again to retry, or raise --attempts',
+        );
+    }
 }
 
 const mark = (status: string): string =>
@@ -247,20 +253,20 @@ const mark = (status: string): string =>
 // cache
 // ---------------------------------------------------------------------------
 
-async function cache(args: readonly string[]): Promise<number> {
-    const { values, positionals } = parse<Flags>(args, OPTIONS, `${NAME} cache <ls|clear>`);
-    const root = values.cache ?? paths.faker();
+async function cache(args: readonly string[], ctx: Context): Promise<void> {
+    const { values, positionals } = parse<Flags>(args, OPTIONS, 'zen faker cache <ls|clear>');
+    const root = values.cache ? resolve(ctx.cwd, values.cache) : paths.faker();
     const sub = positionals[0] ?? 'ls';
 
     if (sub === 'ls') {
         const entries = await listGenerators(root);
-        if (values.json) {
+        if (ctx.json) {
             json(entries);
-            return EXIT.ok;
+            return;
         }
         if (entries.length === 0) {
             note('nothing cached yet');
-            return EXIT.ok;
+            return;
         }
         writeAll(
             table([
@@ -273,7 +279,7 @@ async function cache(args: readonly string[]): Promise<number> {
                 ]),
             ]),
         );
-        return EXIT.ok;
+        return;
     }
 
     if (sub === 'clear') {
@@ -286,10 +292,10 @@ async function cache(args: readonly string[]): Promise<number> {
             await removeContainers(mine.map((c) => c.name));
         }
         note(`${green('cleared')} ${dim(root)}`);
-        return EXIT.ok;
+        return;
     }
 
-    throw usageError(`unknown cache command "${sub}"`, `${NAME} cache <ls|clear>`);
+    throw usageError(`unknown cache command "${sub}"`, 'zen faker cache <ls|clear>');
 }
 
 interface Meta {
@@ -357,10 +363,10 @@ function summarize(operations: readonly Operation[]): SpecStat[] {
 
 const HEADERS = ['PATHS', 'METHODS', 'FUNCTIONS'] as const;
 
-function printSpecs(operations: readonly Operation[]): void {
+function printSpecs(operations: readonly Operation[], cwd: string): void {
     const stats = summarize(operations);
     const rows = stats.map((s) => ({
-        name: relative(process.cwd(), s.source) || s.source,
+        name: relative(cwd, s.source) || s.source,
         cells: [s.paths.size, s.methods, s.functions],
     }));
     if (rows.length > 1) {
@@ -396,12 +402,13 @@ function printSpecs(operations: readonly Operation[]): void {
 async function start(
     values: Flags,
     specs: readonly string[],
+    ctx: Context,
     what: 'serve' | 'build',
 ): Promise<Setup> {
-    const loud = !values.quiet && !values.json;
+    const loud = !values.quiet && !ctx.json;
     return open({
         specs,
-        cwd: process.cwd(),
+        cwd: ctx.cwd,
         cache: values.cache,
         model: values.model,
         image: values.image,
@@ -451,41 +458,3 @@ function number(raw: string | undefined, what: string): number | undefined {
     }
     return value;
 }
-
-function usage(): void {
-    printBanner(BANNER);
-    write(`${bold(NAME)} ${dim('— a mock API from an openapi/swagger document')}`);
-    write(`\n${bold('Usage')}\n  ${USAGE}`);
-    write(`\n${bold('Commands')}`);
-    writeAll(
-        table([
-            ['  serve <spec...>', dim('Serve the documents. Generators are written on demand.')],
-            ['  build <spec...>', dim('Write every generator now and exit.')],
-            ['  cache ls|clear', dim('What has been generated, or throw it away.')],
-        ]),
-    );
-    write(`\n${bold('Options')}`);
-    writeAll(
-        table([
-            ['  --port <n>', dim('Default 8787.')],
-            ['  --host <h>', dim('Default 127.0.0.1. Anything else is reachable off-machine.')],
-            ['  --model <ref>', dim('Which model writes the generators.')],
-            ['  --image <ref>', dim('Skip the baked image and use this one.')],
-            ['  --cache <dir>', dim('Where generators live. Default ~/.zenera/neo/faker.')],
-            ['  --seed <n>', dim('Answer the same request the same way every time.')],
-            ['  --attempts <n>', dim('Tries per generator before giving up. Default 3.')],
-            ['  --concurrency <n>', dim('Generators written at once. Default 4.')],
-            ['  --timeout <s>', dim('Seconds one generator may take. Default 30.')],
-            ['  --max-body <n>', dim('Largest request body accepted, in bytes.')],
-            ['  --rebuild', dim('Ignore what is cached and write it again.')],
-            ['  --no-cache', dim('Do not record what is written.')],
-            ['  --quiet', dim('No narration.')],
-            ['  --json', dim('Machine-readable output.')],
-        ]),
-    );
-    write(
-        `\n${dim(`Credentials come from the ${cyan('zen')} keyring — try ${cyan('zen key ls')}.`)}`,
-    );
-}
-
-process.exitCode = await main(process.argv.slice(2));

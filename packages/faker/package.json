@@ -6,11 +6,11 @@
     "author": "Andrey Ryabov",
     "private": true,
     "type": "module",
-    "bin": {
-        "zfake": "./dist/main.js",
-        "zen-fake": "./dist/main.js",
-        "zen-faker": "./dist/main.js",
-        "zenera-fake": "./dist/main.js"
+    "exports": {
+        "./command": {
+            "types": "./dist/command.d.ts",
+            "default": "./dist/command.js"
+        }
     },
     "files": [
         "dist",

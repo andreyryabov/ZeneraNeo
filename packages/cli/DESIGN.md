@@ -123,6 +123,12 @@ two.
 | `sandbox` | Checks and prepares the container command-line tools run in (§9).        |
 | `version` | CLI, library and Node versions.                                          |
 
+And, when the package providing it is installed:
+
+| Command | Package        | Does                                         |
+| ------- | -------------- | -------------------------------------------- |
+| `faker` | `zenera-faker` | A mock API from an openapi/swagger document. |
+
 Global flags: `-h/--help`, `-v/--version`, `--json`, `-C <dir>`.
 
 Exit codes: `0` ok, `1` the run failed, `2` the invocation was wrong, `3` the
@@ -130,6 +136,42 @@ project is invalid, `4` no usable credential, `5` the sandbox is unavailable.
 
 There is no `chat` and no `resume`. Both were `run` with a different starting
 point, and a flag says that better than a command does.
+
+### 4.1 Commands from another package
+
+A sibling package — `zenera-faker`, and whatever follows it — adds a command to
+`zen` instead of installing a binary of its own. One thing to install, one
+keyring, one name to remember, and the alternative was a family of programs
+that share their whole vocabulary and differ only in what they do with it.
+
+It implements `Command`, the same interface as everything in `src/commands/`,
+and exports it as `<package>/command`. `zen` finds it through `EXTERNAL` in
+[src/commands/index.ts](packages/cli/src/commands/index.ts) — name, package,
+summary, usage, install line, and an optional banner.
+
+Two properties are what the design is for, and both are easy to lose:
+
+**Help never loads anything.** `EXTERNAL` is data, held by `zen`, so
+`zen --help` lists a command whether or not its package is present and pays
+nothing either way. Nothing on the path of `zen list` may import a sibling —
+`zen` starts fast because it depends on almost nothing, and one static import of
+a mock server would end that. `src/external.ts` builds the specifier rather than
+writing it, which is also what keeps the dependency acyclic: the sibling depends
+on `zenera-cli`, never the reverse, so `zen` cannot name it at compile time.
+Asking for _one_ command's help does load that package, because that request
+already named it.
+
+**A missing package is an answer, not a crash.** `ERR_MODULE_NOT_FOUND` becomes
+exit `2` and the line to run, in the same shape the library uses for a missing
+vendor SDK.
+
+It is a known list rather than a scan of `node_modules`. These packages are
+released in lockstep by one author, so discovery would buy nothing and cost a
+manifest format, an API version, and a public contract with strangers. When
+there are strangers, that is the moment to build it — not before.
+
+A command that keeps running is not a special case. `run` returns a promise, and
+a server's simply does not settle until a signal arrives.
 
 ## 5. Projects
 

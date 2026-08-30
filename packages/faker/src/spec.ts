@@ -1,5 +1,6 @@
 import SwaggerParser from '@apidevtools/swagger-parser';
 import { createHash } from 'node:crypto';
+import { CliError, EXIT } from 'zenera-cli/lib';
 import { normalize, type Dialect, type Schema } from './schema.ts';
 
 // ---------------------------------------------------------------------------
@@ -56,13 +57,11 @@ interface Doc {
 const isObject = (v: unknown): v is Record<string, unknown> =>
     typeof v === 'object' && v !== null && !Array.isArray(v);
 
-export class SpecError extends Error {
-    readonly hint?: string;
-
+/** A `CliError` so an unreadable document exits 3 wherever it is raised. */
+export class SpecError extends CliError {
     constructor(message: string, hint?: string) {
-        super(message);
+        super(message, EXIT.invalid, hint);
         this.name = 'SpecError';
-        this.hint = hint;
     }
 }
 

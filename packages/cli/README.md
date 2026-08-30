@@ -101,6 +101,14 @@ you are not expected to hand-author `agents.yaml`.
 | `sandbox` | Checks and prepares the container that command-line tools run in.        |
 | `version` | CLI, library and Node versions.                                          |
 
+Commands can also come from a package installed alongside this one, so a new
+capability is a subcommand rather than a new binary to remember. `zen --help`
+lists them whether or not they are installed, and says what to run if not.
+
+| Command | Package        | Does                                         |
+| ------- | -------------- | -------------------------------------------- |
+| `faker` | `zenera-faker` | A mock API from an openapi/swagger document. |
+
 Global flags: `-h/--help`, `-v/--version`, `--json`, `-C <dir>`. Exit codes: `0`
 ok, `1` the run failed, `2` bad invocation, `3` invalid project, `4` no usable
 credential, `5` sandbox unavailable.

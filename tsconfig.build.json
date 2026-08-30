@@ -3,6 +3,6 @@
     "references": [
         { "path": "packages/neo" },
         { "path": "packages/cli" },
-        { "path": "packages/faker-srv" }
+        { "path": "packages/faker" }
     ]
 }
