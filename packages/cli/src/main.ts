@@ -1,10 +1,17 @@
 #!/usr/bin/env node
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { extract, split } from './args.ts';
+import { extract, invokedAs, split } from './args.ts';
+import { NEO_BANNER, printBanner } from './banner.ts';
 import { ALIASES, COMMANDS } from './commands/index.ts';
 import { cliManifest, versionOf } from './commands/version.ts';
 import { CliError, EXIT, bold, cyan, dim, fail, note, pad, write } from './term.ts';
+
+/** What the user typed: `zen`, `zn` or `zenera` all arrive here. */
+const NAME = invokedAs('zen');
+
+/** Usage lines are written against `zen`. Say them back in the reader's word. */
+const spell = (usage: string): string => (NAME === 'zen' ? usage : usage.replace(/^zen\b/, NAME));
 
 // ---------------------------------------------------------------------------
 // zen — the command line over `zenera-neo`
@@ -40,7 +47,7 @@ async function main(argv: readonly string[]): Promise<number> {
             allowPositionals: false,
         }).values;
     } catch (e) {
-        fail((e as Error).message, `run ${bold('zen --help')} for the options`);
+        fail((e as Error).message, `run ${bold(`${NAME} --help`)} for the options`);
         return EXIT.usage;
     }
 
@@ -50,6 +57,12 @@ async function main(argv: readonly string[]): Promise<number> {
         write(await versionOf(cliManifest));
         return EXIT.ok;
     }
+
+    // Narration, so `--json` and every pipe are untouched by it.
+    if (!json) {
+        printBanner(NEO_BANNER);
+    }
+
     if (parts.name === 'help') {
         usage(rest[0]);
         return EXIT.ok;
@@ -62,7 +75,7 @@ async function main(argv: readonly string[]): Promise<number> {
     const name = ALIASES[parts.name] ?? parts.name;
     const command = COMMANDS[name];
     if (!command) {
-        fail(`unknown command "${parts.name}"`, `run ${bold('zen --help')} for the list`);
+        fail(`unknown command "${parts.name}"`, `run ${bold(`${NAME} --help`)} for the list`);
         return EXIT.usage;
     }
     if (values.help) {
@@ -79,7 +92,7 @@ async function main(argv: readonly string[]): Promise<number> {
         return EXIT.ok;
     } catch (e) {
         if (e instanceof CliError) {
-            fail(e.message, e.hint);
+            fail(e.message, e.hint ? spell(e.hint) : undefined);
             return e.code;
         }
         fail(e instanceof Error ? e.message : String(e));
@@ -97,7 +110,7 @@ async function main(argv: readonly string[]): Promise<number> {
 function usage(name?: string): void {
     const one = name ? COMMANDS[ALIASES[name] ?? name] : undefined;
     if (one) {
-        write(bold(one.usage));
+        write(bold(spell(one.usage)));
         write(`\n  ${one.summary}`);
         if (one.details?.length) {
             write('');
@@ -108,8 +121,8 @@ function usage(name?: string): void {
         return;
     }
 
-    write(`${bold('zen')} ${dim('— run agent projects from the command line')}`);
-    write(`\n${bold('Usage')}\n  zen <command> [options]`);
+    write(`${bold(NAME)} ${dim('— run agent projects from the command line')}`);
+    write(`\n${bold('Usage')}\n  ${NAME} <command> [options]`);
     write(`\n${bold('Commands')}`);
     const width = Math.max(...Object.keys(COMMANDS).map((k) => k.length));
     for (const [key, cmd] of Object.entries(COMMANDS)) {
@@ -120,7 +133,7 @@ function usage(name?: string): void {
     write(`  -v, --version       ${dim('Print the version.')}`);
     write(`      --json          ${dim('Machine-readable output.')}`);
     write(`  -C, --directory <d> ${dim('Act as if run in <d>.')}`);
-    write(`\n${dim(`Start with ${cyan('zen init')}, then ${cyan('zen run')}.`)}`);
+    write(`\n${dim(`Start with ${cyan(`${NAME} init`)}, then ${cyan(`${NAME} run`)}.`)}`);
 }
 
 process.exitCode = await main(process.argv.slice(2));

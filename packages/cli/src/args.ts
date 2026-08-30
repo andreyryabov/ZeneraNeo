@@ -1,3 +1,4 @@
+import { basename } from 'node:path';
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { usageError } from './term.ts';
 
@@ -11,6 +12,21 @@ import { usageError } from './term.ts';
 // ---------------------------------------------------------------------------
 
 type Options = NonNullable<ParseArgsConfig['options']>;
+
+/**
+ * The name the program was launched under. One file is reached by several of
+ * them — `zen`, `zn`, `zenera`; `zfake`, `zen-faker` — and help that names a
+ * command the reader did not type is help about a different program.
+ *
+ * `argv[1]` keeps the symlink `bin` installed rather than its target, which is
+ * exactly the name that was typed. Running the file directly, or through a
+ * Windows shim, lands on `main.js` instead: there is no name to honour then,
+ * so the canonical one stands.
+ */
+export function invokedAs(fallback: string): string {
+    const name = basename(process.argv[1] ?? '').replace(/\.[cm]?js$/, '');
+    return name && name !== 'main' && name !== 'index' ? name : fallback;
+}
 
 export interface Parsed<T> {
     values: T;

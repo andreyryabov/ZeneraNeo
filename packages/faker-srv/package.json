@@ -9,6 +9,7 @@
     "bin": {
         "zfake": "./dist/main.js",
         "zen-fake": "./dist/main.js",
+        "zen-faker": "./dist/main.js",
         "zenera-fake": "./dist/main.js"
     },
     "files": [

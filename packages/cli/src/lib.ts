@@ -18,7 +18,8 @@
 // must not let a `CliError` escape into a request handler.
 // ---------------------------------------------------------------------------
 
-export { extract, one, parse, split, type Parsed, type Split } from './args.ts';
+export { extract, invokedAs, one, parse, split, type Parsed, type Split } from './args.ts';
+export { printBanner, type BannerText } from './banner.ts';
 export { assertPrivate, ensureDir, ensureHome, home, paths, readJson, writeJson } from './home.ts';
 export {
     assertNotEmpty,
@@ -40,7 +41,7 @@ export {
     type KeyOwner,
     type Liveness,
     type Provider,
-    type Service,
+    type Service
 } from './keys.ts';
 export { probe, probeAll } from './liveness.ts';
 export {
@@ -50,7 +51,7 @@ export {
     removeContainers,
     type OwnedContainer,
     type PodmanOptions,
-    type PodmanStatus,
+    type PodmanStatus
 } from './podman.ts';
 export {
     ago,
@@ -75,5 +76,6 @@ export {
     write,
     writeAll,
     yellow,
-    type ExitCode,
+    type ExitCode
 } from './term.ts';
+

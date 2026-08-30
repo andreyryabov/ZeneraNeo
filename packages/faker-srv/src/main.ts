@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { rmSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import {
     bold,
     CliError,
@@ -10,11 +10,13 @@ import {
     EXIT,
     fail,
     green,
+    invokedAs,
     json,
     note,
     ownedContainers,
     parse,
     paths,
+    printBanner,
     red,
     removeContainers,
     split,
@@ -23,12 +25,13 @@ import {
     write,
     writeAll,
     yellow,
+    type BannerText,
 } from 'zenera-cli/lib';
 import { GENERATORS } from './box.ts';
 import { reason } from './generate.ts';
 import { listen } from './server.ts';
 import { open, type Setup } from './setup.ts';
-import { SpecError } from './spec.ts';
+import { SpecError, type Operation } from './spec.ts';
 
 // ---------------------------------------------------------------------------
 // zfake — a mock API from a specification
@@ -39,7 +42,16 @@ import { SpecError } from './spec.ts';
 // under `zen` would have meant one command that means two different things.
 // ---------------------------------------------------------------------------
 
-const USAGE = 'zfake <serve|build|cache> [spec...] [options]';
+/** What the user typed: `zfake`, `zen-fake`, `zen-faker` or `zenera-fake`. */
+const NAME = invokedAs('zfake');
+
+const USAGE = `${NAME} <serve|build|cache> [spec...] [options]`;
+
+const BANNER: BannerText = {
+    head: 'Zenera',
+    accent: 'Faker',
+    subtitle: 'Mock API Server',
+};
 
 interface Flags {
     port?: string;
@@ -112,8 +124,15 @@ async function main(argv: readonly string[]): Promise<number> {
 // ---------------------------------------------------------------------------
 
 async function serve(args: readonly string[]): Promise<number> {
-    const { values, positionals } = parse<Flags>(args, OPTIONS, 'zfake serve <spec...>');
+    const { values, positionals } = parse<Flags>(args, OPTIONS, `${NAME} serve <spec...>`);
+    const loud = !values.quiet && !values.json;
+    if (loud) {
+        printBanner(BANNER);
+    }
     const setup = await start(values, positionals, 'serve');
+    if (loud) {
+        printSpecs(setup.router.operations);
+    }
 
     const host = values.host ?? '127.0.0.1';
     const listener = await listen(
@@ -172,8 +191,15 @@ function until(signals: readonly NodeJS.Signals[]): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function warm(args: readonly string[]): Promise<number> {
-    const { values, positionals } = parse<Flags>(args, OPTIONS, 'zfake build <spec...>');
+    const { values, positionals } = parse<Flags>(args, OPTIONS, `${NAME} build <spec...>`);
+    const loud = !values.quiet && !values.json;
+    if (loud) {
+        printBanner(BANNER);
+    }
     const setup = await start(values, positionals, 'build');
+    if (loud) {
+        printSpecs(setup.router.operations);
+    }
 
     const results: { operation: string; status: string; detail?: string }[] = [];
     try {
@@ -222,7 +248,7 @@ const mark = (status: string): string =>
 // ---------------------------------------------------------------------------
 
 async function cache(args: readonly string[]): Promise<number> {
-    const { values, positionals } = parse<Flags>(args, OPTIONS, 'zfake cache <ls|clear>');
+    const { values, positionals } = parse<Flags>(args, OPTIONS, `${NAME} cache <ls|clear>`);
     const root = values.cache ?? paths.faker();
     const sub = positionals[0] ?? 'ls';
 
@@ -263,7 +289,7 @@ async function cache(args: readonly string[]): Promise<number> {
         return EXIT.ok;
     }
 
-    throw usageError(`unknown cache command "${sub}"`, 'zfake cache <ls|clear>');
+    throw usageError(`unknown cache command "${sub}"`, `${NAME} cache <ls|clear>`);
 }
 
 interface Meta {
@@ -293,6 +319,74 @@ async function listGenerators(root: string): Promise<Meta[]> {
         }
     }
     return out;
+}
+
+// ---------------------------------------------------------------------------
+// What was loaded
+//
+// One row per document named on the argv, because that is the unit the user
+// typed. `methods` is the operations in it; `functions` is how many of those
+// need a generator written for them — an operation answering with no body is
+// served without ever asking a model, and the difference between the two
+// numbers is the size of the job ahead.
+// ---------------------------------------------------------------------------
+
+interface SpecStat {
+    source: string;
+    paths: Set<string>;
+    methods: number;
+    functions: number;
+}
+
+function summarize(operations: readonly Operation[]): SpecStat[] {
+    const by = new Map<string, SpecStat>();
+    for (const op of operations) {
+        let stat = by.get(op.source);
+        if (!stat) {
+            stat = { source: op.source, paths: new Set(), methods: 0, functions: 0 };
+            by.set(op.source, stat);
+        }
+        stat.paths.add(op.path);
+        stat.methods += 1;
+        if (op.success.schema) {
+            stat.functions += 1;
+        }
+    }
+    return [...by.values()];
+}
+
+const HEADERS = ['PATHS', 'METHODS', 'FUNCTIONS'] as const;
+
+function printSpecs(operations: readonly Operation[]): void {
+    const stats = summarize(operations);
+    const rows = stats.map((s) => ({
+        name: relative(process.cwd(), s.source) || s.source,
+        cells: [s.paths.size, s.methods, s.functions],
+    }));
+    if (rows.length > 1) {
+        rows.push({
+            name: 'total',
+            cells: HEADERS.map((_, i) => rows.reduce((n, r) => n + r.cells[i], 0)),
+        });
+    }
+
+    // Numbers are padded before they are styled: a colour code has no width,
+    // and `table` cannot know that.
+    const widths = HEADERS.map((h, i) =>
+        Math.max(h.length, ...rows.map((r) => String(r.cells[i]).length)),
+    );
+    const lines = table([
+        [bold('SPEC'), ...HEADERS.map((h, i) => bold(h.padStart(widths[i])))],
+        ...rows.map((r) => [
+            r.name === 'total' ? dim(r.name) : r.name,
+            ...r.cells.map((c, i) => String(c).padStart(widths[i])),
+        ]),
+    ]);
+    note('');
+    for (const line of lines) {
+        note(`  ${line}`);
+    }
+    note('');
 }
 
 // ---------------------------------------------------------------------------
@@ -359,7 +453,8 @@ function number(raw: string | undefined, what: string): number | undefined {
 }
 
 function usage(): void {
-    write(`${bold('zfake')} ${dim('— a mock API from an openapi/swagger document')}`);
+    printBanner(BANNER);
+    write(`${bold(NAME)} ${dim('— a mock API from an openapi/swagger document')}`);
     write(`\n${bold('Usage')}\n  ${USAGE}`);
     write(`\n${bold('Commands')}`);
     writeAll(
