@@ -9,42 +9,47 @@ import { dim, note } from './term.ts';
 // terminal — a pipeline asking for the answer gets the answer, and a CI log is
 // not decorated with block letters.
 //
-// The font is here rather than pulled in as a dependency because it is nine
-// hundred bytes of constant and the whole CLI is otherwise Node's own. The
-// stroke is a dotted block (U+2592) rather than a solid one: it reads as a
-// screen-print at any font weight, where a solid fill turns to a slab.
+// The font is here rather than pulled in as a dependency because it is a
+// kilobyte of constant and the whole CLI is otherwise Node's own. Two things
+// about its shape are deliberate: the stroke is **two cells wide**, because a
+// one-cell stem in a dotted fill reads as noise rather than as a letter, and
+// the ink is the dotted block (U+2592) rather than a solid one, which makes a
+// thick stroke a screen-print instead of a slab.
+//
+// A terminal too narrow for the art gets the wordmark on one line. A banner
+// that wraps is worse than no banner.
 // ---------------------------------------------------------------------------
 
 const HEIGHT = 5;
-const WIDTH = 5;
+const WIDTH = 6;
 
 const FONT: Record<string, readonly string[]> = {
-    A: [' ▒▒▒ ', '▒   ▒', '▒▒▒▒▒', '▒   ▒', '▒   ▒'],
-    B: ['▒▒▒▒ ', '▒   ▒', '▒▒▒▒ ', '▒   ▒', '▒▒▒▒ '],
-    C: [' ▒▒▒▒', '▒    ', '▒    ', '▒    ', ' ▒▒▒▒'],
-    D: ['▒▒▒▒ ', '▒   ▒', '▒   ▒', '▒   ▒', '▒▒▒▒ '],
-    E: ['▒▒▒▒▒', '▒    ', '▒▒▒▒ ', '▒    ', '▒▒▒▒▒'],
-    F: ['▒▒▒▒▒', '▒    ', '▒▒▒▒ ', '▒    ', '▒    '],
-    G: [' ▒▒▒▒', '▒    ', '▒  ▒▒', '▒   ▒', ' ▒▒▒▒'],
-    H: ['▒   ▒', '▒   ▒', '▒▒▒▒▒', '▒   ▒', '▒   ▒'],
-    I: ['▒▒▒▒▒', '  ▒  ', '  ▒  ', '  ▒  ', '▒▒▒▒▒'],
-    J: ['▒▒▒▒▒', '   ▒ ', '   ▒ ', '▒  ▒ ', ' ▒▒  '],
-    K: ['▒   ▒', '▒  ▒ ', '▒▒▒  ', '▒  ▒ ', '▒   ▒'],
-    L: ['▒    ', '▒    ', '▒    ', '▒    ', '▒▒▒▒▒'],
-    M: ['▒   ▒', '▒▒ ▒▒', '▒ ▒ ▒', '▒   ▒', '▒   ▒'],
-    N: ['▒   ▒', '▒▒  ▒', '▒ ▒ ▒', '▒  ▒▒', '▒   ▒'],
-    O: [' ▒▒▒ ', '▒   ▒', '▒   ▒', '▒   ▒', ' ▒▒▒ '],
-    P: ['▒▒▒▒ ', '▒   ▒', '▒▒▒▒ ', '▒    ', '▒    '],
-    Q: [' ▒▒▒ ', '▒   ▒', '▒   ▒', '▒  ▒ ', ' ▒▒ ▒'],
-    R: ['▒▒▒▒ ', '▒   ▒', '▒▒▒▒ ', '▒  ▒ ', '▒   ▒'],
-    S: [' ▒▒▒▒', '▒    ', ' ▒▒▒ ', '    ▒', '▒▒▒▒ '],
-    T: ['▒▒▒▒▒', '  ▒  ', '  ▒  ', '  ▒  ', '  ▒  '],
-    U: ['▒   ▒', '▒   ▒', '▒   ▒', '▒   ▒', ' ▒▒▒ '],
-    V: ['▒   ▒', '▒   ▒', '▒   ▒', ' ▒ ▒ ', '  ▒  '],
-    W: ['▒   ▒', '▒   ▒', '▒ ▒ ▒', '▒▒ ▒▒', '▒   ▒'],
-    X: ['▒   ▒', ' ▒ ▒ ', '  ▒  ', ' ▒ ▒ ', '▒   ▒'],
-    Y: ['▒   ▒', ' ▒ ▒ ', '  ▒  ', '  ▒  ', '  ▒  '],
-    Z: ['▒▒▒▒▒', '   ▒ ', '  ▒  ', ' ▒   ', '▒▒▒▒▒'],
+    A: [' ▒▒▒▒ ', '▒▒  ▒▒', '▒▒▒▒▒▒', '▒▒  ▒▒', '▒▒  ▒▒'],
+    B: ['▒▒▒▒▒ ', '▒▒  ▒▒', '▒▒▒▒▒ ', '▒▒  ▒▒', '▒▒▒▒▒ '],
+    C: [' ▒▒▒▒▒', '▒▒    ', '▒▒    ', '▒▒    ', ' ▒▒▒▒▒'],
+    D: ['▒▒▒▒▒ ', '▒▒  ▒▒', '▒▒  ▒▒', '▒▒  ▒▒', '▒▒▒▒▒ '],
+    E: ['▒▒▒▒▒▒', '▒▒    ', '▒▒▒▒▒ ', '▒▒    ', '▒▒▒▒▒▒'],
+    F: ['▒▒▒▒▒▒', '▒▒    ', '▒▒▒▒▒ ', '▒▒    ', '▒▒    '],
+    G: [' ▒▒▒▒▒', '▒▒    ', '▒▒ ▒▒▒', '▒▒  ▒▒', ' ▒▒▒▒▒'],
+    H: ['▒▒  ▒▒', '▒▒  ▒▒', '▒▒▒▒▒▒', '▒▒  ▒▒', '▒▒  ▒▒'],
+    I: ['▒▒▒▒▒▒', '  ▒▒  ', '  ▒▒  ', '  ▒▒  ', '▒▒▒▒▒▒'],
+    J: ['▒▒▒▒▒▒', '   ▒▒ ', '   ▒▒ ', '▒▒ ▒▒ ', ' ▒▒▒  '],
+    K: ['▒▒  ▒▒', '▒▒ ▒▒ ', '▒▒▒▒  ', '▒▒ ▒▒ ', '▒▒  ▒▒'],
+    L: ['▒▒    ', '▒▒    ', '▒▒    ', '▒▒    ', '▒▒▒▒▒▒'],
+    M: ['▒▒  ▒▒', '▒▒▒▒▒▒', '▒▒▒▒▒▒', '▒▒  ▒▒', '▒▒  ▒▒'],
+    N: ['▒▒  ▒▒', '▒▒▒ ▒▒', '▒▒▒▒▒▒', '▒▒ ▒▒▒', '▒▒  ▒▒'],
+    O: [' ▒▒▒▒ ', '▒▒  ▒▒', '▒▒  ▒▒', '▒▒  ▒▒', ' ▒▒▒▒ '],
+    P: ['▒▒▒▒▒ ', '▒▒  ▒▒', '▒▒▒▒▒ ', '▒▒    ', '▒▒    '],
+    Q: [' ▒▒▒▒ ', '▒▒  ▒▒', '▒▒  ▒▒', '▒▒ ▒▒ ', ' ▒▒ ▒▒'],
+    R: ['▒▒▒▒▒ ', '▒▒  ▒▒', '▒▒▒▒▒ ', '▒▒ ▒▒ ', '▒▒  ▒▒'],
+    S: [' ▒▒▒▒▒', '▒▒    ', ' ▒▒▒▒ ', '    ▒▒', '▒▒▒▒▒ '],
+    T: ['▒▒▒▒▒▒', '  ▒▒  ', '  ▒▒  ', '  ▒▒  ', '  ▒▒  '],
+    U: ['▒▒  ▒▒', '▒▒  ▒▒', '▒▒  ▒▒', '▒▒  ▒▒', ' ▒▒▒▒ '],
+    V: ['▒▒  ▒▒', '▒▒  ▒▒', '▒▒  ▒▒', ' ▒▒▒▒ ', '  ▒▒  '],
+    W: ['▒▒  ▒▒', '▒▒  ▒▒', '▒▒▒▒▒▒', '▒▒▒▒▒▒', '▒▒  ▒▒'],
+    X: ['▒▒  ▒▒', ' ▒▒▒▒ ', '  ▒▒  ', ' ▒▒▒▒ ', '▒▒  ▒▒'],
+    Y: ['▒▒  ▒▒', ' ▒▒▒▒ ', '  ▒▒  ', '  ▒▒  ', '  ▒▒  '],
+    Z: ['▒▒▒▒▒▒', '   ▒▒ ', '  ▒▒  ', ' ▒▒   ', '▒▒▒▒▒▒'],
 };
 
 const BLANK = ' '.repeat(WIDTH);
@@ -60,6 +65,9 @@ function big(word: string): string[] {
     }
     return rows;
 }
+
+/** A wordmark rather than a sentence, so the letters are set apart. */
+const spaced = (s: string): string => [...s.toUpperCase()].join(' ');
 
 /** The name, in the brightest thing the terminal has. */
 const bright = (s: string): string => styleText(['bold', 'whiteBright'], s);
@@ -82,15 +90,24 @@ export const NEO_BANNER: BannerText = {
     subtitle: 'Agentic Runtime',
 };
 
-export function bannerLines(text: BannerText): string[] {
+export function bannerLines(text: BannerText, columns = process.stderr.columns || 80): string[] {
     const head = big(text.head);
-    const accent = big(text.accent);
+    // Trimmed: the widest accent row is the banner's right edge, and a pad left
+    // inside a styled string cannot be trimmed away later.
+    const accent = big(text.accent).map((row) => row.trimEnd());
+    const width = 2 + head[0].length + Math.max(...accent.map((row) => row.length));
+    const foot = `  ${dim(spaced(text.subtitle))}`;
+
+    if (width > columns) {
+        return [` ${bright(text.head.toUpperCase())} ${neon(text.accent.toUpperCase())}`, foot];
+    }
+
     const lines: string[] = [];
     for (let r = 0; r < HEIGHT; r++) {
         lines.push(` ${bright(head[r])} ${neon(accent[r])}`);
     }
     lines.push('');
-    lines.push(`  ${dim(text.subtitle)}`);
+    lines.push(foot);
     return lines;
 }
 
