@@ -268,11 +268,11 @@ directory go to the platform opener — and on macOS that is Finder, which is th
 symptom this design is arranged to avoid.
 
 Before the window opens, the editor files from `init` — `.vscode/settings.json`
-and `.github/copilot-instructions.md` — are written into the directory being
-opened. An editor reads only the folder it was opened on, and a project may
-predate either file or the version of it this `zen` ships, so the moment it is
-about to be read is the moment to put the current one there. Both are named in
-the narration, and in `files` under `--json`. Edits to either do not survive.
+and the `.github/` tree — are written into the directory being opened. An editor
+reads only the folder it was opened on, and a project may predate either of them
+or the version of it this `zen` ships, so the moment it is about to be read is
+the moment to put the current one there. Every file is named in the narration,
+and in `files` under `--json`. Edits to them do not survive.
 
 The distinction that decides how it is spawned is whether the editor takes over
 this terminal. `$VISUAL` and `$EDITOR` name one that does by convention, so they

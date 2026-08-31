@@ -130,7 +130,7 @@ export const init: Command = {
     details: [
         'Writes INSTRUCTIONS.md, agents.yaml and agents/, then records the',
         'directory so `zen list` and `zen open` can find it by name. Editor files',
-        '(.vscode/settings.json, .github/copilot-instructions.md) are written',
+        '(.vscode/settings.json and the .github/ tree) are written',
         'alongside, replacing any already there.',
         '',
         'The default agent gets the file tools and a sandboxed shell, plus',

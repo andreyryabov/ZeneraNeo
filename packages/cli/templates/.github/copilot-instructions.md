@@ -1,14 +1,15 @@
 # Copilot instructions — agent projects
 
-> Written by `zen init` into `.github/copilot-instructions.md`. VS Code loads it
+> Written by `zen init` into `.github/copilot-instructions.md`, alongside the
+> prompt files and skills in the same tree (§2.4). VS Code loads it
 > automatically for every request in this folder, so it is the standing brief
 > for anyone — human or agent — editing this project.
 >
-> It describes the Zenera Neo runtime, not this particular project. Edit it
-> freely: add the conventions this project has, delete the sections it does not
-> use. The runtime's own reference is `docs/agents-yaml.md`, `docs/projects.md`
-> and `DESIGN.md` in the zenera-neo repository — where they disagree with this
-> file, they win.
+> It describes the Zenera Neo runtime, not this particular project, and `zen`
+> rewrites the whole tree on `init` and `open` — so put this project's own
+> conventions in `INSTRUCTIONS.md`, where they will survive. The runtime's own
+> reference is `docs/agents-yaml.md`, `docs/projects.md` and `DESIGN.md` in the
+> zenera-neo repository — where they disagree with this file, they win.
 
 ---
 
@@ -119,8 +120,10 @@ Two consequences that drive nearly every design rule in this document:
 
 ```
 my-project/
-├── .github/
-│   └── copilot-instructions.md   this file
+├── .github/                      the editor's brief — §2.4
+│   ├── copilot-instructions.md   this file
+│   ├── prompts/*.prompt.md       tasks you invoke by name
+│   └── skills/*/SKILL.md         reference the editor loads on demand
 ├── .env                          credentials — NEVER committed
 ├── INSTRUCTIONS.md               house rules, prepended to every agent
 ├── agents.yaml                   who exists, what they may reach for
@@ -187,6 +190,35 @@ Agent names, provider names and model alias keys must match:
 They reach the model as `transfer_to_<name>` and the file system as directory
 names, so: `intake`, `order-triage`, `house_style`. No spaces, no capitals, no
 dots.
+
+### 2.4 The two audiences
+
+There are two sets of instructions in this repository and they are not for the
+same reader. Keeping them apart is the single easiest thing to get wrong.
+
+| Tree                 | Read by                            | About                            |
+| -------------------- | ---------------------------------- | -------------------------------- |
+| `INSTRUCTIONS.md`, `agents/` | the **project's** agents, at run time | the domain this system works in  |
+| `.github/`           | the **editor's** assistant, while you edit | how a project of this kind is built |
+
+The `.github/` tree follows the same progressive-disclosure discipline the
+agents do, for the same reason — it is a prefix somebody pays for:
+
+- **`copilot-instructions.md`** is always on. Everything in it is loaded for
+  every request in this folder, so it holds only what is true of every task.
+- **`.github/skills/<name>/SKILL.md`** is reference the editor loads when its
+  `description` matches what you asked. Put long, occasional material here —
+  a command surface, a vendor's quirks, a format spec — not in the file above.
+  The `description` is the routing key; §3.4 applies to these as much as to the
+  project's own skills.
+- **`.github/prompts/<name>.prompt.md`** is a task you invoke by name (`/name`),
+  with `mode: agent` and a `description` in its frontmatter. Write one when a
+  job is done repeatedly and has a right order — adding an agent, adding a
+  skill, reviewing before a commit.
+
+`zen init` and `zen open` rewrite this whole tree from the version of `zen` in
+hand, so **edits inside `.github/` do not survive**. Project-specific conventions
+belong in `INSTRUCTIONS.md` and the agent prompts, which are never overwritten.
 
 ---
 
@@ -1531,7 +1563,9 @@ install` is an `image:` that was never set — §3.7.
 ## 12. Maintaining this file
 
 This file is loaded on every request in this repository, so it is subject to its
-own rules: stable, factual, no hedging.
+own rules: stable, factual, no hedging. Before adding a section, ask whether it
+is true of every task — if it is not, it is a skill under `.github/skills/`, or
+a prompt file under `.github/prompts/` if it is a procedure (§2.4).
 
 Update it when:
 
