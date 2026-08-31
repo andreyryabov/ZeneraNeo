@@ -1,10 +1,24 @@
 {
     "name": "zenera-rag",
-    "version": "1.0.8",
+    "version": "1.0.9",
     "description": "Retrieval over API descriptions: openapi/swagger documents as a searchable graph.",
+    "keywords": [
+        "agents",
+        "ai-agents",
+        "llm",
+        "openapi",
+        "rag",
+        "vector-search"
+    ],
     "license": "MIT",
     "author": "Andrey Ryabov",
-    "private": true,
+    "homepage": "https://github.com/andreyryabov/ZeneraNeo#readme",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/andreyryabov/ZeneraNeo.git",
+        "directory": "packages/rag"
+    },
+    "bugs": "https://github.com/andreyryabov/ZeneraNeo/issues",
     "type": "module",
     "exports": {
         ".": {
@@ -29,13 +43,14 @@
     },
     "scripts": {
         "build": "tsc -b",
-        "clean": "tsc -b --clean && rm -rf dist"
+        "clean": "tsc -b --clean && rm -rf dist",
+        "prepack": "tsc -b"
     },
     "dependencies": {
         "@apidevtools/swagger-parser": "^12.0.0",
         "@lancedb/lancedb": "^0.38.0",
         "graphology": "^0.26.0",
-        "zenera-cli": "^1.0.8",
-        "zenera-neo": "^1.0.8"
+        "zenera-cli": "^1.0.9",
+        "zenera-neo": "^1.0.9"
     }
 }

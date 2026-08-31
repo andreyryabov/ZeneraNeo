@@ -48,19 +48,15 @@ jobs:
             # excluded here rather than skipped, so a missing key is not a pass.
             - run: npx vitest run --exclude '**/live-*'
 
-            - name: Pack both packages (dry run)
-              run: npm pack --dry-run -w packages/neo -w packages/cli
+            - name: Pack every package (dry run)
+              run: npm pack --dry-run $(node scripts/release.mjs workspaces)
 
-            # Order matters: the CLI's `zenera-neo` dependency must resolve.
-            # No --provenance: npm rejects it (422) unless the source repository
-            # is public. Add it back to both steps if this repo is opened up.
-            - name: Publish zenera-neo
-              run: npm publish -w packages/neo --access public
-              env:
-                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-            - name: Publish zenera-cli
-              run: npm publish -w packages/cli --access public
+            # The workspace list is in dependency order, so a package is only
+            # published once the siblings it depends on are on npm. No
+            # --provenance: npm rejects it (422) unless the source repository is
+            # public. Add it back here if this repo is opened up.
+            - name: Publish to npm
+              run: npm publish --access public $(node scripts/release.mjs workspaces)
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 

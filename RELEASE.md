@@ -1,28 +1,37 @@
 # Releasing
 
-Two packages are published from this repository:
+Three packages are published from this repository:
 
-| package                      | what it is        | installed as          |
-| ---------------------------- | ----------------- | --------------------- |
-| [`zenera-neo`](packages/neo) | the library       | a dependency          |
-| [`zenera-cli`](packages/cli) | the `zen` command | `npm i -g zenera-cli` |
+| package                      | what it is                       | installed as          |
+| ---------------------------- | -------------------------------- | --------------------- |
+| [`zenera-neo`](packages/neo) | the library                      | a dependency          |
+| [`zenera-cli`](packages/cli) | the `zen` command                | `npm i -g zenera-cli` |
+| [`zenera-rag`](packages/rag) | the `zen rag` subcommand + tools | `npm i -g zenera-rag` |
 
-The repository root is `private: true` and is never published.
+The repository root is `private: true` and is never published. So is
+[`packages/faker`](packages/faker), which is a test fixture.
+
+Nothing lists those three by hand: [scripts/release.mjs](scripts/release.mjs) takes every
+directory under `packages/` whose `package.json` is not `private`, and sorts them so a
+package comes after the siblings it depends on. `node scripts/release.mjs workspaces`
+prints that list as `-w` flags, and the pack and publish commands use it. To publish a new
+package, drop `"private": true` from it.
 
 ## The strategy in one paragraph
 
 **Versions move in lockstep, a git tag is the release, and CI does the publishing.**
-`zenera-cli` depends on `zenera-neo` by range, so the two versions are always identical:
+The packages depend on each other by range, so their versions are always identical:
 one number, one tag, one release. `npm run release -- patch` writes the numbers and cuts
 the tag; pushing the tag starts the `Release` workflow, which re-runs every check, proves
-the tag matches the tree, and publishes the library first and the CLI second. Nothing
-reaches npm from a laptop.
+the tag matches the tree, and publishes the library first, then the CLI, then `zenera-rag`.
+Nothing reaches npm from a laptop.
 
 Two rules the tooling exists to enforce:
 
-- **Order.** `zenera-neo` is published before `zenera-cli`, or the CLI ships asking for a
-  library version that does not exist yet.
-- **The dependency range.** When the version moves, `zenera-cli`'s `"zenera-neo": "^x.y.z"`
+- **Order.** A package is published after everything it depends on: `zenera-neo`, then
+  `zenera-cli`, then `zenera-rag` (which depends on both). Out of order, a package ships
+  asking for a sibling version that does not exist yet.
+- **The dependency ranges.** When the version moves, every internal `"zenera-*": "^x.y.z"`
   must move with it. `npm version --workspaces` does _not_ do this — it bumps each
   workspace and leaves every dependent pointing at the old version. That is the whole
   reason [scripts/release.mjs](scripts/release.mjs) exists.
@@ -38,15 +47,16 @@ git push --follow-tags
 
 `npm run release -- patch`:
 
-1. refuses to run on a dirty tree, or if the two packages are already out of lockstep,
+1. refuses to run on a dirty tree, or if the packages are already out of lockstep,
    or if the tag already exists;
-2. writes the new version into both `package.json` files and rewrites the CLI's
-   `zenera-neo` range;
+2. writes the new version into every `package.json` and rewrites every internal
+   `zenera-*` range;
 3. refreshes `package-lock.json`;
 4. commits `release: vX.Y.Z` and annotates the tag `vX.Y.Z`.
 
 Add `--dry-run` to see the numbers it would write and have it put the files back.
-Add `--no-tag` to commit without tagging.
+**`--dry-run` restores the package manifests with `git checkout --`, so uncommitted edits
+to them are lost.** Add `--no-tag` to commit without tagging.
 
 Pushing the tag is what publishes. Until then nothing has left the machine.
 
@@ -55,31 +65,32 @@ Pushing the tag is what publishes. Until then nothing has left the machine.
 [.github/workflows/release.yml](.github/workflows/release.yml) runs on any `v*.*.*` tag
 (and on `workflow_dispatch` with a tag name, to re-run a failed release):
 
-1. `node scripts/release.mjs verify <tag>` — the tag must name the version in both
-   packages, and the CLI's range must match it. A mismatched tag fails here, before
-   anything is published.
+1. `node scripts/release.mjs verify <tag>` — the tag must name the version in every
+   package, and each internal `zenera-*` range must match it. A mismatched tag fails
+   here, before anything is published.
 2. `format:check`, `typecheck`, `vitest run --exclude '**/live-*'`.
    Live tests need real provider credentials and are excluded rather than skipped, so a
    missing key cannot pass as green.
-3. `npm pack --dry-run` for both packages.
-4. `npm publish -w packages/neo --access public`, then the same for `packages/cli`.
+3. `npm pack --dry-run` for every package.
+4. `npm publish --access public $(node scripts/release.mjs workspaces)` — one command,
+   the workspaces already in dependency order.
 5. `gh release create <tag> --generate-notes`.
 
 > **No `--provenance` while this repository is private.** npm verifies the signed provenance
 > bundle against the source repository and rejects it with
 > `422 … Unsupported GitHub Actions source repository visibility: "private"`. The publish gets
 > that far — the statement is already in the sigstore transparency log — and then fails, so
-> nothing lands on npm. Add `--provenance` back to both publish steps if the repository is
+> nothing lands on npm. Add `--provenance` back to the publish step if the repository is
 > ever made public.
 
-Both packages have a `prepack: tsc -b`, so a stale or missing `dist` cannot be published.
-Neither ships `src`, and the `.js.map` / `.d.ts.map` files are excluded with it — their
+Every package has a `prepack: tsc -b`, so a stale or missing `dist` cannot be published.
+None ships `src`, and the `.js.map` / `.d.ts.map` files are excluded with it — their
 `../src/*.ts` references would not resolve inside the tarball. Maps are still emitted into
 `dist` for local work; they are only kept out of the published files.
 
 ## Publishing by hand
 
-Only when CI cannot ([release:publish](package.json) is the same two commands):
+Only when CI cannot ([release:publish](package.json) is the same command):
 
 ```bash
 npm run release:check
@@ -87,7 +98,7 @@ npm run release:publish
 ```
 
 - A bare `npm publish` at the root fails — the root is private. Always name a workspace.
-- Keep the order: `packages/neo`, then `packages/cli`.
+- Publish in dependency order; `release.mjs workspaces` already emits it.
 - In the VS Code terminal sandbox `npm pack`/`npm publish` fail with `EPERM` on
   `~/.npm/_cacache/tmp`. Add `--cache "$TMPDIR/npm-cache"`, or run in a normal terminal.
 
@@ -97,9 +108,10 @@ npm packages are immutable — a published version is never replaced.
 
 - **The workflow failed before publishing:** fix, then re-run the workflow from the
   Actions tab with the same tag. Nothing was published, the tag is still good.
-- **`zenera-neo` published but `zenera-cli` failed:** re-run the workflow with the same
-  tag. The library publish will fail as already-published; instead publish just the CLI
-  (`npm publish -w packages/cli --access public`) or use a temporary workflow run.
+- **Some packages published and a later one failed:** re-run the workflow with the same
+  tag. The already-published ones will fail as already-published; instead publish just the
+  packages that are missing (`npm publish -w packages/rag --access public`) or use a
+  temporary workflow run.
 - **A broken version is live:** cut the next patch. `npm deprecate zenera-neo@x.y.z <reason>`
   steers people off it. Only reach for `npm unpublish` within 72 hours and when nothing
   depends on the version.
@@ -115,5 +127,5 @@ Never move a tag that CI has already consumed.
 - [ ] `npm run release:check` passes
 - [ ] `npm run release -- <bump>`
 - [ ] `git push --follow-tags`
-- [ ] the `Release` workflow is green and both versions appear on npmjs.com
+- [ ] the `Release` workflow is green and all three versions appear on npmjs.com
 - [ ] `npm i -g zenera-cli@latest && zn --version` from outside the repo

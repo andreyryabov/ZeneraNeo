@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Lockstep versioning for the two publishable packages.
+ * Lockstep versioning for the publishable packages.
  *
- * `zenera-cli` depends on `zenera-neo` by range, so the two versions are kept
+ * The packages depend on each other by range, so their versions are kept
  * identical and moved together: one number, one tag, one release. Note what is
  * *not* here — no changelog generation, no publishing. Publishing is CI's job
  * (see .github/workflows/release.yml); this script only writes the numbers and
@@ -14,18 +14,15 @@
  *
  *   node scripts/release.mjs patch|minor|major|<x.y.z> [--dry-run] [--no-tag]
  *   node scripts/release.mjs verify v1.2.3
+ *   node scripts/release.mjs workspaces        # -w flags, in publish order
  */
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-
-/** Publish order: the library first, the CLI that depends on it second. */
-const PACKAGES = ['packages/neo', 'packages/cli'];
-const LIBRARY = 'zenera-neo';
 
 const read = (dir) => JSON.parse(readFileSync(join(ROOT, dir, 'package.json'), 'utf8'));
 const write = (dir, json) =>
@@ -37,6 +34,36 @@ const die = (message) => {
     console.error(`release: ${message}`);
     process.exit(1);
 };
+
+/** Publish order: a package comes after every sibling it depends on. */
+function order(dirs) {
+    const byName = new Map(dirs.map((dir) => [read(dir).name, dir]));
+    const sorted = [];
+    const visit = (dir, trail) => {
+        if (sorted.includes(dir)) return;
+        if (trail.includes(dir)) die(`dependency cycle: ${[...trail, dir].join(' -> ')}`);
+        for (const dep of Object.keys(read(dir).dependencies ?? {})) {
+            if (byName.has(dep)) visit(byName.get(dep), [...trail, dir]);
+        }
+        sorted.push(dir);
+    };
+    for (const dir of dirs) visit(dir, []);
+    return sorted;
+}
+
+/** Everything under packages/ that is not `private` is published. */
+const PACKAGES = order(
+    readdirSync(join(ROOT, 'packages'), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => `packages/${entry.name}`)
+        .filter((dir) => existsSync(join(ROOT, dir, 'package.json')) && !read(dir).private),
+);
+
+/** The names that move in lockstep — a dependency on any of them is internal. */
+const INTERNAL = new Set(PACKAGES.map((dir) => read(dir).name));
+
+const internalDeps = (pkg) =>
+    Object.keys(pkg.dependencies ?? {}).filter((name) => INTERNAL.has(name));
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?$/;
 
@@ -73,9 +100,11 @@ function verify(tag) {
         if (pkg.version !== version) {
             die(`tag ${tag} does not match ${pkg.name}@${pkg.version}`);
         }
-        const range = pkg.dependencies?.[LIBRARY];
-        if (range && range !== `^${version}`) {
-            die(`${pkg.name} depends on ${LIBRARY}@${range}, expected ^${version}`);
+        for (const name of internalDeps(pkg)) {
+            const range = pkg.dependencies[name];
+            if (range !== `^${version}`) {
+                die(`${pkg.name} depends on ${name}@${range}, expected ^${version}`);
+            }
         }
     }
     console.log(`release: ${tag} matches ${PACKAGES.length} packages`);
@@ -94,8 +123,8 @@ function bump(spec, { dryRun, tag }) {
     for (const dir of PACKAGES) {
         const pkg = read(dir);
         pkg.version = to;
-        // Keep the CLI pinned to the library it was built against.
-        if (pkg.dependencies?.[LIBRARY]) pkg.dependencies[LIBRARY] = `^${to}`;
+        // Keep each package pinned to the siblings it was built against.
+        for (const name of internalDeps(pkg)) pkg.dependencies[name] = `^${to}`;
         write(dir, pkg);
         console.log(`release: ${pkg.name} ${from} -> ${to}`);
     }
@@ -116,12 +145,13 @@ function bump(spec, { dryRun, tag }) {
             '',
             `release: committed v${to}${tag ? ` and tagged it` : ''}.`,
             '  next:  git push --follow-tags',
-            '  then:  the Release workflow publishes both packages to npm',
+            '  then:  the Release workflow publishes every package to npm',
         ].join('\n'),
     );
 }
 
 const [command, ...rest] = process.argv.slice(2);
-if (!command) die('usage: release.mjs <major|minor|patch|x.y.z> | verify <tag>');
+if (!command) die('usage: release.mjs <major|minor|patch|x.y.z> | verify <tag> | workspaces');
 if (command === 'verify') verify(rest[0]);
+else if (command === 'workspaces') console.log(PACKAGES.map((dir) => `-w ${dir}`).join(' '));
 else bump(command, { dryRun: rest.includes('--dry-run'), tag: !rest.includes('--no-tag') });
