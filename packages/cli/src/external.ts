@@ -6,7 +6,7 @@ import { CliError, EXIT, bold } from './term.ts';
 // Loading a command out of a sibling package
 //
 // The specifier is built rather than written, and that is the whole mechanism:
-// a literal `import('zenera-faker/command')` would make the sibling a
+// a literal `import('@zenera/faker/command')` would make the sibling a
 // compile-time dependency of `zen` — a project reference, a package.json entry,
 // and a cycle, since the sibling already depends on `zen`. Built, it is
 // resolved by Node at the moment the user asks for it and by nobody before.

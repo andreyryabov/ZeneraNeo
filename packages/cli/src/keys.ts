@@ -1,6 +1,6 @@
 import { chmodSync, copyFileSync, existsSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { EXA_API_KEY_ENV } from 'zenera-neo';
+import { EXA_API_KEY_ENV } from '@zenera/core';
 import { assertPrivate, ensureDir, paths, readJson, writeJson } from './home.ts';
 import { CliError, EXIT, credentialError, usageError } from './term.ts';
 

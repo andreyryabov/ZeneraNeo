@@ -22,7 +22,7 @@ import {
     yellow,
     type Command,
     type Context,
-} from 'zenera-cli/lib';
+} from '@zenera/cli/lib';
 import { GENERATORS } from './box.ts';
 import { reason } from './generate.ts';
 import { listen } from './server.ts';

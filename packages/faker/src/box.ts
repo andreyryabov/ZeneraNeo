@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { SANDBOX_MOUNT, SandboxPool, runProcess, type Runner, type Sandbox } from 'zenera-neo';
+import { SANDBOX_MOUNT, SandboxPool, runProcess, type Runner, type Sandbox } from '@zenera/core';
 
 // ---------------------------------------------------------------------------
 // Where generators run

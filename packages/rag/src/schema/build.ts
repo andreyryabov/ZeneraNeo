@@ -1,4 +1,4 @@
-import type { Embedder } from 'zenera-neo';
+import type { Embedder } from '@zenera/core';
 import { toEntities, type EntityRecord } from './entities.ts';
 import {
     INDEX_VERSION,

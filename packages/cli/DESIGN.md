@@ -5,7 +5,7 @@ Scope: `packages/cli`
 
 ## 1. What it is
 
-A shell over `zenera-neo`. The library owns agents, models and runs; the CLI
+A shell over `@zenera/core`. The library owns agents, models and runs; the CLI
 owns arguments, terminal output and exit codes, and nothing else. Every command
 is a thin translation of flags into a library call.
 
@@ -125,9 +125,9 @@ two.
 
 And, when the package providing it is installed:
 
-| Command | Package        | Does                                         |
-| ------- | -------------- | -------------------------------------------- |
-| `faker` | `zenera-faker` | A mock API from an openapi/swagger document. |
+| Command | Package         | Does                                         |
+| ------- | --------------- | -------------------------------------------- |
+| `faker` | `@zenera/faker` | A mock API from an openapi/swagger document. |
 
 Global flags: `-h/--help`, `-v/--version`, `--json`, `-C <dir>`.
 
@@ -139,7 +139,7 @@ point, and a flag says that better than a command does.
 
 ### 4.1 Commands from another package
 
-A sibling package — `zenera-faker`, and whatever follows it — adds a command to
+A sibling package — `@zenera/faker`, and whatever follows it — adds a command to
 `zen` instead of installing a binary of its own. One thing to install, one
 keyring, one name to remember, and the alternative was a family of programs
 that share their whole vocabulary and differ only in what they do with it.
@@ -157,7 +157,7 @@ nothing either way. Nothing on the path of `zen list` may import a sibling —
 `zen` starts fast because it depends on almost nothing, and one static import of
 a mock server would end that. `src/external.ts` builds the specifier rather than
 writing it, which is also what keeps the dependency acyclic: the sibling depends
-on `zenera-cli`, never the reverse, so `zen` cannot name it at compile time.
+on `@zenera/cli`, never the reverse, so `zen` cannot name it at compile time.
 Asking for _one_ command's help does load that package, because that request
 already named it.
 
@@ -485,12 +485,12 @@ How it becomes available:
 
 | Situation          | What the user runs                                                               |
 | ------------------ | -------------------------------------------------------------------------------- |
-| Global install     | `npm i -g zenera-cli` → `zen` on `PATH`                                          |
-| Without installing | `npx zenera-cli …`                                                               |
+| Global install     | `npm i -g @zenera/cli` → `zen` on `PATH`                                         |
+| Without installing | `npx @zenera/cli …`                                                              |
 | Project dependency | `npx zen …`, or `zen` inside an npm script                                       |
 | This repo          | `npm install` at the root links `node_modules/.bin/zen` at the workspace symlink |
 
-The package is published as `zenera-cli`; `npm pack --dry-run -w packages/cli`
+The package is published as `@zenera/cli`; `npm pack --dry-run -w packages/cli`
 shows the exact tarball before it leaves the machine. For working on the CLI
 itself, the workspace link below beats reinstalling.
 
@@ -500,17 +500,17 @@ itself, the workspace link below beats reinstalling.
 symlink — not a copy — in the global prefix:
 
 ```
-<prefix>/lib/node_modules/zenera-cli  ->  packages/cli
-<prefix>/bin/zen                       ->  ../lib/node_modules/zenera-cli/dist/main.js
+<prefix>/lib/node_modules/@zenera/cli  ->  packages/cli
+<prefix>/bin/zen                       ->  ../lib/node_modules/@zenera/cli/dist/main.js
 ```
 
-So `zen` picks up every rebuild with no reinstall, and `zenera-neo` resolves
+So `zen` picks up every rebuild with no reinstall, and `@zenera/core` resolves
 through the workspace: Node takes the realpath of the shim's target before
 walking up for `node_modules`, so the lookup starts inside the repo and finds
 the workspace symlink — the published library is never fetched.
 
 `npm i -g ./packages/cli` is the wrong tool here — it copies the directory out of
-the workspace, so `zenera-neo` comes from the registry and your local edits to
+the workspace, so `@zenera/core` comes from the registry and your local edits to
 the library are invisible.
 
 `npm run cli:unlink` removes it.

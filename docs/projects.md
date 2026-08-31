@@ -36,8 +36,8 @@ The config file is found by looking for these names, in order:
 ## Loading
 
 ```ts
-import { loadProject } from 'zenera-neo';
-import { tool } from 'zenera-neo';
+import { loadProject } from '@zenera/core';
+import { tool } from '@zenera/core';
 
 const project = await loadProject('./my-project', {
     tools: [policyLookup, fileClaim],

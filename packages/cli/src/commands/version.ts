@@ -19,7 +19,7 @@ export const cliManifest = new URL('../../package.json', import.meta.url);
  */
 function libraryManifest(): URL {
     const resolve = createRequire(import.meta.url).resolve;
-    return new URL(`file://${resolve('zenera-neo/package.json')}`);
+    return new URL(`file://${resolve('@zenera/core/package.json')}`);
 }
 
 export const version: Command = {
@@ -28,7 +28,7 @@ export const version: Command = {
     run: async (ctx) => {
         const versions = {
             cli: await versionOf(cliManifest),
-            'zenera-neo': await versionOf(libraryManifest()),
+            '@zenera/core': await versionOf(libraryManifest()),
             node: process.versions.node,
         };
         if (ctx.json) {

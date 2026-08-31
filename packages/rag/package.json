@@ -1,5 +1,5 @@
 {
-    "name": "zenera-rag",
+    "name": "@zenera/rag",
     "version": "1.0.13",
     "description": "Retrieval over API descriptions: openapi/swagger documents as a searchable graph.",
     "keywords": [
@@ -11,6 +11,9 @@
         "vector-search"
     ],
     "license": "MIT",
+    "publishConfig": {
+        "access": "public"
+    },
     "author": "Andrey Ryabov",
     "homepage": "https://github.com/andreyryabov/ZeneraNeo#readme",
     "repository": {
@@ -50,7 +53,7 @@
         "@apidevtools/swagger-parser": "^12.0.0",
         "@lancedb/lancedb": "^0.38.0",
         "graphology": "^0.26.0",
-        "zenera-cli": "^1.0.13",
-        "zenera-neo": "^1.0.13"
+        "@zenera/cli": "^1.0.13",
+        "@zenera/core": "^1.0.13"
     }
 }

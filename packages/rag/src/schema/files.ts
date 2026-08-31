@@ -1,7 +1,7 @@
 import { MultiDirectedGraph } from 'graphology';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { CliError, EXIT } from 'zenera-cli/lib';
+import { CliError, EXIT } from '@zenera/cli/lib';
 import type { ApiGraph, EdgeAttrs, NodeAttrs } from './graph.ts';
 import type { Schema } from './schema.ts';
 import type { Operation } from './spec.ts';

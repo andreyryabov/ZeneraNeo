@@ -15,7 +15,7 @@ const NAME = invokedAs('zen');
 const spell = (usage: string): string => (NAME === 'zen' ? usage : usage.replace(/^zen\b/, NAME));
 
 // ---------------------------------------------------------------------------
-// zen — the command line over `zenera-neo`
+// zen — the command line over `@zenera/core`
 //
 // A shell, deliberately. Argument parsing, help, version and exit codes are
 // settled here so that adding a command is a matter of writing one function and

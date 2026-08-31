@@ -1,4 +1,4 @@
-import { isCheckpoint, type AgentEvent, type TokenUsage } from 'zenera-neo';
+import { isCheckpoint, type AgentEvent, type TokenUsage } from '@zenera/core';
 import { cyan, dim, green, note, red, yellow } from './term.ts';
 
 // ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createModel, runProcess } from 'zenera-neo';
+import { createModel, runProcess } from '@zenera/core';
 import { Box } from '../src/box.ts';
 import { Cache } from '../src/cache.ts';
 import { ensureImage } from '../src/image.ts';
