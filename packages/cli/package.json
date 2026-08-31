@@ -1,6 +1,6 @@
 {
     "name": "@zenera/cli",
-    "version": "1.0.13",
+    "version": "1.1.0",
     "description": "Command-line front end for @zenera/neo: agentic projects you can run, share and commit.",
     "keywords": [
         "agents",
@@ -51,7 +51,7 @@
         "@inkjs/ui": "^2.0.0",
         "ink": "^7.1.1",
         "react": "^19.2.8",
-        "@zenera/neo": "^1.0.13"
+        "@zenera/neo": "^1.1.0"
     },
     "peerDependencies": {
         "@anthropic-ai/sdk": "^0.120.0",
