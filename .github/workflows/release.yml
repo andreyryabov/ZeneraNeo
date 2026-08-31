@@ -15,6 +15,12 @@ on:
 permissions:
     contents: read
 
+# Two tags pushed together published concurrently and the registry answered
+# `409 Failed to save packument`. Releases run one at a time; never cancel one.
+concurrency:
+    group: release
+    cancel-in-progress: false
+
 jobs:
     publish:
         runs-on: ubuntu-latest
@@ -51,12 +57,21 @@ jobs:
             - name: Pack every package (dry run)
               run: npm pack --dry-run $(node scripts/release.mjs workspaces)
 
-            # The workspace list is in dependency order, so a package is only
-            # published once the siblings it depends on are on npm. No
-            # --provenance: npm rejects it (422) unless the source repository is
-            # public. Add it back here if this repo is opened up.
+            # One workspace at a time, in dependency order, skipping whatever the
+            # registry already has — re-running after a partial failure has to be
+            # able to finish. No --provenance: npm rejects it (422) unless the
+            # source repository is public. Add it back here if this repo is opened up.
             - name: Publish to npm
-              run: npm publish --access public $(node scripts/release.mjs workspaces)
+              run: |
+                  for dir in $(node scripts/release.mjs workspaces --paths); do
+                      name=$(node -p "require('./$dir/package.json').name")
+                      version=$(node -p "require('./$dir/package.json').version")
+                      if npm view "$name@$version" version > /dev/null 2>&1; then
+                          echo "already published: $name@$version"
+                      else
+                          npm publish -w "$dir" --access public
+                      fi
+                  done
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 

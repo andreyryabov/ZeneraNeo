@@ -14,7 +14,7 @@
  *
  *   node scripts/release.mjs patch|minor|major|<x.y.z> [--dry-run] [--no-tag]
  *   node scripts/release.mjs verify v1.2.3
- *   node scripts/release.mjs workspaces        # -w flags, in publish order
+ *   node scripts/release.mjs workspaces [--paths]   # publish order, -w flags or dirs
  */
 
 import { execFileSync } from 'node:child_process';
@@ -153,5 +153,7 @@ function bump(spec, { dryRun, tag }) {
 const [command, ...rest] = process.argv.slice(2);
 if (!command) die('usage: release.mjs <major|minor|patch|x.y.z> | verify <tag> | workspaces');
 if (command === 'verify') verify(rest[0]);
-else if (command === 'workspaces') console.log(PACKAGES.map((dir) => `-w ${dir}`).join(' '));
-else bump(command, { dryRun: rest.includes('--dry-run'), tag: !rest.includes('--no-tag') });
+else if (command === 'workspaces') {
+    const paths = rest.includes('--paths');
+    console.log(paths ? PACKAGES.join('\n') : PACKAGES.map((dir) => `-w ${dir}`).join(' '));
+} else bump(command, { dryRun: rest.includes('--dry-run'), tag: !rest.includes('--no-tag') });
