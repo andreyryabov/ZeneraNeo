@@ -20,19 +20,19 @@ On a terminal with no prompt it opens the TUI; with a prompt, or without a tty,
 it answers once on stdout. The first word is the project when it names one, and
 the first word of the prompt when it does not — `--project` settles it.
 
-| Flag                   | What it does                                                |
-| ---------------------- | ------------------------------------------------------------ |
-| `--project <name\|dir>` | Which project. Inferred from the directory                  |
-| `--session <id>`       | Continue a particular session                                |
-| `--new`                | Start a fresh one                                            |
-| `--workspace <dir>`    | What the agent may read and write                            |
-| `--model <ref>`        | Override the default model for this run                      |
-| `--image <ref>`        | Override the container commands run in                       |
-| `--read-only`          | Withhold every tool that can write                           |
-| `--quiet`              | The answer only; no narration                                |
-| `--plain`              | One shot, even on a terminal                                 |
-| `--out <file>`         | Write the answer to a file as well as stdout                 |
-| `--yes`                | Accept the questions it would otherwise ask                  |
+| Flag                    | What it does                                 |
+| ----------------------- | -------------------------------------------- |
+| `--project <name\|dir>` | Which project. Inferred from the directory   |
+| `--session <id>`        | Continue a particular session                |
+| `--new`                 | Start a fresh one                            |
+| `--workspace <dir>`     | What the agent may read and write            |
+| `--model <ref>`         | Override the default model for this run      |
+| `--image <ref>`         | Override the container commands run in       |
+| `--read-only`           | Withhold every tool that can write           |
+| `--quiet`               | The answer only; no narration                |
+| `--plain`               | One shot, even on a terminal                 |
+| `--out <file>`          | Write the answer to a file as well as stdout |
+| `--yes`                 | Accept the questions it would otherwise ask  |
 
 Flags always win over the file: the repository states intent, the invocation
 overrides it. There is no `resume` — a session continues itself, because its

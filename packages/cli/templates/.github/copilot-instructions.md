@@ -196,10 +196,10 @@ dots.
 There are two sets of instructions in this repository and they are not for the
 same reader. Keeping them apart is the single easiest thing to get wrong.
 
-| Tree                 | Read by                            | About                            |
-| -------------------- | ---------------------------------- | -------------------------------- |
-| `INSTRUCTIONS.md`, `agents/` | the **project's** agents, at run time | the domain this system works in  |
-| `.github/`           | the **editor's** assistant, while you edit | how a project of this kind is built |
+| Tree                         | Read by                                    | About                               |
+| ---------------------------- | ------------------------------------------ | ----------------------------------- |
+| `INSTRUCTIONS.md`, `agents/` | the **project's** agents, at run time      | the domain this system works in     |
+| `.github/`                   | the **editor's** assistant, while you edit | how a project of this kind is built |
 
 The `.github/` tree follows the same progressive-disclosure discipline the
 agents do, for the same reason — it is a prefix somebody pays for:
