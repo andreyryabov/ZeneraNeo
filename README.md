@@ -21,6 +21,24 @@ same everywhere, and it never carries your keys with it.
 
 ---
 
+## Quickstart
+
+Four commands, from nothing to an answer:
+
+```sh
+npm i -g zenera-cli openai   # the CLI, plus one vendor SDK
+zen key add openai           # prompts with the echo off; stored in ~/.zenera
+zen init my-project          # scaffolds a project and registers it
+cd my-project && zen run "introduce yourself"
+```
+
+`zen run` with a prompt is one shot: stdout is the answer, so it pipes. `zen
+run` with nothing to say opens a TUI instead.
+
+The rest of this page is the same thing, slowly.
+
+---
+
 ## 1 · Install
 
 Node.js 24+. Install the CLI together with at least one vendor SDK — they are
@@ -48,6 +66,10 @@ npm i && npm run cli:link       # builds both packages, puts `zen` on your PATH
 visible to the CLI.
 
 </details>
+
+Extra capabilities are separate packages that add **subcommands** to `zen`
+rather than binaries of their own — see
+[commands from other packages](#commands-from-other-packages).
 
 ## 2 · Add a credential
 
@@ -201,6 +223,64 @@ every tool call, every token.
 
 ---
 
+## A worked example
+
+A two-agent system that reads a repository and writes a note about it. Nothing
+below is generated — it is the whole system, in three files.
+
+```sh
+zen init repo-notes && cd repo-notes
+```
+
+`agents.yaml` — who exists, and what each may reach for:
+
+```yaml
+default: reader
+model: openai:gpt-5.4-mini
+
+agents:
+    - name: reader
+      description: Reads the workspace and summarises what is in it.
+      system: agents/prompts/reader.md
+      tools: [workspace:read_file, workspace:list_dir, workspace:find_files]
+      handoffs: [writer]
+
+    - name: writer
+      description: Turns a summary into a file on disk.
+      system: agents/prompts/writer.md
+      tools: [workspace:*]
+```
+
+`agents/prompts/reader.md`:
+
+```markdown
+You explore a codebase and describe it plainly: what it is, how it is laid out,
+how it is built and tested. Read before you conclude. When you have a picture,
+hand off to `writer`.
+```
+
+`agents/prompts/writer.md`:
+
+```markdown
+You write the summary you were handed to `NOTES.md`, in Markdown, under 40
+lines. Then say where you put it and stop.
+```
+
+Check it, then point it at a real directory:
+
+```sh
+zen check                                  # every file it names, validated
+cd ~/code/some-repo
+zen run repo-notes "summarise this repo"   # this directory is the workspace
+zen inspect --project repo-notes --open    # what it actually did
+```
+
+The workspace is the directory you are standing in, so the second command is a
+complete instruction: no configuration, no paths, nothing to remember. Add
+`--read-only` and the writer's file tools are simply not there.
+
+---
+
 ## The CLI
 
 | Command   | Does                                                                     |
@@ -223,6 +303,45 @@ one command.
 
 `stdout` is the answer, `stderr` is the narration, and `--json` is on every
 command — so `zen run … | jq` is a supported way to use it, not an accident.
+
+### Commands from other packages
+
+A capability that is not for everybody ships as its own package and **adds a
+subcommand to `zen`** rather than a second binary — one thing on your path, one
+keyring, one name to remember. `zen --help` lists them whether or not they are
+installed, and tells you what to run if not; nothing is imported until you type
+the command, so an uninstalled one costs nothing and an installed one costs
+nothing until it is used.
+
+| Command | Package        | Does                                           |
+| ------- | -------------- | ---------------------------------------------- |
+| `faker` | `zenera-faker` | A mock API from an openapi/swagger document.   |
+| `rag`   | `zenera-rag`   | Search an openapi/swagger document as a graph. |
+
+**`zen faker`** — serve a specification as a working mock. The first time a
+route is called, a model writes a Python generator for it, which is tested
+against the response schema in a container and then cached; every later request
+is just that file, no tokens.
+
+```sh
+npm i -g zenera-faker
+zen faker serve api/openapi.yaml --port 8787
+curl -s localhost:8787/users/12324
+# { "user_id": 12324, "email": "brooke.hoffman@example.org", … }
+```
+
+**`zen rag`** — index an API description as a graph plus vectors, then ask it
+for the connected piece that answers a question: the field, the schema it is
+on, and the operation that returns it.
+
+```sh
+npm i -g zenera-rag
+zen rag schema index --embedding openai:text-embedding-3-small ./specs/*.yaml
+zen rag schema search --output-property "user billing history" --format ts
+```
+
+Details: [packages/faker/README.md](packages/faker/README.md) ·
+[packages/rag/README.md](packages/rag/README.md).
 
 ### Concepts
 
@@ -272,18 +391,10 @@ Full specification: [packages/cli/DESIGN.md](packages/cli/DESIGN.md).
 
 ## The library underneath
 
-The CLI is a shell over `zenera-neo`, and the library is usable on its own —
-when you want the runtime inside your own application rather than on a terminal.
-
-```sh
-npm i zenera-neo openai
-npm i zenera-neo @anthropic-ai/sdk
-npm i zenera-neo @google/genai
-```
-
-Runtime dependencies are `yaml` and `zod` and nothing else; the vendor SDKs are
-**optional peer dependencies**, not loaded until a client for that vendor is
-first built, so an OpenAI-only application never pays for the others.
+The CLI is a shell over `zenera-neo` — agents, models, tools, skills, memory and
+an append-only trajectory, with OpenAI, Anthropic, Google/Vertex and OpenRouter
+behind one interface. Use it directly when you want the runtime inside your own
+application rather than on a terminal.
 
 ```ts
 import { loadProject } from 'zenera-neo';
@@ -295,35 +406,21 @@ for await (const ev of project.run('Water damage, policy NM-448127.')) {
 }
 ```
 
-What it gives you:
-
-- **Agents** — an instruction, a model, tools, skills, plus handoffs and fork.
-  There is no hidden orchestration layer.
-- **Models** — OpenAI, Anthropic, Google/Vertex and OpenRouter behind one
-  interface, each through its own SDK, plus any OpenAI-compatible endpoint.
-  Named providers and model aliases resolve from config or from the host.
-- **Tools** — plain typed functions, selectable per agent by name, group or
-  wildcard. Workspace file tools and a Podman sandbox ship with the library.
-- **Skills** — instruction bundles discovered and loaded on demand instead of
-  permanently occupying the prompt, optionally owning their own tools.
-- **Memory** — pluggable `MemoryStore`s, with scopes deciding what is private to
-  an agent and what is shared.
-- **Trajectory** — an append-only log of everything that happened. Provider
-  messages are a projection of it, and compaction _covers_ nodes rather than
-  deleting them, so the audit trail survives context pressure.
-- **Inspection** — `renderReportHtml` turns any run into one self-contained HTML
-  file: the graph, every request, every token.
-
-Reference: [DESIGN.md](DESIGN.md), [docs/projects.md](docs/projects.md),
-[docs/agents-yaml.md](docs/agents-yaml.md), and `examples/` for eight worked
-demos, from a single agent to a project loaded entirely from a folder.
+The library has its own README:
+[packages/neo/README.md](packages/neo/README.md).
 
 ## Packages
 
-| Directory      | Published as | What it is                                                      |
-| -------------- | ------------ | --------------------------------------------------------------- |
-| `packages/cli` | `zenera-cli` | `zen`, the command line: projects, sessions, credentials, a TUI |
-| `packages/neo` | `zenera-neo` | the library — agents, models, tools, skills, memory, trajectory |
+| Directory        | Published as   | What it is                                                      |
+| ---------------- | -------------- | --------------------------------------------------------------- |
+| `packages/cli`   | `zenera-cli`   | `zen`, the command line: projects, sessions, credentials, a TUI |
+| `packages/neo`   | `zenera-neo`   | the library — agents, models, tools, skills, memory, trajectory |
+| `packages/faker` | `zenera-faker` | `zen faker` — a mock API from an openapi/swagger document       |
+| `packages/rag`   | `zenera-rag`   | `zen rag` — an API description as a searchable graph            |
+
+Each has its own README: [cli](packages/cli/README.md) ·
+[neo](packages/neo/README.md) · [faker](packages/faker/README.md) ·
+[rag](packages/rag/README.md).
 
 ---
 

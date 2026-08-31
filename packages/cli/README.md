@@ -38,13 +38,23 @@ npx zenera-cli --help
 
 ## Quickstart
 
+Four commands, from nothing to an answer:
+
 ```sh
-zen key add openai < key.txt    # credentials, never in the project
-zen init my-project             # scaffolds the project + a brief for your coding agent
-cd my-project
-zen run                         # a TUI on a terminal, one shot when piped
+npm i -g zenera-cli openai   # the CLI, plus one vendor SDK
+zen key add openai           # prompts with the echo off; stored in ~/.zenera
+zen init my-project          # scaffolds a project and registers it
+cd my-project && zen run "introduce yourself"
+```
+
+Then the rest of the loop:
+
+```sh
+zen run                         # nothing to say yet — a TUI on a terminal
 zen check                       # validate the project and every file it names
 zen inspect                     # open the last run's report.html
+zen list --sessions             # every project, its sessions and last run
+echo "triage this" | zen run --quiet | jq
 ```
 
 Or ask a question from wherever you are and get an answer back:
@@ -61,6 +71,58 @@ are standing in as the workspace, writable. `--session`, `--workspace` and
 Then open the folder in your editor and tell your coding agent what the system
 should do. It writes the agents; `zen run` runs them; `zen inspect` shows you
 every request, tool call and token it spent.
+
+## A worked example
+
+A two-agent system that reads a repository and writes a note about it — the
+whole thing, in three files.
+
+```sh
+zen init repo-notes && cd repo-notes
+```
+
+`agents.yaml` — who exists, and what each may reach for:
+
+```yaml
+default: reader
+model: openai:gpt-5.4-mini
+
+agents:
+    - name: reader
+      description: Reads the workspace and summarises what is in it.
+      system: agents/prompts/reader.md
+      tools: [workspace:read_file, workspace:list_dir, workspace:find_files]
+      handoffs: [writer]
+
+    - name: writer
+      description: Turns a summary into a file on disk.
+      system: agents/prompts/writer.md
+      tools: [workspace:*]
+```
+
+`agents/prompts/reader.md`:
+
+```markdown
+You explore a codebase and describe it plainly: what it is, how it is laid out,
+how it is built and tested. Read before you conclude. When you have a picture,
+hand off to `writer`.
+```
+
+`agents/prompts/writer.md`:
+
+```markdown
+You write the summary you were handed to `NOTES.md`, in Markdown, under 40
+lines. Then say where you put it and stop.
+```
+
+Check it, then point it at a real directory:
+
+```sh
+zen check                                  # every file it names, validated
+cd ~/code/some-repo
+zen run repo-notes "summarise this repo"   # this directory is the workspace
+zen inspect --project repo-notes --open    # what it actually did
+```
 
 ## The idea
 
@@ -102,12 +164,31 @@ you are not expected to hand-author `agents.yaml`.
 | `version` | CLI, library and Node versions.                                          |
 
 Commands can also come from a package installed alongside this one, so a new
-capability is a subcommand rather than a new binary to remember. `zen --help`
-lists them whether or not they are installed, and says what to run if not.
+capability is a subcommand rather than a new binary to remember — one thing on
+your path, one keyring, one name. `zen --help` lists them whether or not they
+are installed and says what to run if not; nothing is imported until you type
+the command, so an uninstalled one costs nothing and an installed one costs
+nothing until it is used.
 
-| Command | Package        | Does                                         |
-| ------- | -------------- | -------------------------------------------- |
-| `faker` | `zenera-faker` | A mock API from an openapi/swagger document. |
+| Command | Package        | Does                                           |
+| ------- | -------------- | ---------------------------------------------- |
+| `faker` | `zenera-faker` | A mock API from an openapi/swagger document.   |
+| `rag`   | `zenera-rag`   | Search an openapi/swagger document as a graph. |
+
+```sh
+npm i -g zenera-faker
+zen faker serve api/openapi.yaml --port 8787   # a working mock, bodies written by a model
+
+npm i -g zenera-rag
+zen rag schema index --embedding openai:text-embedding-3-small ./specs/*.yaml
+zen rag schema search --output-property "user billing history" --format ts
+```
+
+They use this keyring and these credentials, so there is nothing new to
+configure. Details:
+[zenera-faker](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md)
+·
+[zenera-rag](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md).
 
 Global flags: `-h/--help`, `-v/--version`, `--json`, `-C <dir>`. Exit codes: `0`
 ok, `1` the run failed, `2` bad invocation, `3` invalid project, `4` no usable
@@ -139,7 +220,8 @@ The binary is installed under three names: `zen`, `zn` and `zenera`.
 This is a shell over
 [`zenera-neo`](https://www.npmjs.com/package/zenera-neo) — agents, models,
 tools, skills, memory and an append-only trajectory. Use it directly when you
-want the runtime inside your own application rather than on a terminal.
+want the runtime inside your own application rather than on a terminal:
+[its README](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md).
 
 ## Documentation
 

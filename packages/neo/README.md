@@ -27,6 +27,59 @@ npm i zenera-neo @openrouter/sdk
 
 ## Use
 
+There are two ways in, and they meet in the middle: declare the agents in code,
+or load them from a folder.
+
+### In code
+
+An agent is an instruction, a model, some tools, and who it may hand work to.
+That is the whole list — there is no orchestration layer underneath.
+
+```ts
+import { AgentRunner, createModel, tool } from 'zenera-neo';
+
+const getWeather = tool<{ city: string }>({
+    name: 'get_weather',
+    description: 'Current weather for a city.',
+    parameters: {
+        type: 'object',
+        properties: { city: { type: 'string' } },
+        required: ['city'],
+        additionalProperties: false,
+    },
+    execute: ({ city }) => ({ city, tempC: 21, sky: 'clear' }),
+});
+
+const runner = new AgentRunner({ model: createModel('openai:gpt-5.4-mini') });
+
+const planner = runner.agent({
+    name: 'planner',
+    description: 'Turns a request into a concrete day-by-day plan.',
+    instructions: 'Answer with a plan. Check the weather before you commit to a day.',
+    tools: [getWeather],
+});
+
+const result = await runner.run(planner, 'Two days in Rome, outdoors where possible.');
+console.log(result.output);
+```
+
+`run()` returns a handle: `await` it for the answer, or iterate it for the
+stream — token deltas plus a checkpoint for every model call, tool call,
+handoff, fork and join.
+
+```ts
+for await (const ev of runner.run(planner, 'Two days in Rome.')) {
+    if (ev.type === 'text_delta') process.stdout.write(ev.delta);
+}
+```
+
+A second agent and a handoff is one more `runner.agent({ … })` plus
+`handoffs: [planner]` on the first. Skills, memory scopes and payload stores are
+declared once on the runner and referenced by id from each agent allowed to use
+them.
+
+### From a folder
+
 An agentic project is a folder — prompts, agent wiring, skills and tool
 selections are Markdown and YAML files, not code buried inside an application.
 Load one and run it:
@@ -73,8 +126,9 @@ of surfacing three turns into a run as a confused model.
 
 - **Agents** — an instruction, a model, tools, skills, plus handoffs and fork.
   There is no hidden orchestration layer.
-- **Models** — OpenAI, Anthropic and Google/Vertex behind one interface, with
-  named providers and model aliases resolved from config or from the host.
+- **Models** — OpenAI, Anthropic, Google/Vertex and OpenRouter behind one
+  interface, each through its own SDK, plus any OpenAI-compatible endpoint.
+  Named providers and model aliases resolve from config or from the host.
 - **Tools** — plain typed functions, selectable per agent by name, group or
   wildcard. Workspace file tools and a Podman sandbox ship with the library.
 - **Skills** — instruction bundles discovered and loaded on demand instead of
@@ -107,7 +161,16 @@ of surfacing three turns into a run as a confused model.
 eight worked demos, from a single agent to a project loaded entirely from a
 folder.
 
-There is also `zen`, a command line over this runtime, in the same repository.
+## The rest of the family
+
+| Package                                                                                        | What it is                                                    |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| [`zenera-cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` — this runtime on the command line, with a TUI          |
+| [`zenera-faker`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` — a mock API from an openapi/swagger document     |
+| [`zenera-rag`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md)     | `zen rag` — an API description as a searchable graph, + tools |
+
+`zenera-rag` also exports tools you can hand straight to `loadProject`, so an
+agent can search an API it has never read.
 
 ## License
 
