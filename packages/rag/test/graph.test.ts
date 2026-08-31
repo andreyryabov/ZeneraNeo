@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { buildGraph, methodId, paramId, propertyId, typeId } from '../src/schema/graph.ts';
 import { loadSpecs } from '../src/schema/spec.ts';
+import { stitch } from '../src/schema/subgraph.ts';
 import { Printer } from '../src/schema/typescript.ts';
 
 // ---------------------------------------------------------------------------
@@ -162,6 +163,53 @@ describe('the graph', () => {
         expect(
             graph.getNodeAttribute(propertyId('PublicUserProfile', 'address'), 'signature'),
         ).toBe('Address');
+    });
+});
+
+describe('stitching a subgraph', () => {
+    const { graph } = built;
+    const one = (id: string, maxNodes?: number) =>
+        stitch(graph, [{ id, term: id, field: 'test', score: 1 }], { maxNodes })[0]!;
+    const ids = (sub: { nodes: { id: string }[] }) => sub.nodes.map((n) => n.id);
+
+    it('walks containment backwards until it finds the call that carries the hit', () => {
+        // `postcode` is on `Address`, which no operation mentions: it is reached
+        // through `PublicUserProfile.address`, and that is the whole point.
+        const sub = one(propertyId('Address', 'postcode'));
+        expect(ids(sub)).toEqual(
+            expect.arrayContaining([
+                typeId('Address'),
+                propertyId('PublicUserProfile', 'address'),
+                typeId('PublicUserProfile'),
+                methodId('getUser'),
+            ]),
+        );
+    });
+
+    it('keeps only the field that links, not the rest of the type it passes through', () => {
+        const sub = one(propertyId('Address', 'postcode'));
+        expect(ids(sub)).not.toContain(propertyId('PublicUserProfile', 'email'));
+        expect(ids(sub)).not.toContain(propertyId('PublicUserProfile', 'settings'));
+        // The type the hit actually sits on does come with its siblings.
+        expect(ids(sub)).toContain(propertyId('Address', 'city'));
+    });
+
+    it('climbs a COMPOSES edge the same way', () => {
+        const sub = one(typeId('Timestamps'));
+        expect(ids(sub)).toEqual(
+            expect.arrayContaining([typeId('PublicUserProfile'), methodId('getUser')]),
+        );
+    });
+
+    it('terminates on a type that contains itself', () => {
+        expect(ids(one(propertyId('PublicUserProfile', 'manager')))).toContain(methodId('getUser'));
+    });
+
+    it('spends a tight budget on the route to the call, not on sibling fields', () => {
+        const sub = one(propertyId('Address', 'postcode'), 5);
+        expect(sub.truncated).toBe(true);
+        expect(ids(sub)).toContain(methodId('getUser'));
+        expect(ids(sub)).not.toContain(propertyId('Address', 'city'));
     });
 });
 

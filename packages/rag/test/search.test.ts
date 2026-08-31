@@ -185,6 +185,17 @@ describe('rendering', () => {
         expect(diagram.startsWith('classDiagram')).toBe(true);
         expect(diagram).toMatch(/class \w+ \{/);
         expect(diagram).not.toMatch(/class \S*[/{}]/);
+        // Colours belong to whatever renders the diagram, not to the diagram.
+        expect(diagram).not.toContain('style ');
+    });
+
+    it('joins a class to the type of its field, which is a line inside the class', async () => {
+        const { subgraphs } = await search({ properties: ['postcode'] });
+        const diagram = toMermaid(find(subgraphs, 'Property:petstore.Address.postcode')!, {});
+
+        expect(diagram).toContain('PublicUserProfile --> petstore_Address : address');
+        // The name is what is being looked for; the type answers it.
+        expect(diagram).toContain('-postcode : string');
     });
 });
 

@@ -148,12 +148,9 @@ export function toMermaid(sub: Subgraph, options: RenderOptions = {}): string {
         lines.push(`    class ${view.id(type.id)} {`);
         for (const property of fields) {
             const a = property.attributes;
-            lines.push(`        ${a.required ? '+' : '-'}${safe(a.signature)} ${safe(a.name)}`);
+            lines.push(`        ${a.required ? '+' : '-'}${safe(a.name)} : ${safe(a.signature)}`);
         }
         lines.push('    }');
-        if (type.hit) {
-            lines.push(`    style ${view.id(type.id)} fill:#1d2432,stroke:#5b7fff`);
-        }
     }
 
     for (const method of view.of('method')) {
@@ -163,8 +160,21 @@ export function toMermaid(sub: Subgraph, options: RenderOptions = {}): string {
     }
 
     for (const edge of sub.edges) {
+        if (!view.node(edge.source) || !view.node(edge.target)) {
+            continue;
+        }
+        // A field is a line inside a class, not a class of its own, so the type
+        // it is of has to be joined from whatever holds the field.
+        if (edge.relation === 'OF_TYPE') {
+            const owner = view.owner(edge.source);
+            if (owner) {
+                const label = safe(view.name(edge.source));
+                lines.push(`    ${view.id(owner)} --> ${view.id(edge.target)} : ${label}`);
+            }
+            continue;
+        }
         const arrow = ARROWS[edge.relation];
-        if (!arrow || !view.node(edge.source) || !view.node(edge.target)) {
+        if (!arrow) {
             continue;
         }
         const label = edge.relation === 'RETURNS_OUTPUT' ? `returns ${edge.status}` : arrow.label;
@@ -201,10 +211,7 @@ export function toFlowchart(sub: Subgraph, options: RenderOptions = {}): string 
                   ? `${a.name}: ${a.signature || 'unknown'}`
                   : a.name;
         const [open, close] = node.kind === 'method' ? ['([', '])'] : ['[', ']'];
-        lines.push(`    ${id}${open}"${safe(label)}"${close}`);
-        if (node.hit) {
-            lines.push(`    style ${id} fill:#1d2432,stroke:#5b7fff,color:#e6ecff`);
-        }
+        lines.push(`    ${id}${open}"${safe(node.hit ? `${HIT} ${label}` : label)}"${close}`);
     }
 
     for (const edge of sub.edges) {
@@ -233,6 +240,7 @@ class View {
     readonly owned = new Set<string>();
     readonly #nodes = new Map<string, SubgraphNode>();
     readonly #out = new Map<string, SubgraphEdge[]>();
+    readonly #owner = new Map<string, string>();
     readonly #ids = new Map<string, string>();
 
     constructor(sub: Subgraph) {
@@ -248,6 +256,7 @@ class View {
             }
             if (edge.relation === 'HAS_PROPERTY' || edge.relation === 'HAS_PARAM') {
                 this.owned.add(edge.target);
+                this.#owner.set(edge.target, edge.source);
             }
         }
         const taken = new Set<string>();
@@ -267,6 +276,11 @@ class View {
 
     name(id: string): string {
         return this.#nodes.get(id)?.attributes.name ?? id;
+    }
+
+    /** The type or method a property hangs off, for renderers that draw it inline. */
+    owner(id: string): string | undefined {
+        return this.#owner.get(id);
     }
 
     id(id: string): string {
