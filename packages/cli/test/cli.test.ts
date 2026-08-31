@@ -75,6 +75,10 @@ describe('commands in another package', () => {
         expect(hasExternal(EXTERNAL.faker)).toBe(true);
     });
 
+    it('finds the rag package, which this workspace also has', () => {
+        expect(hasExternal(EXTERNAL.rag)).toBe(true);
+    });
+
     it('routes mock to the faker', () => {
         expect(ALIASES.mock).toBe('faker');
         expect(COMMANDS[ALIASES.mock]).toBeUndefined();
@@ -89,7 +93,10 @@ describe('commands in another package', () => {
         const dist = join(import.meta.dirname, '..', 'dist');
         const sources = readdirSync(dist, { recursive: true }) as string[];
         for (const file of sources.filter((f) => f.endsWith('.js'))) {
-            expect(readFileSync(join(dist, file), 'utf8')).not.toContain("from 'zenera-faker");
+            const text = readFileSync(join(dist, file), 'utf8');
+            for (const ext of Object.values(EXTERNAL)) {
+                expect(text).not.toContain(`from '${ext.package}`);
+            }
         }
     });
 });

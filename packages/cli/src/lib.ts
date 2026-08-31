@@ -46,7 +46,7 @@ export {
     type KeyOwner,
     type Liveness,
     type Provider,
-    type Service
+    type Service,
 } from './keys.ts';
 export { probe, probeAll } from './liveness.ts';
 export {
@@ -56,7 +56,7 @@ export {
     removeContainers,
     type OwnedContainer,
     type PodmanOptions,
-    type PodmanStatus
+    type PodmanStatus,
 } from './podman.ts';
 export {
     ago,
@@ -81,6 +81,5 @@ export {
     write,
     writeAll,
     yellow,
-    type ExitCode
+    type ExitCode,
 } from './term.ts';
-
