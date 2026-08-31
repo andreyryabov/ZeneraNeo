@@ -1,4 +1,4 @@
-import { readProjectConfig } from '@zenera/core';
+import { readProjectConfig } from '@zenera/neo';
 import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { ensurePodmanReady, ownedContainers, podmanStatus, removeContainers } from '../podman.ts';

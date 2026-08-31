@@ -10,7 +10,7 @@ import {
     PayloadResolver,
     renderReportHtml,
     type AgentState,
-} from '@zenera/core';
+} from '@zenera/neo';
 import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { project as resolveProject } from '../resolve.ts';

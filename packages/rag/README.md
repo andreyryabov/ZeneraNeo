@@ -79,7 +79,7 @@ mermaid-flowchart | ts | openapi`. `zen help rag` prints the full table.
 ## From an agent
 
 ```ts
-import { createEmbedder, loadProject } from '@zenera/core';
+import { createEmbedder, loadProject } from '@zenera/neo';
 import { SchemaIndex, schemaTools } from '@zenera/rag';
 
 const index = await SchemaIndex.open(
@@ -136,7 +136,7 @@ different one is refused rather than answered with noise.
 | Package                                                                                         | What it is                                              |
 | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
 | [`@zenera/cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` — agent projects on the command line              |
-| [`@zenera/core`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md)    | the runtime — agents, models, tools, skills, memory     |
+| [`@zenera/neo`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md)     | the runtime — agents, models, tools, skills, memory     |
 | [`@zenera/faker`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` — a mock API from the same kind of document |
 
 ## License

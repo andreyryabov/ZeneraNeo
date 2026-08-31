@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SANDBOX_MOUNT, type Model, type ProcResult, type Runner } from '@zenera/core';
+import { SANDBOX_MOUNT, type Model, type ProcResult, type Runner } from '@zenera/neo';
 import { Box } from '../src/box.ts';
 import { Cache } from '../src/cache.ts';
 import { Router } from '../src/router.ts';

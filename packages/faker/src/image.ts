@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { DEFAULT_SANDBOX_IMAGE, runProcess, type Runner } from '@zenera/core';
+import { DEFAULT_SANDBOX_IMAGE, runProcess, type Runner } from '@zenera/neo';
 
 // ---------------------------------------------------------------------------
 // The image
@@ -11,7 +11,7 @@ import { DEFAULT_SANDBOX_IMAGE, runProcess, type Runner } from '@zenera/core';
 // the container gets real libraries.
 //
 // They cannot be installed into the *running* box. `containerName()` in
-// @zenera/core hashes the image and the network, so "start online, install, then
+// @zenera/neo hashes the image and the network, so "start online, install, then
 // switch to `network: none`" resolves to two different containers and the
 // install goes with the first one. Baking them into an image instead is one
 // build, cached by podman's own layers, and leaves the serving container

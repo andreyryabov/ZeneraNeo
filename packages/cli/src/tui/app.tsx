@@ -2,7 +2,7 @@ import { TextInput } from '@inkjs/ui';
 import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
 import { pathToFileURL } from 'node:url';
 import React, { useCallback, useContext, useRef, useState } from 'react';
-import { isCheckpoint, turns, zeroUsage, type AgentEvent, type TokenUsage } from '@zenera/core';
+import { isCheckpoint, turns, zeroUsage, type AgentEvent, type TokenUsage } from '@zenera/neo';
 import * as Engine from '../engine.ts';
 import { format } from '../narrate.ts';
 import { display } from '../session.ts';

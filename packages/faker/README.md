@@ -95,11 +95,11 @@ Environment variables still win over the keyring, exactly as they do for `zen`.
 
 ## The rest of the family
 
-| Package                                                                                      | What it is                                           |
-| -------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| [`@zenera/cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)  | `zen` — agent projects on the command line           |
-| [`@zenera/core`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md) | the runtime — agents, models, tools, skills, memory  |
-| [`@zenera/rag`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md)  | `zen rag` — an API description as a searchable graph |
+| Package                                                                                     | What it is                                           |
+| ------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| [`@zenera/cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md) | `zen` — agent projects on the command line           |
+| [`@zenera/neo`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md) | the runtime — agents, models, tools, skills, memory  |
+| [`@zenera/rag`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md) | `zen rag` — an API description as a searchable graph |
 
 ## License
 

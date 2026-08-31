@@ -16,7 +16,7 @@ import {
     type ModelRef,
     type ProjectConfig,
     type SkillSummary,
-} from '@zenera/core';
+} from '@zenera/neo';
 import { auditModels, credentialFor, type DeclaredRole, type ModelIssue } from './audit.ts';
 import { SHAPES, type KeyStore, type Service } from './keys.ts';
 

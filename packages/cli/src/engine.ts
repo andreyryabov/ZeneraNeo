@@ -21,7 +21,7 @@ import {
     type AgentState,
     type Input,
     type RunResult,
-} from '@zenera/core';
+} from '@zenera/neo';
 import { auditModels, describeIssue } from './audit.ts';
 import { readJson, writeJson } from './home.ts';
 import { KeyStore, assertUsable } from './keys.ts';

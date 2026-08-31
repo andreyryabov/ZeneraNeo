@@ -11,7 +11,7 @@ import {
     SHAPES,
     type Provider,
 } from '@zenera/cli/lib';
-import { createModel, type Model } from '@zenera/core';
+import { createModel, type Model } from '@zenera/neo';
 import { Box } from './box.ts';
 import { Cache, type CacheOptions } from './cache.ts';
 import { ensureImage } from './image.ts';

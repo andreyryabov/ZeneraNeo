@@ -5,7 +5,7 @@ Scope: `packages/cli`
 
 ## 1. What it is
 
-A shell over `@zenera/core`. The library owns agents, models and runs; the CLI
+A shell over `@zenera/neo`. The library owns agents, models and runs; the CLI
 owns arguments, terminal output and exit codes, and nothing else. Every command
 is a thin translation of flags into a library call.
 
@@ -504,13 +504,13 @@ symlink — not a copy — in the global prefix:
 <prefix>/bin/zen                       ->  ../lib/node_modules/@zenera/cli/dist/main.js
 ```
 
-So `zen` picks up every rebuild with no reinstall, and `@zenera/core` resolves
+So `zen` picks up every rebuild with no reinstall, and `@zenera/neo` resolves
 through the workspace: Node takes the realpath of the shim's target before
 walking up for `node_modules`, so the lookup starts inside the repo and finds
 the workspace symlink — the published library is never fetched.
 
 `npm i -g ./packages/cli` is the wrong tool here — it copies the directory out of
-the workspace, so `@zenera/core` comes from the registry and your local edits to
+the workspace, so `@zenera/neo` comes from the registry and your local edits to
 the library are invisible.
 
 `npm run cli:unlink` removes it.

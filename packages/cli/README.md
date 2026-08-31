@@ -218,7 +218,7 @@ The binary is installed under three names: `zen`, `zn` and `zenera`.
 ## The library underneath
 
 This is a shell over
-[`@zenera/core`](https://www.npmjs.com/package/@zenera/core) — agents, models,
+[`@zenera/neo`](https://www.npmjs.com/package/@zenera/neo) — agents, models,
 tools, skills, memory and an append-only trajectory. Use it directly when you
 want the runtime inside your own application rather than on a terminal:
 [its README](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md).

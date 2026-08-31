@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
-import type { ProcResult, runProcess } from '@zenera/core';
+import type { ProcResult, runProcess } from '@zenera/neo';
 import { extract, split } from '../src/args.ts';
 import { auditModels } from '../src/audit.ts';
 import { ALIASES, COMMANDS, EXTERNAL, type External } from '../src/commands/index.ts';

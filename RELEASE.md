@@ -4,7 +4,7 @@ Four packages are published from this repository:
 
 | package                           | what it is                       | installed as             |
 | --------------------------------- | -------------------------------- | ------------------------ |
-| [`@zenera/core`](packages/neo)    | the library                      | a dependency             |
+| [`@zenera/neo`](packages/neo)     | the library                      | a dependency             |
 | [`@zenera/cli`](packages/cli)     | the `zen` command                | `npm i -g @zenera/cli`   |
 | [`@zenera/faker`](packages/faker) | the `zen faker` subcommand       | `npm i -g @zenera/faker` |
 | [`@zenera/rag`](packages/rag)     | the `zen rag` subcommand + tools | `npm i -g @zenera/rag`   |
@@ -29,7 +29,7 @@ Nothing reaches npm from a laptop.
 
 Two rules the tooling exists to enforce:
 
-- **Order.** A package is published after everything it depends on: `@zenera/core`, then
+- **Order.** A package is published after everything it depends on: `@zenera/neo`, then
   `@zenera/cli`, then the subcommand packages that depend on both. Out of order, a package
   ships asking for a sibling version that does not exist yet.
 - **The dependency ranges.** When the version moves, every internal `"@zenera/*": "^x.y.z"`
@@ -128,7 +128,7 @@ npm packages are immutable — a published version is never replaced.
   tag. The publish step skips what is already on the registry and publishes the rest.
   Dispatch it from `main` (the workflow file comes from the dispatch ref, the tree from
   the tag) so any fix to the workflow itself is the one that runs.
-- **A broken version is live:** cut the next patch. `npm deprecate @zenera/core@x.y.z <reason>`
+- **A broken version is live:** cut the next patch. `npm deprecate @zenera/neo@x.y.z <reason>`
   steers people off it. Only reach for `npm unpublish` within 72 hours and when nothing
   depends on the version.
 

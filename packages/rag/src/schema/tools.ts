@@ -1,4 +1,4 @@
-import { tool, type AnyTool } from '@zenera/core';
+import { tool, type AnyTool } from '@zenera/neo';
 import { FORMATS, isFormat, present, type Format } from '../present.ts';
 import { isEmpty, parseQuery, QueryError } from '../query.ts';
 import { toTypeScript } from './hydrate.ts';

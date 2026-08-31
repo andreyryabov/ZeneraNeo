@@ -391,13 +391,13 @@ Full specification: [packages/cli/DESIGN.md](packages/cli/DESIGN.md).
 
 ## The library underneath
 
-The CLI is a shell over `@zenera/core` — agents, models, tools, skills, memory and
+The CLI is a shell over `@zenera/neo` — agents, models, tools, skills, memory and
 an append-only trajectory, with OpenAI, Anthropic, Google/Vertex and OpenRouter
 behind one interface. Use it directly when you want the runtime inside your own
 application rather than on a terminal.
 
 ```ts
-import { loadProject } from '@zenera/core';
+import { loadProject } from '@zenera/neo';
 
 const project = await loadProject('./my-project', { tools: [lookupPolicy] });
 
@@ -414,7 +414,7 @@ The library has its own README:
 | Directory        | Published as    | What it is                                                      |
 | ---------------- | --------------- | --------------------------------------------------------------- |
 | `packages/cli`   | `@zenera/cli`   | `zen`, the command line: projects, sessions, credentials, a TUI |
-| `packages/neo`   | `@zenera/core`  | the library — agents, models, tools, skills, memory, trajectory |
+| `packages/neo`   | `@zenera/neo`   | the library — agents, models, tools, skills, memory, trajectory |
 | `packages/faker` | `@zenera/faker` | `zen faker` — a mock API from an openapi/swagger document       |
 | `packages/rag`   | `@zenera/rag`   | `zen rag` — an API description as a searchable graph            |
 

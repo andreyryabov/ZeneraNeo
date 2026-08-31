@@ -9,7 +9,7 @@ import {
     type SandboxConfig,
     type SandboxMount,
     type SandboxSpec,
-} from '@zenera/core';
+} from '@zenera/neo';
 import { ensurePodmanReady } from './podman.ts';
 import type { SessionPaths } from './session.ts';
 import { warn } from './term.ts';

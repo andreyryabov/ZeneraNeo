@@ -1,4 +1,4 @@
-import type { Embedder, EmbeddingRequest, EmbeddingResponse } from '@zenera/core';
+import type { Embedder, EmbeddingRequest, EmbeddingResponse } from '@zenera/neo';
 
 // ---------------------------------------------------------------------------
 // An embedder with no network behind it

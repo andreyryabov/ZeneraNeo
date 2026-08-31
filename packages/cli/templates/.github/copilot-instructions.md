@@ -9,7 +9,7 @@
 > rewrites the whole tree on `init` and `open` — so put this project's own
 > conventions in `INSTRUCTIONS.md`, where they will survive. The runtime's own
 > reference is `docs/agents-yaml.md`, `docs/projects.md` and `DESIGN.md` in the
-> @zenera/core repository — where they disagree with this file, they win.
+> @zenera/neo repository — where they disagree with this file, they win.
 
 ---
 

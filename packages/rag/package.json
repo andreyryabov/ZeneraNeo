@@ -54,6 +54,6 @@
         "@lancedb/lancedb": "^0.38.0",
         "graphology": "^0.26.0",
         "@zenera/cli": "^1.0.13",
-        "@zenera/core": "^1.0.13"
+        "@zenera/neo": "^1.0.13"
     }
 }

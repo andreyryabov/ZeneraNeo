@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
-import type { AnyTool, ToolContext } from '@zenera/core';
+import type { AnyTool, ToolContext } from '@zenera/neo';
 import { buildIndex } from '../src/schema/build.ts';
 import { SchemaIndex } from '../src/schema/search.ts';
 import { schemaTools } from '../src/schema/tools.ts';

@@ -1,5 +1,5 @@
 import { platform } from 'node:os';
-import { runProcess, SandboxError, type ProcResult } from '@zenera/core';
+import { runProcess, SandboxError, type ProcResult } from '@zenera/neo';
 import { CliError, confirm, dim, EXIT, isInteractive, note } from './term.ts';
 
 // ---------------------------------------------------------------------------

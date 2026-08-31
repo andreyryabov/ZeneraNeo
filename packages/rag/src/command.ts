@@ -20,7 +20,7 @@ import {
     type Context,
     type Provider,
 } from '@zenera/cli/lib';
-import { createEmbedder, type Embedder, type EmbeddingRef } from '@zenera/core';
+import { createEmbedder, type Embedder, type EmbeddingRef } from '@zenera/neo';
 import { isFormat, present, type Format } from './present.ts';
 import { isEmpty, parseQuery, QueryError } from './query.ts';
 import { repl } from './repl.ts';
