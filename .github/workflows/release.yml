@@ -61,9 +61,11 @@ jobs:
             # registry already has — re-running after a partial failure has to be
             # able to finish. No --provenance: npm rejects it (422) unless the
             # source repository is public. Add it back here if this repo is opened up.
+            # `tr | grep` because re-running an OLD tag checks out that tag's
+            # release.mjs, which may predate --paths and print `-w <dir>` pairs.
             - name: Publish to npm
               run: |
-                  for dir in $(node scripts/release.mjs workspaces --paths); do
+                  for dir in $(node scripts/release.mjs workspaces --paths | tr ' ' '\n' | grep '^packages/'); do
                       name=$(node -p "require('./$dir/package.json').name")
                       version=$(node -p "require('./$dir/package.json').version")
                       if npm view "$name@$version" version > /dev/null 2>&1; then
