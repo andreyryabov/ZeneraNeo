@@ -15,7 +15,8 @@ Nothing lists those four by hand: [scripts/release.mjs](scripts/release.mjs) tak
 directory under `packages/` whose `package.json` is not `private`, and sorts them so a
 package comes after the siblings it depends on. `node scripts/release.mjs workspaces`
 prints that list as `-w` flags (`--paths` for bare directories), and the pack and publish
-commands use it. To publish a new package, drop `"private": true` from it.
+commands use it. To publish a new package, drop `"private": true` from it — and publish its
+first version by hand, because CI's credential does not exist until the package does.
 
 ## The strategy in one paragraph
 
@@ -83,12 +84,17 @@ Pushing the tag is what publishes. Until then nothing has left the machine.
    failed release finishes it instead of dying on the first already-published package.
 5. `gh release create <tag> --generate-notes`.
 
-> **No `--provenance` while this repository is private.** npm verifies the signed provenance
-> bundle against the source repository and rejects it with
-> `422 … Unsupported GitHub Actions source repository visibility: "private"`. The publish gets
-> that far — the statement is already in the sigstore transparency log — and then fails, so
-> nothing lands on npm. Add `--provenance` back to the publish step if the repository is
-> ever made public.
+> **CI has no npm token.** `NPM_TOKEN` is unset; the workflow authenticates with npm
+> **trusted publishing** (OIDC, `id-token: write` + npm >= 11.5.1), which also signs a
+> provenance statement automatically — the repository is public, so npm accepts it.
+>
+> **A package npm has never seen has no trusted publisher, so its first version cannot be
+> published by CI.** The run fails with `npm error code ENEEDAUTH … You need to authorize
+this machine using npm login`, exactly where the new package's turn comes up. Publish
+> that first version by hand (below), then add the trusted publisher on npmjs.com —
+> _package → Settings → Trusted Publisher → GitHub Actions_, repository
+> `andreyryabov/ZeneraNeo`, workflow `release.yml`, environment `npm` — and every later
+> release goes through CI like the rest.
 
 Every package has a `prepack: tsc -b`, so a stale or missing `dist` cannot be published.
 None ships `src`, and the `.js.map` / `.d.ts.map` files are excluded with it — their
@@ -97,15 +103,18 @@ None ships `src`, and the `.js.map` / `.d.ts.map` files are excluded with it —
 
 ## Publishing by hand
 
-Only when CI cannot ([release:publish](package.json) is the same command):
+When CI cannot ([release:publish](package.json) is the same command), and to bootstrap a
+brand-new package:
 
 ```bash
+npm login                                    # once per machine; 2FA prompts for an OTP
 npm run release:check
-npm run release:publish
+npm run release:publish                      # or: npm publish -w packages/<new> --access public
 ```
 
 - A bare `npm publish` at the root fails — the root is private. Always name a workspace.
 - Publish in dependency order; `release.mjs workspaces` already emits it.
+- The version must be the one the tag names, or the tree is no longer in lockstep.
 - In the VS Code terminal sandbox `npm pack`/`npm publish` fail with `EPERM` on
   `~/.npm/_cacache/tmp`. Add `--cache "$TMPDIR/npm-cache"`, or run in a normal terminal.
 
