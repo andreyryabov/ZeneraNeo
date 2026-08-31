@@ -1,0 +1,58 @@
+{
+    "swagger": "2.0",
+    "info": { "title": "Billing", "version": "0.9" },
+    "basePath": "/v1",
+    "paths": {
+        "/invoices": {
+            "parameters": [
+                { "name": "X-Tenant", "in": "header", "type": "string", "required": true }
+            ],
+            "get": {
+                "operationId": "listInvoices",
+                "summary": "Invoices for the tenant.",
+                "parameters": [{ "name": "cursor", "in": "query", "type": "string" }],
+                "responses": {
+                    "200": {
+                        "description": "A page of invoices.",
+                        "schema": { "type": "array", "items": { "$ref": "#/definitions/Invoice" } }
+                    }
+                }
+            },
+            "post": {
+                "operationId": "createInvoice",
+                "parameters": [
+                    {
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": { "$ref": "#/definitions/Invoice" }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": { "$ref": "#/definitions/Invoice" }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "Invoice": {
+            "description": "A bill sent to a tenant.",
+            "type": "object",
+            "required": ["id", "total"],
+            "properties": {
+                "id": { "type": "string" },
+                "total": { "type": "number", "minimum": 0, "exclusiveMinimum": true },
+                "note": { "type": "string", "x-nullable": true },
+                "paidAt": { "type": "string", "format": "date-time" }
+            }
+        },
+        "Address": {
+            "description": "A billing address, unrelated to the petstore one.",
+            "type": "object",
+            "properties": { "line1": { "type": "string" } }
+        }
+    }
+}
