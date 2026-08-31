@@ -1,4 +1,4 @@
-import { realpathSync, type Stats } from 'node:fs';
+import { realpathSync, statSync, type Stats } from 'node:fs';
 import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { tool, type AnyTool } from '../types.ts';
@@ -31,6 +31,27 @@ const MAX_SCAN = 1024 * 1024;
 /** ...and one listing only spends this much on line counting in total. */
 const LIST_SCAN_BUDGET = 8 * 1024 * 1024;
 
+/** Where a project's `assets/` directory appears in the agent's namespace. */
+export const ASSETS_MOUNT = '/assets';
+
+/** ...and where its skill catalog does, so a skill's scripts can be run. */
+export const SKILLS_MOUNT = '/skills';
+
+/**
+ * A second tree the agent can reach, under a name of its own. Structurally the
+ * same as a `SandboxMount` on purpose: one directory is one mount, and the host
+ * hands the identical array to the file tools and to the container so that both
+ * call it by the same name.
+ */
+export interface WorkspaceMount {
+    /** absolute host path; must already exist */
+    host: string;
+    /** absolute path the agent names it by, e.g. `/assets` */
+    at: string;
+    /** defaults to true — an extra tree is reference material unless said otherwise */
+    readOnly?: boolean;
+}
+
 export interface WorkspaceOptions {
     root: string;
     /** refuse every mutating tool; `zen run --read-only` */
@@ -43,73 +64,135 @@ export interface WorkspaceOptions {
      * it and both spellings reach the same file.
      */
     mount?: string;
+    /** further trees, each under its own name; read-only unless one says otherwise */
+    mounts?: readonly WorkspaceMount[];
+}
+
+/** One directory the agent can reach, the name it reaches it by, and what it may do there. */
+interface Root {
+    path: string;
+    at?: string;
+    readOnly: boolean;
 }
 
 export class Workspace {
     readonly root: string;
     readonly readOnly: boolean;
     readonly mount: string | undefined;
+    /** the extra trees, resolved — the primary root is not among them */
+    readonly mounts: readonly Required<WorkspaceMount>[];
+
+    /** primary first */
+    readonly #roots: Root[];
+    /** the ones with a name, longest name first */
+    readonly #named: (Root & { at: string })[];
+    /** every root, deepest host path first, for attributing a resolved path to one */
+    readonly #deep: Root[];
 
     constructor(opts: WorkspaceOptions) {
         // Resolve the root's own symlinks once, so a workspace that *is* a
         // symlink does not fail every containment check against itself.
         this.root = realpathSync(resolve(opts.root));
         this.readOnly = opts.readOnly ?? false;
-        // A trailing slash — or a mount of `/`, which would make everything on
-        // the machine look like it was inside — is not a mount point.
-        const mount = opts.mount?.replace(/\/+$/, '');
-        this.mount = mount ? mount : undefined;
+        this.mount = mountPoint(opts.mount);
+
+        const roots: Root[] = [{ path: this.root, at: this.mount, readOnly: this.readOnly }];
+        const mounts: Required<WorkspaceMount>[] = [];
+        for (const m of opts.mounts ?? []) {
+            const at = mountPoint(m.at);
+            if (at === undefined) {
+                throw new Error(`a workspace mount needs an absolute name of its own: ${m.at}`);
+            }
+            // Overlapping names would make one path mean two directories, and
+            // which one won would depend on the order they were passed in.
+            for (const taken of roots) {
+                if (taken.at && (at === taken.at || under(at, taken.at) || under(taken.at, at))) {
+                    throw new Error(`workspace mounts overlap: ${at} and ${taken.at}`);
+                }
+            }
+            const host = directory(m.host, at);
+            const readOnly = m.readOnly ?? true;
+            roots.push({ path: host, at, readOnly });
+            mounts.push({ host, at, readOnly });
+        }
+
+        this.mounts = mounts;
+        this.#roots = roots;
+        this.#named = roots
+            .filter((r): r is Root & { at: string } => r.at !== undefined)
+            .sort((a, b) => b.at.length - a.at.length);
+        // A mount may sit inside the workspace root; the deeper one owns the path.
+        this.#deep = [...roots].sort((a, b) => b.path.length - a.path.length);
     }
 
     /**
-     * The one gate. Returns an absolute path inside the workspace, or throws.
+     * The one gate. Returns an absolute path inside one of the roots, or throws.
      *
      * A path that does not exist yet cannot be realpath'd, so the nearest
      * existing ancestor is resolved instead and the remainder appended — which
      * is exactly what a create needs and closes the same hole a create opens.
      */
-    within(input: string): string {
+    within(input: string, opts: { write?: boolean } = {}): string {
         if (typeof input !== 'string' || input.length === 0) {
             throw new Error('path is required');
         }
         if (input.includes('\0')) {
             throw new Error('path contains a null byte');
         }
-        // A lone `/` is the model's other name for "the top of what I can see".
-        // There is nothing above the root for it to mean, so it means the root
-        // — refusing it teaches nothing and costs a turn. This is the only
-        // absolute path treated as rooted: `/etc/passwd` still names the
-        // machine's file and still fails containment below.
-        const wanted = resolve(this.root, /^[\\/]+$/.test(input) ? '.' : this.#unmount(input));
-        const real = this.#realish(wanted);
-        if (real !== this.root && !real.startsWith(this.root + sep)) {
+        const { root, rest } = this.#locate(input);
+        const real = this.#realish(resolve(root.path, rest));
+        if (real !== root.path && !real.startsWith(root.path + sep)) {
             throw new Error(`outside the workspace: ${input}`);
+        }
+        if (opts.write && root.readOnly) {
+            throw new Error(
+                root.path === this.root
+                    ? 'the workspace is read-only for this run'
+                    : `${root.at} is read-only`,
+            );
         }
         return real;
     }
 
     /**
-     * `/workspace/src/a.ts` and `src/a.ts` are one file under two names, and
-     * only the second resolves against the root, so the mounted spelling is
-     * rewritten before anything else looks at it.
+     * Which tree a path names, and where in it. `/workspace/src/a.ts` and
+     * `src/a.ts` are one file under two names, and only the second resolves
+     * against the root, so the mounted spelling is rewritten before anything
+     * else looks at it.
      *
-     * This is renaming, not permission. What comes out is still relative, still
-     * resolved, still symlink-followed and still checked against the root
-     * above: `/workspace/../etc/passwd` loses its prefix and then fails
-     * containment exactly as `../etc/passwd` does.
+     * This is renaming, not permission. What comes out is still resolved, still
+     * symlink-followed and still checked against its root by the caller:
+     * `/workspace/../etc/passwd` loses its prefix and then fails containment
+     * exactly as `../etc/passwd` does.
      */
-    #unmount(input: string): string {
-        if (this.mount === undefined) {
-            return input;
+    #locate(input: string): { root: Root; rest: string } {
+        const primary = this.#roots[0];
+        // A lone `/` is the model's other name for "the top of what I can see".
+        // There is nothing above the root for it to mean, so it means the root
+        // — refusing it teaches nothing and costs a turn. This is the only
+        // absolute path treated as rooted: `/etc/passwd` still names the
+        // machine's file and still fails containment.
+        if (/^[\\/]+$/.test(input)) {
+            return { root: primary, rest: '.' };
         }
         const at = input.replace(/\\/g, '/');
-        if (at === this.mount) {
-            return '.';
+        for (const root of this.#named) {
+            if (at === root.at) {
+                return { root, rest: '.' };
+            }
+            if (at.startsWith(root.at + '/')) {
+                return { root, rest: at.slice(root.at.length + 1).replace(/^\/+/, '') || '.' };
+            }
         }
-        if (!at.startsWith(this.mount + '/')) {
-            return input;
-        }
-        return at.slice(this.mount.length).replace(/^\/+/, '') || '.';
+        return { root: primary, rest: input };
+    }
+
+    /** The root a resolved path belongs to; the primary when nothing else claims it. */
+    #owner(path: string): Root {
+        return (
+            this.#deep.find((r) => path === r.path || path.startsWith(r.path + sep)) ??
+            this.#roots[0]
+        );
     }
 
     #realish(path: string): string {
@@ -134,9 +217,9 @@ export class Workspace {
         }
     }
 
-    /** Where a path sits under the root, in posix form. `.` is the root. */
+    /** Where a path sits under its own root, in posix form. `.` is that root. */
     rel(path: string): string {
-        return relative(this.root, path).split(sep).join('/') || '.';
+        return relative(this.#owner(path).path, path).split(sep).join('/') || '.';
     }
 
     /**
@@ -150,11 +233,17 @@ export class Workspace {
      * is exact. Without one, everything stays relative as before.
      */
     show(path: string): string {
-        const rel = this.rel(path);
-        if (this.mount === undefined) {
+        const root = this.#owner(path);
+        const rel = relative(root.path, path).split(sep).join('/') || '.';
+        if (root.at === undefined) {
             return rel;
         }
-        return rel === '.' ? this.mount : `${this.mount}/${rel}`;
+        return rel === '.' ? root.at : `${root.at}/${rel}`;
+    }
+
+    /** Whether a resolved path *is* one of the roots. Nothing may move or delete one. */
+    isRoot(path: string): boolean {
+        return this.#roots.some((r) => r.path === path);
     }
 
     mutable(): void {
@@ -162,6 +251,42 @@ export class Workspace {
             throw new Error('the workspace is read-only for this run');
         }
     }
+}
+
+/**
+ * An absolute name a tree is known by, with any trailing slash removed. A mount
+ * of `/` would make everything on the machine look like it was inside, so it is
+ * not a mount point; nor is a relative one, which would resolve against nothing.
+ */
+function mountPoint(at: string | undefined): string | undefined {
+    const clean = at?.replace(/\\/g, '/').replace(/\/+$/, '');
+    return clean && clean.startsWith('/') ? clean : undefined;
+}
+
+function under(inner: string, outer: string): boolean {
+    return inner.startsWith(outer + '/');
+}
+
+/** The host side of a mount, resolved. It has to exist: a mount of nothing is a typo. */
+function directory(host: string, at: string): string {
+    let path;
+    try {
+        path = realpathSync(resolve(host));
+    } catch {
+        throw new Error(`workspace mount ${at}: no such directory: ${host}`);
+    }
+    if (!statSync(path).isDirectory()) {
+        throw new Error(`workspace mount ${at}: not a directory: ${host}`);
+    }
+    return path;
+}
+
+/** `a`, `a and b`, `a, b and c` — these end up in sentences the model reads. */
+function nameList(items: readonly string[]): string {
+    if (items.length < 2) {
+        return items[0] ?? '';
+    }
+    return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -621,18 +746,32 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
     // `read_file`, which is the first of these any model reaches for; the short
     // one is repeated on every `path` argument, which is where the value is
     // actually written and where a wrong guess costs a turn.
-    const scope = ws.mount
-        ? `The workspace is mounted at ${ws.mount}, which is the name commands running in the ` +
-          `sandbox print and the name these tools answer with, so a path from a command's ` +
-          `output can be used here unchanged. A path relative to the workspace root names the ` +
-          `same file: ${ws.mount}/src/a.ts and src/a.ts are one file. That directory is the ` +
-          'whole of what can be reached: nothing outside it can be read or written.'
-        : 'Paths are relative to the workspace root, and that directory is the whole of what ' +
-          'can be reached: nothing outside it can be read or written.';
-    const inside = ws.mount
-        ? `Path in the workspace: ${ws.mount}/src/a.ts, or src/a.ts relative to the root — the ` +
-          `same file either way. The root itself is "${ws.mount}", "/" or ".".`
-        : 'Path in the workspace, relative to its root: src/a.ts. The root itself is "." or "/".';
+    //
+    // This is also the only place an extra tree is named. Nothing else in the
+    // prompt mentions one, and a directory the model has not been told about is
+    // a directory it never opens.
+    const extras = ws.mounts.map((m) => m.at);
+    const bounds =
+        extras.length === 0
+            ? ' That directory is the whole of what can be reached: nothing outside it can be ' +
+              'read or written.'
+            : ` ${nameList(extras)} ${extras.length > 1 ? 'are' : 'is'} mounted alongside it: ` +
+              `read, list and search ${extras.length > 1 ? 'them' : 'it'} like anything else, ` +
+              'but nothing there can be written, moved or deleted. Nothing outside those ' +
+              'directories can be reached at all.';
+    const scope =
+        (ws.mount
+            ? `The workspace is mounted at ${ws.mount}, which is the name commands running in ` +
+              `the sandbox print and the name these tools answer with, so a path from a ` +
+              `command's output can be used here unchanged. A path relative to the workspace ` +
+              `root names the same file: ${ws.mount}/src/a.ts and src/a.ts are one file.`
+            : 'Paths are relative to the workspace root.') + bounds;
+    const inside =
+        (ws.mount
+            ? `Path in the workspace: ${ws.mount}/src/a.ts, or src/a.ts relative to the root — ` +
+              `the same file either way. The root itself is "${ws.mount}", "/" or ".".`
+            : 'Path in the workspace, relative to its root: src/a.ts. The root itself is "." ' +
+              'or "/".') + (extras.length === 0 ? '' : ` Read-only: ${nameList(extras)}.`);
 
     /**
      * `.`, `/`, the mount and nothing at all are four spellings of the root, and
@@ -788,7 +927,7 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
             if (content.length > MAX_WRITE) {
                 return { error: `content exceeds ${MAX_WRITE} bytes` };
             }
-            const at = ws.within(path);
+            const at = ws.within(path, { write: true });
             await mkdir(dirname(at), { recursive: true });
             await writeFile(at, content, 'utf8');
             return {
@@ -874,12 +1013,12 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
         },
         execute: async ({ from, to, overwrite }) => {
             ws.mutable();
-            const source = ws.within(from);
-            const target = ws.within(to);
-            if (source === ws.root) {
+            const source = ws.within(from, { write: true });
+            const target = ws.within(to, { write: true });
+            if (ws.isRoot(source)) {
                 return { error: 'refusing to move the workspace root' };
             }
-            if (target === ws.root) {
+            if (ws.isRoot(target)) {
                 return { error: 'refusing to overwrite the workspace root' };
             }
             if (source === target) {
@@ -925,8 +1064,8 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
         },
         execute: async ({ path, recursive }) => {
             ws.mutable();
-            const at = ws.within(path);
-            if (at === ws.root) {
+            const at = ws.within(path, { write: true });
+            if (ws.isRoot(at)) {
                 return { error: 'refusing to delete the workspace root' };
             }
             const info = await stat(at);
@@ -966,19 +1105,35 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
             additionalProperties: false,
         },
         execute: async ({ pattern, path }) => {
-            const at = root(path);
+            // Omitting the path means "everywhere I can see", and what the
+            // model can see now includes the mounted trees. Searching only the
+            // workspace would leave them behind a path it has to know to ask
+            // for. A tree nested inside the workspace is walked twice, so the
+            // hits are a set: `show` gives one file one name either way.
+            const where = path?.trim()
+                ? [ws.within(path)]
+                : [ws.root, ...ws.mounts.map((m) => m.host)];
             const needle = pattern.toLowerCase();
-            const hits: string[] = [];
-            await walk(at, ws, (file) => {
-                // Matched on the path within the workspace, reported under the
-                // name the model uses: a mount prefix is on every candidate, so
-                // matching it would mean nothing.
-                if (ws.rel(file).toLowerCase().includes(needle)) {
-                    hits.push(ws.show(file));
+            const hits = new Set<string>();
+            for (const dir of where) {
+                const room = await walk(dir, ws, (file) => {
+                    // Matched on the path within its own tree, reported under
+                    // the name the model uses: a mount prefix is on every
+                    // candidate, so matching it would mean nothing.
+                    if (ws.rel(file).toLowerCase().includes(needle)) {
+                        hits.add(ws.show(file));
+                    }
+                    return hits.size < MAX_ENTRIES;
+                });
+                if (!room) {
+                    break;
                 }
-                return hits.length < MAX_ENTRIES;
-            });
-            return { pattern, matches: hits, truncated: hits.length >= MAX_ENTRIES };
+            }
+            return {
+                pattern,
+                matches: [...hits],
+                truncated: hits.size >= MAX_ENTRIES,
+            };
         },
     });
 
@@ -1010,8 +1165,8 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
     let fuzz = 0;
 
     for (const op of ops) {
-        const at = ws.within(op.path);
-        if (at === ws.root) {
+        const at = patchPath(ws, op.path);
+        if (ws.isRoot(at)) {
             throw new PatchError(`${op.path} is the workspace root`);
         }
         if (seen.has(at)) {
@@ -1087,8 +1242,8 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
             lines: patched.lines.length,
         };
         if (op.moveTo) {
-            const to = ws.within(op.moveTo);
-            if (to === ws.root) {
+            const to = patchPath(ws, op.moveTo);
+            if (ws.isRoot(to)) {
                 throw new PatchError('cannot move a file onto the workspace root');
             }
             if (to !== at) {
@@ -1133,6 +1288,21 @@ async function statOrNull(at: string): Promise<Stats | null> {
         return await stat(at);
     } catch {
         return null;
+    }
+}
+
+/**
+ * A path in a patch, checked for containment and for write permission before
+ * the first byte is written. Both refusals become patch errors, because the
+ * promise apply_patch makes is that a patch it will not finish leaves nothing
+ * behind — a read-only file named halfway down is a reason to reject the whole
+ * patch, not to write the files above it and then throw.
+ */
+function patchPath(ws: Workspace, path: string): string {
+    try {
+        return ws.within(path, { write: true });
+    } catch (err) {
+        throw new PatchError(err instanceof Error ? err.message : String(err));
     }
 }
 

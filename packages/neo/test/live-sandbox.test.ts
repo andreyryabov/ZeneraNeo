@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -538,4 +538,128 @@ describe.skipIf(!ENABLED)('a real container', () => {
             3 * MINUTE,
         );
     });
+});
+
+/**
+ * The trees that are mounted beside the workspace: the project's assets and its
+ * skill catalog. Only a real container can say whether `:ro` holds, and only a
+ * real one can run a skill's script — which is the point of mounting the
+ * catalog at all.
+ */
+describe.skipIf(!ENABLED)('mounted reference material', () => {
+    const AGENT = { agent: { name: 'reader' } } as ToolContext;
+    let root = '';
+    let assets = '';
+    let skills = '';
+    let box: Sandbox;
+    let file: AnyTool[];
+    let shell: AnyTool[];
+
+    const call = async (tools: AnyTool[], name: string, args: unknown): Promise<any> => {
+        const found = tools.find((t) => t.name === name);
+        if (!found) {
+            throw new Error(`no such tool: ${name}`);
+        }
+        return await found.execute(args, AGENT);
+    };
+
+    beforeAll(async () => {
+        // realpath: the VM only shares the resolved path.
+        root = await realpath(await mkdtemp(join(tmpdir(), 'zn-live-mounts-')));
+        assets = await realpath(await mkdtemp(join(tmpdir(), 'zn-live-assets-')));
+        skills = await realpath(await mkdtemp(join(tmpdir(), 'zn-live-skills-')));
+
+        await writeFile(join(assets, 'handbook.md'), 'Always say please.\n', 'utf8');
+        await mkdir(join(skills, 'greet', 'scripts'), { recursive: true });
+        await writeFile(
+            join(skills, 'greet', 'SKILL.md'),
+            '---\ndescription: Greets.\n---\nRun scripts/hello.py.\n',
+            'utf8',
+        );
+        await writeFile(
+            join(skills, 'greet', 'scripts', 'hello.py'),
+            'print("hello from the skill")\n',
+            'utf8',
+        );
+
+        const mounts = [
+            { host: assets, at: '/assets', readOnly: true },
+            { host: skills, at: '/skills', readOnly: true },
+        ];
+        file = workspaceTools({ root, mount: SANDBOX_MOUNT, mounts });
+        shell = sandboxTools({
+            root,
+            key: 'live-mounts',
+            image: IMAGE,
+            engine: ENGINE,
+            mounts,
+            env: { PYTHONDONTWRITEBYTECODE: '1' },
+        });
+        box = new Sandbox({
+            root,
+            key: 'live-mounts',
+            image: IMAGE,
+            engine: ENGINE,
+            mounts,
+            env: { PYTHONDONTWRITEBYTECODE: '1' },
+        });
+        await box.start();
+    }, 12 * MINUTE);
+
+    afterAll(async () => {
+        await box?.dispose();
+        for (const dir of [root, assets, skills]) {
+            if (dir) {
+                await rm(dir, { recursive: true, force: true });
+            }
+        }
+    }, 2 * MINUTE);
+
+    it(
+        'runs a script the skill shipped, from where the skill says it is',
+        async () => {
+            const out = await call(shell, 'run_command', {
+                command: 'python /skills/greet/scripts/hello.py',
+            });
+            expect(out.exit_code).toBe(0);
+            expect(out.stdout).toBe('hello from the skill\n');
+        },
+        2 * MINUTE,
+    );
+
+    it(
+        'is the same bytes under the same name on both sides',
+        async () => {
+            expect((await call(file, 'read_file', { path: '/assets/handbook.md' })).content).toBe(
+                'Always say please.',
+            );
+            const printed = await call(shell, 'run_command', {
+                command: 'cat /assets/handbook.md',
+            });
+            expect(printed.stdout).toBe('Always say please.\n');
+
+            // Omitting the path searches everything the agent can see.
+            const found = await call(file, 'find_files', { pattern: 'hello.py' });
+            expect(found.matches).toContain('/skills/greet/scripts/hello.py');
+        },
+        2 * MINUTE,
+    );
+
+    it(
+        'refuses a write from either side',
+        async () => {
+            await expect(
+                call(file, 'write_file', { path: '/assets/new.md', content: 'no' }),
+            ).rejects.toThrow(/read-only/);
+
+            const shellWrite = await call(shell, 'run_command', {
+                command: 'echo no > /assets/new.md; echo no > /skills/greet/new.py',
+            });
+            expect(shellWrite.exit_code).not.toBe(0);
+            expect(await call(file, 'list_dir', { path: '/assets' })).toMatchObject({
+                entries: [{ name: 'handbook.md' }],
+            });
+        },
+        2 * MINUTE,
+    );
 });

@@ -5,7 +5,7 @@ import type { Model, ModelRequest, ModelResponse } from '../src/model.ts';
 import { AgentRunner } from '../src/runner.ts';
 import { Services } from '../src/services.ts';
 import { StaticSkillProvider } from '../src/skill-providers/static.ts';
-import { SkillRequiredError, type Skill, type SkillBinding } from '../src/skills.ts';
+import { renderSkills, SkillRequiredError, type Skill, type SkillBinding } from '../src/skills.ts';
 import type { AgentState } from '../src/state.ts';
 import type { TrajectoryNode } from '../src/trajectory.ts';
 import { tool, zeroUsage, type AnyTool, type ToolCall, type ToolSchema } from '../src/types.ts';
@@ -118,6 +118,28 @@ function findNode<T extends TrajectoryNode['type']>(
 }
 
 // ---------------------------------------------------------------------------
+
+describe('what a loaded skill reads as', () => {
+    const body = (path?: string): string =>
+        renderSkills([
+            { name: 'greet', description: 'Greets.', content: 'Say hello.', ...(path && { path }) },
+        ]);
+
+    it('says nothing about files when the skill has none of its own', () => {
+        expect(body()).toBe('## Skill: greet\nSay hello.');
+    });
+
+    it('names the directory the skill ships, once, when the host mounted it', () => {
+        const said = body('/skills/greet');
+        expect(said).toContain('## Skill: greet');
+        expect(said).toContain('Say hello.');
+        // The one thing the model cannot work out for itself: where the files
+        // the instructions talk about actually are, and that it cannot write there.
+        expect(said).toContain('/skills/greet');
+        expect(said).toContain('read-only');
+        expect(said.match(/\/skills\/greet/g)).toHaveLength(1);
+    });
+});
 
 describe('locked skill tools', () => {
     it('declares the same tool schemas before and after a skill load', async () => {

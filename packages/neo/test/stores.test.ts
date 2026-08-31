@@ -171,7 +171,7 @@ describe('FileSkillProvider', () => {
         expect((await provider.list()).map((s) => s.name)).toEqual(['budget_travel', 'quick_note']);
     });
 
-    it('loads frontmatter, body, tools and resources', async () => {
+    it('loads frontmatter, body and tools', async () => {
         const provider = new FileSkillProvider({ dir, id: 'disk', tools: [cheapHotels] });
         const skill = await provider.load('budget_travel');
         expect(skill.description).toBe('plan on a budget');
@@ -179,7 +179,23 @@ describe('FileSkillProvider', () => {
         expect(skill.version).toBe('1.2.0');
         expect(skill.content).toBe('Prefer trains. Book outside the centre.');
         expect(skill.tools?.map((t) => t.name)).toEqual(['cheap_hotels']);
-        expect(skill.resources).toEqual({ 'cities.md': 'Lisbon, Porto' });
+        // Nothing said where the catalog is reachable, so nothing claims a path.
+        expect(skill.path).toBeUndefined();
+    });
+
+    /**
+     * The files beside a SKILL.md are only useful if the agent can name them,
+     * and the name is the host's to give: the same folder is `/skills/x` in a
+     * container and something else entirely on disk.
+     */
+    it('names a folder skill by its mount when the host gives one', async () => {
+        const provider = new FileSkillProvider({
+            dir: { path: dir, at: '/skills' },
+            tools: [cheapHotels],
+        });
+        expect((await provider.load('budget_travel')).path).toBe('/skills/budget_travel');
+        // A flat `<name>.md` has no folder of its own to point at.
+        expect((await provider.load('quick_note')).path).toBeUndefined();
     });
 
     it('falls back to the first body line for a bare markdown skill', async () => {

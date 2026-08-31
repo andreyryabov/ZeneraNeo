@@ -1,5 +1,3 @@
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import {
     DEFAULT_SANDBOX_IMAGE,
     SANDBOX_GROUP,
@@ -10,6 +8,8 @@ import {
     type SandboxMount,
     type SandboxSpec,
 } from '@zenera/neo';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { ensurePodmanReady } from './podman.ts';
 import type { SessionPaths } from './session.ts';
 import { warn } from './term.ts';
@@ -49,6 +49,12 @@ export interface SandboxInputs {
     session: SessionPaths;
     workspace: string;
     readOnly?: boolean;
+    /**
+     * Trees to mount besides the workspace and the home — the project's assets
+     * and its skill catalog. The same array goes to the file tools, so a path
+     * a command prints is a path `read_file` accepts.
+     */
+    mounts?: readonly SandboxMount[];
     /** `--image` */
     image?: string;
 }
@@ -57,13 +63,19 @@ export function buildSandbox(opts: SandboxInputs): SandboxSetup {
     const base = { ...(opts.config.sandbox ?? {}), ...(opts.image ? { image: opts.image } : {}) };
     const home = join(opts.session.data, 'sandbox', 'home');
 
-    const mounts: SandboxMount[] = [{ host: home, at: HOME }];
-    const spec = toSpec(base, { HOME });
+    const mounts: SandboxMount[] = [{ host: home, at: HOME }, ...(opts.mounts ?? [])];
+    // Skills and assets are mounted read-only, and a python script run from a
+    // read-only directory fails on writing its own `__pycache__` — a confusing
+    // error about a file nobody asked for.
+    const spec = toSpec(base, { HOME, PYTHONDONTWRITEBYTECODE: '1' });
 
     const agents: Record<string, SandboxSpec> = {};
     for (const agent of opts.config.agents) {
         if (agent.sandbox) {
-            agents[agent.name] = toSpec({ ...base, ...agent.sandbox }, { HOME });
+            agents[agent.name] = toSpec(
+                { ...base, ...agent.sandbox },
+                { HOME, PYTHONDONTWRITEBYTECODE: '1' },
+            );
         }
     }
 

@@ -115,6 +115,22 @@ describe('starting a container', () => {
         expect(find(f, 'run')?.args).toContain(`/host/ws:${SANDBOX_MOUNT}:ro`);
     });
 
+    /** Reference material and the skill catalog, under the names the tools use. */
+    it('mounts the extra trees it is given, read-only', async () => {
+        const f = fresh();
+        await box(f, {
+            mounts: [
+                { host: '/host/assets', at: '/assets', readOnly: true },
+                { host: '/host/skills', at: '/skills', readOnly: true },
+                { host: '/host/home', at: '/home/agent' },
+            ],
+        }).start();
+        const args = find(f, 'run')?.args ?? [];
+        expect(args).toContain('/host/assets:/assets:ro');
+        expect(args).toContain('/host/skills:/skills:ro');
+        expect(args).toContain('/host/home:/home/agent');
+    });
+
     it('forwards only the environment it was given', async () => {
         const f = fresh();
         await box(f, { env: { HOME: '/home/agent', HTTPS_PROXY: 'http://p:3128' } }).start();

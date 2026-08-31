@@ -1,5 +1,3 @@
-import { existsSync, readdirSync, statSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve } from 'node:path';
 import {
     EXA_GROUP,
     FileSkillProvider,
@@ -17,6 +15,8 @@ import {
     type ProjectConfig,
     type SkillSummary,
 } from '@zenera/neo';
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { auditModels, credentialFor, type DeclaredRole, type ModelIssue } from './audit.ts';
 import { SHAPES, type KeyStore, type Service } from './keys.ts';
 
@@ -104,8 +104,8 @@ export interface SkillReport {
     /** the SKILL.md, relative to the project root */
     path: string;
     tools?: string[];
-    /** other files in the skill folder, which the agent gets as resources */
-    resources?: string[];
+    /** other files in the skill folder, which the agent can reach under /skills */
+    files?: string[];
     /** agents whose binding can see it */
     usedBy: string[];
 }
@@ -182,6 +182,8 @@ const CONFIG_NAMES = ['agents.yaml', 'agents.yml', 'agents/agents.yaml', 'agents
 const HOUSE_RULES = 'INSTRUCTIONS.md';
 const PROMPTS_DIR = 'agents/prompts';
 const SKILLS_DIR = 'agents/skills';
+const SKILL_FILE = 'SKILL.md';
+const ASSETS_DIR = 'assets';
 
 /** What `allow:` and `preload:` accept, so a skill outside it cannot be named. */
 const REFERABLE = /^[a-z0-9]+(?:[-_][a-z0-9]+)*$/;
@@ -391,6 +393,12 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
     skillDirs = catalog.dirs;
     skills.push(...catalog.entries);
     bindSkills(config, skills, catalog.names, add);
+
+    // -----------------------------------------------------------------------
+    // Assets
+    // -----------------------------------------------------------------------
+
+    checkAssets(root, config, record, add);
 
     // -----------------------------------------------------------------------
     // Models and credentials
@@ -854,9 +862,9 @@ async function checkSkills(
         try {
             const skill = await provider.load(summary.name);
             report.path = display(root, skill.file ?? '');
-            const resources = Object.keys(skill.resources ?? {});
-            if (resources.length) {
-                report.resources = resources;
+            const files = siblings(skill.file);
+            if (files.length) {
+                report.files = files;
             }
             if (skill.tools?.length) {
                 report.tools = skill.tools.map((t) => t.name);
@@ -1059,6 +1067,101 @@ function bindSkills(
                 fix: 'add `skills: {}` to an agent, or add it to that agent’s `allow:`',
             });
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Assets
+//
+// The folder every agent can read and none can write. It is a convention, so
+// not having one is not a finding — but *naming* one that is not there is, and
+// so is naming one so wide that the run's own working files are inside it.
+// ---------------------------------------------------------------------------
+
+function checkAssets(root: string, config: ProjectConfig, record: Recorder, add: Add): void {
+    const named = config.assets !== undefined;
+    const ref = config.assets ?? ASSETS_DIR;
+    const rel = normalise(root, ref);
+    if (rel === undefined) {
+        add({
+            severity: 'error',
+            code: 'assets.outside',
+            where: 'assets',
+            message: `"${ref}" resolves outside the project root, which is refused`,
+            fix: 'keep the material inside the project, or copy it in',
+        });
+        return;
+    }
+    // The conventional folder is optional; a project with nothing to share has
+    // nothing to say about it.
+    if (!named && !existsSync(join(root, rel))) {
+        return;
+    }
+
+    const role = 'reference material, mounted read-only at /assets';
+    if (!record(rel, role, 'directory', named, named ? 'assets' : undefined)) {
+        add({
+            severity: 'error',
+            code: 'assets.missing',
+            where: 'assets',
+            message: `no such directory: ${rel} — the project will not load`,
+            fix: `create ${rel}, or drop the \`assets:\` key`,
+        });
+        return;
+    }
+
+    const at = join(root, rel);
+    // Mounting the project root, or anything holding the sessions directory,
+    // hands every agent the transcripts of every run — including this one.
+    if (rel === '' || rel === '.' || existsSync(join(at, 'sessions'))) {
+        add({
+            severity: 'warning',
+            code: 'assets.overbroad',
+            where: 'assets',
+            message:
+                `${rel || '.'} contains the project's own files, so every run's ` +
+                'transcripts, prompts and configuration are readable by every agent',
+            fix: 'point `assets:` at a directory that holds only what agents should read',
+        });
+        return;
+    }
+
+    if (contents(at).length === 0) {
+        add({
+            severity: 'note',
+            code: 'assets.empty',
+            where: 'assets',
+            message: `${rel} is empty, so /assets is mounted with nothing in it`,
+            fix: 'put something in it, or remove it',
+        });
+    }
+}
+
+function contents(dir: string): string[] {
+    try {
+        return readdirSync(dir);
+    } catch {
+        return [];
+    }
+}
+
+/**
+ * What else is in a skill's folder — the files the agent reaches under /skills,
+ * and the reason a skill can ship a script instead of describing one. A flat
+ * `<name>.md` has no folder of its own, and its neighbours are other skills.
+ */
+function siblings(skillFile: string | undefined): string[] {
+    if (!skillFile || basename(skillFile) !== SKILL_FILE) {
+        return [];
+    }
+    const folder = dirname(skillFile);
+    try {
+        return readdirSync(folder, { withFileTypes: true })
+            .filter((e) => e.name !== SKILL_FILE)
+            .map((e) => (e.isDirectory() ? `${e.name}/` : e.name))
+            .sort();
+    } catch {
+        return [];
     }
 }
 

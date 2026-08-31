@@ -52,6 +52,7 @@ they should be unambiguous in both.
 | `models`    | map of name → model    | Named model configurations                                 |
 | `model`     | model ref              | Fallback for agents that do not pin their own              |
 | `skills`    | string or string[]     | Skill directories, merged into one catalog                 |
+| `assets`    | string                 | Reference material, mounted read-only at `/assets`         |
 | `sandbox`   | sandbox                | The container `run_command` and friends execute in         |
 | `agents`    | agent[]                | At least one                                               |
 
@@ -450,6 +451,58 @@ Directories are relative to the project root and may not escape it. Several
 directories are merged into a single catalog with the provider id `project`.
 If the key is absent and `agents/skills` exists, it is used.
 
+The catalog is also mounted into the run, read-only, at `/skills` — one
+directory becomes `/skills`, several become `/skills/<folder name>` each. That
+is what lets a skill ship a script instead of describing one: a folder skill's
+instructions are rendered with the line "This skill's files are at
+/skills/<name>, so `run_command` can execute `python
+/skills/pdf_forms/scripts/fill.py` and `read_file` can open it. A flat
+`<name>.md` skill has no folder of its own and gets no such line.
+
+The whole catalog is mounted, for every agent, before anything is loaded — a
+container's mounts are fixed when it is created, so a folder cannot appear at
+the moment `skill_load` asks for it. An agent's `allow:` therefore decides what
+it can _load_, not what it can _read_: a determined model that already knows a
+name can open the file. `allow:` is a prompt boundary, not a filesystem one.
+
+---
+
+## `assets:`
+
+Reference material every agent can read and none can write.
+
+```yaml
+assets: handbook
+```
+
+If the key is absent and an `assets/` directory exists next to `agents.yaml`,
+it is used — the folder is the whole configuration for most projects. The key
+exists for material kept elsewhere in the tree; like every other path here it
+is relative to the project root and may not escape it, and naming a directory
+that is not there fails the load.
+
+It is mounted at `/assets`, always read-only, for every agent:
+
+- `read_file`, `list_dir` and `find_files` reach it under that name, and
+  `find_files` with no `path` searches it along with the workspace.
+- `write_file`, `apply_patch`, `move_file` and `delete_file` refuse it. A
+  patch that touches one file under `/assets` writes none of its files.
+- `run_command` sees the same directory at the same path, bind-mounted `:ro`.
+
+There is no per-agent `assets:`. An agent that may see only part of the
+material is a different project, not a different key — and since the mount is
+fixed when the container starts, it could not be varied per hand-off anyway.
+
+What belongs here is what agents consult: handbooks, specifications, schemas,
+style guides, worked examples. What does not is the project's own directory.
+`zen check` warns when `assets:` resolves to somewhere containing `sessions/`,
+because that hands every agent every transcript of every run, including the one
+reading it.
+
+> Adding or removing a mount changes the container's name, exactly as a
+> `sandbox:` field does. With `persist: true` that abandons the old container
+> and whatever was installed in it — see below.
+
 ---
 
 ## `sandbox:`
@@ -489,13 +542,15 @@ Linux there is no machine and they only cap the container.
 ### What survives, and what does not
 
 By default the container is removed when the session closes, so anything
-installed into its root filesystem is gone. Two directories are bind mounts and
-do survive:
+installed into its root filesystem is gone. These directories are bind mounts
+and do survive:
 
 | Inside        | On the host                                              |
 | ------------- | -------------------------------------------------------- |
 | `/workspace`  | the session's workspace                                  |
 | `/home/agent` | `<session>/.data/sandbox/home`, and `$HOME` points at it |
+| `/assets`     | the project's `assets:`, read-only, if it has one        |
+| `/skills`     | the project's skill catalog, read-only, if it has one    |
 
 `/workspace` is the same directory the file tools work in, and they are told so:
 `read_file`, `apply_patch` and the rest accept `/workspace/src/a.ts` as well as
@@ -531,10 +586,11 @@ removes it.
 
 Changing any field here changes the container's name, so a project that bumps
 its image gets a new container rather than an old one quietly persisting with
-the wrong contents. That is also the cost of `persist: true`: a config change
-abandons the old container along with whatever was installed in it, so anything
-the project always needs still belongs in `image:` rather than in an
-accumulated rootfs.
+the wrong contents. Adding or removing an `assets:` directory or a skill
+directory does the same, since the mounts are part of what a container is. That
+is also the cost of `persist: true`: a config change abandons the old container
+along with whatever was installed in it, so anything the project always needs
+still belongs in `image:` rather than in an accumulated rootfs.
 
 ### `env:` names, never values
 

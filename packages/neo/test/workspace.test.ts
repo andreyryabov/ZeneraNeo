@@ -128,6 +128,131 @@ describe('workspace containment', () => {
     });
 });
 
+/**
+ * A second tree under a name of its own — the project's `assets/`, or the skill
+ * catalogue. It is reference material: reachable by every reading tool and by
+ * none of the writing ones, and the refusal is here rather than only in the
+ * container's `:ro` because the file tools never go through the container.
+ */
+describe('a mounted tree', () => {
+    const root = mkdtempSync(join(tmpdir(), 'zen-ws-mounts-'));
+    const assets = mkdtempSync(join(tmpdir(), 'zen-assets-'));
+    afterAll(() => {
+        rmSync(root, { recursive: true, force: true });
+        rmSync(assets, { recursive: true, force: true });
+    });
+
+    writeFileSync(join(assets, 'handbook.md'), '# handbook\n');
+    mkdirSync(join(assets, 'specs'), { recursive: true });
+    writeFileSync(join(assets, 'specs', 'api.md'), 'GET /things\n');
+
+    const opts = { root, mount: '/workspace', mounts: [{ host: assets, at: '/assets' }] };
+    const ws = new Workspace(opts);
+    const tools = workspaceTools(opts);
+    const call = async (name: string, args: unknown): Promise<any> => {
+        const found = tools.find((t) => t.name === name);
+        if (!found) {
+            throw new Error(`no such tool: ${name}`);
+        }
+        return await found.execute(args, {} as never);
+    };
+
+    it('resolves under its own name', () => {
+        expect(ws.within('/assets/handbook.md')).toBe(join(ws.mounts[0].host, 'handbook.md'));
+        expect(ws.within('/assets')).toBe(ws.mounts[0].host);
+        expect(ws.within('/assets/')).toBe(ws.mounts[0].host);
+    });
+
+    it('is a name, not a way out', () => {
+        expect(() => ws.within('/assets/../etc/passwd')).toThrow(/outside the workspace/);
+        expect(() => ws.within('/assetsX/a')).toThrow();
+    });
+
+    /** A relative path still means the workspace, not the newest mount. */
+    it('does not take over the relative spelling', () => {
+        expect(ws.within('handbook.md')).toBe(join(ws.root, 'handbook.md'));
+        expect(ws.within('/')).toBe(ws.root);
+    });
+
+    it('is the name paths come back under', () => {
+        expect(ws.show(join(ws.mounts[0].host, 'specs/api.md'))).toBe('/assets/specs/api.md');
+        expect(ws.show(ws.mounts[0].host)).toBe('/assets');
+        expect(ws.rel(join(ws.mounts[0].host, 'specs/api.md'))).toBe('specs/api.md');
+    });
+
+    it('can be read, listed and searched', async () => {
+        expect(await call('read_file', { path: '/assets/handbook.md' })).toMatchObject({
+            path: '/assets/handbook.md',
+            content: '# handbook',
+        });
+        expect(await call('list_dir', { path: '/assets' })).toMatchObject({ path: '/assets' });
+        // With no path to search under, everything the model can see is searched.
+        expect((await call('find_files', { pattern: 'api.md' })).matches).toContain(
+            '/assets/specs/api.md',
+        );
+    });
+
+    it('refuses every tool that would change it', async () => {
+        await expect(call('write_file', { path: '/assets/new.md', content: 'x' })).rejects.toThrow(
+            /\/assets is read-only/,
+        );
+        await expect(call('delete_file', { path: '/assets/handbook.md' })).rejects.toThrow(
+            /read-only/,
+        );
+        await expect(
+            call('move_file', { from: '/assets/handbook.md', to: 'stolen.md' }),
+        ).rejects.toThrow(/read-only/);
+        await expect(call('move_file', { from: 'a.txt', to: '/assets/a.txt' })).rejects.toThrow(
+            /read-only/,
+        );
+        expect(existsSync(join(assets, 'handbook.md'))).toBe(true);
+    });
+
+    /** A patch that touches one file it may not write writes none of them. */
+    it('fails a patch whole, not halfway', async () => {
+        const out = await call('apply_patch', {
+            patch:
+                '*** Begin Patch\n' +
+                '*** Add File: fine.txt\n' +
+                '+ok\n' +
+                '*** Add File: /assets/sneaky.md\n' +
+                '+no\n' +
+                '*** End Patch',
+        });
+        expect(out.error).toContain('read-only');
+        expect(out.hint).toContain('nothing was written');
+        expect(existsSync(join(root, 'fine.txt'))).toBe(false);
+        expect(existsSync(join(assets, 'sneaky.md'))).toBe(false);
+    });
+
+    /** The tool descriptions are the only place the model learns the tree exists. */
+    it('is named in what the model is told', () => {
+        const said = JSON.stringify(tools);
+        expect(said).toContain('/assets');
+        expect(said.toLowerCase()).toContain('read-only');
+    });
+
+    it('refuses a mount it cannot make sense of', () => {
+        const bad = (mounts: { host: string; at: string }[]): (() => Workspace) => {
+            return () => new Workspace({ root, mount: '/workspace', mounts });
+        };
+        expect(bad([{ host: assets, at: 'assets' }])).toThrow(/absolute/);
+        expect(bad([{ host: assets, at: '/' }])).toThrow(/absolute/);
+        expect(bad([{ host: join(assets, 'nope'), at: '/assets' }])).toThrow(/no such directory/);
+        expect(bad([{ host: join(assets, 'handbook.md'), at: '/assets' }])).toThrow(
+            /not a directory/,
+        );
+        // One name may not mean two directories, nor sit inside another name.
+        expect(bad([{ host: assets, at: '/workspace/assets' }])).toThrow(/overlap/);
+        expect(
+            bad([
+                { host: assets, at: '/assets' },
+                { host: root, at: '/assets/inner' },
+            ]),
+        ).toThrow(/overlap/);
+    });
+});
+
 describe('the workspace tools', () => {
     const root = mkdtempSync(join(tmpdir(), 'zen-ws-tools-'));
     afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -324,11 +449,11 @@ describe('the workspace tools', () => {
     });
 
     it('will not patch its way out of the workspace', async () => {
-        await expect(
-            call('apply_patch', {
-                patch: '*** Begin Patch\n*** Add File: ../escape.txt\n+x\n*** End Patch',
-            }),
-        ).rejects.toThrow();
+        const out = await call('apply_patch', {
+            patch: '*** Begin Patch\n*** Add File: ../escape.txt\n+x\n*** End Patch',
+        });
+        expect(out.error).toContain('outside the workspace');
+        expect(out.hint).toContain('nothing was written');
     });
 
     it('moves and renames, without clobbering by accident', async () => {

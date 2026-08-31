@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { Agent, AgentRegistry, type ForkOptions } from '../agent.ts';
 import type { Embedder } from '../embedding.ts';
 import { RunStream } from '../events.ts';
@@ -14,7 +14,7 @@ import {
 import type { PayloadStore } from '../payload.ts';
 import { promptFile, type PromptPart } from '../prompt.ts';
 import { AgentRunner, type RunOptions, type RunnerOptions } from '../runner.ts';
-import { FileSkillProvider } from '../skill-providers/file.ts';
+import { FileSkillProvider, type SkillDir } from '../skill-providers/file.ts';
 import type { SkillBinding, SkillProvider, SkillSummary } from '../skills.ts';
 import { selectTools, type AnyTool, type Input } from '../types.ts';
 import { parseConfig, type AgentConfig, type ProjectConfig } from './config.ts';
@@ -32,6 +32,7 @@ import { projectDir, projectFile, projectRoot } from './refs.ts';
  * agents.yaml                   who exists, what they may reach for
  * agents/prompts/<role>.md      one agent's own instructions
  * agents/skills/<name>/SKILL.md
+ * assets/                       reference material, mounted read-only at /assets
  * ```
  *
  * The loader turns that into the objects an author would otherwise write by
@@ -73,10 +74,22 @@ export interface ProjectOptions<TCtx = unknown> {
     payloads?: PayloadStore;
     /** extra providers merged with the ones the project declares */
     skills?: SkillProvider[];
+    /**
+     * Where the host has mounted the skill catalog for the agent to reach —
+     * `/skills` from the CLI, which bind-mounts it into the container.
+     *
+     * Set it and a loaded skill carries the path of its own folder, so one that
+     * ships a script can say where the script is. Left unset, a skill is text
+     * and nothing claims otherwise: a promise of a directory that is not there
+     * is worse than no directory.
+     */
+    skillsAt?: string;
 }
 
 const PROMPTS_DIR = 'agents/prompts';
 const SKILLS_DIR = 'agents/skills';
+/** Reference material, by convention, when `assets:` says nothing. */
+const ASSETS_DIR = 'assets';
 const CONFIG_NAMES = ['agents.yaml', 'agents.yml', 'agents/agents.yaml', 'agents/agents.yml'];
 // Deliberately not `AGENTS.md`: every coding assistant now reads that name out
 // of an open folder, and `zen open` opens exactly this directory. The house
@@ -123,6 +136,9 @@ export async function loadProject<TCtx = unknown>(
     const providers = [...skillProviders(root, config, opts), ...(opts.skills ?? [])];
     const catalogs = await indexOf(providers);
     const models = projectRegistry(config, opts);
+    // Resolved here rather than where it is mounted, so an `assets:` naming a
+    // directory that is not there fails at load like every other bad path.
+    const assets = assetsDir(root, config);
 
     const registry = new AgentRegistry<TCtx>();
     const resolve = modelResolver(config, opts, models);
@@ -153,6 +169,7 @@ export async function loadProject<TCtx = unknown>(
         entry: entrypoint(config),
         registry,
         skillProviders: providers,
+        assets,
         models,
         embedders,
         options: opts,
@@ -166,6 +183,7 @@ interface ProjectParts<TCtx> {
     entry: string;
     registry: AgentRegistry<TCtx>;
     skillProviders: SkillProvider[];
+    assets: string | undefined;
     models: ModelRegistry;
     embedders: (ref: string | undefined, where: string) => Embedder | undefined;
     options: ProjectOptions<TCtx>;
@@ -193,6 +211,8 @@ export class AgentProject<TCtx = unknown> {
     readonly entry: string;
     readonly registry: AgentRegistry<TCtx>;
     readonly skillProviders: readonly SkillProvider[];
+    /** reference material to mount read-only, if the project has any */
+    readonly assets: string | undefined;
     /** the providers this project declared, and the clients behind them */
     readonly models: ModelRegistry;
     readonly #embedders: (ref: string | undefined, where: string) => Embedder | undefined;
@@ -206,6 +226,7 @@ export class AgentProject<TCtx = unknown> {
         this.entry = parts.entry;
         this.registry = parts.registry;
         this.skillProviders = parts.skillProviders;
+        this.assets = parts.assets;
         this.models = parts.models;
         this.#embedders = parts.embedders;
         this.#options = parts.options;
@@ -442,13 +463,7 @@ function skillProviders<TCtx>(
     config: ProjectConfig,
     opts: ProjectOptions<TCtx>,
 ): SkillProvider[] {
-    const declared = config.skills
-        ? Array.isArray(config.skills)
-            ? config.skills
-            : [config.skills]
-        : existsSync(join(root, SKILLS_DIR))
-          ? [SKILLS_DIR]
-          : [];
+    const declared = skillDirs(root, config);
     if (!declared.length) {
         return [];
     }
@@ -458,10 +473,67 @@ function skillProviders<TCtx>(
     return [
         new FileSkillProvider({
             id: 'project',
-            dir: declared.map((d, i) => projectDir(root, d, `skills[${i}]`)),
+            dir: opts.skillsAt ? skillMounts(declared, opts.skillsAt) : declared,
             tools: opts.tools,
         }),
     ];
+}
+
+/**
+ * Where each skill directory appears in the agent's namespace.
+ *
+ * One catalog is the whole of `/skills`, which is what a project normally has.
+ * Several cannot all be it, so each takes its own last segment underneath — and
+ * two directories ending in the same name would mean one hid the other, which
+ * is a load error rather than a catalog that silently went missing.
+ */
+export function skillMounts(dirs: readonly string[], at: string): SkillDir[] {
+    if (dirs.length === 1) {
+        return [{ path: dirs[0], at }];
+    }
+    const taken = new Map<string, string>();
+    return dirs.map((dir) => {
+        const name = basename(dir);
+        const clash = taken.get(name);
+        if (clash) {
+            throw new Error(`skills: ${dir} and ${clash} would both be mounted at ${at}/${name}`);
+        }
+        taken.set(name, dir);
+        return { path: dir, at: `${at}/${name}` };
+    });
+}
+
+/**
+ * The directories the skill catalog is built from, resolved. `skills:` if it is
+ * there, otherwise the conventional folder if it exists, otherwise none — a
+ * project without skills is a project, not an error.
+ */
+export function skillDirs(root: string, config: ProjectConfig): string[] {
+    const declared = config.skills
+        ? Array.isArray(config.skills)
+            ? config.skills
+            : [config.skills]
+        : existsSync(join(root, SKILLS_DIR))
+          ? [SKILLS_DIR]
+          : [];
+    return declared.map((d, i) => projectDir(root, d, `skills[${i}]`));
+}
+
+/**
+ * The project's reference material, resolved, or undefined if it has none.
+ *
+ * Convention first — `assets/` next to `agents.yaml` is enough, and a project
+ * that only wants somewhere to put a handbook writes no config at all. The key
+ * exists for the project that keeps its material elsewhere in the tree; a key
+ * naming a directory that is not there is a mistake in the file and fails at
+ * load, where the conventional folder merely being absent does not.
+ */
+export function assetsDir(root: string, config: ProjectConfig): string | undefined {
+    if (config.assets) {
+        return projectDir(root, config.assets, 'assets');
+    }
+    const at = join(root, ASSETS_DIR);
+    return existsSync(at) && statSync(at).isDirectory() ? at : undefined;
 }
 
 // ---------------------------------------------------------------------------

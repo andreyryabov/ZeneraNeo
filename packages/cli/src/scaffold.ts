@@ -77,6 +77,11 @@ version: 1
 
 ${MODEL_SECTION(model, options)}
 
+# Anything in assets/ is mounted read-only at /assets for every agent: they can
+# read, list and search it, and no tool can change it. It is a convention, so
+# the folder is enough — set \`assets: <path>\` only to keep the material
+# somewhere else in this project.
+
 # The container \`sandbox:*\` commands run in. \`persist: true\` keeps it between
 # runs instead of throwing it away, so what the agent installs is still there
 # next time — otherwise only /workspace and its home directory survive, and an
@@ -124,6 +129,20 @@ Say what you changed.
 const GITIGNORE = `# Sessions hold run state, memory, blobs and whatever the agent wrote.
 # None of it is source.
 sessions/
+`;
+
+const ASSETS_README = `# assets
+
+Everything in this folder is mounted at /assets when an agent runs. Every agent
+in this project can read, list and search it, and no tool of theirs can change
+it — so this is where reference material goes: handbooks, specifications,
+schemas, worked examples, the style guide the output is supposed to follow.
+
+It is the project's own files that agents get without being asked. The
+workspace they are pointed at is the work; this is what they consult while
+doing it.
+
+Delete this file once there is something here to read.
 `;
 
 // ---------------------------------------------------------------------------
@@ -244,6 +263,7 @@ export function scaffold(opts: ScaffoldOptions): string[] {
     put('INSTRUCTIONS.md', INSTRUCTIONS_MD);
     put('agents.yaml', AGENTS_YAML(opts.model, opts.modelOptions, opts.web));
     put(join('agents', 'prompts', 'default.md'), PROMPT);
+    put(join('assets', 'README.md'), ASSETS_README);
     put('.gitignore', GITIGNORE);
 
     // The project directory is what `zen open` opens, so this is where the

@@ -12,7 +12,9 @@ Ask what the skill must say and when it applies, if I have not already said.
 
 1. Choose the layout. A flat `agents/skills/<name>.md` for text alone; a folder
    `agents/skills/<name>/SKILL.md` when it needs companions — a rate table, an
-   example letter, a schema. Siblings of `SKILL.md` become readable resources.
+   example letter, a schema, a script. A folder's files are mounted read-only at
+   `/skills/<name>/`, and the skill's own text is what tells the agent to use
+   them.
 2. Write the `description`. This is the routing key and the only thing the model
    sees before deciding to load the skill, so write it as **the condition under
    which the skill is needed**, not as a title. `Water policy` is a title;

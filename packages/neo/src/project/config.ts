@@ -271,6 +271,12 @@ export const projectSchema = z
         embedding: modelRef.optional(),
         /** one directory, or several merged into one catalog */
         skills: z.union([z.string().min(1), z.array(z.string().min(1))]).optional(),
+        /**
+         * Reference material every agent can read and none can write, mounted
+         * at /assets. One directory, project-wide: an agent that may only see
+         * some of it is a different project, not a different key.
+         */
+        assets: z.string().min(1).optional(),
         /** the container `run_command` and friends execute in */
         sandbox: sandbox.optional(),
         agents: z.array(agent).min(1),

@@ -134,10 +134,11 @@ my-project/
 │   └── skills/
 │       ├── house_style/
 │       │   ├── SKILL.md          folder skill
-│       │   └── examples.md       sibling files become `resources`
+│       │   └── examples.md       its own files, reachable at /skills/house_style
 │       ├── water_damage/
 │       │   └── SKILL.md
 │       └── shipping_delays.md    flat skill (frontmatter + body)
+├── assets/                       reference material, read-only at /assets
 └── sessions/                     run state, memory, whatever the agent wrote
 ```
 
@@ -240,6 +241,7 @@ model: fast # fallback for agents that do not pin their own
 embeddings: {} # named vectorisers — §3.1.1
 embedding: small # the one `AgentProject.embedder()` returns when asked for no name
 skills: agents/skills # one directory, or a list
+assets: assets # reference material, read-only at /assets — §3.11
 
 agents: # the only required key; at least one entry
     - name: intake
@@ -471,7 +473,7 @@ discovered in the same scan:
 
 ```
 agents/skills/refund_policy.md          flat: frontmatter + body
-agents/skills/refund_policy/SKILL.md    folder: sibling files become `resources`
+agents/skills/refund_policy/SKILL.md    folder: the skill's files ship with it
 ```
 
 Frontmatter is a deliberately small subset of YAML — `key: value`, plus `[a, b]`
@@ -511,7 +513,18 @@ provider from turn 0 (the schema never changes) but **refuse to execute** until
 the skill is active. This is how a tool can be gated without breaking the cache.
 
 Use a folder skill when the content needs companions — a CSV rate table, an
-example letter, a JSON schema. Siblings become `resources` the model can read.
+example letter, a JSON schema, a script. The whole catalog is mounted read-only
+at `/skills`, so a folder skill's files are at `/skills/<name>/...` and its
+rendered instructions say so. That is what lets a skill ship a script:
+
+```markdown
+Run `python /skills/refund_policy/scripts/calculate.py <order-id>` and use what
+it prints. Do not compute the amount yourself.
+```
+
+The mount is read-only and is created before anything is loaded, so `allow:`
+limits what an agent can **load**, not what it can **read**. Do not put
+anything in the catalog that some agents must not see.
 
 ### 3.5 Tools
 
@@ -815,6 +828,22 @@ EXA_API_KEY=...
 
 Never commit. Never inline a key into `agents.yaml` — use `${VAR}`. Never print a
 key in a log line, a test fixture, or a chat message.
+
+### 3.11 `assets/`
+
+`assets/` next to `agents.yaml` — or `assets: <path>` — is reference material
+every agent can read and none can write. It is mounted at `/assets`: the file
+tools read, list and search it, `run_command` sees it bind-mounted read-only,
+and every tool that would change it refuses.
+
+Put a handbook, a specification, a schema or a style guide there — what agents
+consult while working, as opposed to the workspace, which is the work. Do not
+point `assets:` at the project root: that hands every agent the `sessions/`
+directory, every transcript of every run, including the one reading it.
+`zen check` warns when it would.
+
+It is project-wide by design. An agent that may see only part of the material
+is a different project, not a different key.
 
 ---
 

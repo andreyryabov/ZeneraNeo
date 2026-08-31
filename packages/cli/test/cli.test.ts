@@ -1,8 +1,8 @@
+import type { ProcResult, runProcess } from '@zenera/neo';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
-import type { ProcResult, runProcess } from '@zenera/neo';
 import { extract, split } from '../src/args.ts';
 import { auditModels } from '../src/audit.ts';
 import { ALIASES, COMMANDS, EXTERNAL, type External } from '../src/commands/index.ts';
@@ -395,6 +395,69 @@ describe('the project check', () => {
         expect(codes(report)).toContain('skill.no-skill-md');
         expect(report.skills.entries.map((s) => s.name)).toEqual(['known']);
         expect(report.skills.entries[0].usedBy).toEqual(['solo']);
+    });
+
+    /** The files a skill folder ships, which the agent reaches under /skills. */
+    it('lists what else is in a skill folder', async () => {
+        const dir = project({
+            'agents.yaml': 'version: 1\nmodel: gpt-4o\nagents:\n  - name: solo\n',
+            'agents/skills/render/SKILL.md': '---\ndescription: Renders.\n---\nRun scripts/go.py\n',
+            'agents/skills/render/scripts/go.py': 'print("hi")\n',
+            'agents/skills/plain.md': 'Just text.\n',
+        });
+        const report = await validateProject({ dir });
+
+        const byName = new Map(report.skills.entries.map((s) => [s.name, s]));
+        expect(byName.get('render')?.files).toEqual(['scripts/']);
+        // A flat skill's neighbours are other skills, not its own files.
+        expect(byName.get('plain')?.files).toBeUndefined();
+    });
+
+    it('reports an assets directory that is named but not there', async () => {
+        const dir = project({
+            'agents.yaml': 'version: 1\nmodel: gpt-4o\nassets: handbook\nagents:\n  - name: solo\n',
+        });
+        const report = await validateProject({ dir });
+
+        expect(errors(report)).toContain('assets.missing');
+        expect(report.files.find((f) => f.path === 'handbook')?.from).toBe('assets');
+    });
+
+    /**
+     * Pointing `assets:` at the project itself hands every agent the sessions
+     * directory — every transcript of every run, including the one reading it.
+     */
+    it('warns when assets would include the project’s own files', async () => {
+        const dir = project({
+            'agents.yaml': 'version: 1\nmodel: gpt-4o\nassets: .\nagents:\n  - name: solo\n',
+            'sessions/keep.txt': 'a transcript would live here\n',
+        });
+        const report = await validateProject({ dir });
+
+        expect(codes(report)).toContain('assets.overbroad');
+        expect(errors(report)).not.toContain('assets.overbroad');
+    });
+
+    /** No `assets:`, no folder, nothing to say. */
+    it('says nothing about assets when the project has none', async () => {
+        const dir = project({
+            'agents.yaml': 'version: 1\nmodel: gpt-4o\nagents:\n  - name: solo\n',
+        });
+        const report = await validateProject({ dir });
+
+        expect(codes(report).filter((c) => c.startsWith('assets.'))).toEqual([]);
+        expect(report.files.some((f) => f.path === 'assets')).toBe(false);
+    });
+
+    it('notes an assets directory with nothing in it', async () => {
+        const dir = project({
+            'agents.yaml': 'version: 1\nmodel: gpt-4o\nagents:\n  - name: solo\n',
+        });
+        mkdirSync(join(dir, 'assets'), { recursive: true });
+        const report = await validateProject({ dir });
+
+        expect(codes(report)).toContain('assets.empty');
+        expect(errors(report)).toEqual([]);
     });
 });
 

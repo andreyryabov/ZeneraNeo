@@ -38,7 +38,14 @@ export interface Skill extends SkillSummary {
     content: string;
     /** tools unlocked while the skill is active; the context type is the host agent's */
     tools?: AnyTool<any>[];
-    resources?: Record<string, string>;
+    /**
+     * Where the skill's own files are, *under a name the agent can use* — not a
+     * host path. A skill that ships a script is instructions plus that script,
+     * and its text says "run scripts/fill.py" without saying where `scripts/`
+     * is; this is the answer, and it is only set when the host has actually put
+     * the folder somewhere the agent can reach.
+     */
+    path?: string;
     /** absolute path of the source file, if known (set by file-backed providers) */
     file?: string;
 }
@@ -85,7 +92,17 @@ export function skillContentHash(s: Skill): string {
 
 export function renderSkills(skills: Skill[]): string {
     return skills
-        .map((s) => `## Skill: ${s.name}${s.version ? ` (${s.version})` : ''}\n${s.content}`)
+        .map((s) => {
+            const head = `## Skill: ${s.name}${s.version ? ` (${s.version})` : ''}`;
+            // One line, and only when the files are reachable. Without it the
+            // model has the instructions and no way to act on the half of them
+            // that names a file.
+            const where = s.path
+                ? `\nThis skill's files are at ${s.path}, read-only. Paths written in it are ` +
+                  'relative to that directory.\n'
+                : '';
+            return `${head}${where}\n${s.content}`;
+        })
         .join('\n\n');
 }
 

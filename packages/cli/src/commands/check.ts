@@ -1,4 +1,4 @@
-import { basename, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { one, parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { KeyStore } from '../keys.ts';
@@ -184,16 +184,24 @@ function render(report: Report): string[] {
         )}`,
     );
     if (report.skills.entries.length) {
-        push(
-            ...table(
-                report.skills.entries.map((s) => [
-                    `  ${s.name}`,
-                    dim(s.path),
-                    dim(s.tools?.length ? `unlocks ${s.tools.join(' ')}` : ''),
-                    dim(s.usedBy.length ? `used by ${s.usedBy.join(', ')}` : 'unused'),
-                ]),
-            ),
+        // A folder skill's own files travel with it: they are mounted at
+        // /skills/<folder> and the body may point the model straight at them,
+        // so say what is there and under which name.
+        const rows = table(
+            report.skills.entries.map((s) => [
+                `  ${s.name}`,
+                dim(s.path),
+                dim(s.tools?.length ? `unlocks ${s.tools.join(' ')}` : ''),
+                dim(s.usedBy.length ? `used by ${s.usedBy.join(', ')}` : 'unused'),
+            ]),
         );
+        report.skills.entries.forEach((s, i) => {
+            push(rows[i] ?? '');
+            if (s.files?.length) {
+                const at = basename(dirname(s.path));
+                push(dim(`    /skills/${at}/  ${s.files.join('  ')}`));
+            }
+        });
     }
 
     // Models ----------------------------------------------------------------

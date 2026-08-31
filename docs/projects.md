@@ -20,8 +20,9 @@ my-project/
             adjuster.md
         skills/
             house_style/
-                SKILL.md             a folder skill; siblings become resources
+                SKILL.md             a folder skill; its files ship with it
             refund_policy.md         a flat skill
+    assets/                          reference material, read-only at /assets
 ```
 
 Only `agents.yaml` is required, and only `agents:` is required inside it.
@@ -133,7 +134,7 @@ Two file layouts are discovered in the same scan:
 
 ```
 <dir>/refund_policy.md          flat: frontmatter + body
-<dir>/refund_policy/SKILL.md    folder: sibling files become `resources`
+<dir>/refund_policy/SKILL.md    folder: the skill's own files live beside it
 ```
 
 Frontmatter is a deliberately small subset of YAML — `key: value`, plus
@@ -159,6 +160,34 @@ skill is a markdown file with no frontmatter at all.
 are declared to the model from turn one and gated at call time — they are never
 appended mid-run, because a growing tools array destroys the provider's prompt
 cache.
+
+A folder skill can ship more than text. Pass `ProjectOptions.skillsAt` — the
+CLI passes `/skills` — and each folder skill is loaded with a `path`, the name
+that folder can be reached by, and its rendered instructions say so:
+
+```
+## Skill: house_style
+This skill's files are at /skills/house_style, read-only. Paths written in it
+are relative to that directory.
+```
+
+That is what makes `python /skills/house_style/scripts/lint.py` runnable. The
+CLI bind-mounts the whole catalog into the sandbox read-only and hands the same
+paths to the file tools; a library host that mounts nothing leaves `skillsAt`
+unset, and no skill claims a directory that is not there.
+
+## Assets
+
+`assets:`, or an `assets/` folder next to `agents.yaml`, is material every
+agent can read and none can write. It is mounted at `/assets` — the file tools
+resolve paths under it, the container sees it bind-mounted `:ro`, and every
+tool that would change it refuses.
+
+It is project-wide. There is no per-agent key: the mount is fixed when the
+container is created, so it could not vary by hand-off, and an agent that may
+see only part of the material is a different project.
+
+`AgentProject.assets` is the resolved directory, or `undefined`.
 
 ## Entry point
 
