@@ -21,7 +21,7 @@ export interface SkillDir {
 }
 
 export interface FileSkillProviderOptions {
-    /** one or more root directories holding `<name>.md` files and/or `<name>/SKILL.md` folders */
+    /** one or more root directories holding `<name>/SKILL.md` folders, or bare `<name>.md` files */
     dir: string | SkillDir | (string | SkillDir)[];
     /** logical provider id agents bind to; defaults to `file` */
     id?: string;
@@ -38,7 +38,7 @@ interface Entry {
     summary: SkillSummary;
     /** absolute path of the markdown file */
     file: string;
-    /** the folder holding the skill, or undefined for a flat `<name>.md` */
+    /** the folder holding the skill, or undefined for a bare `<name>.md` */
     folder?: string;
     /** that folder under the name the agent can use, when the host gave one */
     at?: string;
@@ -46,12 +46,17 @@ interface Entry {
 }
 
 /**
- * Reads skills from disk. Two layouts, both discovered in one scan:
+ * Reads skills from disk. A skill is a directory holding `SKILL.md`, and the
+ * directory is what lets it ship a rate table or a script beside its text:
  *
  * ```
- * <dir>/budget_travel.md          flat: frontmatter + body
- * <dir>/budget_travel/SKILL.md    folder: the skill's own files live beside it
+ * <dir>/budget_travel/SKILL.md    the instructions
+ * <dir>/budget_travel/cities.md   whatever they refer to
  * ```
+ *
+ * A bare `<dir>/budget_travel.md` is indexed too, for a host with nothing but
+ * prose to offer. `zen check` refuses it in a project, since a skill with no
+ * directory of its own can never grow one.
  *
  * Frontmatter is a small subset of YAML — `key: value`, plus `[a, b]` lists
  * for `tags` and `tools`. `name` defaults to the file or folder name and

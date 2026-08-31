@@ -451,13 +451,27 @@ Directories are relative to the project root and may not escape it. Several
 directories are merged into a single catalog with the provider id `project`.
 If the key is absent and `agents/skills` exists, it is used.
 
+Each skill in a catalog is a directory holding `SKILL.md`:
+
+```
+agents/skills/pdf_forms/SKILL.md
+agents/skills/pdf_forms/scripts/fill.py
+```
+
+A bare `agents/skills/pdf_forms.md` is indexed by the provider but is not a
+project layout — `zen check` reports it as `skill.flat`, because a skill with no
+directory of its own cannot ship anything but prose.
+
 The catalog is also mounted into the run, read-only, at `/skills` — one
 directory becomes `/skills`, several become `/skills/<folder name>` each. That
-is what lets a skill ship a script instead of describing one: a folder skill's
+is what lets a skill ship a script instead of describing one: a skill's
 instructions are rendered with the line "This skill's files are at
-/skills/<name>, so `run_command` can execute `python
-/skills/pdf_forms/scripts/fill.py` and `read_file` can open it. A flat
-`<name>.md` skill has no folder of its own and gets no such line.
+/skills/<name>", so `run_command` can execute `python
+/skills/pdf_forms/scripts/fill.py` and `read_file` can open it. Write that
+absolute path in the skill body: the text is loaded into a prompt, not executed
+from its directory, and the working directory is `/workspace`. The interpreter
+has to be in the `sandbox:` image already, and anything the script produces has
+to be written under `/workspace`, since the mount refuses writes.
 
 The whole catalog is mounted, for every agent, before anything is loaded — a
 container's mounts are fixed when it is created, so a folder cannot appear at

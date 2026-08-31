@@ -387,13 +387,16 @@ describe('the project check', () => {
             'agents/prompts/solo.md': 'Be useful.\n',
             'agents/skills/known/SKILL.md': '---\nname: known\ndescription: A skill.\n---\nBody.\n',
             'agents/skills/halfway/notes.md': 'no SKILL.md here\n',
+            'agents/skills/loose.md': '---\ndescription: Loose.\n---\nBody.\n',
         });
         const report = await validateProject({ dir });
 
         expect(errors(report)).toContain('skills.preload-not-allowed');
         expect(errors(report)).toContain('skills.preload-unknown');
         expect(codes(report)).toContain('skill.no-skill-md');
-        expect(report.skills.entries.map((s) => s.name)).toEqual(['known']);
+        // A bare `<name>.md` is indexed, and is still the wrong layout.
+        expect(errors(report)).toContain('skill.flat');
+        expect(report.skills.entries.map((s) => s.name)).toEqual(['known', 'loose']);
         expect(report.skills.entries[0].usedBy).toEqual(['solo']);
     });
 
@@ -409,7 +412,7 @@ describe('the project check', () => {
 
         const byName = new Map(report.skills.entries.map((s) => [s.name, s]));
         expect(byName.get('render')?.files).toEqual(['scripts/']);
-        // A flat skill's neighbours are other skills, not its own files.
+        // A bare `<name>.md` skill's neighbours are other skills, not its own files.
         expect(byName.get('plain')?.files).toBeUndefined();
     });
 

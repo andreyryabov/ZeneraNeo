@@ -933,7 +933,7 @@ function locate(root: string, dirs: string[], name: string): string | undefined 
     return undefined;
 }
 
-/** Directories in a catalog that hold no `SKILL.md`, and are therefore not skills. */ function ignored(
+/** Anything in a catalog that is not a `<name>/SKILL.md` folder. */ function ignored(
     root: string,
     dirs: string[],
     known: Set<string>,
@@ -947,10 +947,26 @@ function locate(root: string, dirs: string[], name: string): string | undefined 
             continue;
         }
         for (const item of items) {
+            // A bare `<name>.md` is still indexed, so this is not a skill that
+            // went missing — it is one that can never grow a file of its own.
+            if (item.isFile() && item.name.endsWith('.md')) {
+                const folder = join(dir, item.name.slice(0, -'.md'.length));
+                out.push({
+                    severity: 'error',
+                    code: 'skill.flat',
+                    where: join(dir, item.name),
+                    message:
+                        'a skill is a folder holding SKILL.md — a bare markdown file has no ' +
+                        'directory of its own, so it can never ship the table, example or ' +
+                        'script that is half of what a skill is for',
+                    fix: `move it to ${join(folder, SKILL_FILE)}`,
+                });
+                continue;
+            }
             if (!item.isDirectory() || known.has(item.name)) {
                 continue;
             }
-            if (existsSync(join(root, dir, item.name, 'SKILL.md'))) {
+            if (existsSync(join(root, dir, item.name, SKILL_FILE))) {
                 // It has one; it is in the catalog under a frontmatter name.
                 continue;
             }
@@ -1147,7 +1163,7 @@ function contents(dir: string): string[] {
 
 /**
  * What else is in a skill's folder — the files the agent reaches under /skills,
- * and the reason a skill can ship a script instead of describing one. A flat
+ * and the reason a skill can ship a script instead of describing one. A bare
  * `<name>.md` has no folder of its own, and its neighbours are other skills.
  */
 function siblings(skillFile: string | undefined): string[] {

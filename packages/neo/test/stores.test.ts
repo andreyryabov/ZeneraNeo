@@ -194,7 +194,7 @@ describe('FileSkillProvider', () => {
             tools: [cheapHotels],
         });
         expect((await provider.load('budget_travel')).path).toBe('/skills/budget_travel');
-        // A flat `<name>.md` has no folder of its own to point at.
+        // A bare `<name>.md` has no folder of its own to point at.
         expect((await provider.load('quick_note')).path).toBeUndefined();
     });
 

@@ -22,8 +22,8 @@ loadEnv();
 //   assets/handbook/INSTRUCTIONS.md               shared by both agents
 //   assets/handbook/triage.md                     one agent's own brief
 //   assets/handbook/resolver.md                   the other's
-//   assets/handbook/skills/shipping_delays.md     a flat skill
-//   assets/handbook/skills/refund_policy/         a folder skill, with resources
+//   assets/handbook/skills/shipping_delays/SKILL.md   instructions alone
+//   assets/handbook/skills/refund_policy/            a skill with resources
 //
 // That layout is the point. When the answer is wrong, somebody has to know
 // which of those files to edit — and "somebody" includes the non-engineer who
@@ -82,9 +82,10 @@ const refundQuote = tool<{
 });
 
 /**
- * Both layouts in one directory: `shipping_delays.md` is a flat skill,
- * `refund_policy/` is a folder whose sibling files become `resources`. Either
- * way the provider records the file it read, which is what the report shows.
+ * A skill is a directory holding `SKILL.md`: `shipping_delays/` carries nothing
+ * but its instructions, `refund_policy/` has sibling files that become
+ * `resources`. Either way the provider records the file it read, which is what
+ * the report shows.
  */
 const handbookSkills = new FileSkillProvider({
     dir: join(ASSETS, 'skills'),

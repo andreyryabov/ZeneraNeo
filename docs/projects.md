@@ -20,8 +20,10 @@ my-project/
             adjuster.md
         skills/
             house_style/
-                SKILL.md             a folder skill; its files ship with it
-            refund_policy.md         a flat skill
+                SKILL.md         a skill; its files ship with it
+            refund_policy/
+                SKILL.md
+                scripts/calculate.py
     assets/                          reference material, read-only at /assets
 ```
 
@@ -130,12 +132,19 @@ provider (id `project`), not several — a binding names exactly one catalog, an
 "which folder is this skill in?" is not a question an agent author should have
 to answer.
 
-Two file layouts are discovered in the same scan:
+A skill is a **directory holding `SKILL.md`**, and the directory name is the
+skill name:
 
 ```
-<dir>/refund_policy.md          flat: frontmatter + body
-<dir>/refund_policy/SKILL.md    folder: the skill's own files live beside it
+<dir>/refund_policy/SKILL.md    the instructions
+<dir>/refund_policy/rates.csv   whatever they refer to
 ```
+
+`FileSkillProvider` also indexes a bare `<dir>/refund_policy.md`, which is how
+the provider has always behaved and what a library host may still rely on. It
+is not a project layout: `zen check` reports it as `skill.flat`, because a
+skill with no directory of its own can never ship the table, example or script
+that is half of what a skill is for.
 
 Frontmatter is a deliberately small subset of YAML — `key: value`, plus
 `[a, b]` flow lists for `tags` and `tools`:
@@ -152,18 +161,20 @@ tools: [issue_refund]
 The written policy follows...
 ```
 
-Every key is optional. `name` defaults to the file or folder name and
-`description` to the first non-empty line of the body, so the minimum viable
-skill is a markdown file with no frontmatter at all.
+Every key is optional. `name` defaults to the directory name and `description`
+to the first non-empty line of the body, so the minimum viable skill is a
+`SKILL.md` with no frontmatter at all.
 
 `tools:` names are resolved against `ProjectOptions.tools`. Skill-owned tools
 are declared to the model from turn one and gated at call time — they are never
 appended mid-run, because a growing tools array destroys the provider's prompt
 cache.
 
-A folder skill can ship more than text. Pass `ProjectOptions.skillsAt` — the
-CLI passes `/skills` — and each folder skill is loaded with a `path`, the name
-that folder can be reached by, and its rendered instructions say so:
+### Files and scripts
+
+A skill ships more than text. Pass `ProjectOptions.skillsAt` — the CLI passes
+`/skills` — and each skill is loaded with a `path`, the name its directory can
+be reached by, and its rendered instructions say so:
 
 ```
 ## Skill: house_style
@@ -171,10 +182,27 @@ This skill's files are at /skills/house_style, read-only. Paths written in it
 are relative to that directory.
 ```
 
-That is what makes `python /skills/house_style/scripts/lint.py` runnable. The
-CLI bind-mounts the whole catalog into the sandbox read-only and hands the same
-paths to the file tools; a library host that mounts nothing leaves `skillsAt`
-unset, and no skill claims a directory that is not there.
+That is what makes `python /skills/house_style/scripts/lint.py` runnable rather
+than aspirational. The CLI bind-mounts the whole catalog into the sandbox
+read-only and hands the same paths to the file tools; a library host that mounts
+nothing leaves `skillsAt` unset, and no skill claims a directory that is not
+there.
+
+What follows from that, for whoever writes the skill:
+
+- The body names files by their **absolute** `/skills/<name>/...` path. A skill
+  is loaded into a prompt, not executed from its directory, and the working
+  directory is the workspace.
+- The mount is read-only. A script that produces a file takes an output path and
+  writes it under `/workspace`.
+- The agent needs the tools to act on it — `sandbox:*` to run a script,
+  `read_file` to open a data file — and the interpreter has to be in the sandbox
+  image already.
+- One catalog is the whole of `/skills`; several take `/skills/<folder>` each,
+  and two directories ending in the same name are a load error rather than one
+  quietly hiding the other.
+- Every mount exists before anything is loaded, so a binding's `allow:` decides
+  what an agent may **load**, not what it may **read**.
 
 ## Assets
 
