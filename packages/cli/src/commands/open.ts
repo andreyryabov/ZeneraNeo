@@ -28,9 +28,9 @@ export const open: Command = {
         'Editor: --editor, then $ZENERA_EDITOR, then the editor this terminal',
         'belongs to, then $VISUAL or $EDITOR, then a known editor on PATH or',
         'installed, then the platform opener.',
-        'The editor files `zen init` writes (.vscode/settings.json,',
-        '.github/copilot-instructions.md) are refreshed in the directory being',
-        'opened; edits to them do not survive.',
+        'The editor files `zen init` writes (.vscode/settings.json and the',
+        '.github/ tree) are refreshed in the directory being opened; edits to',
+        'them do not survive.',
         'VS Code and its forks are launched with --disable-workspace-trust so',
         'the settings written there apply to the window straight away.',
     ],
@@ -53,10 +53,10 @@ export const open: Command = {
         verify(editor);
 
         // The editor reads the settings and instructions of the folder it was
-        // opened on, and a project may predate either file — or the version of
-        // them this `zen` writes. Both are ours, so both are written fresh
-        // before the window is there to read them.
-        const written = [editorSettings(dir), copilotInstructions(dir)];
+        // opened on, and a project may predate either of them — or the version
+        // this `zen` writes. They are ours, so they are written fresh before
+        // the window is there to read them.
+        const written = [editorSettings(dir), ...copilotInstructions(dir)];
 
         if (ctx.json) {
             json({

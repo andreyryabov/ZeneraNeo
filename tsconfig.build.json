@@ -1,4 +1,9 @@
 {
     "files": [],
-    "references": [{ "path": "packages/neo" }, { "path": "packages/cli" }]
+    "references": [
+        { "path": "packages/neo" },
+        { "path": "packages/cli" },
+        { "path": "packages/faker" },
+        { "path": "packages/rag" }
+    ]
 }

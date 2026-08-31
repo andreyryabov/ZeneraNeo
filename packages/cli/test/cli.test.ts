@@ -1,14 +1,16 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import type { ProcResult, runProcess } from 'zenera-neo';
 import { extract, split } from '../src/args.ts';
 import { auditModels } from '../src/audit.ts';
+import { ALIASES, COMMANDS, EXTERNAL, type External } from '../src/commands/index.ts';
+import { hasExternal, loadExternal } from '../src/external.ts';
 import { isStamp, stamp, stampInstant } from '../src/ids.ts';
 import { assertUsable, mask, parseRef, type KeyEntry, type KeyStore } from '../src/keys.ts';
 import { ensurePodmanReady } from '../src/podman.ts';
-import { EXIT, pad, table } from '../src/term.ts';
+import { CliError, EXIT, pad, table } from '../src/term.ts';
 import { windowOf, wrap } from '../src/tui/wrap.ts';
 import { validateProject, type Report } from '../src/validate.ts';
 
@@ -47,6 +49,55 @@ describe('splitting the command line', () => {
     it('leaves everything after -- alone', () => {
         const { rest } = extract(['--', '--json', '--help']);
         expect(rest).toEqual(['--json', '--help']);
+    });
+});
+
+describe('commands in another package', () => {
+    const absent: External = {
+        package: 'zenera-nothing-at-all',
+        summary: 'Nothing.',
+        usage: 'zen nothing',
+        install: 'npm i -g zenera-nothing-at-all',
+    };
+
+    it('says what to install instead of throwing a resolver error', async () => {
+        const err = await loadExternal('nothing', absent).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(CliError);
+        expect((err as CliError).code).toBe(EXIT.usage);
+        expect((err as CliError).hint).toContain(absent.install);
+    });
+
+    it('reports an uninstalled package without loading anything', () => {
+        expect(hasExternal(absent)).toBe(false);
+    });
+
+    it('finds the faker, which this workspace has', () => {
+        expect(hasExternal(EXTERNAL.faker)).toBe(true);
+    });
+
+    it('finds the rag package, which this workspace also has', () => {
+        expect(hasExternal(EXTERNAL.rag)).toBe(true);
+    });
+
+    it('routes mock to the faker', () => {
+        expect(ALIASES.mock).toBe('faker');
+        expect(COMMANDS[ALIASES.mock]).toBeUndefined();
+        expect(EXTERNAL[ALIASES.mock]).toBeDefined();
+    });
+
+    /**
+     * The whole point of the seam: `zen list` must not pay for a mock server's
+     * dependencies, which it would the moment anything imports it statically.
+     */
+    it('is not imported by the frame', () => {
+        const dist = join(import.meta.dirname, '..', 'dist');
+        const sources = readdirSync(dist, { recursive: true }) as string[];
+        for (const file of sources.filter((f) => f.endsWith('.js'))) {
+            const text = readFileSync(join(dist, file), 'utf8');
+            for (const ext of Object.values(EXTERNAL)) {
+                expect(text).not.toContain(`from '${ext.package}`);
+            }
+        }
     });
 });
 

@@ -11,6 +11,7 @@ import {
     OWNERS,
     parseRef,
     SHAPES,
+    type KeyCheck,
     type KeyEntry,
     type KeyOwner,
     type Liveness,
@@ -29,6 +30,7 @@ import {
     isInteractive,
     json,
     note,
+    progress,
     readStdin,
     red,
     table,
@@ -82,12 +84,31 @@ function rows(store: KeyStore): string[] {
 
 type Sub = (ctx: Context, args: readonly string[]) => Promise<void>;
 
+/**
+ * Checking is a network round trip per key, so it says which one it is waiting
+ * on. Silence for ten seconds is indistinguishable from a hang.
+ */
+async function checkAll(
+    ctx: Context,
+    store: KeyStore,
+    targets: readonly KeyEntry[],
+): Promise<[KeyEntry, KeyCheck][]> {
+    const bar = ctx.json ? undefined : progress();
+    try {
+        return await probeAll(store, targets, (entry, index, total) =>
+            bar?.update(dim(`checking ${keyId(entry)} … ${index + 1}/${total}`)),
+        );
+    } finally {
+        bar?.done();
+    }
+}
+
 const ls: Sub = async (ctx, args) => {
     const { values } = parse<{ check?: boolean }>(args, { check: { type: 'boolean' } }, USAGE);
     const store = await KeyStore.open();
 
     if (values.check) {
-        const checks = await probeAll(store, store.entries);
+        const checks = await checkAll(ctx, store, store.entries);
         for (const [entry, check] of checks) {
             store.record(entry, check);
         }
@@ -164,7 +185,10 @@ const add: Sub = async (ctx, args) => {
     // be checked right now — offline, behind a proxy — is not a key that is
     // wrong, and refusing to save it would make `zen key add` fail on a plane.
     if (!values['no-check']) {
+        const bar = ctx.json ? undefined : progress();
+        bar?.update(dim(`checking ${keyId(entry)} …`));
         const check = await probe(store, entry);
+        bar?.done();
         store.record(entry, check);
         if (check.state === 'dead') {
             note(`${red('rejected')} ${check.detail ?? 'the provider refused this key'}`);
@@ -220,7 +244,7 @@ const check: Sub = async (ctx, args) => {
     assertNotEmpty(store);
 
     const targets = positionals[0] ? select(store, positionals[0]) : store.entries;
-    const checks = await probeAll(store, targets);
+    const checks = await checkAll(ctx, store, targets);
     for (const [entry, result] of checks) {
         store.record(entry, result);
     }

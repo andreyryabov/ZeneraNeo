@@ -1,0 +1,156 @@
+openapi: 3.1.0
+info:
+    title: Petstore
+    version: 1.4.0
+
+paths:
+    /pets:
+        get:
+            operationId: listPets
+            summary: Every pet on file.
+            parameters:
+                - name: page_size
+                  in: query
+                  description: How many pets to return in one page.
+                  schema: { type: integer, minimum: 1, maximum: 100 }
+                - name: species
+                  in: query
+                  schema: { $ref: '#/components/schemas/Species' }
+            responses:
+                '200':
+                    description: The page.
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items: { $ref: '#/components/schemas/Pet' }
+        post:
+            operationId: createPet
+            summary: File a new pet.
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema: { $ref: '#/components/schemas/Pet' }
+            responses:
+                '201':
+                    description: Filed.
+                    content:
+                        application/json:
+                            schema: { $ref: '#/components/schemas/Pet' }
+
+    /users/{userId}:
+        get:
+            operationId: getUser
+            summary: One user, as anyone may see them.
+            parameters:
+                - name: userId
+                  in: path
+                  required: true
+                  schema: { type: string }
+            responses:
+                '200':
+                    description: The user.
+                    content:
+                        application/json:
+                            schema: { $ref: '#/components/schemas/PublicUserProfile' }
+
+    /auth/reset-password:
+        post:
+            operationId: resetPassword
+            summary: Set a new password from an emailed token.
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema: { $ref: '#/components/schemas/ResetPasswordPayload' }
+            responses:
+                '204':
+                    description: Done.
+                '200':
+                    description: A short acknowledgement.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    acceptedAt: { type: string, format: date-time }
+
+components:
+    schemas:
+        Species:
+            type: string
+            enum: [cat, dog]
+
+        Pet:
+            description: An animal on file.
+            oneOf:
+                - $ref: '#/components/schemas/Cat'
+                - $ref: '#/components/schemas/Dog'
+            discriminator:
+                propertyName: petType
+                mapping:
+                    cat: '#/components/schemas/Cat'
+                    dog: '#/components/schemas/Dog'
+
+        Cat:
+            type: object
+            required: [petType, name]
+            properties:
+                petType: { type: string }
+                name: { type: string }
+                meowVolume: { type: number }
+
+        Dog:
+            type: object
+            required: [petType, name]
+            properties:
+                petType: { type: string }
+                name: { type: string }
+                barkVolume: { type: number }
+
+        Address:
+            type: object
+            properties:
+                city: { type: string }
+                postcode:
+                    type: string
+                    pattern: /^[0-9]{4}$/
+
+        PublicUserProfile:
+            description: What anyone may see about a user.
+            allOf:
+                - $ref: '#/components/schemas/Timestamps'
+                - type: object
+                  required: [id, email]
+                  properties:
+                      id: { type: string }
+                      email:
+                          type: string
+                          format: email
+                          description: Contact address, shown publicly.
+                      address: { $ref: '#/components/schemas/Address' }
+                      manager: { $ref: '#/components/schemas/PublicUserProfile' }
+                      settings:
+                          type: object
+                          description: Per-user display preferences.
+                          properties:
+                              locale: { type: string }
+                              compact: { type: boolean }
+
+        Timestamps:
+            type: object
+            properties:
+                createdAt: { type: string, format: date-time }
+
+        ResetPasswordPayload:
+            description: Payload for password retrieval and reset requests.
+            type: object
+            required: [resetToken, password]
+            properties:
+                resetToken:
+                    type: string
+                    description: Unexpired token sent to the account's email address.
+                password:
+                    type: string
+                    description: New plain-text user password complying with complexity rules.

@@ -1,0 +1,89 @@
+openapi: 3.0.3
+info:
+    title: Petstore
+    version: 1.0.0
+paths:
+    /users/{user_id}:
+        parameters:
+            - name: user_id
+              in: path
+              required: true
+              schema:
+                  type: integer
+                  format: int64
+        get:
+            operationId: getUserById
+            summary: One user by id.
+            parameters:
+                - name: verbose
+                  in: query
+                  required: false
+                  schema:
+                      type: boolean
+            responses:
+                '200':
+                    description: the user
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/User'
+                '404':
+                    description: no such user
+    /users/me:
+        get:
+            operationId: getSelf
+            responses:
+                '200':
+                    description: the caller
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/User'
+    /users:
+        post:
+            operationId: createUser
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/User'
+            responses:
+                '201':
+                    description: created
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/User'
+    /ping:
+        delete:
+            operationId: stopPing
+            responses:
+                '204':
+                    description: nothing comes back
+components:
+    schemas:
+        User:
+            type: object
+            required: [user_id, email]
+            properties:
+                user_id:
+                    type: integer
+                    format: int64
+                email:
+                    type: string
+                    format: email
+                nickname:
+                    type: string
+                    nullable: true
+                score:
+                    type: number
+                    minimum: 0
+                    maximum: 100
+                    exclusiveMaximum: true
+                manager:
+                    $ref: '#/components/schemas/User'
+                tags:
+                    type: array
+                    items:
+                        type: string

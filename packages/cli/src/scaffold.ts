@@ -1,5 +1,6 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // ---------------------------------------------------------------------------
 // Scaffolding
@@ -72,7 +73,6 @@ const AGENTS_YAML = (
     web?: boolean,
 ): string => `# Who exists, and what they may reach for.
 #
-# Reference: docs/agents-yaml.md
 version: 1
 
 ${MODEL_SECTION(model, options)}
@@ -171,24 +171,46 @@ export function editorSettings(dir: string): string {
 // `INSTRUCTIONS.md` addresses the *project's* agents. The editor's assistant
 // still needs a brief of its own, and what it needs to know is how this kind
 // of project is put together — the file formats, how a prompt is written, when
-// to add a skill rather than an agent. That is one long document, kept as a
-// file rather than a template literal in here: it is full of backticks and
-// `${...}` examples, which a TS template literal cannot hold without escaping
-// every one of them into illegibility.
+// to add a skill rather than an agent. That is a whole `.github/` tree — the
+// standing brief, plus the prompt files and skills the editor picks up from
+// the same place — kept as files rather than template literals in here: they
+// are full of backticks and `${...}` examples, which a TS template literal
+// cannot hold without escaping every one of them into illegibility.
+//
+// `templates/.github/` mirrors what lands in the project one for one, so
+// adding a skill or a prompt file is adding a file there and nothing else.
 // ---------------------------------------------------------------------------
 
-const COPILOT_TEMPLATE = new URL('../templates/copilot-instructions.md', import.meta.url);
+const GITHUB_TEMPLATE = fileURLToPath(new URL('../templates/.github', import.meta.url));
 
 /**
- * Writes `.github/copilot-instructions.md` under `dir`, replacing what is
- * there — it describes the file formats of the version of `zen` in hand, so
- * the current one is the only one worth having. Returns the relative path.
+ * Writes the `.github/` tree under `dir`, replacing what is there — it
+ * describes the file formats of the version of `zen` in hand, so the current
+ * one is the only one worth having. Returns the relative paths written.
  */
-export function copilotInstructions(dir: string): string {
-    const rel = join('.github', 'copilot-instructions.md');
-    mkdirSync(join(dir, '.github'), { recursive: true });
-    writeFileSync(join(dir, rel), readFileSync(COPILOT_TEMPLATE, 'utf8'));
-    return rel;
+export function copilotInstructions(dir: string): string[] {
+    return copyTree(GITHUB_TEMPLATE, dir, '.github');
+}
+
+/**
+ * Copies one template directory into `dir` at `rel`, depth first, sorted so
+ * the list it returns is the same on every machine.
+ */
+function copyTree(from: string, dir: string, rel: string): string[] {
+    const written: string[] = [];
+    mkdirSync(join(dir, rel), { recursive: true });
+    const entries = readdirSync(from, { withFileTypes: true });
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+        const child = join(rel, entry.name);
+        if (entry.isDirectory()) {
+            written.push(...copyTree(join(from, entry.name), dir, child));
+        } else {
+            writeFileSync(join(dir, child), readFileSync(join(from, entry.name)));
+            written.push(child);
+        }
+    }
+    return written;
 }
 
 export interface ScaffoldOptions {
@@ -226,6 +248,6 @@ export function scaffold(opts: ScaffoldOptions): string[] {
 
     // The project directory is what `zen open` opens, so this is where the
     // editor actually reads them.
-    written.push(editorSettings(opts.dir), copilotInstructions(opts.dir));
+    written.push(editorSettings(opts.dir), ...copilotInstructions(opts.dir));
     return written;
 }
