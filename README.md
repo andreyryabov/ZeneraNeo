@@ -26,7 +26,7 @@ same everywhere, and it never carries your keys with it.
 Four commands, from nothing to an answer:
 
 ```sh
-npm i -g zenera-cli openai   # the CLI, plus one vendor SDK
+npm i -g @zenera/cli openai   # the CLI, plus one vendor SDK
 zen key add openai           # prompts with the echo off; stored in ~/.zenera
 zen init my-project          # scaffolds a project and registers it
 cd my-project && zen run "introduce yourself"
@@ -45,11 +45,11 @@ Node.js 24+. Install the CLI together with at least one vendor SDK — they are
 **optional peer dependencies**, so you only pay for the ones you use.
 
 ```sh
-npm i -g zenera-cli openai
+npm i -g @zenera/cli openai
 #                or @anthropic-ai/sdk, @google/genai, @openrouter/sdk — any mix
 ```
 
-Or try it without installing anything: `npx zenera-cli --help`.
+Or try it without installing anything: `npx @zenera/cli --help`.
 
 The binary is installed under three names: `zen`, `zn` and `zenera`.
 
@@ -313,10 +313,10 @@ installed, and tells you what to run if not; nothing is imported until you type
 the command, so an uninstalled one costs nothing and an installed one costs
 nothing until it is used.
 
-| Command | Package        | Does                                           |
-| ------- | -------------- | ---------------------------------------------- |
-| `faker` | `zenera-faker` | A mock API from an openapi/swagger document.   |
-| `rag`   | `zenera-rag`   | Search an openapi/swagger document as a graph. |
+| Command | Package         | Does                                           |
+| ------- | --------------- | ---------------------------------------------- |
+| `faker` | `@zenera/faker` | A mock API from an openapi/swagger document.   |
+| `rag`   | `@zenera/rag`   | Search an openapi/swagger document as a graph. |
 
 **`zen faker`** — serve a specification as a working mock. The first time a
 route is called, a model writes a Python generator for it, which is tested
@@ -324,7 +324,7 @@ against the response schema in a container and then cached; every later request
 is just that file, no tokens.
 
 ```sh
-npm i -g zenera-faker
+npm i -g @zenera/faker
 zen faker serve api/openapi.yaml --port 8787
 curl -s localhost:8787/users/12324
 # { "user_id": 12324, "email": "brooke.hoffman@example.org", … }
@@ -335,7 +335,7 @@ for the connected piece that answers a question: the field, the schema it is
 on, and the operation that returns it.
 
 ```sh
-npm i -g zenera-rag
+npm i -g @zenera/rag
 zen rag schema index --embedding openai:text-embedding-3-small ./specs/*.yaml
 zen rag schema search --output-property "user billing history" --format ts
 ```
@@ -391,13 +391,13 @@ Full specification: [packages/cli/DESIGN.md](packages/cli/DESIGN.md).
 
 ## The library underneath
 
-The CLI is a shell over `zenera-neo` — agents, models, tools, skills, memory and
+The CLI is a shell over `@zenera/neo` — agents, models, tools, skills, memory and
 an append-only trajectory, with OpenAI, Anthropic, Google/Vertex and OpenRouter
 behind one interface. Use it directly when you want the runtime inside your own
 application rather than on a terminal.
 
 ```ts
-import { loadProject } from 'zenera-neo';
+import { loadProject } from '@zenera/neo';
 
 const project = await loadProject('./my-project', { tools: [lookupPolicy] });
 
@@ -411,12 +411,12 @@ The library has its own README:
 
 ## Packages
 
-| Directory        | Published as   | What it is                                                      |
-| ---------------- | -------------- | --------------------------------------------------------------- |
-| `packages/cli`   | `zenera-cli`   | `zen`, the command line: projects, sessions, credentials, a TUI |
-| `packages/neo`   | `zenera-neo`   | the library — agents, models, tools, skills, memory, trajectory |
-| `packages/faker` | `zenera-faker` | `zen faker` — a mock API from an openapi/swagger document       |
-| `packages/rag`   | `zenera-rag`   | `zen rag` — an API description as a searchable graph            |
+| Directory        | Published as    | What it is                                                      |
+| ---------------- | --------------- | --------------------------------------------------------------- |
+| `packages/cli`   | `@zenera/cli`   | `zen`, the command line: projects, sessions, credentials, a TUI |
+| `packages/neo`   | `@zenera/neo`   | the library — agents, models, tools, skills, memory, trajectory |
+| `packages/faker` | `@zenera/faker` | `zen faker` — a mock API from an openapi/swagger document       |
+| `packages/rag`   | `@zenera/rag`   | `zen rag` — an API description as a searchable graph            |
 
 Each has its own README: [cli](packages/cli/README.md) ·
 [neo](packages/neo/README.md) · [faker](packages/faker/README.md) ·

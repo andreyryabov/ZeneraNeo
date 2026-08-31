@@ -1,4 +1,4 @@
-# zenera-faker
+# @zenera/faker
 
 **A mock HTTP server for swagger/OpenAPI documents. Point it at a spec and it
 serves it — the response bodies are written, once, by a model.**
@@ -16,7 +16,7 @@ serves it — the response bodies are written, once, by a model.**
 Node.js 24+ and [podman](https://podman.io). Install it alongside the CLI:
 
 ```sh
-npm i -g zenera-cli zenera-faker openai
+npm i -g @zenera/cli @zenera/faker openai
 zen key add openai          # the keyring `zen` already uses
 ```
 
@@ -95,11 +95,11 @@ Environment variables still win over the keyring, exactly as they do for `zen`.
 
 ## The rest of the family
 
-| Package                                                                                    | What it is                                           |
-| ------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
-| [`zenera-cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md) | `zen` — agent projects on the command line           |
-| [`zenera-neo`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md) | the runtime — agents, models, tools, skills, memory  |
-| [`zenera-rag`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md) | `zen rag` — an API description as a searchable graph |
+| Package                                                                                     | What it is                                           |
+| ------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| [`@zenera/cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md) | `zen` — agent projects on the command line           |
+| [`@zenera/neo`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md) | the runtime — agents, models, tools, skills, memory  |
+| [`@zenera/rag`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md) | `zen rag` — an API description as a searchable graph |
 
 ## License
 

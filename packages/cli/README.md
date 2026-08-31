@@ -1,4 +1,4 @@
-# zenera-cli
+# @zenera/cli
 
 **`zen` — put a team of AI agents to work on your problem, in one command.**
 
@@ -12,7 +12,7 @@ it to a colleague, or start from one someone else already built and make it your
 own. It runs the same everywhere, on whichever models you prefer, and it never
 carries your keys with it.
 
-[![npm](https://img.shields.io/npm/v/zenera-cli.svg)](https://www.npmjs.com/package/zenera-cli)
+[![npm](https://img.shields.io/npm/v/@zenera/cli.svg)](https://www.npmjs.com/package/@zenera/cli)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
 
@@ -26,14 +26,14 @@ Node.js 24+. Install the CLI together with at least one vendor SDK — they are
 **optional peer dependencies**, so you only pay for the ones you use.
 
 ```sh
-npm i -g zenera-cli openai
+npm i -g @zenera/cli openai
 #                or @anthropic-ai/sdk, @google/genai, @openrouter/sdk — any mix of them
 ```
 
 Or without installing anything:
 
 ```sh
-npx zenera-cli --help
+npx @zenera/cli --help
 ```
 
 ## Quickstart
@@ -41,7 +41,7 @@ npx zenera-cli --help
 Four commands, from nothing to an answer:
 
 ```sh
-npm i -g zenera-cli openai   # the CLI, plus one vendor SDK
+npm i -g @zenera/cli openai   # the CLI, plus one vendor SDK
 zen key add openai           # prompts with the echo off; stored in ~/.zenera
 zen init my-project          # scaffolds a project and registers it
 cd my-project && zen run "introduce yourself"
@@ -170,25 +170,25 @@ are installed and says what to run if not; nothing is imported until you type
 the command, so an uninstalled one costs nothing and an installed one costs
 nothing until it is used.
 
-| Command | Package        | Does                                           |
-| ------- | -------------- | ---------------------------------------------- |
-| `faker` | `zenera-faker` | A mock API from an openapi/swagger document.   |
-| `rag`   | `zenera-rag`   | Search an openapi/swagger document as a graph. |
+| Command | Package         | Does                                           |
+| ------- | --------------- | ---------------------------------------------- |
+| `faker` | `@zenera/faker` | A mock API from an openapi/swagger document.   |
+| `rag`   | `@zenera/rag`   | Search an openapi/swagger document as a graph. |
 
 ```sh
-npm i -g zenera-faker
+npm i -g @zenera/faker
 zen faker serve api/openapi.yaml --port 8787   # a working mock, bodies written by a model
 
-npm i -g zenera-rag
+npm i -g @zenera/rag
 zen rag schema index --embedding openai:text-embedding-3-small ./specs/*.yaml
 zen rag schema search --output-property "user billing history" --format ts
 ```
 
 They use this keyring and these credentials, so there is nothing new to
 configure. Details:
-[zenera-faker](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md)
+[@zenera/faker](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md)
 ·
-[zenera-rag](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md).
+[@zenera/rag](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md).
 
 Global flags: `-h/--help`, `-v/--version`, `--json`, `-C <dir>`. Exit codes: `0`
 ok, `1` the run failed, `2` bad invocation, `3` invalid project, `4` no usable
@@ -218,7 +218,7 @@ The binary is installed under three names: `zen`, `zn` and `zenera`.
 ## The library underneath
 
 This is a shell over
-[`zenera-neo`](https://www.npmjs.com/package/zenera-neo) — agents, models,
+[`@zenera/neo`](https://www.npmjs.com/package/@zenera/neo) — agents, models,
 tools, skills, memory and an append-only trajectory. Use it directly when you
 want the runtime inside your own application rather than on a terminal:
 [its README](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md).

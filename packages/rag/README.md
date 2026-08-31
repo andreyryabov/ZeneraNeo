@@ -1,4 +1,4 @@
-# zenera-rag
+# @zenera/rag
 
 **An OpenAPI description, indexed as a graph and searched by meaning — for
 agents that have to call an API they have not read.**
@@ -29,7 +29,7 @@ standalone OpenAPI document.
 Node.js 24+. Install it alongside the CLI:
 
 ```sh
-npm i -g zenera-cli zenera-rag openai
+npm i -g @zenera/cli @zenera/rag openai
 zen key add openai          # the keyring `zen` already uses
 ```
 
@@ -79,8 +79,8 @@ mermaid-flowchart | ts | openapi`. `zen help rag` prints the full table.
 ## From an agent
 
 ```ts
-import { createEmbedder, loadProject } from 'zenera-neo';
-import { SchemaIndex, schemaTools } from 'zenera-rag';
+import { createEmbedder, loadProject } from '@zenera/neo';
+import { SchemaIndex, schemaTools } from '@zenera/rag';
 
 const index = await SchemaIndex.open(
     './schema-db',
@@ -133,11 +133,11 @@ different one is refused rather than answered with noise.
 
 ## The rest of the family
 
-| Package                                                                                        | What it is                                              |
-| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| [`zenera-cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` — agent projects on the command line              |
-| [`zenera-neo`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md)     | the runtime — agents, models, tools, skills, memory     |
-| [`zenera-faker`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` — a mock API from the same kind of document |
+| Package                                                                                         | What it is                                              |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| [`@zenera/cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` — agent projects on the command line              |
+| [`@zenera/neo`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md)     | the runtime — agents, models, tools, skills, memory     |
+| [`@zenera/faker`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` — a mock API from the same kind of document |
 
 ## License
 

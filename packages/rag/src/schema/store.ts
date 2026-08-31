@@ -1,5 +1,5 @@
 import { connect, Index, type Connection, type Table } from '@lancedb/lancedb';
-import { CliError, EXIT } from 'zenera-cli/lib';
+import { CliError, EXIT } from '@zenera/cli/lib';
 import type { EntityRecord } from './entities.ts';
 import { lancePath } from './files.ts';
 

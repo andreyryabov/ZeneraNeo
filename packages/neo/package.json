@@ -1,5 +1,5 @@
 {
-    "name": "zenera-neo",
+    "name": "@zenera/neo",
     "version": "1.0.13",
     "description": "A multi-agent runtime for Node.js: agents, models, tools, skills, memory and an append-only trajectory.",
     "keywords": [
@@ -15,6 +15,9 @@
         "typescript"
     ],
     "license": "MIT",
+    "publishConfig": {
+        "access": "public"
+    },
     "author": "Andrey Ryabov",
     "homepage": "https://github.com/andreyryabov/ZeneraNeo#readme",
     "repository": {

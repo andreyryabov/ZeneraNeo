@@ -1,7 +1,7 @@
 import SwaggerParser from '@apidevtools/swagger-parser';
 import { createHash } from 'node:crypto';
 import { basename, extname } from 'node:path';
-import { CliError, EXIT } from 'zenera-cli/lib';
+import { CliError, EXIT } from '@zenera/cli/lib';
 import { docOf, isObject, normalize, type Dialect, type Schema } from './schema.ts';
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import { EXA_BASE_URL, ModelRegistry } from 'zenera-neo';
+import { EXA_BASE_URL, ModelRegistry } from '@zenera/neo';
 import {
     SHAPES,
     type KeyCheck,

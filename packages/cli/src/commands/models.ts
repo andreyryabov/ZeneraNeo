@@ -1,4 +1,4 @@
-import { loadProject, readProjectConfig, type AgentProject } from 'zenera-neo';
+import { loadProject, readProjectConfig, type AgentProject } from '@zenera/neo';
 import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { KeyStore, PROVIDERS, SHAPES } from '../keys.ts';

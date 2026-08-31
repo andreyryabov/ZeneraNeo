@@ -31,7 +31,7 @@
         "typecheck:watch": "tsc -p tsconfig.json --noEmit --watch",
         "cli": "npm run build --silent && node packages/cli/dist/main.js",
         "cli:link": "npm run build && npm link -w packages/cli",
-        "cli:unlink": "npm rm -g zenera-cli",
+        "cli:unlink": "npm rm -g @zenera/cli",
         "release": "node scripts/release.mjs",
         "release:check": "npm run format:check && npm run typecheck && npx vitest run --exclude '**/live-*' && npm pack --dry-run $(node scripts/release.mjs workspaces)",
         "release:publish": "npm publish --access public $(node scripts/release.mjs workspaces)",

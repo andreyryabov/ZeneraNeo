@@ -8,7 +8,7 @@ import {
     type ModelRef,
     type ModelRequirement,
     type ProjectConfig,
-} from 'zenera-neo';
+} from '@zenera/neo';
 import { SHAPES, isProvider, type KeyStore, type Provider } from './keys.ts';
 import { bold, dim } from './term.ts';
 

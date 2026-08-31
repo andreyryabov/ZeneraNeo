@@ -1,9 +1,9 @@
-# zenera-neo
+# @zenera/neo
 
 **A multi-agent runtime for Node.js: agents, models, tools, skills, memory and
 an append-only trajectory.**
 
-[![npm](https://img.shields.io/npm/v/zenera-neo.svg)](https://www.npmjs.com/package/zenera-neo)
+[![npm](https://img.shields.io/npm/v/@zenera/neo.svg)](https://www.npmjs.com/package/@zenera/neo)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
 
@@ -19,10 +19,10 @@ a client for that vendor is first built, so an OpenAI-only application never
 pays for the others.
 
 ```sh
-npm i zenera-neo openai
-npm i zenera-neo @anthropic-ai/sdk
-npm i zenera-neo @google/genai
-npm i zenera-neo @openrouter/sdk
+npm i @zenera/neo openai
+npm i @zenera/neo @anthropic-ai/sdk
+npm i @zenera/neo @google/genai
+npm i @zenera/neo @openrouter/sdk
 ```
 
 ## Use
@@ -36,7 +36,7 @@ An agent is an instruction, a model, some tools, and who it may hand work to.
 That is the whole list — there is no orchestration layer underneath.
 
 ```ts
-import { AgentRunner, createModel, tool } from 'zenera-neo';
+import { AgentRunner, createModel, tool } from '@zenera/neo';
 
 const getWeather = tool<{ city: string }>({
     name: 'get_weather',
@@ -85,7 +85,7 @@ selections are Markdown and YAML files, not code buried inside an application.
 Load one and run it:
 
 ```ts
-import { loadProject } from 'zenera-neo';
+import { loadProject } from '@zenera/neo';
 
 const project = await loadProject('./my-project', { tools: [lookupPolicy] });
 
@@ -143,13 +143,13 @@ of surfacing three turns into a run as a confused model.
 
 ## Entry points
 
-| Specifier                    | Contents                                  |
-| ---------------------------- | ----------------------------------------- |
-| `zenera-neo`                 | agents, models, tools, kernel, inspection |
-| `zenera-neo/project`         | loading a project folder                  |
-| `zenera-neo/skill-providers` | skill discovery and loading               |
-| `zenera-neo/memory-stores`   | `MemoryStore` implementations             |
-| `zenera-neo/payload-stores`  | payload persistence                       |
+| Specifier                     | Contents                                  |
+| ----------------------------- | ----------------------------------------- |
+| `@zenera/neo`                 | agents, models, tools, kernel, inspection |
+| `@zenera/neo/project`         | loading a project folder                  |
+| `@zenera/neo/skill-providers` | skill discovery and loading               |
+| `@zenera/neo/memory-stores`   | `MemoryStore` implementations             |
+| `@zenera/neo/payload-stores`  | payload persistence                       |
 
 ## Documentation
 
@@ -163,13 +163,13 @@ folder.
 
 ## The rest of the family
 
-| Package                                                                                        | What it is                                                    |
-| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| [`zenera-cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` — this runtime on the command line, with a TUI          |
-| [`zenera-faker`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` — a mock API from an openapi/swagger document     |
-| [`zenera-rag`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md)     | `zen rag` — an API description as a searchable graph, + tools |
+| Package                                                                                         | What it is                                                    |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| [`@zenera/cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` — this runtime on the command line, with a TUI          |
+| [`@zenera/faker`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` — a mock API from an openapi/swagger document     |
+| [`@zenera/rag`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md)     | `zen rag` — an API description as a searchable graph, + tools |
 
-`zenera-rag` also exports tools you can hand straight to `loadProject`, so an
+`@zenera/rag` also exports tools you can hand straight to `loadProject`, so an
 agent can search an API it has never read.
 
 ## License

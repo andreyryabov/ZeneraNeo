@@ -1,4 +1,4 @@
-import type { Message, Model, ModelRequest, ModelResponse } from 'zenera-neo';
+import type { Message, Model, ModelRequest, ModelResponse } from '@zenera/neo';
 import type { Box } from './box.ts';
 import { echoIssues, probesFor } from './probe.ts';
 import { instruction, retry, SYSTEM } from './prompt.ts';

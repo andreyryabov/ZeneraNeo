@@ -1,4 +1,4 @@
-import type { Embedder } from 'zenera-neo';
+import type { Embedder } from '@zenera/neo';
 import type { EntityRecord } from './entities.ts';
 import { assertSameEmbedding, openIndex, type Manifest, type OpenIndex } from './files.ts';
 import type { ApiGraph } from './graph.ts';

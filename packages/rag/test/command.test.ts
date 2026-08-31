@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
-import { CliError, EXIT } from 'zenera-cli/lib';
+import { CliError, EXIT } from '@zenera/cli/lib';
 import { command } from '../src/command.ts';
 import { isEmpty, parseQuery, QueryError } from '../src/query.ts';
 import { buildIndex } from '../src/schema/build.ts';

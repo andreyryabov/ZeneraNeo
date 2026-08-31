@@ -69,17 +69,17 @@ export interface External {
 
 export const EXTERNAL: Record<string, External> = {
     faker: {
-        package: 'zenera-faker',
+        package: '@zenera/faker',
         summary: 'A mock API from an openapi/swagger document.',
         usage: 'zen faker <serve|build|cache> [spec...]',
-        install: 'npm i -g zenera-faker',
+        install: 'npm i -g @zenera/faker',
         banner: { head: 'Zenera', accent: 'Faker', subtitle: 'Mock API Server' },
     },
     rag: {
-        package: 'zenera-rag',
+        package: '@zenera/rag',
         summary: 'Search an openapi/swagger document as a graph.',
         usage: 'zen rag schema <index|search|show|stats> [spec...]',
-        install: 'npm i -g zenera-rag',
+        install: 'npm i -g @zenera/rag',
         banner: { head: 'Zenera', accent: 'Rag', subtitle: 'Api Retrieval' },
     },
 };

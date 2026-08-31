@@ -1,8 +1,8 @@
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { writeJson } from 'zenera-cli/lib';
-import type { Model } from 'zenera-neo';
+import { writeJson } from '@zenera/cli/lib';
+import type { Model } from '@zenera/neo';
 import { GENERATORS, type Box } from './box.ts';
 import { build, BuildFailed } from './generate.ts';
 import type { Operation } from './spec.ts';
