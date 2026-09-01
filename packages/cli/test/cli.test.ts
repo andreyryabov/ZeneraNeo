@@ -9,9 +9,10 @@ import { ALIASES, COMMANDS, EXTERNAL, type External } from '../src/commands/inde
 import { hasExternal, loadExternal } from '../src/external.ts';
 import { isStamp, stamp, stampInstant } from '../src/ids.ts';
 import { assertUsable, mask, parseRef, type KeyEntry, type KeyStore } from '../src/keys.ts';
-import { ensurePodmanReady } from '../src/podman.ts';
+import { engineDisk, ensurePodmanReady, ownedContainers } from '../src/podman.ts';
+import { dirSize } from '../src/projects.ts';
 import { scaffold } from '../src/scaffold.ts';
-import { CliError, EXIT, pad, table } from '../src/term.ts';
+import { bytes, CliError, EXIT, pad, table } from '../src/term.ts';
 import { windowOf, wrap } from '../src/tui/wrap.ts';
 import { validateProject, type Report } from '../src/validate.ts';
 
@@ -693,6 +694,100 @@ describe('the podman pre-flight', () => {
         await expect(
             ensurePodmanReady({ image: 'img-garbage', yes: true, exec: f.run }),
         ).rejects.toThrow(/machine list/);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// The disk report
+//
+// `zen sandbox disk` answers a question people ask after seeing a long list of
+// stopped containers, and the answer is only useful if it keeps two disks
+// apart: what the engine holds inside its machine, and what a project holds in
+// its own directory. Removing a container reclaims one of them.
+// ---------------------------------------------------------------------------
+
+describe('the disk report', () => {
+    const reply = (stdout: string, code = 0): typeof runProcess => {
+        return () =>
+            Promise.resolve({ code, stdout, stderr: '', truncated: false, timedOut: false });
+    };
+
+    const ps = JSON.stringify([
+        {
+            Names: ['zn-old-aaaaaaaaaa'],
+            State: 'exited',
+            Created: 1_700_000_000,
+            Labels: { zenera: '1', 'zenera.key': '20260827-213141-fa7d' },
+            Size: { rootFsSize: 100_000_000, rwSize: 64_900_000 },
+        },
+        {
+            Names: ['zn-new-bbbbbbbbbb'],
+            State: 'running',
+            Created: 1_800_000_000,
+            Labels: { zenera: '1', 'zenera.key': '20260901-132913-2eac' },
+        },
+    ]);
+
+    it('reads a listing as json, newest first, keeping the session label', async () => {
+        const found = await ownedContainers('podman', reply(ps));
+        expect(found.map((c) => c.name)).toEqual(['zn-new-bbbbbbbbbb', 'zn-old-aaaaaaaaaa']);
+        expect(found[0].state).toBe('running');
+        expect(found[1].key).toBe('20260827-213141-fa7d');
+        expect(found[1].size).toBe(64_900_000);
+    });
+
+    it('only pays for sizes when they are asked for', async () => {
+        const seen: string[] = [];
+        const run: typeof runProcess = (bin, args) => {
+            seen.push(args.join(' '));
+            return reply(ps)(bin, args, {});
+        };
+        await ownedContainers('podman', run);
+        await ownedContainers('podman', run, { sizes: true });
+        expect(seen[0]).not.toContain('--size');
+        expect(seen[1]).toContain('--size');
+    });
+
+    it('reports nothing rather than throwing when the engine talks nonsense', async () => {
+        expect(await ownedContainers('podman', reply('not json'))).toEqual([]);
+        expect(await engineDisk('podman', reply('not json'))).toBeUndefined();
+        expect(await engineDisk('podman', reply('', 1))).toBeUndefined();
+    });
+
+    it('separates what is used from what could be reclaimed', async () => {
+        const df = JSON.stringify([
+            { Type: 'Images', TotalCount: 10, Active: 3, RawSize: 665, RawReclaimable: 600 },
+            { Type: 'Containers', TotalCount: 9, Active: 0, RawSize: 72, RawReclaimable: 72 },
+            { Type: 'Local Volumes', TotalCount: 0, Active: 0, RawSize: 0, RawReclaimable: 0 },
+        ]);
+        const usage = await engineDisk('podman', reply(df));
+        expect(usage?.images).toEqual({ count: 10, active: 3, size: 665, reclaimable: 600 });
+        expect(usage?.containers.count).toBe(9);
+        expect(usage?.volumes.size).toBe(0);
+    });
+
+    it('measures a tree in the blocks it occupies', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'zen-size-'));
+        try {
+            expect(dirSize(dir)).toBe(0);
+            mkdirSync(join(dir, 'deep'));
+            writeFileSync(join(dir, 'deep', 'file'), 'x'.repeat(10_000));
+            const size = dirSize(dir);
+            expect(size).toBeGreaterThanOrEqual(10_000);
+            expect(size % 512).toBe(0);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('prints sizes in the units the engine prints them in', () => {
+        expect(bytes(0)).toBe('0 B');
+        expect(bytes(999)).toBe('999 B');
+        expect(bytes(1000)).toBe('1.0 kB');
+        expect(bytes(11_332)).toBe('11.3 kB');
+        expect(bytes(72_366_052)).toBe('72.4 MB');
+        expect(bytes(665_426_572)).toBe('665 MB');
     });
 });
 

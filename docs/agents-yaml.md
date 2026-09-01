@@ -653,6 +653,13 @@ place. This is the recommended setting for any project whose agents install
 things; `zen sandbox status` lists what is left behind and `zen sandbox clean`
 removes it.
 
+A container is per **session**, not per project, so a project used for a week
+accumulates one per session it ran. They are cheap — a stopped container costs
+disk and nothing else, and the writable layer is usually tens of kilobytes,
+because everything worth keeping is already in the two mounts — but they are
+not free, and `zen sandbox disk` shows what they and every project directory
+add up to.
+
 Changing any field here changes the container's name, so a project that bumps
 its image gets a new container rather than an old one quietly persisting with
 the wrong contents. Adding or removing an `assets:` directory or a skill

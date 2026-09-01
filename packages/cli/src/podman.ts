@@ -1,5 +1,7 @@
 import { runProcess, SandboxError, type ProcResult } from '@zenera/neo';
-import { platform } from 'node:os';
+import { readdirSync, statSync } from 'node:fs';
+import { homedir, platform } from 'node:os';
+import { join } from 'node:path';
 import type { ResolvedBuild } from './image.ts';
 import { CliError, confirm, dim, EXIT, isInteractive, note } from './term.ts';
 
@@ -371,6 +373,19 @@ export interface OwnedContainer {
     name: string;
     /** podman's own word: `running`, `exited`, `created`, `paused` */
     state: string;
+    /** the session that owns it, from the `zenera.key` label */
+    key?: string;
+    createdAt?: string;
+    /** bytes written on top of the image; only present when `sizes` is asked for */
+    size?: number;
+}
+
+interface PsEntry {
+    Names?: string[];
+    State?: string;
+    Created?: number;
+    Labels?: Record<string, string>;
+    Size?: { rwSize?: number };
 }
 
 /**
@@ -382,23 +397,42 @@ export interface OwnedContainer {
 export async function ownedContainers(
     engine = 'podman',
     exec = runProcess,
+    opts: { sizes?: boolean } = {},
 ): Promise<OwnedContainer[]> {
-    const res = await exec(
-        engine,
-        ['ps', '--all', '--filter', 'label=zenera=1', '--format', '{{.Names}}\t{{.State}}'],
-        { timeoutMs: 30_000 },
-    ).catch(() => undefined);
+    const args = ['ps', '--all', '--filter', 'label=zenera=1', '--format', 'json'];
+    // Asked for by name only: podman works a size out by diffing the layer,
+    // which costs more than everything else `status` does put together.
+    if (opts.sizes) {
+        args.push('--size');
+    }
+    const res = await exec(engine, args, { timeoutMs: 120_000 }).catch(() => undefined);
     if (!res || res.code !== 0) {
         return [];
     }
-    return res.stdout
-        .split('\n')
-        .map((l) => l.trim())
-        .filter(Boolean)
-        .map((line) => {
-            const [name, state] = line.split('\t');
-            return { name, state: state?.trim() || 'unknown' };
-        });
+    return parseContainers(res.stdout);
+}
+
+/** Newest first, which is the order someone reading a list of them wants. */
+function parseContainers(stdout: string): OwnedContainer[] {
+    let raw: unknown;
+    try {
+        raw = JSON.parse(stdout.trim() || '[]');
+    } catch {
+        return [];
+    }
+    if (!Array.isArray(raw)) {
+        return [];
+    }
+    return (raw as PsEntry[])
+        .map((c) => ({
+            name: c.Names?.[0] ?? '',
+            state: c.State?.trim() || 'unknown',
+            key: c.Labels?.['zenera.key'],
+            createdAt: c.Created ? new Date(c.Created * 1000).toISOString() : undefined,
+            size: c.Size?.rwSize,
+        }))
+        .filter((c) => c.name)
+        .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
 }
 
 export async function removeContainers(
@@ -410,6 +444,139 @@ export async function removeContainers(
         return;
     }
     await exec(engine, ['rm', '--force', '--volumes', ...names], { timeoutMs: 120_000 });
+}
+
+// ---------------------------------------------------------------------------
+// Disk
+//
+// Two disks, and confusing them is the whole difficulty. Images and container
+// layers live inside the machine's disk image; everything a session writes
+// lives in the project directory, on the host. On macOS both end up in the
+// same SSD, but only one of them is reclaimed by removing a container.
+// ---------------------------------------------------------------------------
+
+export interface DiskLine {
+    count: number;
+    active: number;
+    size: number;
+    reclaimable: number;
+}
+
+export interface EngineDisk {
+    images: DiskLine;
+    containers: DiskLine;
+    volumes: DiskLine;
+    /** the filesystem images and layers are kept on — inside the machine, if there is one */
+    store?: { used: number; capacity: number };
+    /** the machine's disk image, as it costs this host; absent on Linux */
+    image?: { name: string; path: string; allocated: number };
+}
+
+interface DfEntry {
+    Type?: string;
+    TotalCount?: number;
+    Total?: number;
+    Active?: number;
+    RawSize?: number;
+    RawReclaimable?: number;
+}
+
+/** What the engine is using. Never throws: a disk report is not worth a crash. */
+export async function engineDisk(
+    engine = 'podman',
+    exec = runProcess,
+): Promise<EngineDisk | undefined> {
+    const call = (args: string[]): Promise<ProcResult | undefined> =>
+        exec(engine, args, { timeoutMs: 120_000 }).catch(() => undefined);
+
+    const res = await call(['system', 'df', '--format', 'json']);
+    if (!res || res.code !== 0) {
+        return undefined;
+    }
+    let raw: unknown;
+    try {
+        raw = JSON.parse(res.stdout.trim() || '[]');
+    } catch {
+        return undefined;
+    }
+    const rows = Array.isArray(raw) ? (raw as DfEntry[]) : [];
+    const pick = (type: string): DiskLine => {
+        const row = rows.find((r) => r.Type === type);
+        return {
+            count: row?.TotalCount ?? row?.Total ?? 0,
+            active: row?.Active ?? 0,
+            size: row?.RawSize ?? 0,
+            reclaimable: row?.RawReclaimable ?? 0,
+        };
+    };
+
+    const info = await call([
+        'info',
+        '--format',
+        '{{.Store.GraphRootUsed}}\t{{.Store.GraphRootAllocated}}',
+    ]);
+    const [used, capacity] = (info?.code === 0 ? info.stdout.trim() : '').split('\t').map(Number);
+
+    return {
+        images: pick('Images'),
+        containers: pick('Containers'),
+        volumes: pick('Local Volumes'),
+        store: used > 0 && capacity > 0 ? { used, capacity } : undefined,
+        image: platform() === 'linux' ? undefined : await machineImage(engine, exec),
+    };
+}
+
+/**
+ * What the machine costs the host, which is not what it says it costs: the
+ * disk image is created sparse at its full size, so only its allocated blocks
+ * are real, and blocks freed inside the machine are not handed back until
+ * something trims them. That is why this can exceed the machine's own `used`.
+ *
+ * The path is not something podman will tell us — `machine inspect` stopped
+ * carrying it — so this is the documented default location and nothing is
+ * reported when the file is not there.
+ */
+async function machineImage(engine: string, exec: typeof runProcess): Promise<EngineDisk['image']> {
+    const listed = await exec(engine, ['machine', 'list', '--format', 'json'], {
+        timeoutMs: 30_000,
+    }).catch(() => undefined);
+    if (!listed || listed.code !== 0) {
+        return undefined;
+    }
+    const machines = safeMachines(listed.stdout);
+    const name = (machines.find((m) => m.Default) ?? machines[0])?.Name;
+    if (!name) {
+        return undefined;
+    }
+
+    const base = join(
+        process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'),
+        'containers',
+        'podman',
+        'machine',
+    );
+    for (const provider of children(base)) {
+        for (const file of children(join(base, provider))) {
+            if (!file.startsWith(name) || !/\.(raw|qcow2|img)$/.test(file)) {
+                continue;
+            }
+            const path = join(base, provider, file);
+            try {
+                return { name, path, allocated: statSync(path).blocks * 512 };
+            } catch {
+                return undefined;
+            }
+        }
+    }
+    return undefined;
+}
+
+function children(dir: string): string[] {
+    try {
+        return readdirSync(dir);
+    } catch {
+        return [];
+    }
 }
 
 // ---------------------------------------------------------------------------

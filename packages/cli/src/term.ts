@@ -279,3 +279,18 @@ export function ago(iso: string | undefined): string {
 export function count(n: number, singular: string, plural = `${singular}s`): string {
     return `${n} ${n === 1 ? singular : plural}`;
 }
+
+/** Powers of 1000, as the container engine prints them, so the two agree. */
+export function bytes(n: number): string {
+    if (!Number.isFinite(n) || n <= 0) {
+        return '0 B';
+    }
+    const units = ['B', 'kB', 'MB', 'GB', 'TB'];
+    let value = n;
+    let unit = 0;
+    while (value >= 1000 && unit < units.length - 1) {
+        value /= 1000;
+        unit++;
+    }
+    return `${unit > 0 && value < 100 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+}

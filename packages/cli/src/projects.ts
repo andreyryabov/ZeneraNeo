@@ -7,7 +7,7 @@ import {
     type ProjectConfig,
     type SandboxMount,
 } from '@zenera/neo';
-import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { paths, readJson, writeJson } from './home.ts';
 import { isStamp } from './ids.ts';
@@ -303,6 +303,40 @@ function stampedChildren(dir: string): string[] {
         .filter((e) => e.isDirectory() && isStamp(e.name))
         .map((e) => e.name)
         .sort();
+}
+
+/**
+ * What a tree occupies, in allocated blocks rather than in bytes, because a
+ * sparse file costs what it was given and not what it claims. Symlinks are
+ * counted and never followed: a link out of the tree is not part of it, and
+ * one that points back in would otherwise be counted twice — or forever.
+ */
+export function dirSize(dir: string): number {
+    let total = 0;
+    const stack = [dir];
+    while (stack.length > 0) {
+        const at = stack.pop() as string;
+        let entries;
+        try {
+            entries = readdirSync(at, { withFileTypes: true });
+        } catch {
+            continue;
+        }
+        for (const entry of entries) {
+            const path = join(at, entry.name);
+            if (entry.isDirectory()) {
+                stack.push(path);
+                continue;
+            }
+            try {
+                total += lstatSync(path).blocks * 512;
+            } catch {
+                // Gone between the listing and the stat: a live session is
+                // writing, which is normal and not worth failing a report for.
+            }
+        }
+    }
+    return total;
 }
 
 /** True when a session's lock names a process that is still alive. */

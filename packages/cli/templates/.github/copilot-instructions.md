@@ -768,9 +768,10 @@ sandbox:
 ```
 
 With it, the container is _stopped_ rather than removed, and the next run of
-that session starts the same one back up with everything still installed. The
-cost is containers that outlive their sessions — `zen sandbox status` lists them
-and `zen sandbox clean` removes them.
+that session starts the same one back up with everything still installed. A
+container is per session rather than per project, so they accumulate: `zen
+sandbox status` lists them, `zen sandbox disk` totals what they and the project
+directories cost, and `zen sandbox clean` removes them.
 
 Changing any field renames the container, so bumping the image gets a fresh one
 rather than an old one quietly persisting with the wrong contents. That is also
