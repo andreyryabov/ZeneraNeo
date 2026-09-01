@@ -1,6 +1,7 @@
 import { readProjectConfig } from '@zenera/neo';
 import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
+import { resolveBuild, type ResolvedBuild } from '../image.ts';
 import { ensurePodmanReady, ownedContainers, podmanStatus, removeContainers } from '../podman.ts';
 import { project as findProject } from '../resolve.ts';
 import { bold, dim, green, json, note, red, usageError, write, yellow } from '../term.ts';
@@ -27,8 +28,8 @@ export const sandbox: Command = {
     usage: USAGE,
     details: [
         '  status                 What is installed, running and pulled. Changes nothing.',
-        '  up                     Install if asked, start the machine, pull the image.',
-        '  pull                   Just the image.',
+        '  up                     Install if asked, start the machine, pull or build the image.',
+        '  pull                   Just the image: pulled, or built from the project\u2019s Dockerfile.',
         '  clean                  Remove every container this CLI created.',
         '',
         '  --project <name|dir>   Which project the image comes from.',
@@ -55,15 +56,17 @@ export const sandbox: Command = {
             throw usageError('one subcommand at a time', USAGE);
         }
 
-        const image = values.image ?? (await projectImage(ctx.cwd, values));
+        const found = values.image ? undefined : await projectSandbox(ctx.cwd, values);
+        const image = values.image ?? found?.image;
+        const build = found?.build;
 
         switch (what) {
             case 'status':
-                return status(image, ctx.json);
+                return status(image, build, ctx.json);
             case 'up':
-                return up(image, ctx.json, ctx.json);
+                return up(image, build, ctx.json, ctx.json);
             case 'pull':
-                return up(image, true, ctx.json);
+                return up(image, build, true, ctx.json, true);
             case 'clean':
                 return clean(ctx.json);
         }
@@ -76,21 +79,30 @@ export const sandbox: Command = {
  * not a failure — it just means there is no image to report on. Notably this
  * does *not* go through `target`: reading a setting must not create a session.
  */
-async function projectImage(cwd: string, values: Flags): Promise<string | undefined> {
+async function projectSandbox(
+    cwd: string,
+    values: Flags,
+): Promise<{ image?: string; build?: ResolvedBuild } | undefined> {
     try {
         const found = await findProject({ cwd, project: values.project, yes: true });
-        return readProjectConfig(found.dir).config.sandbox?.image;
+        const { root, config } = readProjectConfig(found.dir);
+        const build = resolveBuild(root, config.sandbox);
+        return { image: build?.tag ?? config.sandbox?.image, build };
     } catch {
         return undefined;
     }
 }
 
-async function status(image: string | undefined, asJson: boolean): Promise<void> {
+async function status(
+    image: string | undefined,
+    build: ResolvedBuild | undefined,
+    asJson: boolean,
+): Promise<void> {
     const found = await podmanStatus({ image });
     const containers = found.ready ? await ownedContainers(found.engine) : [];
 
     if (asJson) {
-        json({ ...found, containers });
+        json({ ...found, dockerfile: build?.dockerfile ?? null, containers });
         return;
     }
 
@@ -106,6 +118,9 @@ async function status(image: string | undefined, asJson: boolean): Promise<void>
     if (found.image) {
         write(`${bold('image')}      ${found.image} ${mark(Boolean(found.imagePresent))}`);
     }
+    if (build) {
+        write(`${bold('dockerfile')} ${dim(build.dockerfile)}`);
+    }
     const listed = containers.map((c) =>
         c.state === 'running' ? `${c.name} ${green('running')}` : `${c.name} ${dim(c.state)}`,
     );
@@ -117,10 +132,16 @@ async function status(image: string | undefined, asJson: boolean): Promise<void>
     }
 }
 
-async function up(image: string | undefined, yes: boolean, asJson: boolean): Promise<void> {
-    await ensurePodmanReady({ image, yes });
+async function up(
+    image: string | undefined,
+    build: ResolvedBuild | undefined,
+    yes: boolean,
+    asJson: boolean,
+    rebuild = false,
+): Promise<void> {
+    await ensurePodmanReady({ image, build, yes, rebuild });
     if (asJson) {
-        json({ ready: true, image });
+        json({ ready: true, image, dockerfile: build?.dockerfile ?? null });
         return;
     }
     write(`${green('ready')}${image ? ` ${dim(image)}` : ''}`);

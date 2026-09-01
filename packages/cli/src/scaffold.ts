@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -82,14 +82,21 @@ ${MODEL_SECTION(model, options)}
 # the folder is enough — set \`assets: <path>\` only to keep the material
 # somewhere else in this project.
 
-# The container \`sandbox:*\` commands run in. \`persist: true\` keeps it between
-# runs instead of throwing it away, so what the agent installs is still there
-# next time — otherwise only /workspace and its home directory survive, and an
-# \`apt-get\` or a root \`pip install\` is repeated on every run. \`zen sandbox
+# The container \`sandbox:*\` commands run in. \`build:\` names a Dockerfile to
+# build instead of an image to pull, so anything this project always needs is
+# in the image rather than installed by an agent on every run — put it in
+# sandbox/Dockerfile. Swap the whole block for \`image: <ref>\` to pull a
+# published one instead; the two cannot both be set.
+#
+# \`persist: true\` keeps the container between runs rather than throwing it
+# away, so what an agent installs for itself is still there next time —
+# otherwise only /workspace and its home directory survive. \`zen sandbox
 # clean\` removes the ones left behind. Everything else has a default; see the
-# sandbox: block in docs/agents-yaml.md to size or pin the image.
+# sandbox: block in docs/agents-yaml.md to size it.
 sandbox:
     persist: true
+    build:
+        dockerfile: sandbox/Dockerfile
 
 agents:
     - name: default
@@ -201,6 +208,7 @@ export function editorSettings(dir: string): string {
 // ---------------------------------------------------------------------------
 
 const GITHUB_TEMPLATE = fileURLToPath(new URL('../templates/.github', import.meta.url));
+const SANDBOX_TEMPLATE = fileURLToPath(new URL('../templates/sandbox', import.meta.url));
 
 /**
  * Writes the `.github/` tree under `dir`, replacing what is there — it
@@ -212,10 +220,19 @@ export function copilotInstructions(dir: string): string[] {
 }
 
 /**
+ * Writes `sandbox/`, the Dockerfile the scaffolded `agents.yaml` builds. Unlike
+ * the editor files this becomes the project's own — it is meant to be edited —
+ * so anything already there is left alone.
+ */
+export function sandboxTemplate(dir: string): string[] {
+    return copyTree(SANDBOX_TEMPLATE, dir, 'sandbox', { keep: true });
+}
+
+/**
  * Copies one template directory into `dir` at `rel`, depth first, sorted so
  * the list it returns is the same on every machine.
  */
-function copyTree(from: string, dir: string, rel: string): string[] {
+function copyTree(from: string, dir: string, rel: string, opts?: { keep?: boolean }): string[] {
     const written: string[] = [];
     mkdirSync(join(dir, rel), { recursive: true });
     const entries = readdirSync(from, { withFileTypes: true });
@@ -223,11 +240,14 @@ function copyTree(from: string, dir: string, rel: string): string[] {
     for (const entry of entries) {
         const child = join(rel, entry.name);
         if (entry.isDirectory()) {
-            written.push(...copyTree(join(from, entry.name), dir, child));
-        } else {
-            writeFileSync(join(dir, child), readFileSync(join(from, entry.name)));
-            written.push(child);
+            written.push(...copyTree(join(from, entry.name), dir, child, opts));
+            continue;
         }
+        if (opts?.keep && existsSync(join(dir, child))) {
+            continue;
+        }
+        writeFileSync(join(dir, child), readFileSync(join(from, entry.name)));
+        written.push(child);
     }
     return written;
 }
@@ -265,6 +285,7 @@ export function scaffold(opts: ScaffoldOptions): string[] {
     put(join('agents', 'prompts', 'default.md'), PROMPT);
     put(join('assets', 'README.md'), ASSETS_README);
     put('.gitignore', GITIGNORE);
+    written.push(...sandboxTemplate(opts.dir));
 
     // The project directory is what `zen open` opens, so this is where the
     // editor actually reads them.

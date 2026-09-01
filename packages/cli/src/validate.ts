@@ -2,6 +2,7 @@ import {
     EXA_GROUP,
     FileSkillProvider,
     SANDBOX_MOUNT,
+    Sandbox,
     exaTools,
     projectRegistry,
     readProjectConfig,
@@ -13,12 +14,16 @@ import {
     type EmbeddingRef,
     type ModelRef,
     type ProjectConfig,
+    type Runner,
     type SkillSummary,
 } from '@zenera/neo';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { auditModels, credentialFor, type DeclaredRole, type ModelIssue } from './audit.ts';
+import { resolveBuild, type ResolvedBuild } from './image.ts';
 import { SHAPES, type KeyStore, type Service } from './keys.ts';
+import { BuildError, ensurePodmanReady } from './podman.ts';
 
 // ---------------------------------------------------------------------------
 // The project check
@@ -35,8 +40,17 @@ import { SHAPES, type KeyStore, type Service } from './keys.ts';
 // Two consequences shape the whole module. Nothing here throws for a problem
 // *in the project* — a throw would end the walk and cost the findings after it
 // — so every check that could throw is wrapped and turned into a `Finding`.
-// And nothing here needs a credential, a network or a container: a check that
-// only works on a machine already set up is no use to the machine that is not.
+// And nothing here needs a credential or a network: a check that only works on
+// a machine already set up is no use to the machine that is not.
+//
+// The sandbox is the one exception, and it is deliberate. A Dockerfile that
+// does not build is a broken project, and nothing short of building it says so
+// — the file parses, the path exists, and the failure waits for the first run.
+// So the check builds it and runs one command in it. That is the only thing
+// here that starts anything, it happens against a temporary directory rather
+// than anyone's workspace, it takes the container down again on the way out,
+// and `--no-sandbox` turns it off. A missing container engine stays a warning,
+// because the machine that is not set up yet is still owed the rest.
 // ---------------------------------------------------------------------------
 
 /**
@@ -150,7 +164,15 @@ export interface Report {
     };
     providers: string[];
     models: ModelReport[];
-    sandbox: { image: string | null; declared: boolean; used: boolean };
+    sandbox: {
+        image: string | null;
+        /** the Dockerfile that image is built from, when it is built rather than pulled */
+        dockerfile: string | null;
+        declared: boolean;
+        used: boolean;
+        /** whether the image was actually built and a container started */
+        probed: boolean;
+    };
     findings: Finding[];
     counts: { errors: number; warnings: number; notes: number };
 }
@@ -173,6 +195,19 @@ export interface ValidateOptions {
      * pay for it.
      */
     keys?: KeyStore;
+    /**
+     * Whether to build the image and start a container. Everything else here
+     * is a reading of files; this is the one part that runs something, so it
+     * is named separately and can be turned off.
+     */
+    sandbox?: {
+        enabled: boolean;
+        engine?: string;
+        /** the test seam, as elsewhere — a check can be watched without an engine */
+        exec?: Runner;
+        /** called with each slow step, so the caller can narrate one */
+        onProgress?: (what: string) => void;
+    };
 }
 
 // Mirrors the loader's own constants (`packages/neo/src/project/load.ts`).
@@ -203,6 +238,8 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
     let entry: string | null = null;
     let registered = opts.registered ?? false;
     let name = opts.name ?? null;
+    let build: ResolvedBuild | undefined;
+    let probed = false;
 
     const add = (f: Finding): void => {
         findings.push(f);
@@ -240,7 +277,7 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
             skillDirs,
             providers,
             models,
-            sandbox: sandboxSummary(config, agents),
+            sandbox: sandboxSummary(config, agents, build, probed),
             findings,
         });
 
@@ -401,6 +438,12 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
     checkAssets(root, config, record, add);
 
     // -----------------------------------------------------------------------
+    // The sandbox
+    // -----------------------------------------------------------------------
+
+    build = checkSandbox(root, config, record, add);
+
+    // -----------------------------------------------------------------------
     // Models and credentials
     // -----------------------------------------------------------------------
 
@@ -409,6 +452,13 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
     models.push(...resolved.models);
 
     checkServices(agents, available, opts.keys, add);
+
+    // Last, because it is the only step that starts anything: everything a
+    // reading of the files can tell you is already on the report by now, so an
+    // interrupted check is still a useful one.
+    if (opts.sandbox?.enabled && sandboxSummary(config, agents).used) {
+        probed = await probeSandbox(config, build, opts.sandbox, add);
+    }
 
     return done();
 }
@@ -1161,6 +1211,200 @@ function contents(dir: string): string[] {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The sandbox
+//
+// Two halves. The first reads the `build:` block and says whether the files it
+// names are there — cheap, and true on any machine. The second builds the
+// image and runs one command in it, which is the only way to find out whether
+// the Dockerfile works, and is the only thing in this module that starts
+// anything.
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves `sandbox.build:` and records the files it names. Returns what the
+ * probe would build, or nothing when the project pulls an image instead.
+ */
+function checkSandbox(
+    root: string,
+    config: ProjectConfig,
+    record: Recorder,
+    add: Add,
+): ResolvedBuild | undefined {
+    const spec = config.sandbox?.build;
+    if (!spec) {
+        return undefined;
+    }
+
+    const file = normalise(root, spec.dockerfile);
+    const context = spec.context === undefined ? undefined : normalise(root, spec.context);
+    if (file === undefined || (spec.context !== undefined && context === undefined)) {
+        add({
+            severity: 'error',
+            code: 'sandbox.outside',
+            where: 'sandbox.build',
+            message: 'the build resolves outside the project root, which is refused',
+            fix: 'keep the Dockerfile and its context inside the project',
+        });
+        return undefined;
+    }
+
+    let ok = record(file, 'the sandbox image is built from this', 'file', true, 'sandbox.build');
+    if (!ok) {
+        add({
+            severity: 'error',
+            code: 'sandbox.dockerfile.missing',
+            where: 'sandbox.build.dockerfile',
+            message: `no such file: ${file} — the project will not load`,
+            fix: `create ${file}, or replace \`build:\` with \`image: <ref>\``,
+        });
+    }
+    if (context !== undefined) {
+        const found = record(
+            context,
+            'what the sandbox build may COPY from',
+            'directory',
+            true,
+            'sandbox.build.context',
+        );
+        if (!found) {
+            add({
+                severity: 'error',
+                code: 'sandbox.context.missing',
+                where: 'sandbox.build.context',
+                message: `no such directory: ${context} — the project will not load`,
+                fix: `create ${context}, or drop \`context:\` to use the Dockerfile's own folder`,
+            });
+        }
+        ok &&= found;
+    }
+    if (!ok) {
+        return undefined;
+    }
+
+    try {
+        return resolveBuild(root, config.sandbox);
+    } catch (err) {
+        add({
+            severity: 'error',
+            code: 'sandbox.build.invalid',
+            where: 'sandbox.build',
+            message: err instanceof Error ? err.message : String(err),
+        });
+        return undefined;
+    }
+}
+
+/** Written by the smoke test and read back, to prove the mount is real. */
+const SMOKE = 'zen-check';
+
+/**
+ * Builds the image and runs one command in it.
+ *
+ * The container is given a temporary directory rather than anybody's
+ * workspace: this is a check, and a check that can write to the work is not
+ * one. `persist` is off, so closing it removes it — a `zen check` that left a
+ * container behind would be a slow leak nobody attributed to it.
+ */
+async function probeSandbox(
+    config: ProjectConfig,
+    build: ResolvedBuild | undefined,
+    opts: NonNullable<ValidateOptions['sandbox']>,
+    add: Add,
+): Promise<boolean> {
+    const image = build?.tag ?? config.sandbox?.image;
+    const engine = opts.engine ?? 'podman';
+
+    // The pre-flight narrates the build and the pull itself, so this only has
+    // to cover the silence before it: installing, and starting a machine.
+    opts.onProgress?.('checking the sandbox');
+    try {
+        await ensurePodmanReady({ image, build, engine, exec: opts.exec, yes: true });
+    } catch (err) {
+        if (err instanceof BuildError) {
+            const rel = config.sandbox?.build?.dockerfile ?? 'the Dockerfile';
+            add({
+                severity: 'error',
+                code: 'sandbox.build',
+                where: 'sandbox.build.dockerfile',
+                message: `${rel} does not build: ${err.hint ?? reason(err)}`,
+                fix: 'run the build by hand to see the whole log',
+            });
+            return false;
+        }
+        // A laptop with no container engine is not a broken project, and this
+        // report is most valuable on exactly that laptop.
+        add({
+            severity: 'warning',
+            code: 'sandbox.unchecked',
+            where: 'sandbox',
+            message: `${reason(err)} — so the sandbox was not tried`,
+            fix: 'run `zen sandbox up`, or pass --no-sandbox to skip this',
+        });
+        return false;
+    }
+
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'zen-check-')));
+    const box = new Sandbox({
+        root,
+        key: 'check',
+        image,
+        cpus: config.sandbox?.cpus,
+        memory: config.sandbox?.memory,
+        network: config.sandbox?.network,
+        workdir: config.sandbox?.workdir,
+        user: config.sandbox?.user,
+        engine,
+        exec: opts.exec,
+        // Not the project's: a check forwards no host values, and keeping the
+        // container is the caller's choice about their work, not about this.
+        env: {},
+        persist: false,
+    });
+
+    opts.onProgress?.(`starting ${image ?? 'the container'}`);
+    try {
+        const res = await box.exec(
+            [
+                `printf '%s\\n' ${SMOKE} > ${SMOKE}.txt`,
+                `cat ${SMOKE}.txt`,
+                `rm ${SMOKE}.txt`,
+                'pwd',
+            ].join('\n'),
+            { timeout: 60 },
+        );
+        if (res.exit_code !== 0 || !res.stdout.includes(SMOKE)) {
+            add({
+                severity: 'error',
+                code: 'sandbox.smoke',
+                where: 'sandbox',
+                message:
+                    `${image} starts, but the workspace is not usable inside it: ` +
+                    (res.stderr.trim().split('\n')[0] || `exit ${res.exit_code}`),
+                fix: 'check `workdir:` and `user:` — the image must be able to write there',
+            });
+            return false;
+        }
+        return true;
+    } catch (err) {
+        add({
+            severity: 'error',
+            code: 'sandbox.start',
+            where: 'sandbox',
+            message: `could not start a container from ${image}: ${reason(err)}`,
+            fix: 'run `zen sandbox status` to see what the engine says',
+        });
+        return false;
+    } finally {
+        await box.dispose().catch(() => undefined);
+        rmSync(root, { recursive: true, force: true });
+    }
+}
+
+function reason(err: unknown): string {
+    return err instanceof Error ? err.message : String(err);
+}
+
 /**
  * What else is in a skill's folder — the files the agent reaches under /skills,
  * and the reason a skill can ship a script instead of describing one. A bare
@@ -1359,12 +1603,17 @@ function whereFor(
 function sandboxSummary(
     config: ProjectConfig | undefined,
     agents: AgentReport[],
+    build?: ResolvedBuild,
+    probed = false,
 ): Report['sandbox'] {
     const used = agents.some((a) => a.tools.some((t) => SANDBOX_TOOLS.has(t)));
     return {
-        image: config?.sandbox?.image ?? null,
+        image: build?.tag ?? config?.sandbox?.image ?? null,
+        // As written, not as resolved: this is read by someone about to edit it.
+        dockerfile: config?.sandbox?.build?.dockerfile ?? null,
         declared: Boolean(config?.sandbox) || agents.some((a) => a.ownSandbox),
         used,
+        probed,
     };
 }
 

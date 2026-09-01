@@ -547,7 +547,7 @@ model call:
 | ---------- | ----------------------------------------------------------- |
 | `status`   | What is installed, running and pulled. Changes nothing      |
 | `up`       | The whole pre-flight: install, machine, socket, image       |
-| `pull`     | Just the image                                              |
+| `pull`     | Just the image: pulled, or built from the Dockerfile        |
 | `clean`    | Removes every container this CLI created (`label=zenera=1`) |
 
 Two directories are bind-mounted into every container: the session's workspace
@@ -556,6 +556,48 @@ is what makes a session self-contained the way the rest of it already is — a
 `pip install --user` is still there when the session is reopened, and travels
 with the directory when it is copied. Everything outside the two mounts is
 thrown away when the session closes, unless `sandbox.persist` says otherwise.
+
+### 9.1 Building instead of pulling
+
+A project can name a Dockerfile instead of an image, and `zen init` writes one:
+
+```yaml
+sandbox:
+    build:
+        dockerfile: sandbox/Dockerfile
+```
+
+Building is a host concern, so none of it is in the library — `@zenera/neo`
+gains the schema and nothing else, and a `SandboxSpec` still only ever holds an
+image reference. [image.ts](packages/cli/src/image.ts) resolves the block to a
+tag before a container is ever named, and the pre-flight builds it where it
+would otherwise pull.
+
+The tag has to be **content-addressed** — `localhost/zenera-sandbox:<digest>`,
+over the Dockerfile and every file in its context — because the container's
+name is a hash of its spec, and a stable tag over changed content would leave a
+`persist: true` container running a rootfs the project no longer describes.
+Hashing is a synchronous read, so the pool is still built in one shot; only the
+`podman build` is deferred to the pre-flight.
+
+It builds only when that tag is not already on disk. Skipping is safe here in a
+way it would not be for an ordinary tag — the image existing _means_ the content
+is unchanged — so a warm `zen run` costs one `image exists` call. A moved base
+image is the gap that leaves, since `podman build` defaults to `--pull=missing`;
+`zen sandbox pull` forces the build.
+
+### 9.2 What `zen check` does with it
+
+`zen check` is otherwise a reading of files, and says so. The sandbox is the
+exception: a Dockerfile that does not build is a broken project, and nothing
+short of building it says so. So the check builds the image and runs one
+command in it — against a temporary directory, never the workspace, with no
+host environment forwarded and `persist` off, so nothing survives it.
+
+It is skipped when no agent can reach a shell, skipped by `--no-sandbox`, and a
+host with no container engine is a **warning** rather than an error: that is the
+host most likely to be running the check in the first place. A build that runs
+and fails is the one case that fails the check.
 
 ## 10. Not here
 

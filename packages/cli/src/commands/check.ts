@@ -12,6 +12,7 @@ import {
     green,
     invalidError,
     json,
+    progress,
     red,
     table,
     write,
@@ -26,10 +27,11 @@ import {
     type Severity,
 } from '../validate.ts';
 
-const USAGE = 'zen check [dir] [--project <name|dir>] [--strict] [--quiet]';
+const USAGE = 'zen check [dir] [--project <name|dir>] [--no-sandbox] [--strict] [--quiet]';
 
 interface Flags {
     project?: string;
+    'no-sandbox'?: boolean;
     strict?: boolean;
     quiet?: boolean;
 }
@@ -44,20 +46,28 @@ interface Flags {
 // stable code and a fix, and the whole thing goes to stdout — it is the answer,
 // not narration.
 //
-// Nothing here is contacted, started or paid for. That is the point: the check
-// has to work on the machine that is not set up yet, which is the machine that
-// most needs it.
+// Nothing is contacted or paid for. The one thing that *runs* is the sandbox:
+// the project's image is built and one command is executed in it, because a
+// Dockerfile that does not build is a broken project and nothing short of
+// building it says so. It happens against a temporary directory, the container
+// is removed on the way out, and `--no-sandbox` skips it — so the report is
+// still worth having on the machine that has no container engine at all.
 // ---------------------------------------------------------------------------
 
 export const check: Command = {
     summary: 'Validate agents.yaml and every file it names, and report in full.',
     usage: USAGE,
     details: [
-        'Checks the whole project without running anything: the configuration',
-        'parses and satisfies the schema, every prompt, skill and catalog it',
-        'names is on disk, hand-offs and forks name agents that exist, tool',
-        'selectors resolve, skills bind to a catalog that holds them, and the',
-        'models it declares have a credential on this machine.',
+        'Checks the whole project: the configuration parses and satisfies the',
+        'schema, every prompt, skill and catalog it names is on disk, hand-offs',
+        'and forks name agents that exist, tool selectors resolve, skills bind to',
+        'a catalog that holds them, and the models it declares have a credential',
+        'on this machine.',
+        '',
+        'It also builds the sandbox image and runs one command in it, against a',
+        'temporary directory rather than your workspace. That is the only thing',
+        'it starts, and --no-sandbox skips it. No container engine is a warning,',
+        'not an error.',
         '',
         'Unlike a run, it does not stop at the first problem — the report lists',
         'everything it found, each with a code and the fix for it.',
@@ -70,6 +80,7 @@ export const check: Command = {
             ctx.args,
             {
                 project: { type: 'string' },
+                'no-sandbox': { type: 'boolean' },
                 strict: { type: 'boolean' },
                 quiet: { type: 'boolean' },
             },
@@ -95,12 +106,18 @@ export const check: Command = {
         const keys = await KeyStore.open();
         keys.materialize();
 
+        const bar = progress();
         const report = await validateProject({
             dir,
             name,
             registered: entry !== undefined,
             keys,
+            sandbox: {
+                enabled: !values['no-sandbox'],
+                onProgress: (what) => bar.update(dim(what)),
+            },
         });
+        bar.done();
 
         if (ctx.json) {
             json(report);
@@ -239,13 +256,21 @@ function render(report: Report): string[] {
         push(
             ...table([
                 ['  image', report.sandbox.image ?? dim('the default image')],
+                ...(report.sandbox.dockerfile
+                    ? [['  built from', report.sandbox.dockerfile] as [string, string]]
+                    : []),
                 [
                     '  reached by',
                     report.sandbox.used
                         ? 'at least one agent has the shell tools'
                         : dim('nothing — the block is declared but no agent can run a command'),
                 ],
-                ['  requires', dim('podman on this machine: zen sandbox status')],
+                [
+                    '  tried',
+                    report.sandbox.probed
+                        ? green('built, started, and a command ran in it')
+                        : dim('no — nothing was built or started'),
+                ],
             ]),
         );
     }

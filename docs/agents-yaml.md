@@ -540,6 +540,7 @@ sandbox:
 | Field     | Type                   | Default                                       | Meaning                                             |
 | --------- | ---------------------- | --------------------------------------------- | --------------------------------------------------- |
 | `image`   | string                 | `docker.io/library/python:3.14-slim-bookworm` | The base image commands run in                      |
+| `build`   | object                 | none                                          | A Dockerfile to build instead of an image to pull   |
 | `cpus`    | number                 | the host's                                    | Fractional cores, as podman's `--cpus`              |
 | `memory`  | integer, MiB           | the host's                                    | As podman's `--memory`                              |
 | `network` | `bridge`/`none`/`host` | `bridge`                                      | `none` for a project that must not reach out        |
@@ -549,9 +550,63 @@ sandbox:
 | `persist` | boolean                | `false` — **recommended `true`**              | Keep the container between runs of a session        |
 | `env`     | string[]               | none                                          | Host variables to forward, **by name**              |
 
+`image` and `build` cannot both be set: a Dockerfile names its own base in its
+`FROM` line, so one of the two would be silently ignored.
+
 `cpus` and `memory` do two jobs on macOS and Windows: they cap the container,
 and they size the Podman virtual machine if the CLI has to create one. On
 Linux there is no machine and they only cap the container.
+
+### `build:`, for what the project always needs
+
+A published image is the right answer when one exists. When it does not — a
+project that needs Python _and_ Node, or a pinned toolchain — the alternative
+is an agent installing it at the start of every run, which is slow, silently
+version-drifting, and thrown away with the container.
+
+```yaml
+sandbox:
+    persist: true
+    build:
+        dockerfile: sandbox/Dockerfile
+```
+
+| Field        | Type | Default                     | Meaning                        |
+| ------------ | ---- | --------------------------- | ------------------------------ |
+| `dockerfile` | path | required                    | Relative to the project root   |
+| `context`    | path | the Dockerfile's own folder | What the build may `COPY` from |
+
+Both must resolve inside the project; a path that escapes the root is refused
+at load, as everywhere else in this file.
+
+`zen init` writes a `sandbox/Dockerfile` with Python and Node in it and points
+this at it. It is the project's file from then on — edit it, commit it, and
+`zen init` will not touch it again.
+
+**The tag is a hash of the content.** The image is tagged
+`localhost/zenera-sandbox:<digest>`, where the digest covers the Dockerfile and
+every file in the context. Editing either produces a different tag, and
+therefore a different container name — which is what you want, and is also the
+cost noted under `persist: true` below: the old container is abandoned, along
+with whatever was installed in it.
+
+The build is **skipped once the tag is on disk**, which is the point of hashing
+the content: the image existing means the Dockerfile and its context are
+unchanged, so an ordinary `zen run` costs one `podman image exists` and nothing
+else. What that does not catch is a base image that moved — `podman build`
+reuses whatever `FROM node:24` resolved to last time — so `zen sandbox pull`
+forces the build when you want a fresh one.
+
+A `.dockerignore` is honoured by the engine but **not** by the digest, so a
+file the build ignores can still change the tag. That direction is wasteful and
+never wrong; the other direction would hand you a stale image.
+
+`zen check` builds the image and runs one command in it, against a temporary
+directory rather than your workspace — a Dockerfile that does not build is a
+broken project, and nothing short of building it says so. `zen check
+--no-sandbox` skips that. A machine with no container engine gets a warning
+rather than an error, since that is the machine most likely to be running the
+check.
 
 ### What survives, and what does not
 
@@ -604,7 +659,8 @@ the wrong contents. Adding or removing an `assets:` directory or a skill
 directory does the same, since the mounts are part of what a container is. That
 is also the cost of `persist: true`: a config change abandons the old container
 along with whatever was installed in it, so anything the project always needs
-still belongs in `image:` rather than in an accumulated rootfs.
+still belongs in `image:` — or in `build:` — rather than in an accumulated
+rootfs.
 
 ### `env:` names, never values
 
@@ -638,6 +694,10 @@ agents:
 
 The fields are the same, merged over the top-level block. Two agents that
 resolve to the same configuration still share one container.
+
+An agent that sets `image` displaces a project-level `build`, and an agent that
+sets `build` displaces a project-level `image` — the two are exclusive after
+the merge as well as before it.
 
 ---
 

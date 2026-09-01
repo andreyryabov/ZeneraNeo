@@ -109,6 +109,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
         const mounts = projectMounts(root, config);
         sandbox = buildSandbox({
             config,
+            root,
             session: opts.session,
             workspace,
             readOnly: opts.readOnly,
