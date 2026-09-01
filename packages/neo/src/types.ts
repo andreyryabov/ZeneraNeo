@@ -265,6 +265,10 @@ export function tool<TArgs, TCtx = unknown>(def: Tool<TArgs, TCtx>): Tool<TArgs,
 // the only way to withhold one tool from a family is to stop using the family,
 // and an author who wants six of seven is back to listing names.
 //
+// A single tool may be written either way — `read_file` or
+// `workspace:read_file` — because having seen the group in one line, everyone
+// tries the qualified form in the next.
+//
 // Everything is resolved at load, and an unknown name or an empty group is a
 // startup failure: a typo that silently grants nothing is the same bug as a
 // typo that silently grants everything, and both surface as a confused model.
@@ -279,9 +283,10 @@ export interface ToolSelection {
 
 /**
  * Resolves selectors against the tools a host provided, in the order written
- * and without duplicates. A selector is a tool name, `<group>:*` for every tool
- * in a group, or `*` for everything; any of them prefixed with `-` removes
- * what it matches from the selection so far.
+ * and without duplicates. A selector is a tool name, `<group>:<name>` for the
+ * same tool written out in full, `<group>:*` for every tool in a group, or `*`
+ * for everything; any of them prefixed with `-` removes what it matches from
+ * the selection so far.
  */
 export function selectTools<TCtx>(
     available: AnyTool<TCtx>[],
@@ -329,6 +334,25 @@ function matchTools<TCtx>(
     const exact = available.find((t) => t.name === selector);
     if (exact) {
         return [exact];
+    }
+    // `workspace:read_file` is the same thing as `read_file`: an author who
+    // writes `workspace:*` on one line should not be told the qualified form
+    // is a typo on the next.
+    const colon = selector.lastIndexOf(':');
+    if (colon > 0) {
+        const group = selector.slice(0, colon);
+        const name = selector.slice(colon + 1);
+        const qualified = available.find((t) => t.group === group && t.name === name);
+        if (qualified) {
+            return [qualified];
+        }
+        const elsewhere = available.find((t) => t.name === name);
+        if (elsewhere) {
+            throw new Error(
+                `${opts.where}: unknown tool "${selector}" ` +
+                    `("${name}" is in group "${elsewhere.group ?? 'none'}", not "${group}")`,
+            );
+        }
     }
     const known = available.map((t) => t.name).join(', ') || 'none';
     throw new Error(

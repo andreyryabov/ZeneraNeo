@@ -769,9 +769,17 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
     const inside =
         (ws.mount
             ? `Path in the workspace: ${ws.mount}/src/a.ts, or src/a.ts relative to the root — ` +
-              `the same file either way. The root itself is "${ws.mount}", "/" or ".".`
+              `the same file either way. The root itself is "${ws.mount}" or ".".`
             : 'Path in the workspace, relative to its root: src/a.ts. The root itself is "." ' +
               'or "/".') + (extras.length === 0 ? '' : ` Read-only: ${nameList(extras)}.`);
+
+    // With more than one tree in reach, "/" is not another name for the
+    // workspace root: it is where the trees hang, and listing it names them.
+    // One tree has nothing above it, so there "/" stays the root.
+    const trees: FileInfo[] | undefined =
+        ws.mount && ws.mounts.length > 0
+            ? [ws.mount, ...extras].map((name) => ({ name, kind: 'dir' }))
+            : undefined;
 
     /**
      * `.`, `/`, the mount and nothing at all are four spellings of the root, and
@@ -860,13 +868,20 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
             properties: {
                 path: {
                     type: 'string',
-                    description: `${inside} Omit it to list the root.`,
+                    description: trees
+                        ? `${inside} Omit it, or give "/", to list the directories that can be ` +
+                          `reached: ${nameList(trees.map((t) => t.name))}.`
+                        : `${inside} Omit it to list the root.`,
                 },
             },
             required: [],
             additionalProperties: false,
         },
         execute: async ({ path }) => {
+            const asked = path?.trim() ?? '';
+            if (trees && (asked === '' || /^[\\/]+$/.test(asked))) {
+                return { path: '/', entries: trees };
+            }
             const at = root(path);
             const entries = await readdir(at, { withFileTypes: true });
             const listed: FileInfo[] = [];

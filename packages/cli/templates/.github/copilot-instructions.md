@@ -621,12 +621,13 @@ container involved there is no second name and everything stays relative.
 
 **Selecting them.** A `tools:` entry is a selector, not only a name:
 
-| Selector      | Selects                                           |
-| ------------- | ------------------------------------------------- |
-| `read_file`   | that one tool                                     |
-| `workspace:*` | every tool in the group                           |
-| `'*'`         | every tool the runtime provides                   |
-| `-<any>`      | removes what it matches from the selection so far |
+| Selector              | Selects                                           |
+| --------------------- | ------------------------------------------------- |
+| `read_file`           | that one tool                                     |
+| `workspace:read_file` | the same tool, written out in full                |
+| `workspace:*`         | every tool in the group                           |
+| `'*'`                 | every tool the runtime provides                   |
+| `-<any>`              | removes what it matches from the selection so far |
 
 ```yaml
 agents:

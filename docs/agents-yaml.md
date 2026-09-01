@@ -499,6 +499,9 @@ It is mounted at `/assets`, always read-only, for every agent:
 
 - `read_file`, `list_dir` and `find_files` reach it under that name, and
   `find_files` with no `path` searches it along with the workspace.
+- `list_dir` with no path (or `/`) lists the trees themselves — `/workspace`
+  and `/assets` — since with more than one in reach there is a level above
+  both.
 - `write_file`, `apply_patch`, `move_file` and `delete_file` refuse it. A
   patch that touches one file under `/assets` writes none of its files.
 - `run_command` sees the same directory at the same path, bind-mounted `:ro`.
@@ -748,12 +751,13 @@ and accepting one would mean accepting keys nothing honours.
 
 An entry is a tool name, or a selector:
 
-| Selector    | Selects                                                     |
-| ----------- | ----------------------------------------------------------- |
-| `read_file` | that one tool                                               |
-| `group:*`   | every tool in a group — `workspace:*` is all the file tools |
-| `'*'`       | everything the host passed to `loadProject`                 |
-| `-<any>`    | removes what it matches from the selection so far           |
+| Selector              | Selects                                                     |
+| --------------------- | ----------------------------------------------------------- |
+| `read_file`           | that one tool                                               |
+| `workspace:read_file` | the same tool, written out in full                          |
+| `group:*`             | every tool in a group — `workspace:*` is all the file tools |
+| `'*'`                 | everything the host passed to `loadProject`                 |
+| `-<any>`              | removes what it matches from the selection so far           |
 
 Quote a lone `'*'`: unquoted, YAML reads it as an alias and refuses the file.
 `workspace:*` needs no quoting.

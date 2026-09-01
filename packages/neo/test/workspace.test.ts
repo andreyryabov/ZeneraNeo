@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { Workspace, workspaceTools } from '../src/tools/workspace.ts';
+import { selectTools } from '../src/types.ts';
 
 describe('workspace containment', () => {
     const root = mkdtempSync(join(tmpdir(), 'zen-ws-'));
@@ -192,6 +193,20 @@ describe('a mounted tree', () => {
         );
     });
 
+    /**
+     * With a second tree in reach, `/` is no longer another name for the
+     * workspace root — it is where both trees hang, so listing it is how the
+     * model finds out what it can reach without being told.
+     */
+    it('is listed at the top, next to the workspace', async () => {
+        const top = { path: '/', entries: [{ name: '/workspace' }, { name: '/assets' }] };
+        expect(await call('list_dir', { path: '/' })).toMatchObject(top);
+        expect(await call('list_dir', {})).toMatchObject(top);
+        expect(await call('list_dir', { path: '' })).toMatchObject(top);
+        // `.` still means the workspace itself.
+        expect(await call('list_dir', { path: '.' })).toMatchObject({ path: '/workspace' });
+    });
+
     it('refuses every tool that would change it', async () => {
         await expect(call('write_file', { path: '/assets/new.md', content: 'x' })).rejects.toThrow(
             /\/assets is read-only/,
@@ -285,6 +300,17 @@ describe('the workspace tools', () => {
     it('tags every tool with the workspace group', () => {
         const groups = workspaceTools({ root }).map((t) => t.group);
         expect(new Set(groups)).toEqual(new Set(['workspace']));
+    });
+
+    it('accepts a tool named bare or qualified by its group', () => {
+        const pick = (selectors: string[]): string[] =>
+            selectTools(tools, selectors, { where: 'test' }).map((t) => t.name);
+        expect(pick(['workspace:read_file', 'list_dir'])).toEqual(['read_file', 'list_dir']);
+        expect(pick(['workspace:*', '-workspace:delete_file'])).not.toContain('delete_file');
+        // The qualified form still has to be true: a right name in the wrong
+        // group is a mistake worth naming, not a silent grant.
+        expect(() => pick(['sandbox:read_file'])).toThrow(/group "workspace"/);
+        expect(() => pick(['workspace:nope'])).toThrow(/unknown tool/);
     });
 
     it('reads a range of lines and says where it stopped', async () => {
