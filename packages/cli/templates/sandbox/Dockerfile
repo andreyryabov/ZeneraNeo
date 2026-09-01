@@ -1,0 +1,19 @@
+# The container `run_command` runs in. Built by `zen run` and `zen check`, and
+# named by the `sandbox: build:` block in agents.yaml.
+#
+# Python and Node both, because an agent asked to look at a repository does not
+# get to choose which one it finds. Add what this project always needs here
+# rather than letting an agent install it at run time: a root `pip install` or
+# `apt-get` lands in the container's own filesystem, which is thrown away.
+
+FROM node:24-bookworm-slim AS node
+FROM python:3.14-slim-bookworm
+
+# Copy Node.js runtime and global modules from official Node image
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/include/node /usr/local/include/node
+COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
+
+# Symlink npm and npx executables
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx

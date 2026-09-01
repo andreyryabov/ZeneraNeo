@@ -1,5 +1,8 @@
-import { platform } from 'node:os';
 import { runProcess, SandboxError, type ProcResult } from '@zenera/neo';
+import { readdirSync, statSync } from 'node:fs';
+import { homedir, platform } from 'node:os';
+import { join } from 'node:path';
+import type { ResolvedBuild } from './image.ts';
 import { CliError, confirm, dim, EXIT, isInteractive, note } from './term.ts';
 
 // ---------------------------------------------------------------------------
@@ -21,6 +24,10 @@ import { CliError, confirm, dim, EXIT, isInteractive, note } from './term.ts';
 export interface PodmanOptions {
     /** the image the project needs on disk before the first run */
     image?: string;
+    /** a Dockerfile to build into `image`, instead of a registry to pull it from */
+    build?: ResolvedBuild;
+    /** build even when the tag is already on disk; `zen sandbox pull` */
+    rebuild?: boolean;
     /** machine size, when one has to be created */
     cpus?: number;
     /** MiB */
@@ -36,6 +43,8 @@ const DEFAULT_MACHINE_CPUS = 2;
 const DEFAULT_MACHINE_MEMORY = 2048;
 /** Starting a virtual machine and pulling an image are both slow on purpose. */
 const SLOW_MS = 600_000;
+/** ...and a build from a cold cache is slower than either. */
+const BUILD_MS = 900_000;
 
 interface Machine {
     Name: string;
@@ -121,7 +130,9 @@ async function preflight(opts: PodmanOptions): Promise<void> {
 
     // 4. The image, so the first command is not a five-minute pull that looks
     //    like a hung model.
-    if (opts.image) {
+    if (opts.build) {
+        await build(engine, opts.build, run, opts.rebuild);
+    } else if (opts.image) {
         const present = await call(['image', 'exists', opts.image], 30_000);
         if (present.code !== 0) {
             note(dim(`pulling ${opts.image} — this happens once`));
@@ -241,6 +252,69 @@ function parseMachines(stdout: string): Machine[] {
 }
 
 // ---------------------------------------------------------------------------
+// The image
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds the project's Dockerfile under its tag.
+ *
+ * Run every time rather than skipped when the tag already exists, because the
+ * tag is a hash of the Dockerfile and its context and the engine's layer cache
+ * is a hash of the same thing plus the base image. Asking it is cheap, and it
+ * is the only thing that notices when `FROM node:24` starts meaning a different
+ * node:24.
+ */
+/**
+ * A build that ran and failed, rather than a host that could not be asked.
+ *
+ * The difference is invisible at the command line — both stop the run and
+ * print why — but it decides everything for `zen check`: a Dockerfile that
+ * does not build is a broken project, and a laptop without podman on it is
+ * not. Only one of them is an error.
+ */
+export class BuildError extends CliError {}
+
+/**
+ * Builds the project's Dockerfile under its tag, unless that tag is already on
+ * disk.
+ *
+ * Skipping is safe here in a way it would not be for an ordinary tag, because
+ * this one is a hash of the Dockerfile and its context: the image existing
+ * *means* the content is unchanged. What it does not cover is a moved base
+ * image — `podman build` defaults to `--pull=missing` and reuses whatever
+ * `FROM node:24` resolved to last time — so `zen sandbox pull` forces the
+ * build, and `--pull` is where that would be fixed if it ever needs to be.
+ */
+async function build(
+    engine: string,
+    spec: ResolvedBuild,
+    run: typeof runProcess,
+    force = false,
+): Promise<void> {
+    if (!force) {
+        const present = await run(engine, ['image', 'exists', spec.tag], { timeoutMs: 30_000 });
+        if (present.code === 0) {
+            return;
+        }
+    }
+
+    note(dim(`building ${spec.tag} from ${spec.dockerfile}`));
+    const built = await stream(
+        engine,
+        ['build', '--tag', spec.tag, '--file', spec.dockerfile, spec.context],
+        run,
+        BUILD_MS,
+    );
+    if (built.code !== 0) {
+        throw new BuildError(
+            `could not build ${spec.dockerfile}`,
+            EXIT.sandbox,
+            last(built) || 'run the build by hand to see what the engine says',
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Reporting
 // ---------------------------------------------------------------------------
 
@@ -299,6 +373,19 @@ export interface OwnedContainer {
     name: string;
     /** podman's own word: `running`, `exited`, `created`, `paused` */
     state: string;
+    /** the session that owns it, from the `zenera.key` label */
+    key?: string;
+    createdAt?: string;
+    /** bytes written on top of the image; only present when `sizes` is asked for */
+    size?: number;
+}
+
+interface PsEntry {
+    Names?: string[];
+    State?: string;
+    Created?: number;
+    Labels?: Record<string, string>;
+    Size?: { rwSize?: number };
 }
 
 /**
@@ -310,23 +397,42 @@ export interface OwnedContainer {
 export async function ownedContainers(
     engine = 'podman',
     exec = runProcess,
+    opts: { sizes?: boolean } = {},
 ): Promise<OwnedContainer[]> {
-    const res = await exec(
-        engine,
-        ['ps', '--all', '--filter', 'label=zenera=1', '--format', '{{.Names}}\t{{.State}}'],
-        { timeoutMs: 30_000 },
-    ).catch(() => undefined);
+    const args = ['ps', '--all', '--filter', 'label=zenera=1', '--format', 'json'];
+    // Asked for by name only: podman works a size out by diffing the layer,
+    // which costs more than everything else `status` does put together.
+    if (opts.sizes) {
+        args.push('--size');
+    }
+    const res = await exec(engine, args, { timeoutMs: 120_000 }).catch(() => undefined);
     if (!res || res.code !== 0) {
         return [];
     }
-    return res.stdout
-        .split('\n')
-        .map((l) => l.trim())
-        .filter(Boolean)
-        .map((line) => {
-            const [name, state] = line.split('\t');
-            return { name, state: state?.trim() || 'unknown' };
-        });
+    return parseContainers(res.stdout);
+}
+
+/** Newest first, which is the order someone reading a list of them wants. */
+function parseContainers(stdout: string): OwnedContainer[] {
+    let raw: unknown;
+    try {
+        raw = JSON.parse(stdout.trim() || '[]');
+    } catch {
+        return [];
+    }
+    if (!Array.isArray(raw)) {
+        return [];
+    }
+    return (raw as PsEntry[])
+        .map((c) => ({
+            name: c.Names?.[0] ?? '',
+            state: c.State?.trim() || 'unknown',
+            key: c.Labels?.['zenera.key'],
+            createdAt: c.Created ? new Date(c.Created * 1000).toISOString() : undefined,
+            size: c.Size?.rwSize,
+        }))
+        .filter((c) => c.name)
+        .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
 }
 
 export async function removeContainers(
@@ -338,6 +444,139 @@ export async function removeContainers(
         return;
     }
     await exec(engine, ['rm', '--force', '--volumes', ...names], { timeoutMs: 120_000 });
+}
+
+// ---------------------------------------------------------------------------
+// Disk
+//
+// Two disks, and confusing them is the whole difficulty. Images and container
+// layers live inside the machine's disk image; everything a session writes
+// lives in the project directory, on the host. On macOS both end up in the
+// same SSD, but only one of them is reclaimed by removing a container.
+// ---------------------------------------------------------------------------
+
+export interface DiskLine {
+    count: number;
+    active: number;
+    size: number;
+    reclaimable: number;
+}
+
+export interface EngineDisk {
+    images: DiskLine;
+    containers: DiskLine;
+    volumes: DiskLine;
+    /** the filesystem images and layers are kept on — inside the machine, if there is one */
+    store?: { used: number; capacity: number };
+    /** the machine's disk image, as it costs this host; absent on Linux */
+    image?: { name: string; path: string; allocated: number };
+}
+
+interface DfEntry {
+    Type?: string;
+    TotalCount?: number;
+    Total?: number;
+    Active?: number;
+    RawSize?: number;
+    RawReclaimable?: number;
+}
+
+/** What the engine is using. Never throws: a disk report is not worth a crash. */
+export async function engineDisk(
+    engine = 'podman',
+    exec = runProcess,
+): Promise<EngineDisk | undefined> {
+    const call = (args: string[]): Promise<ProcResult | undefined> =>
+        exec(engine, args, { timeoutMs: 120_000 }).catch(() => undefined);
+
+    const res = await call(['system', 'df', '--format', 'json']);
+    if (!res || res.code !== 0) {
+        return undefined;
+    }
+    let raw: unknown;
+    try {
+        raw = JSON.parse(res.stdout.trim() || '[]');
+    } catch {
+        return undefined;
+    }
+    const rows = Array.isArray(raw) ? (raw as DfEntry[]) : [];
+    const pick = (type: string): DiskLine => {
+        const row = rows.find((r) => r.Type === type);
+        return {
+            count: row?.TotalCount ?? row?.Total ?? 0,
+            active: row?.Active ?? 0,
+            size: row?.RawSize ?? 0,
+            reclaimable: row?.RawReclaimable ?? 0,
+        };
+    };
+
+    const info = await call([
+        'info',
+        '--format',
+        '{{.Store.GraphRootUsed}}\t{{.Store.GraphRootAllocated}}',
+    ]);
+    const [used, capacity] = (info?.code === 0 ? info.stdout.trim() : '').split('\t').map(Number);
+
+    return {
+        images: pick('Images'),
+        containers: pick('Containers'),
+        volumes: pick('Local Volumes'),
+        store: used > 0 && capacity > 0 ? { used, capacity } : undefined,
+        image: platform() === 'linux' ? undefined : await machineImage(engine, exec),
+    };
+}
+
+/**
+ * What the machine costs the host, which is not what it says it costs: the
+ * disk image is created sparse at its full size, so only its allocated blocks
+ * are real, and blocks freed inside the machine are not handed back until
+ * something trims them. That is why this can exceed the machine's own `used`.
+ *
+ * The path is not something podman will tell us — `machine inspect` stopped
+ * carrying it — so this is the documented default location and nothing is
+ * reported when the file is not there.
+ */
+async function machineImage(engine: string, exec: typeof runProcess): Promise<EngineDisk['image']> {
+    const listed = await exec(engine, ['machine', 'list', '--format', 'json'], {
+        timeoutMs: 30_000,
+    }).catch(() => undefined);
+    if (!listed || listed.code !== 0) {
+        return undefined;
+    }
+    const machines = safeMachines(listed.stdout);
+    const name = (machines.find((m) => m.Default) ?? machines[0])?.Name;
+    if (!name) {
+        return undefined;
+    }
+
+    const base = join(
+        process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'),
+        'containers',
+        'podman',
+        'machine',
+    );
+    for (const provider of children(base)) {
+        for (const file of children(join(base, provider))) {
+            if (!file.startsWith(name) || !/\.(raw|qcow2|img)$/.test(file)) {
+                continue;
+            }
+            const path = join(base, provider, file);
+            try {
+                return { name, path, allocated: statSync(path).blocks * 512 };
+            } catch {
+                return undefined;
+            }
+        }
+    }
+    return undefined;
+}
+
+function children(dir: string): string[] {
+    try {
+        return readdirSync(dir);
+    } catch {
+        return [];
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -364,6 +603,12 @@ async function stream(
 
 function first(res: ProcResult): string {
     return (res.stderr.trim() || res.stdout.trim()).split('\n')[0] ?? '';
+}
+
+/** A build says what went wrong on its last line, not its first. */
+function last(res: ProcResult): string {
+    const lines = (res.stderr.trim() || res.stdout.trim()).split('\n').filter((l) => l.trim());
+    return lines.slice(-2).join(' — ');
 }
 
 function sandboxError(message: string, hint?: string): CliError {

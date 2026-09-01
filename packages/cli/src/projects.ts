@@ -1,4 +1,13 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import {
+    ASSETS_MOUNT,
+    assetsDir,
+    skillDirs,
+    skillMounts,
+    SKILLS_MOUNT,
+    type ProjectConfig,
+    type SandboxMount,
+} from '@zenera/neo';
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { paths, readJson, writeJson } from './home.ts';
 import { isStamp } from './ids.ts';
@@ -34,6 +43,30 @@ export interface Project {
     dir: string;
     /** what it is called: the registry's name, or the directory's own */
     name: string;
+}
+
+/**
+ * The trees a run mounts besides the workspace itself.
+ *
+ * One array, handed to the file tools and to the container both, because the
+ * two have to agree on the name: a path `run_command` prints has to be a path
+ * `read_file` takes. Everything here is read-only — material an agent consults
+ * and does not edit — and the paths are resolved, because the podman machine on
+ * macOS shares the real path or nothing.
+ */
+export function projectMounts(root: string, config: ProjectConfig): SandboxMount[] {
+    const mounts: SandboxMount[] = [];
+    const assets = assetsDir(root, config);
+    if (assets) {
+        mounts.push({ host: realpathSync(assets), at: ASSETS_MOUNT, readOnly: true });
+    }
+    // The catalog goes in whole, at fixed names, before anything is loaded: a
+    // container's mounts are decided when it is created, so a skill folder
+    // cannot be added at the moment `skill_load` asks for it.
+    for (const dir of skillMounts(skillDirs(root, config), SKILLS_MOUNT)) {
+        mounts.push({ host: realpathSync(dir.path), at: dir.at, readOnly: true });
+    }
+    return mounts;
 }
 
 // ---------------------------------------------------------------------------
@@ -270,6 +303,40 @@ function stampedChildren(dir: string): string[] {
         .filter((e) => e.isDirectory() && isStamp(e.name))
         .map((e) => e.name)
         .sort();
+}
+
+/**
+ * What a tree occupies, in allocated blocks rather than in bytes, because a
+ * sparse file costs what it was given and not what it claims. Symlinks are
+ * counted and never followed: a link out of the tree is not part of it, and
+ * one that points back in would otherwise be counted twice — or forever.
+ */
+export function dirSize(dir: string): number {
+    let total = 0;
+    const stack = [dir];
+    while (stack.length > 0) {
+        const at = stack.pop() as string;
+        let entries;
+        try {
+            entries = readdirSync(at, { withFileTypes: true });
+        } catch {
+            continue;
+        }
+        for (const entry of entries) {
+            const path = join(at, entry.name);
+            if (entry.isDirectory()) {
+                stack.push(path);
+                continue;
+            }
+            try {
+                total += lstatSync(path).blocks * 512;
+            } catch {
+                // Gone between the listing and the stat: a live session is
+                // writing, which is normal and not worth failing a report for.
+            }
+        }
+    }
+    return total;
 }
 
 /** True when a session's lock names a process that is still alive. */

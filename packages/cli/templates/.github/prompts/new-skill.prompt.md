@@ -10,9 +10,10 @@ change without the prompt changing.
 
 Ask what the skill must say and when it applies, if I have not already said.
 
-1. Choose the layout. A flat `agents/skills/<name>.md` for text alone; a folder
-   `agents/skills/<name>/SKILL.md` when it needs companions — a rate table, an
-   example letter, a schema. Siblings of `SKILL.md` become readable resources.
+1. Create `agents/skills/<name>/SKILL.md`. That is the only skill layout there
+   is — a bare `agents/skills/<name>.md` fails `zen check` — and the folder is
+   what lets the skill carry companions later: a rate table, an example letter,
+   a schema, a script.
 2. Write the `description`. This is the routing key and the only thing the model
    sees before deciding to load the skill, so write it as **the condition under
    which the skill is needed**, not as a title. `Water policy` is a title;
@@ -23,12 +24,18 @@ Ask what the skill must say and when it applies, if I have not already said.
    wording, the boundaries of the rule, and what to do when the case falls
    outside it. Put the facts here rather than in a prompt — that is the point of
    the file.
-4. Declare `tools:` in the frontmatter only for tools that must not run until
+4. Put anything the rule computes or looks up in a file beside `SKILL.md` and
+   name it from the body by its absolute path — `python
+/skills/<name>/scripts/calculate.py <id>`, not `scripts/calculate.py`. The
+   folder is mounted read-only at `/skills/<name>/`, so the script writes
+   nothing there; the agent needs `sandbox:*` to run it, and the interpreter has
+   to be in the `sandbox:` image already.
+5. Declare `tools:` in the frontmatter only for tools that must not run until
    this skill is active. They are advertised from turn 0 and refuse to execute
    while the skill is dormant, which is how gating happens without breaking the
    prompt cache.
-5. Leave `name` out unless it must differ from the file or folder name, and
-   leave `version`/`tags` out unless something uses them.
+6. Leave `name` out unless it must differ from the folder name, and leave
+   `version`/`tags` out unless something uses them.
 
 Do not `preload:` it unless every case genuinely needs it — a preloaded skill is
 a longer prompt, paid for on every call. Bind it under `agents[].skills.allow`

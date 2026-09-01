@@ -1,5 +1,3 @@
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import {
     DEFAULT_SANDBOX_IMAGE,
     SANDBOX_GROUP,
@@ -10,6 +8,9 @@ import {
     type SandboxMount,
     type SandboxSpec,
 } from '@zenera/neo';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { resolveBuild, type ResolvedBuild } from './image.ts';
 import { ensurePodmanReady } from './podman.ts';
 import type { SessionPaths } from './session.ts';
 import { warn } from './term.ts';
@@ -40,6 +41,8 @@ export interface SandboxSetup {
     /** the resolved base spec, for `zn sandbox status` and the image pre-warm */
     spec: SandboxSpec;
     image: string;
+    /** the Dockerfile behind `image`, when it came from one */
+    build?: ResolvedBuild;
     /** host side of the container's `$HOME`, created only if it is ever needed */
     home: string;
 }
@@ -48,22 +51,41 @@ export interface SandboxInputs {
     config: ProjectConfig;
     session: SessionPaths;
     workspace: string;
+    /** the project directory, which `build:` paths are relative to */
+    root: string;
     readOnly?: boolean;
+    /**
+     * Trees to mount besides the workspace and the home — the project's assets
+     * and its skill catalog. The same array goes to the file tools, so a path
+     * a command prints is a path `read_file` accepts.
+     */
+    mounts?: readonly SandboxMount[];
     /** `--image` */
     image?: string;
 }
 
 export function buildSandbox(opts: SandboxInputs): SandboxSetup {
-    const base = { ...(opts.config.sandbox ?? {}), ...(opts.image ? { image: opts.image } : {}) };
+    // An explicit --image is an answer, so there is nothing left to build.
+    const build = opts.image ? undefined : resolveBuild(opts.root, opts.config.sandbox);
+    const base = {
+        ...(opts.config.sandbox ?? {}),
+        ...((opts.image ?? build?.tag) ? { image: opts.image ?? build?.tag } : {}),
+    };
     const home = join(opts.session.data, 'sandbox', 'home');
 
-    const mounts: SandboxMount[] = [{ host: home, at: HOME }];
-    const spec = toSpec(base, { HOME });
+    const mounts: SandboxMount[] = [{ host: home, at: HOME }, ...(opts.mounts ?? [])];
+    // Skills and assets are mounted read-only, and a python script run from a
+    // read-only directory fails on writing its own `__pycache__` — a confusing
+    // error about a file nobody asked for.
+    const spec = toSpec(base, { HOME, PYTHONDONTWRITEBYTECODE: '1' });
 
     const agents: Record<string, SandboxSpec> = {};
     for (const agent of opts.config.agents) {
         if (agent.sandbox) {
-            agents[agent.name] = toSpec({ ...base, ...agent.sandbox }, { HOME });
+            agents[agent.name] = toSpec(merge(base, agent.sandbox), {
+                HOME,
+                PYTHONDONTWRITEBYTECODE: '1',
+            });
         }
     }
 
@@ -76,7 +98,24 @@ export function buildSandbox(opts: SandboxInputs): SandboxSetup {
         mounts,
     });
 
-    return { pool, spec, image: spec.image ?? DEFAULT_SANDBOX_IMAGE, home };
+    return { pool, spec, image: spec.image ?? DEFAULT_SANDBOX_IMAGE, build, home };
+}
+
+/**
+ * An agent's overrides on the project's block. `image` and `build` answer the
+ * same question, so naming either one drops the other: a plain spread would
+ * leave an agent's `image` sitting next to the project's `build`, and the
+ * schema forbids exactly that combination when it is written down.
+ */
+function merge(base: SandboxConfig, agent: SandboxConfig): SandboxConfig {
+    const merged = { ...base, ...agent };
+    if (agent.image !== undefined) {
+        delete merged.build;
+    }
+    if (agent.build !== undefined) {
+        delete merged.image;
+    }
+    return merged;
 }
 
 /**
@@ -125,6 +164,7 @@ export async function preflight(setup: SandboxSetup, yes?: boolean): Promise<voi
     mkdirSync(setup.home, { recursive: true });
     await ensurePodmanReady({
         image: setup.image,
+        build: setup.build,
         cpus: setup.spec.cpus,
         memory: setup.spec.memory,
         yes,

@@ -1,5 +1,5 @@
 import { readFile, readdir } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import type { Skill, SkillProvider, SkillSummary } from '../skills.ts';
 import { selectTools, type AnyTool } from '../types.ts';
 
@@ -9,9 +9,20 @@ import { selectTools, type AnyTool } from '../types.ts';
 
 const SKILL_FILE = 'SKILL.md';
 
+/**
+ * A directory of skills, and the name the *agent* reaches it by — which is not
+ * the host path when the folder is bind-mounted into a container. Give the
+ * plain string and a skill is text; give the pair and a skill that ships a
+ * script can say where the script is.
+ */
+export interface SkillDir {
+    path: string;
+    at: string;
+}
+
 export interface FileSkillProviderOptions {
-    /** one or more root directories holding `<name>.md` files and/or `<name>/SKILL.md` folders */
-    dir: string | string[];
+    /** one or more root directories holding `<name>/SKILL.md` folders, or bare `<name>.md` files */
+    dir: string | SkillDir | (string | SkillDir)[];
     /** logical provider id agents bind to; defaults to `file` */
     id?: string;
     /**
@@ -27,18 +38,25 @@ interface Entry {
     summary: SkillSummary;
     /** absolute path of the markdown file */
     file: string;
-    /** the folder to scan for resources, or undefined for a flat `<name>.md` */
+    /** the folder holding the skill, or undefined for a bare `<name>.md` */
     folder?: string;
+    /** that folder under the name the agent can use, when the host gave one */
+    at?: string;
     content: string;
 }
 
 /**
- * Reads skills from disk. Two layouts, both discovered in one scan:
+ * Reads skills from disk. A skill is a directory holding `SKILL.md`, and the
+ * directory is what lets it ship a rate table or a script beside its text:
  *
  * ```
- * <dir>/budget_travel.md          flat: frontmatter + body
- * <dir>/budget_travel/SKILL.md    folder: sibling files become `resources`
+ * <dir>/budget_travel/SKILL.md    the instructions
+ * <dir>/budget_travel/cities.md   whatever they refer to
  * ```
+ *
+ * A bare `<dir>/budget_travel.md` is indexed too, for a host with nothing but
+ * prose to offer. `zen check` refuses it in a project, since a skill with no
+ * directory of its own can never grow one.
  *
  * Frontmatter is a small subset of YAML — `key: value`, plus `[a, b]` lists
  * for `tags` and `tools`. `name` defaults to the file or folder name and
@@ -47,14 +65,18 @@ interface Entry {
  */
 export class FileSkillProvider implements SkillProvider {
     readonly id: string;
-    readonly #dirs: string[];
+    readonly #dirs: SkillDir[];
     readonly #tools = new Map<string, AnyTool<any>>();
     #index?: Promise<Map<string, Entry>>;
 
     constructor(opts: FileSkillProviderOptions | string) {
         const o = typeof opts === 'string' ? { dir: opts } : opts;
         const raw = Array.isArray(o.dir) ? o.dir : [o.dir];
-        this.#dirs = raw.map((d) => resolve(d));
+        this.#dirs = raw.map((d) =>
+            typeof d === 'string'
+                ? { path: resolve(d), at: '' }
+                : { path: resolve(d.path), at: d.at },
+        );
         this.id = o.id ?? 'file';
         for (const t of o.tools ?? []) {
             this.#tools.set(t.name, t);
@@ -63,12 +85,12 @@ export class FileSkillProvider implements SkillProvider {
 
     /** The first configured directory (kept for backwards compatibility). */
     get dir(): string {
-        return this.#dirs[0];
+        return this.#dirs[0].path;
     }
 
     /** All configured directories. */
     get dirs(): string[] {
-        return [...this.#dirs];
+        return this.#dirs.map((d) => d.path);
     }
 
     /** Drops the cached scan; call after editing skills on disk. */
@@ -114,7 +136,7 @@ export class FileSkillProvider implements SkillProvider {
             content: entry.content,
             file: entry.file,
             ...(tools.length ? { tools } : {}),
-            ...(entry.folder ? { resources: await readResources(entry.folder) } : {}),
+            ...(entry.at ? { path: entry.at } : {}),
         };
     }
 
@@ -133,7 +155,7 @@ export class FileSkillProvider implements SkillProvider {
         for (const dir of this.#dirs) {
             let items;
             try {
-                items = await readdir(dir, { withFileTypes: true });
+                items = await readdir(dir.path, { withFileTypes: true });
             } catch (err) {
                 if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
                     continue;
@@ -141,8 +163,8 @@ export class FileSkillProvider implements SkillProvider {
                 throw err;
             }
             for (const item of items) {
-                const folder = item.isDirectory() ? join(dir, item.name) : undefined;
-                const file = folder ? join(folder, SKILL_FILE) : join(dir, item.name);
+                const folder = item.isDirectory() ? join(dir.path, item.name) : undefined;
+                const file = folder ? join(folder, SKILL_FILE) : join(dir.path, item.name);
                 if (!folder && !(item.isFile() && item.name.endsWith('.md'))) {
                     continue;
                 }
@@ -151,7 +173,10 @@ export class FileSkillProvider implements SkillProvider {
                     continue;
                 }
                 const base = folder ? item.name : item.name.slice(0, -'.md'.length);
-                const entry = parse(raw, base, file, folder);
+                // Only a folder skill has files of its own to point at, and
+                // only when the host said where the directory can be reached.
+                const at = folder && dir.at ? `${dir.at}/${basename(folder)}` : undefined;
+                const entry = parse(raw, base, file, folder, at);
                 index.set(entry.summary.name, entry);
             }
         }
@@ -159,13 +184,14 @@ export class FileSkillProvider implements SkillProvider {
     }
 }
 
-function parse(raw: string, base: string, file: string, folder?: string): Entry {
+function parse(raw: string, base: string, file: string, folder?: string, at?: string): Entry {
     const { data, body } = frontmatter(raw);
     const tags = toList(data.tags);
     const tools = toList(data.tools);
     return {
         file,
         folder,
+        ...(at ? { at } : {}),
         content: body,
         summary: {
             name: data.name || base,
@@ -175,21 +201,6 @@ function parse(raw: string, base: string, file: string, folder?: string): Entry 
             ...(tools.length ? { toolNames: tools } : {}),
         },
     };
-}
-
-/** Sibling files of a `SKILL.md`, top level only, keyed by filename. */
-async function readResources(folder: string): Promise<Record<string, string>> {
-    const out: Record<string, string> = {};
-    for (const item of await readdir(folder, { withFileTypes: true })) {
-        if (!item.isFile() || item.name === SKILL_FILE) {
-            continue;
-        }
-        const value = await readOptional(join(folder, item.name));
-        if (value !== undefined) {
-            out[item.name] = value;
-        }
-    }
-    return out;
 }
 
 async function readOptional(path: string): Promise<string | undefined> {

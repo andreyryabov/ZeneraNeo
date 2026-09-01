@@ -52,6 +52,7 @@ they should be unambiguous in both.
 | `models`    | map of name → model    | Named model configurations                                 |
 | `model`     | model ref              | Fallback for agents that do not pin their own              |
 | `skills`    | string or string[]     | Skill directories, merged into one catalog                 |
+| `assets`    | string                 | Reference material, mounted read-only at `/assets`         |
 | `sandbox`   | sandbox                | The container `run_command` and friends execute in         |
 | `agents`    | agent[]                | At least one                                               |
 
@@ -450,6 +451,72 @@ Directories are relative to the project root and may not escape it. Several
 directories are merged into a single catalog with the provider id `project`.
 If the key is absent and `agents/skills` exists, it is used.
 
+Each skill in a catalog is a directory holding `SKILL.md`:
+
+```
+agents/skills/pdf_forms/SKILL.md
+agents/skills/pdf_forms/scripts/fill.py
+```
+
+A bare `agents/skills/pdf_forms.md` is indexed by the provider but is not a
+project layout — `zen check` reports it as `skill.flat`, because a skill with no
+directory of its own cannot ship anything but prose.
+
+The catalog is also mounted into the run, read-only, at `/skills` — one
+directory becomes `/skills`, several become `/skills/<folder name>` each. That
+is what lets a skill ship a script instead of describing one: a skill's
+instructions are rendered with the line "This skill's files are at
+/skills/<name>", so `run_command` can execute `python
+/skills/pdf_forms/scripts/fill.py` and `read_file` can open it. Write that
+absolute path in the skill body: the text is loaded into a prompt, not executed
+from its directory, and the working directory is `/workspace`. The interpreter
+has to be in the `sandbox:` image already, and anything the script produces has
+to be written under `/workspace`, since the mount refuses writes.
+
+The whole catalog is mounted, for every agent, before anything is loaded — a
+container's mounts are fixed when it is created, so a folder cannot appear at
+the moment `skill_load` asks for it. An agent's `allow:` therefore decides what
+it can _load_, not what it can _read_: a determined model that already knows a
+name can open the file. `allow:` is a prompt boundary, not a filesystem one.
+
+---
+
+## `assets:`
+
+Reference material every agent can read and none can write.
+
+```yaml
+assets: handbook
+```
+
+If the key is absent and an `assets/` directory exists next to `agents.yaml`,
+it is used — the folder is the whole configuration for most projects. The key
+exists for material kept elsewhere in the tree; like every other path here it
+is relative to the project root and may not escape it, and naming a directory
+that is not there fails the load.
+
+It is mounted at `/assets`, always read-only, for every agent:
+
+- `read_file`, `list_dir` and `find_files` reach it under that name, and
+  `find_files` with no `path` searches it along with the workspace.
+- `write_file`, `apply_patch`, `move_file` and `delete_file` refuse it. A
+  patch that touches one file under `/assets` writes none of its files.
+- `run_command` sees the same directory at the same path, bind-mounted `:ro`.
+
+There is no per-agent `assets:`. An agent that may see only part of the
+material is a different project, not a different key — and since the mount is
+fixed when the container starts, it could not be varied per hand-off anyway.
+
+What belongs here is what agents consult: handbooks, specifications, schemas,
+style guides, worked examples. What does not is the project's own directory.
+`zen check` warns when `assets:` resolves to somewhere containing `sessions/`,
+because that hands every agent every transcript of every run, including the one
+reading it.
+
+> Adding or removing a mount changes the container's name, exactly as a
+> `sandbox:` field does. With `persist: true` that abandons the old container
+> and whatever was installed in it — see below.
+
 ---
 
 ## `sandbox:`
@@ -473,6 +540,7 @@ sandbox:
 | Field     | Type                   | Default                                       | Meaning                                             |
 | --------- | ---------------------- | --------------------------------------------- | --------------------------------------------------- |
 | `image`   | string                 | `docker.io/library/python:3.14-slim-bookworm` | The base image commands run in                      |
+| `build`   | object                 | none                                          | A Dockerfile to build instead of an image to pull   |
 | `cpus`    | number                 | the host's                                    | Fractional cores, as podman's `--cpus`              |
 | `memory`  | integer, MiB           | the host's                                    | As podman's `--memory`                              |
 | `network` | `bridge`/`none`/`host` | `bridge`                                      | `none` for a project that must not reach out        |
@@ -482,20 +550,76 @@ sandbox:
 | `persist` | boolean                | `false` — **recommended `true`**              | Keep the container between runs of a session        |
 | `env`     | string[]               | none                                          | Host variables to forward, **by name**              |
 
+`image` and `build` cannot both be set: a Dockerfile names its own base in its
+`FROM` line, so one of the two would be silently ignored.
+
 `cpus` and `memory` do two jobs on macOS and Windows: they cap the container,
 and they size the Podman virtual machine if the CLI has to create one. On
 Linux there is no machine and they only cap the container.
 
+### `build:`, for what the project always needs
+
+A published image is the right answer when one exists. When it does not — a
+project that needs Python _and_ Node, or a pinned toolchain — the alternative
+is an agent installing it at the start of every run, which is slow, silently
+version-drifting, and thrown away with the container.
+
+```yaml
+sandbox:
+    persist: true
+    build:
+        dockerfile: sandbox/Dockerfile
+```
+
+| Field        | Type | Default                     | Meaning                        |
+| ------------ | ---- | --------------------------- | ------------------------------ |
+| `dockerfile` | path | required                    | Relative to the project root   |
+| `context`    | path | the Dockerfile's own folder | What the build may `COPY` from |
+
+Both must resolve inside the project; a path that escapes the root is refused
+at load, as everywhere else in this file.
+
+`zen init` writes a `sandbox/Dockerfile` with Python and Node in it and points
+this at it. It is the project's file from then on — edit it, commit it, and
+`zen init` will not touch it again.
+
+**The tag is a hash of the content.** The image is tagged
+`localhost/zenera-sandbox:<digest>`, where the digest covers the Dockerfile and
+every file in the context. Editing either produces a different tag, and
+therefore a different container name — which is what you want, and is also the
+cost noted under `persist: true` below: the old container is abandoned, along
+with whatever was installed in it.
+
+The build is **skipped once the tag is on disk**, which is the point of hashing
+the content: the image existing means the Dockerfile and its context are
+unchanged, so an ordinary `zen run` costs one `podman image exists` and nothing
+else. What that does not catch is a base image that moved — `podman build`
+reuses whatever `FROM node:24` resolved to last time — so `zen sandbox pull`
+forces the build when you want a fresh one.
+
+A `.dockerignore` is honoured by the engine but **not** by the digest, so a
+file the build ignores can still change the tag. That direction is wasteful and
+never wrong; the other direction would hand you a stale image.
+
+`zen check` builds the image and runs one command in it, against a temporary
+directory rather than your workspace — a Dockerfile that does not build is a
+broken project, and nothing short of building it says so. `zen check
+--no-sandbox` skips that. A machine with no container engine gets a warning
+rather than an error, since that is the machine most likely to be running the
+check.
+
 ### What survives, and what does not
 
 By default the container is removed when the session closes, so anything
-installed into its root filesystem is gone. Two directories are bind mounts and
-do survive:
+installed into its root filesystem is gone. These directories are bind mounts
+and do survive:
 
 | Inside        | On the host                                              |
 | ------------- | -------------------------------------------------------- |
 | `/workspace`  | the session's workspace                                  |
 | `/home/agent` | `<session>/.data/sandbox/home`, and `$HOME` points at it |
+| `/assets`     | the project's `assets:`, read-only, if it has one        |
+| `/skills`     | the project's skill catalog, read-only, if it has one    |
 
 `/workspace` is the same directory the file tools work in, and they are told so:
 `read_file`, `apply_patch` and the rest accept `/workspace/src/a.ts` as well as
@@ -529,12 +653,21 @@ place. This is the recommended setting for any project whose agents install
 things; `zen sandbox status` lists what is left behind and `zen sandbox clean`
 removes it.
 
+A container is per **session**, not per project, so a project used for a week
+accumulates one per session it ran. They are cheap — a stopped container costs
+disk and nothing else, and the writable layer is usually tens of kilobytes,
+because everything worth keeping is already in the two mounts — but they are
+not free, and `zen sandbox disk` shows what they and every project directory
+add up to.
+
 Changing any field here changes the container's name, so a project that bumps
 its image gets a new container rather than an old one quietly persisting with
-the wrong contents. That is also the cost of `persist: true`: a config change
-abandons the old container along with whatever was installed in it, so anything
-the project always needs still belongs in `image:` rather than in an
-accumulated rootfs.
+the wrong contents. Adding or removing an `assets:` directory or a skill
+directory does the same, since the mounts are part of what a container is. That
+is also the cost of `persist: true`: a config change abandons the old container
+along with whatever was installed in it, so anything the project always needs
+still belongs in `image:` — or in `build:` — rather than in an accumulated
+rootfs.
 
 ### `env:` names, never values
 
@@ -568,6 +701,10 @@ agents:
 
 The fields are the same, merged over the top-level block. Two agents that
 resolve to the same configuration still share one container.
+
+An agent that sets `image` displaces a project-level `build`, and an agent that
+sets `build` displaces a project-level `image` — the two are exclusive after
+the merge as well as before it.
 
 ---
 

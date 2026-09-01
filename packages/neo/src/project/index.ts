@@ -6,13 +6,17 @@ export {
     type ModelConfig,
     type ProjectConfig,
     type ProviderConfig,
+    type SandboxBuildConfig,
     type SandboxConfig,
 } from './config.ts';
 export {
     AgentProject,
+    assetsDir,
     loadProject,
     projectRegistry,
     readProjectConfig,
+    skillDirs,
+    skillMounts,
     type ProjectOptions,
     type ProjectSource,
 } from './load.ts';

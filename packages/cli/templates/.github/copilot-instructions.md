@@ -133,11 +133,15 @@ my-project/
 │   │   └── adjuster.md
 │   └── skills/
 │       ├── house_style/
-│       │   ├── SKILL.md          folder skill
-│       │   └── examples.md       sibling files become `resources`
+│       │   ├── SKILL.md          the instructions
+│       │   └── examples.md       its own files, reachable at /skills/house_style
 │       ├── water_damage/
 │       │   └── SKILL.md
-│       └── shipping_delays.md    flat skill (frontmatter + body)
+│       └── refund_policy/
+│           ├── SKILL.md
+│           └── scripts/calculate.py   run at /skills/refund_policy/scripts — §3.4.1
+├── assets/                       reference material, read-only at /assets
+├── sandbox/Dockerfile            the image commands run in — §3.7
 └── sessions/                     run state, memory, whatever the agent wrote
 ```
 
@@ -240,6 +244,7 @@ model: fast # fallback for agents that do not pin their own
 embeddings: {} # named vectorisers — §3.1.1
 embedding: small # the one `AgentProject.embedder()` returns when asked for no name
 skills: agents/skills # one directory, or a list
+assets: assets # reference material, read-only at /assets — §3.11
 
 agents: # the only required key; at least one entry
     - name: intake
@@ -465,18 +470,24 @@ yet.
 
 ### 3.4 Skills
 
-A skill is curated, reusable instruction content — plus optional tools — loaded
-**on demand** instead of permanently occupying the system prompt. Two layouts,
-discovered in the same scan:
+A skill is curated, reusable instruction content — plus the files and tools it
+needs — loaded **on demand** instead of permanently occupying the system prompt.
+One layout, and only one:
 
 ```
-agents/skills/refund_policy.md          flat: frontmatter + body
-agents/skills/refund_policy/SKILL.md    folder: sibling files become `resources`
+agents/skills/refund_policy/SKILL.md    the instructions
+agents/skills/refund_policy/rates.csv   whatever they refer to
 ```
+
+The folder name is the skill name. A bare `agents/skills/refund_policy.md` is
+**not a skill location**: `zen check` reports it as `skill.flat`, and the fix is
+to move it to `refund_policy/SKILL.md`. A skill with nowhere to put a table, an
+example or a script can only ever be prose, which is the half of the idea that
+does not need a file.
 
 Frontmatter is a deliberately small subset of YAML — `key: value`, plus `[a, b]`
 flow lists for `tags` and `tools`. **Every key is optional**: `name` defaults to
-the file/folder name, `description` to the first non-empty line of the body.
+the folder name, `description` to the first non-empty line of the body.
 
 ```markdown
 ---
@@ -510,8 +521,58 @@ skill is needed_, not as a title:
 provider from turn 0 (the schema never changes) but **refuse to execute** until
 the skill is active. This is how a tool can be gated without breaking the cache.
 
-Use a folder skill when the content needs companions — a CSV rate table, an
-example letter, a JSON schema. Siblings become `resources` the model can read.
+### 3.4.1 Skills that ship files and scripts
+
+The whole catalog is mounted **read-only at `/skills`** before anything is
+loaded, so a skill's own files sit at `/skills/<name>/...`. The runtime says so
+in the activation, once, when the skill loads:
+
+> This skill's files are at /skills/refund_policy, read-only. Paths written in
+> it are relative to that directory.
+
+That line is what turns a script in a skill from decoration into something the
+agent can run:
+
+```
+agents/skills/refund_policy/
+├── SKILL.md
+├── rates.csv
+└── scripts/calculate.py
+```
+
+```markdown
+Run `python /skills/refund_policy/scripts/calculate.py <order-id>` and use the
+figure it prints. Read `/skills/refund_policy/rates.csv` if you need the band.
+Do not compute the amount yourself.
+```
+
+**Reach for a script whenever the answer is arithmetic, a lookup or a fixed
+transformation.** It is the cheapest tool there is: no schema in the prefix, no
+vendor, versioned beside the prose that calls it, and its output is a fact
+rather than a guess (§1.4).
+
+Rules that follow from the mount:
+
+- The agent needs `sandbox:*` to run the script and `read_file` to open a data
+  file. Grant them, or the skill's own instructions cannot be followed (§3.5).
+- **The interpreter must already be in the sandbox image.** A skill whose
+  script needs `pandas` is a `sandbox/Dockerfile` line that was never written —
+  not a first line that runs `pip install` on every turn (§3.7).
+- **`/skills` is read-only.** A script that produces a file must take an output
+  path and write it under `/workspace`.
+- **Write the absolute `/skills/<name>/...` path** in the skill body. The text is
+  loaded into a prompt, not executed from its directory, and the working
+  directory is `/workspace`.
+- Say what to do when the script fails, as with any other instruction (§4.2).
+- With several `skills:` directories, one catalog is the whole of `/skills` and
+  several take `/skills/<folder>` each — check the rendered path before writing
+  it into the body.
+- The mount is created before anything is loaded, so `allow:` limits what an
+  agent can **load**, not what it can **read**. Do not put anything in the
+  catalog that some agents must not see.
+
+`zen check` lists what each skill folder ships, so a script that was never
+committed shows up as a skill with no files.
 
 ### 3.5 Tools
 
@@ -635,6 +696,7 @@ sandbox:
 | Field     | Default                                       | Meaning                                      |
 | --------- | --------------------------------------------- | -------------------------------------------- |
 | `image`   | `docker.io/library/python:3.14-slim-bookworm` | The base image commands run in               |
+| `build`   | none                                          | A Dockerfile to build instead                |
 | `cpus`    | the host's                                    | Fractional cores                             |
 | `memory`  | the host's                                    | MiB                                          |
 | `network` | `bridge`                                      | `bridge` / `none` / `host`                   |
@@ -647,6 +709,30 @@ sandbox:
 `env:` takes **names, never values** — a value here would be a secret in the
 repository — and anything credential-shaped (`KEY`, `TOKEN`, `SECRET`,
 `PASSWORD`, `CREDENTIAL`) is refused at load.
+
+**`build:`, when no published image fits.** A project that needs two runtimes,
+or a pinned toolchain, names a Dockerfile instead of an image — `zen init`
+writes one at `sandbox/Dockerfile` with Python and Node in it:
+
+```yaml
+sandbox:
+    persist: true
+    build:
+        dockerfile: sandbox/Dockerfile
+        # context: .   # what the build may COPY from; the Dockerfile's folder by default
+```
+
+`image:` and `build:` cannot both be set — a Dockerfile names its own base in
+its `FROM` line. The tag is a hash of the Dockerfile and its context, so
+editing it produces a new image and, like any other change here, a new
+container. `zen check` builds it and runs a command in it, so a Dockerfile that
+does not build fails the check rather than the next run.
+
+**Put what the project always needs in the image, not in a prompt.** This is the
+real use of `build:`: a `RUN apt-get install ripgrep` in the Dockerfile is
+installed once, for everyone, forever. The same instruction written into a
+prompt is executed on every run, by an agent that is root in a filesystem that
+is about to be thrown away.
 
 Agents share one container, because they share the workspace and a hand-off is
 meant to be continuous. An agent that needs something else says so and gets its
@@ -682,15 +768,16 @@ sandbox:
 ```
 
 With it, the container is _stopped_ rather than removed, and the next run of
-that session starts the same one back up with everything still installed. The
-cost is containers that outlive their sessions — `zen sandbox status` lists them
-and `zen sandbox clean` removes them.
+that session starts the same one back up with everything still installed. A
+container is per session rather than per project, so they accumulate: `zen
+sandbox status` lists them, `zen sandbox disk` totals what they and the project
+directories cost, and `zen sandbox clean` removes them.
 
 Changing any field renames the container, so bumping the image gets a fresh one
 rather than an old one quietly persisting with the wrong contents. That is also
 the one sharp edge of `persist: true`: a config change abandons the old
 container with whatever was installed in it, so a long-lived setup still belongs
-in `image:` rather than in an accumulated rootfs.
+in `image:` — or in `sandbox/Dockerfile` — rather than in an accumulated rootfs.
 
 Granting the group is what makes the project need Podman: `zen run` checks the
 engine before the first turn and exits `5` with an install command if it is
@@ -792,7 +879,7 @@ zen run "what changed?"         one shot; stdout is the answer
 zen run --session <id>          continue a session
 zen run --workspace ./repo      what the agent may read and write
 zen run --model careful         override the default model for this run
-zen run --image <ref>           override the sandbox image for this run
+zen run --image <ref>           override the sandbox image for this run, ignoring build:
 zen run --read-only             withhold every tool that can write
 ```
 
@@ -815,6 +902,22 @@ EXA_API_KEY=...
 
 Never commit. Never inline a key into `agents.yaml` — use `${VAR}`. Never print a
 key in a log line, a test fixture, or a chat message.
+
+### 3.11 `assets/`
+
+`assets/` next to `agents.yaml` — or `assets: <path>` — is reference material
+every agent can read and none can write. It is mounted at `/assets`: the file
+tools read, list and search it, `run_command` sees it bind-mounted read-only,
+and every tool that would change it refuses.
+
+Put a handbook, a specification, a schema or a style guide there — what agents
+consult while working, as opposed to the workspace, which is the work. Do not
+point `assets:` at the project root: that hands every agent the `sessions/`
+directory, every transcript of every run, including the one reading it.
+`zen check` warns when it would.
+
+It is project-wide by design. An agent that may see only part of the material
+is a different project, not a different key.
 
 ---
 
@@ -1468,10 +1571,13 @@ Before finishing any change here:
 
 **Skills**
 
+- [ ] Every skill is `<name>/SKILL.md` — no bare `<name>.md` in the catalog
 - [ ] Every skill has a `description` that says _when it is needed_
 - [ ] `preload` is reserved for content the model would never decline
 - [ ] `preload` entries also appear in `allow` where `allow` is used
 - [ ] Catalog >~30 entries → `discovery: search`
+- [ ] A skill that ships a script writes its `/skills/<name>/...` path, the agent
+      holds `sandbox:*`, and the sandbox image already has the interpreter
 
 **Tools**
 
@@ -1481,7 +1587,7 @@ Before finishing any change here:
 - [ ] `sandbox:*` is granted only where a shell is actually needed
 - [ ] `sandbox.persist: true`, unless a throwaway rootfs is wanted on purpose
 - [ ] The `sandbox:` image carries what the work needs, rather than the prompt
-      installing it every run
+      installing it every run — add it to `sandbox/Dockerfile` if `build:` is used
 - [ ] `sandbox.env` lists names only, and nothing credential-shaped
 - [ ] `exa:*` is granted only where the live web is actually needed, and the
       prompt says when to trust it over what the model already believes
@@ -1507,31 +1613,33 @@ Before finishing any change here:
 
 ## 10. Where to change what
 
-| Symptom                                    | Change this                                                |
-| ------------------------------------------ | ---------------------------------------------------------- |
-| Wrong tone, wrong format, wrong length     | `INSTRUCTIONS.md` (all agents) or the agent prompt         |
-| Says something forbidden                   | `INSTRUCTIONS.md` prohibition, stated specifically         |
-| Ignores a rule that only applies sometimes | Move the rule into a skill with a sharp description        |
-| Never loads the skill it should            | The skill's `description`; or `preload` it                 |
-| Loads too much, answers slowly             | `allow:`, `maxIndexEntries:`, or `discovery: search`       |
-| Invents a number                           | A skill holding the figure, or a command that computes it  |
-| Rewrites a whole file to change one line   | A prompt line preferring `apply_patch` — §3.6              |
-| Edits files it should only be reading      | Subtract the mutating tools, or `zen run --read-only`      |
-| Cannot run the build or the tests          | Grant `sandbox:*`; pick an `image:` that has the toolchain |
-| Installs the same packages on every run    | `sandbox.persist: true`, or set `sandbox.image` — §3.7     |
-| Answers from stale knowledge of the world  | Grant `web_search` + `web_read`, and say when — §3.8       |
-| Cites a page it only saw the excerpt of    | A prompt line: `web_read` before quoting — §3.8            |
-| Every web call refuses                     | No Exa key: `zen key add exa` — `zen check` warns — §3.8   |
-| Answers instead of routing                 | Router prompt prohibition; check `handoffs:`               |
-| Routes to the wrong specialist             | The target agents' `description:` fields                   |
-| Loses a detail after a handoff             | Say it in the handoff; check the collapse policy           |
-| Works through N independent items serially | `fork:` on that agent, and a prompt line — §6.4            |
-| Forks when the steps actually depend       | Prompt line: branches cannot see each other                |
-| Slow and expensive on trivial cases        | Demote that agent's model tier / reasoning effort          |
-| Fails only on genuinely hard cases         | Promote that agent's tier, or split the hard path out      |
-| Shows no reasoning while it works          | Turn summaries on for that model — §7.6                    |
-| Forgets across conversations               | Continue the session rather than starting a new one        |
-| Breaks at load with a named path           | Read the message — it names the exact key                  |
+| Symptom                                    | Change this                                                         |
+| ------------------------------------------ | ------------------------------------------------------------------- |
+| Wrong tone, wrong format, wrong length     | `INSTRUCTIONS.md` (all agents) or the agent prompt                  |
+| Says something forbidden                   | `INSTRUCTIONS.md` prohibition, stated specifically                  |
+| Ignores a rule that only applies sometimes | Move the rule into a skill with a sharp description                 |
+| Never loads the skill it should            | The skill's `description`; or `preload` it                          |
+| Loads too much, answers slowly             | `allow:`, `maxIndexEntries:`, or `discovery: search`                |
+| Invents a number                           | A skill holding the figure, or a script that computes it — §3.4.1   |
+| A skill in the catalog is never offered    | It is a bare `<name>.md`; move it to `<name>/SKILL.md` — §3.4       |
+| Cannot find a file its own skill names     | Absolute `/skills/<name>/…` path, and `sandbox:*` — §3.4.1          |
+| Rewrites a whole file to change one line   | A prompt line preferring `apply_patch` — §3.6                       |
+| Edits files it should only be reading      | Subtract the mutating tools, or `zen run --read-only`               |
+| Cannot run the build or the tests          | Grant `sandbox:*`; add the toolchain to `sandbox/Dockerfile`        |
+| Installs the same packages on every run    | Put them in `sandbox/Dockerfile`, or `sandbox.persist: true` — §3.7 |
+| Answers from stale knowledge of the world  | Grant `web_search` + `web_read`, and say when — §3.8                |
+| Cites a page it only saw the excerpt of    | A prompt line: `web_read` before quoting — §3.8                     |
+| Every web call refuses                     | No Exa key: `zen key add exa` — `zen check` warns — §3.8            |
+| Answers instead of routing                 | Router prompt prohibition; check `handoffs:`                        |
+| Routes to the wrong specialist             | The target agents' `description:` fields                            |
+| Loses a detail after a handoff             | Say it in the handoff; check the collapse policy                    |
+| Works through N independent items serially | `fork:` on that agent, and a prompt line — §6.4                     |
+| Forks when the steps actually depend       | Prompt line: branches cannot see each other                         |
+| Slow and expensive on trivial cases        | Demote that agent's model tier / reasoning effort                   |
+| Fails only on genuinely hard cases         | Promote that agent's tier, or split the hard path out               |
+| Shows no reasoning while it works          | Turn summaries on for that model — §7.6                             |
+| Forgets across conversations               | Continue the session rather than starting a new one                 |
+| Breaks at load with a named path           | Read the message — it names the exact key                           |
 
 ---
 
@@ -1542,6 +1650,10 @@ Before finishing any change here:
   prompt style. Collapse into one with a catalog.
 - **Facts in prompts.** A fee schedule inside `INSTRUCTIONS.md`. It cannot be
   versioned, cannot be shared, and is paid for on every call.
+- **The bare skill file.** `agents/skills/<name>.md` instead of a folder. It can
+  never grow the table or script the next revision of the rule will want — §3.4.
+- **Arithmetic in prose.** A skill that walks the model through a calculation it
+  will get wrong, in a folder that could have held the script — §3.4.1.
 - **Politeness padding.** "Please try your best to be helpful." Costs tokens,
   changes nothing.
 - **Commented implementation notes.** `agents.yaml` explaining how skill

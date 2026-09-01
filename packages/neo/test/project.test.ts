@@ -312,6 +312,32 @@ describe('validation', () => {
         );
     });
 
+    /**
+     * A Dockerfile names its own base in its FROM line, so a config that gave
+     * both would have one of them quietly win. Refusing is the only reading
+     * that cannot be wrong.
+     */
+    it('rejects an image and a Dockerfile together', () => {
+        expect(() =>
+            parseConfig(
+                'sandbox:\n    image: python:3.14\n    build:\n' +
+                    '        dockerfile: sandbox/Dockerfile\n' +
+                    'agents:\n  - name: solo\n',
+                'agents.yaml',
+            ),
+        ).toThrow(/image and build cannot both be set/);
+    });
+
+    it('takes a Dockerfile with an optional context', () => {
+        const config = parseConfig(
+            'sandbox:\n    build:\n        dockerfile: docker/Dockerfile\n' +
+                '        context: .\n' +
+                'agents:\n  - name: solo\n',
+            'agents.yaml',
+        );
+        expect(config.sandbox?.build).toEqual({ dockerfile: 'docker/Dockerfile', context: '.' });
+    });
+
     it('rejects a hand-off to nobody', async () => {
         await expect(
             loadProject(

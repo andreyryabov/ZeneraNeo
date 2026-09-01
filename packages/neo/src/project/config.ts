@@ -183,10 +183,29 @@ const forkBinding = z
  */
 const SECRETISH = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)/i;
 
+/**
+ * A Dockerfile to build instead of an image to pull, for the ordinary case the
+ * `image:` key cannot serve: a project that needs two runtimes, or a pinned
+ * toolchain, and would otherwise have its agents reinstall it on every run.
+ *
+ * Building is a host concern, so nothing in this library does it — the front
+ * end resolves this to an image reference before a container is ever named.
+ */
+const build = z
+    .object({
+        /** path to the Dockerfile, relative to the project root */
+        dockerfile: z.string().min(1),
+        /** what the build may COPY from; the Dockerfile's own directory by default */
+        context: z.string().min(1).optional(),
+    })
+    .strict();
+
 const sandbox = z
     .object({
         /** the base image, e.g. `docker.io/library/python:3.13-slim` */
         image: z.string().min(1).optional(),
+        /** a Dockerfile to build, instead of an image to pull */
+        build: build.optional(),
         /** fractional cores the container may use */
         cpus: z.number().positive().optional(),
         /** MiB the container may use */
@@ -205,6 +224,15 @@ const sandbox = z
     })
     .strict()
     .superRefine((value, ctx) => {
+        if (value.image !== undefined && value.build !== undefined) {
+            ctx.addIssue({
+                code: 'custom',
+                path: ['build'],
+                message:
+                    'image and build cannot both be set — a Dockerfile names its own base ' +
+                    'in its FROM line, so one of the two would be silently ignored',
+            });
+        }
         for (const [i, name] of (value.env ?? []).entries()) {
             if (SECRETISH.test(name)) {
                 ctx.addIssue({
@@ -271,6 +299,12 @@ export const projectSchema = z
         embedding: modelRef.optional(),
         /** one directory, or several merged into one catalog */
         skills: z.union([z.string().min(1), z.array(z.string().min(1))]).optional(),
+        /**
+         * Reference material every agent can read and none can write, mounted
+         * at /assets. One directory, project-wide: an agent that may only see
+         * some of it is a different project, not a different key.
+         */
+        assets: z.string().min(1).optional(),
         /** the container `run_command` and friends execute in */
         sandbox: sandbox.optional(),
         agents: z.array(agent).min(1),
@@ -283,6 +317,7 @@ export type ProviderConfig = z.infer<typeof provider>;
 export type ModelConfig = z.infer<typeof modelSpec>;
 export type EmbeddingConfig = z.infer<typeof embeddingSpec>;
 export type SandboxConfig = z.infer<typeof sandbox>;
+export type SandboxBuildConfig = z.infer<typeof build>;
 
 /**
  * Re-renders a zod failure as `agents.yaml: agents[1].skills.discovery — …`.

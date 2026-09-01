@@ -547,8 +547,9 @@ model call:
 | ---------- | ----------------------------------------------------------- |
 | `status`   | What is installed, running and pulled. Changes nothing      |
 | `up`       | The whole pre-flight: install, machine, socket, image       |
-| `pull`     | Just the image                                              |
+| `pull`     | Just the image: pulled, or built from the Dockerfile        |
 | `clean`    | Removes every container this CLI created (`label=zenera=1`) |
+| `disk`     | What the engine and every known project occupy              |
 
 Two directories are bind-mounted into every container: the session's workspace
 at `/workspace`, and `sessions/<id>/.data/sandbox/home` as `$HOME`. The second
@@ -556,6 +557,78 @@ is what makes a session self-contained the way the rest of it already is — a
 `pip install --user` is still there when the session is reopened, and travels
 with the directory when it is copied. Everything outside the two mounts is
 thrown away when the session closes, unless `sandbox.persist` says otherwise.
+
+### 9.1 Building instead of pulling
+
+A project can name a Dockerfile instead of an image, and `zen init` writes one:
+
+```yaml
+sandbox:
+    build:
+        dockerfile: sandbox/Dockerfile
+```
+
+Building is a host concern, so none of it is in the library — `@zenera/neo`
+gains the schema and nothing else, and a `SandboxSpec` still only ever holds an
+image reference. [image.ts](packages/cli/src/image.ts) resolves the block to a
+tag before a container is ever named, and the pre-flight builds it where it
+would otherwise pull.
+
+The tag has to be **content-addressed** — `localhost/zenera-sandbox:<digest>`,
+over the Dockerfile and every file in its context — because the container's
+name is a hash of its spec, and a stable tag over changed content would leave a
+`persist: true` container running a rootfs the project no longer describes.
+Hashing is a synchronous read, so the pool is still built in one shot; only the
+`podman build` is deferred to the pre-flight.
+
+It builds only when that tag is not already on disk. Skipping is safe here in a
+way it would not be for an ordinary tag — the image existing _means_ the content
+is unchanged — so a warm `zen run` costs one `image exists` call. A moved base
+image is the gap that leaves, since `podman build` defaults to `--pull=missing`;
+`zen sandbox pull` forces the build.
+
+### 9.2 What `zen check` does with it
+
+`zen check` is otherwise a reading of files, and says so. The sandbox is the
+exception: a Dockerfile that does not build is a broken project, and nothing
+short of building it says so. So the check builds the image and runs one
+command in it — against a temporary directory, never the workspace, with no
+host environment forwarded and `persist` off, so nothing survives it.
+
+It is skipped when no agent can reach a shell, skipped by `--no-sandbox`, and a
+host with no container engine is a **warning** rather than an error: that is the
+host most likely to be running the check in the first place. A build that runs
+and fails is the one case that fails the check.
+
+### 9.3 Where the disk goes
+
+A container is per _session_, not per project, so a project worked on for a
+week has a container per session it ran and `persist: true` keeps every one of
+them stopped rather than removed. The count surprises people, so `zen sandbox
+status` lists them with an age and says where they came from.
+
+`zen sandbox disk` answers the question that follows. It has to keep two disks
+apart, because only one of them is reclaimed by removing a container:
+
+- **In podman** — images and container layers, inside the machine's disk image
+  on the platforms that have one. Read from `system df` and `ps --size`, which
+  is asked for by name because podman works a size out by diffing the layer.
+- **On disk** — the project directory itself: workspaces, blobs, memory, every
+  session that was ever opened. Measured in allocated blocks, not bytes, so a
+  sparse file costs what it was given.
+
+Containers carry the session id that made them in a `zenera.key` label, and a
+session id is a directory name under a project, so attributing one needs no
+second index that could fall out of step. A container whose session directory
+is gone is reported as unclaimed rather than hidden.
+
+The machine's disk image gets a line of its own because it is the only number
+that is really missing from this host's SSD, and it is the one podman is least
+willing to state: it is created sparse at its full size, so its apparent size
+means nothing, and blocks freed inside the machine are not handed back until
+something trims them. `machine inspect` no longer carries the path, so the
+documented default location is checked and the line is simply absent when the
+file is not there.
 
 ## 10. Not here
 

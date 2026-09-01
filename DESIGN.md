@@ -705,7 +705,7 @@ export interface SkillSummary {
 export interface Skill extends SkillSummary {
     content: Payload; // full instructions (offloadable — often large)
     tools?: AnyTool<unknown>[]; // tools unlocked while the skill is active
-    resources?: Record<string, Payload>; // templates, examples, schemas
+    path?: string; // where the skill's own files are, if the host mounted them
 }
 
 export interface SkillProvider {

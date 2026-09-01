@@ -1,11 +1,9 @@
-import { existsSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import {
     AgentRunner,
     FileMemoryStore,
     FilePayloadStore,
     SANDBOX_MOUNT,
+    SKILLS_MOUNT,
     assertState,
     buildRunReport,
     exaTools,
@@ -22,10 +20,13 @@ import {
     type Input,
     type RunResult,
 } from '@zenera/neo';
+import { existsSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { auditModels, describeIssue } from './audit.ts';
 import { readJson, writeJson } from './home.ts';
 import { KeyStore, assertUsable } from './keys.ts';
-import type { Project } from './projects.ts';
+import { projectMounts, type Project } from './projects.ts';
 import { buildSandbox, preflight, teardown, usesSandbox, type SandboxSetup } from './sandbox.ts';
 import {
     acquire,
@@ -103,13 +104,17 @@ export async function open(opts: EngineOptions): Promise<Engine> {
     let sandbox: SandboxSetup;
     let project: AgentProject;
     try {
-        const { config } = readProjectConfig(opts.project.dir);
+        const { root, config } = readProjectConfig(opts.project.dir);
+        // Assets and the skill catalog are mounted for both, under one name.
+        const mounts = projectMounts(root, config);
         sandbox = buildSandbox({
             config,
+            root,
             session: opts.session,
             workspace,
             readOnly: opts.readOnly,
             image: opts.image,
+            mounts,
         });
         project = await loadProject(opts.project.dir, {
             tools: [
@@ -120,6 +125,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
                     root: workspace,
                     readOnly: opts.readOnly,
                     mount: sandbox.spec.workdir ?? SANDBOX_MOUNT,
+                    mounts,
                 }),
                 ...sandboxTools(sandbox.pool),
                 // Registered whether or not a key exists: the credential is
@@ -128,6 +134,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
                 // turn that tried.
                 ...exaTools(),
             ],
+            skillsAt: SKILLS_MOUNT,
             payloads,
             memory,
         });
