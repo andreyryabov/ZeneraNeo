@@ -1,0 +1,159 @@
+# API search — `zen rag`
+
+```
+zen rag schema <index|search|show|stats> [spec...]
+```
+
+Provided by `@zenera/rag` — `npm i -g @zenera/rag` if `zen rag` says it is not
+installed.
+
+Reads an OpenAPI/Swagger document as a **graph** — operations, schemas and the
+fields inside them, joined by the `$ref`s between them — and makes it
+searchable. The answer to a search is not a list of matches but the connected
+piece of the API that matched: the operations, the schemas they carry and the
+fields inside them, printed as text, a diagram, or TypeScript that compiles.
+
+It exists because a large specification does not fit in a context window and
+grepping it returns fragments that name types nobody printed.
+
+## `index`
+
+```
+zen rag schema index <spec...> [--embedding <ref>] [-o <dir>] [--batch <n>]
+```
+
+| Flag                | Default       | Meaning                                                      |
+| ------------------- | ------------- | ------------------------------------------------------------ |
+| `--embedding <ref>` | —             | Which embedder makes the vectors. Omit it to see the choices |
+| `-o`, `--out <dir>` | `./schema-db` | Where the index goes                                         |
+| `--batch <n>`       | `96`          | Texts per embedding request, and how often progress prints   |
+
+```
+zen rag schema index openapi.yaml --embedding openai:text-embedding-3-small
+```
+
+Unlike the faker, `$ref`s are **bundled, not dereferenced**: component names are
+the node ids and the cycles between them are the edges. `discriminator` is kept —
+it is what turns a `oneOf` into a tagged union a compiler can narrow.
+
+What lands in `<out>`:
+
+```
+manifest.json     written last; its presence means the index is complete
+graph.json        the nodes and edges
+schemas.json      the schemas, read lazily
+operations.json   the operations, read lazily
+lance/            the vector and full-text indexes
+```
+
+The manifest records the embedding ref **and** the embedder's own id, so a
+search with a different model is refused rather than quietly returning nonsense.
+
+## `search`
+
+```
+zen rag schema search [terms…] [filters…]
+```
+
+Every argument is validated before an embedder is constructed, so a typo is a
+usage error rather than a credential error.
+
+### Terms — repeatable, and the field is the point
+
+| Term                    | Searches                                 |
+| ----------------------- | ---------------------------------------- |
+| `<text>`                | Everything, the same as `--all`          |
+| `--all <q>`             | Everything, unfiltered                   |
+| `--method <q>`          | Operations                               |
+| `--type <q>`            | Schemas, on the side `--direction` names |
+| `--input-type <q>`      | Schemas a call accepts                   |
+| `--output-type <q>`     | Schemas a call returns                   |
+| `--property <q>`        | Fields and parameters, per `--direction` |
+| `--input-property <q>`  | Fields and parameters a call accepts     |
+| `--output-property <q>` | Fields a call returns                    |
+| `--query <json\|->`     | A whole query object; `-` reads stdin    |
+
+Putting the intent in the field that matches what is wanted is what makes the
+search good. A request field belongs in `--input-property`, a response field in
+`--output-property`; `--all` cannot filter and is the weakest of them.
+
+### Filters and shape
+
+| Flag                        | Default       | Meaning                                                 |
+| --------------------------- | ------------- | ------------------------------------------------------- |
+| `-d`, `--dir <dir>`         | `./schema-db` | Which index                                             |
+| `--embedding <ref>`         | the index's   | Must be the one the index was built with                |
+| `--direction <d>`           | `any`         | `input`, `output` or `any`                              |
+| `--method-type <t>`         | `any`         | `read_only`, `read_write` or `any`                      |
+| `--exclude-id <id>`         | —             | Drop a node. Repeatable                                 |
+| `--exclude-method <name>`   | —             | Drop an operation by name. Repeatable                   |
+| `--exclude-type <name>`     | —             | Drop a schema by name. Repeatable                       |
+| `--exclude-property <name>` | —             | Drop a field by name. Repeatable                        |
+| `--limit <n>`               | `5`           | Seeds kept per term                                     |
+| `--max-hops <n>`            | `3`           | How far apart two hits may be                           |
+| `--max-nodes <n>`           | `200`         | Nodes per result                                        |
+| `--format <f>`              | `text`        | `text`, `mermaid`, `mermaid-flowchart`, `ts`, `openapi` |
+| `--no-docs`                 | —             | Leave the descriptions out                              |
+| `--interactive`             | —             | Prompt, search, refine. Needs a terminal                |
+| `--quiet`                   | —             | No narration                                            |
+
+```
+zen rag schema search --method "reset a user password" --format ts
+zen rag schema search --output-property "invoice total" --direction output
+echo '{"methods":["cancel a subscription"]}' | zen rag schema search --query -
+```
+
+The exclusions are what turn one search into a session: pass back the ids of
+what you have already been shown to be shown something else instead of the same
+thing again.
+
+`--format ts` emits TypeScript closed over its own `$ref`s — everything named is
+also declared, so the output compiles on its own.
+
+### `--interactive`
+
+A prompt that keeps the query between searches:
+
+```
+<text>                  search everything
+all|method|type <text>  search one field
+input-property <text>   also: output-property, property, input-type, output-type
+direction <d>           input | output | any
+method-type <t>         read_only | read_write | any
+format <f>              text | mermaid | mermaid-flowchart | ts | openapi
+show                    the query as it stands
+reset                   forget it, exclusions included
+quit
+```
+
+## `show`
+
+```
+zen rag schema show <id...> [-d <dir>] [--format <f>]
+```
+
+Prints named nodes with no search in between. Needs no embedder and no
+credential — it is a read of the graph.
+
+## `stats`
+
+```
+zen rag schema stats [-d <dir>]
+```
+
+What is in an index and what built it: counts by kind, the embedding model, the
+documents it came from. Also needs no embedder.
+
+## Giving it to an agent
+
+`@zenera/rag/tools` exports the same search as tools an agent can call:
+
+| Tool                       | For                                                                 |
+| -------------------------- | ------------------------------------------------------------------- |
+| `search_api`               | The search above, with the same fields                              |
+| `describe_types`           | Named schemas as TypeScript, closed over what they refer to         |
+| `find_types_with_property` | Every schema with a field of this name — exact lookup, no searching |
+| `list_methods`             | Operations by path, to see the shape of the API before asking       |
+
+They share the group `schema`, so an agent takes them with `schema:*` in its
+`tools:`.
