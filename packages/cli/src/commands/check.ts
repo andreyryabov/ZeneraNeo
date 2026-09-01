@@ -1,3 +1,4 @@
+import { existsSync, statSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { one, parse } from '../args.ts';
 import type { Command } from '../command.ts';
@@ -15,6 +16,7 @@ import {
     progress,
     red,
     table,
+    usageError,
     write,
     writeAll,
     yellow,
@@ -27,7 +29,7 @@ import {
     type Severity,
 } from '../validate.ts';
 
-const USAGE = 'zen check [dir] [--project <name|dir>] [--no-sandbox] [--strict] [--quiet]';
+const USAGE = 'zen check [name|dir] [--project <name|dir>] [--no-sandbox] [--strict] [--quiet]';
 
 interface Flags {
     project?: string;
@@ -72,6 +74,9 @@ export const check: Command = {
         'Unlike a run, it does not stop at the first problem — the report lists',
         'everything it found, each with a code and the fix for it.',
         '',
+        'The argument is a directory if one is there and a registered project',
+        'name otherwise; with neither, the project you are standing in.',
+        '',
         'Exit codes: 0 nothing wrong, 3 at least one error (or, with --strict,',
         'at least one warning). --quiet prints the findings and nothing else.',
     ],
@@ -87,12 +92,9 @@ export const check: Command = {
             USAGE,
         );
 
-        // A bare directory is accepted so an unregistered folder — a checkout,
-        // a scaffold in progress — can be checked at all. `--project` goes
-        // through the registry, like everywhere else.
-        const here = one(positionals, 'directory', USAGE);
+        const here = one(positionals, 'project or directory', USAGE);
         const dir = here
-            ? resolve(ctx.cwd, here)
+            ? await locate(ctx.cwd, here)
             : await resolveProject({ cwd: ctx.cwd, project: values.project }).then((p) => p.dir);
 
         // Being listed is the registry's answer, not the directory's, so it is
@@ -139,6 +141,39 @@ export const check: Command = {
         }
     },
 };
+
+/**
+ * What a bare argument means: a directory when one is there, a registered name
+ * otherwise. A directory is tried first, and it does not have to be a project
+ * yet — an unregistered folder, a checkout, a scaffold in progress is exactly
+ * what there is to check.
+ *
+ * A word that is neither is a usage error and stops here. The check itself
+ * would answer it too, but it would answer at the length of a full report, and
+ * a page of empty sections about a directory that does not exist buries the one
+ * line that matters: there is nothing by that name.
+ */
+async function locate(cwd: string, arg: string): Promise<string> {
+    const at = resolve(cwd, arg);
+    if (existsSync(at) && statSync(at).isDirectory()) {
+        return at;
+    }
+    const entry = (await Registry.open()).find(arg);
+    if (!entry) {
+        throw usageError(
+            `no project or directory named "${arg}"`,
+            'see what is registered: zen list',
+        );
+    }
+    const path = resolve(entry.path);
+    if (!existsSync(path)) {
+        throw usageError(
+            `project "${entry.name}" is registered at ${path}, which is gone`,
+            'forget it: zen list --prune',
+        );
+    }
+    return path;
+}
 
 // ---------------------------------------------------------------------------
 // Rendering

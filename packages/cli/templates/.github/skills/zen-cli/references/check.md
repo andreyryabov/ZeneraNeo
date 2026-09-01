@@ -6,7 +6,7 @@ every edit.
 ## `zen check`
 
 ```
-zen check [dir] [--project <name|dir>] [--no-sandbox] [--strict] [--quiet]
+zen check [name|dir] [--project <name|dir>] [--no-sandbox] [--strict] [--quiet]
 ```
 
 Aliases: `validate`, `doctor`.
@@ -22,8 +22,9 @@ with a code, a location and the fix for it.
 | `--strict`              | Warnings count as failure                           |
 | `--quiet`               | The findings and nothing else                       |
 
-It takes a bare `[dir]` and needs no `zenera.json`, so an unregistered directory
-can be checked too.
+The bare argument is a directory if one is there and a registered project name
+otherwise, and it needs no `zenera.json`, so an unregistered directory can be
+checked too. A word that is neither is a usage error (exit 2), not a report.
 
 ### What it checks
 

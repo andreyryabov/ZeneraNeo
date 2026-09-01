@@ -78,8 +78,9 @@ Most commands operate on a project directory, resolved in this order:
 2. The working directory, if it is a project (or is inside one).
 3. For `zen run`, a bare first word that names a registered project.
 
-`zen check` is the exception: it takes a bare `[dir]` and needs no
-`zenera.json`, so an unregistered directory can still be validated.
+`zen check` is the exception: its bare argument is a directory if one is there
+and a registered name otherwise, and it needs no `zenera.json`, so an
+unregistered directory can still be validated.
 
 ## Environment
 

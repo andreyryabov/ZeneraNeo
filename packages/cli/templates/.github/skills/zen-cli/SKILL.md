@@ -22,7 +22,7 @@ zen run      [project] [prompt] [options]
 zen open     [project] [--editor <cmd>] [--wait]
 zen key      <ls|add|use|check|rm|show|env> [ref] [options]
 zen models   [--project <name|dir>]
-zen check    [dir] [--project <name|dir>] [--no-sandbox] [--strict] [--quiet]
+zen check    [name|dir] [--project <name|dir>] [--no-sandbox] [--strict] [--quiet]
 zen inspect  [run] [--session <id>] [--open] [--rebuild] [--serve [port]]
 zen sandbox  [status|up|pull|clean|disk] [options]
 zen version
