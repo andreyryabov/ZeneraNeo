@@ -5,7 +5,7 @@ import { delimiter, join, resolve, sep } from 'node:path';
 import { one, parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { project as resolveProject } from '../resolve.ts';
-import { copilotInstructions, editorSettings } from '../scaffold.ts';
+import { editorFiles } from '../scaffold.ts';
 import { CliError, cyan, dim, EXIT, json, note, usageError } from '../term.ts';
 
 const USAGE = 'zen open [project] [--editor <cmd>] [--wait]';
@@ -56,7 +56,7 @@ export const open: Command = {
         // opened on, and a project may predate either of them — or the version
         // this `zen` writes. They are ours, so they are written fresh before
         // the window is there to read them.
-        const written = [editorSettings(dir), ...copilotInstructions(dir)];
+        const written = editorFiles(dir);
 
         if (ctx.json) {
             json({

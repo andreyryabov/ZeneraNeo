@@ -1,0 +1,44 @@
+# Who exists, and what they may reach for.
+#
+version: 1
+
+{{model}}
+
+# Anything in assets/ is mounted read-only at /assets for every agent: they can
+# read, list and search it, and no tool can change it. It is a convention, so
+# the folder is enough — set `assets: <path>` only to keep the material
+# somewhere else in this project.
+
+# The container `sandbox:*` commands run in. `build:` names a Dockerfile to
+# build instead of an image to pull, so anything this project always needs is
+# in the image rather than installed by an agent on every run — put it in
+# sandbox/Dockerfile. Swap the whole block for `image: <ref>` to pull a
+# published one instead; the two cannot both be set.
+#
+# `persist: true` keeps the container between runs rather than throwing it
+# away, so what an agent installs for itself is still there next time —
+# otherwise only /workspace and its home directory survive. `zen sandbox
+# clean` removes the ones left behind. Everything else has a default; see the
+# sandbox: block in docs/agents-yaml.md to size it.
+sandbox:
+    persist: true
+    build:
+        dockerfile: sandbox/Dockerfile
+
+agents:
+    - name: default
+      description: The entry point.
+      # Instructions live in agents/prompts/<name>.md and are picked up by
+      # convention — no need to name the file here.
+      #
+      # workspace:* is every file tool at once, sandbox:* is the shell. Name
+      # them one by one to be narrower, or subtract: [workspace:*, -delete_file]
+      #
+      # sandbox:* runs commands in a container, not on this machine, so it
+      # needs podman — `zen run` installs and starts what it can on its own,
+      # and `zen sandbox status` says where that got to. Drop the line if you
+      # would rather this agent never reached a shell.
+      tools:
+          - workspace:*
+          - sandbox:*
+          {{exa}}

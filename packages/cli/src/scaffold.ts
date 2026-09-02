@@ -5,19 +5,67 @@ import { fileURLToPath } from 'node:url';
 // ---------------------------------------------------------------------------
 // Scaffolding
 //
-// What `zen init` writes. Deliberately close to empty: a template full of
+// What `zen init` writes and `zen open` refreshes — none of which is in this
+// file. `templates/` holds the real thing, laid out the way it lands, so
+// changing what a project starts life as is editing a file rather than a string
+// literal escaping every backtick and `${...}` it contains:
+//
+//   templates/project/   the project's own files. Written once and edited from
+//                        then on, so anything already there is left alone.
+//   templates/editor/    ours: `.vscode/settings.json` and the `.github/` tree,
+//                        which describe this version of `zen` to the editor and
+//                        are replaced every time.
+//   templates/parts/     fragments spliced into a template above.
+//
+// The trees are copied whole and nothing enumerates them, so adding a file to
+// a new project is adding a file to `templates/project/` and nothing else.
+//
+// What is there is deliberately close to empty: a template full of
 // commented-out options is a template nobody reads and everybody deletes. The
-// one agent here works as written, and every other knob is in `docs/`.
+// one agent works as written, and every other knob is in `docs/`.
 // ---------------------------------------------------------------------------
 
-const INSTRUCTIONS_MD = `# House rules
+const TEMPLATES = fileURLToPath(new URL('../templates', import.meta.url));
 
-Everything in this file is prepended to every agent's prompt, so it is the
-place for the things that are true regardless of who is answering: tone,
-constraints, what to do when the answer is not knowable.
+/** The suffix on a file with `{{...}}` in it, dropped when the file lands. */
+const TEMPLATE = '.tmpl';
 
-Replace this with yours.
-`;
+type Vars = Record<string, string>;
+
+/**
+ * Fills the `{{name}}` in a template, in the two shapes templates use.
+ *
+ * A placeholder alone on a line takes a whole fragment: its own indentation is
+ * applied to every line of the value, and an empty value takes the line with
+ * it — which is how an optional block leaves nothing behind. Anywhere else it
+ * takes a word. A name nothing supplies throws, so a typo in a template is a
+ * failing test rather than a `{{provider}}` sitting in somebody's agents.yaml.
+ */
+function render(text: string, vars: Vars): string {
+    const value = (name: string): string => {
+        const found = vars[name];
+        if (found === undefined) {
+            throw new Error(`template asks for {{${name}}}, which nothing supplies`);
+        }
+        return found;
+    };
+    return text
+        .replace(/^([ \t]*)\{\{(\w+)\}\}[ \t]*\r?\n/gm, (_, indent: string, name: string) => {
+            const body = value(name).trimEnd();
+            if (!body) {
+                return '';
+            }
+            const lines = body.split('\n').map((line) => (line ? indent + line : ''));
+            return `${lines.join('\n')}\n`;
+        })
+        .replace(/\{\{(\w+)\}\}/g, (_, name: string) => value(name));
+}
+
+/** Reads one fragment from `templates/parts/`, without its trailing newline. */
+function part(name: string, vars: Vars = {}): string {
+    const text = readFileSync(join(TEMPLATES, 'parts', `${name}${TEMPLATE}`), 'utf8');
+    return render(text, vars).trimEnd();
+}
 
 /**
  * The `model:` section, which is one line until it has to say more.
@@ -27,130 +75,67 @@ Replace this with yours.
  * reasoning means splitting the ref back into the two fields and giving the
  * configuration a name to be referred to by.
  */
-const MODEL_SECTION = (ref: string, options?: string): string => {
+function modelSection(ref: string, options?: string): string {
     const colon = ref.indexOf(':');
     if (!options || colon < 0) {
-        return (
-            '# The model an agent uses when it does not pin its own. Change it here and the\n' +
-            '# whole project moves. The prefix is the *provider* name, not the vendor — drop\n' +
-            '# it and the id goes to the default provider, whatever the id looks like.\n' +
-            `model: ${ref}`
-        );
+        return part('model.yaml', { ref });
     }
-    const indented = options
-        .trimEnd()
-        .split('\n')
-        .map((line) => (line ? `        ${line}` : ''))
-        .join('\n');
-    return (
-        '# The model an agent uses when it does not pin its own. Change it here and the\n' +
-        '# whole project moves. A named configuration is what gives the knobs below\n' +
-        '# somewhere to live; a bare `model: <provider>:<id>` works when there are none.\n' +
-        'models:\n' +
-        '    main:\n' +
-        `        provider: ${ref.slice(0, colon)}\n` +
-        `        model: ${ref.slice(colon + 1)}\n` +
-        `${indented}\n` +
-        '\n' +
-        'model: main'
-    );
-};
+    return part('models.yaml', {
+        provider: ref.slice(0, colon),
+        id: ref.slice(colon + 1),
+        options,
+    });
+}
+
+interface CopyOptions {
+    /** values for the `{{...}}` in any template under this tree */
+    vars?: Vars;
+    /** leave a file that is already there alone rather than replacing it */
+    keep?: boolean;
+}
+
 /**
- * Added above the tool list when the project is scaffolded with web access.
- * The group is registered whether or not a key exists, so this only ever
- * changes what the agent is allowed to reach for.
+ * The name a template file lands under.
+ *
+ * `gitignore` gains its dot here because it cannot have one in the repository:
+ * npm strips a `.gitignore` out of a published tarball, and git would read this
+ * one as rules about `packages/cli/templates/` rather than as content.
  */
-const EXA_NOTE = `
-      #
-      # exa:* is web search and page reading, here because this machine has an
-      # Exa key. The key is read from the environment when a tool is called,
-      # so a clone of this project without one still loads and only the call
-      # fails.`;
+function target(name: string): string {
+    if (name.endsWith(TEMPLATE)) {
+        return name.slice(0, -TEMPLATE.length);
+    }
+    return name === 'gitignore' ? '.gitignore' : name;
+}
 
-const AGENTS_YAML = (
-    model: string,
-    options?: string,
-    web?: boolean,
-): string => `# Who exists, and what they may reach for.
-#
-version: 1
-
-${MODEL_SECTION(model, options)}
-
-# Anything in assets/ is mounted read-only at /assets for every agent: they can
-# read, list and search it, and no tool can change it. It is a convention, so
-# the folder is enough — set \`assets: <path>\` only to keep the material
-# somewhere else in this project.
-
-# The container \`sandbox:*\` commands run in. \`build:\` names a Dockerfile to
-# build instead of an image to pull, so anything this project always needs is
-# in the image rather than installed by an agent on every run — put it in
-# sandbox/Dockerfile. Swap the whole block for \`image: <ref>\` to pull a
-# published one instead; the two cannot both be set.
-#
-# \`persist: true\` keeps the container between runs rather than throwing it
-# away, so what an agent installs for itself is still there next time —
-# otherwise only /workspace and its home directory survive. \`zen sandbox
-# clean\` removes the ones left behind. Everything else has a default; see the
-# sandbox: block in docs/agents-yaml.md to size it.
-sandbox:
-    persist: true
-    build:
-        dockerfile: sandbox/Dockerfile
-
-agents:
-    - name: default
-      description: The entry point.
-      # Instructions live in agents/prompts/<name>.md and are picked up by
-      # convention — no need to name the file here.
-      #
-      # workspace:* is every file tool at once, sandbox:* is the shell. Name
-      # them one by one to be narrower, or subtract: [workspace:*, -delete_file]
-      #
-      # sandbox:* runs commands in a container, not on this machine, so it
-      # needs podman — \`zen run\` installs and starts what it can on its own,
-      # and \`zen sandbox status\` says where that got to. Drop the line if you
-      # would rather this agent never reached a shell.${web ? EXA_NOTE : ''}
-      tools:
-          - workspace:*
-          - sandbox:*${web ? '\n          - exa:*' : ''}
-`;
-
-const PROMPT = `You are a helpful assistant working inside a project workspace.
-
-You have tools to read, search and edit files. The workspace is the only
-place you can see; paths are relative to its root.
-
-You can also run shell commands. They run in a container over the same
-workspace, not on the user's machine, so a command that fails there has cost
-them nothing — but it is still their work in the directory, so read before you
-overwrite and say what you ran.
-
-Read a file before you change it: \`apply_patch\` matches the surrounding text
-exactly, so a patch written from memory will not apply. Use \`apply_patch\` to
-change part of a file and \`write_file\` only for a new one.
-
-Say what you changed.
-`;
-
-const GITIGNORE = `# Sessions hold run state, memory, blobs and whatever the agent wrote.
-# None of it is source.
-sessions/
-`;
-
-const ASSETS_README = `# assets
-
-Everything in this folder is mounted at /assets when an agent runs. Every agent
-in this project can read, list and search it, and no tool of theirs can change
-it — so this is where reference material goes: handbooks, specifications,
-schemas, worked examples, the style guide the output is supposed to follow.
-
-It is the project's own files that agents get without being asked. The
-workspace they are pointed at is the work; this is what they consult while
-doing it.
-
-Delete this file once there is something here to read.
-`;
+/**
+ * Copies one template directory into `dir` at `rel`, depth first, sorted so the
+ * list it returns is the same on every machine. Only a `.tmpl` is read as text;
+ * everything else is copied byte for byte.
+ */
+function copyTree(from: string, dir: string, rel: string, opts: CopyOptions): string[] {
+    const written: string[] = [];
+    mkdirSync(join(dir, rel), { recursive: true });
+    const entries = readdirSync(from, { withFileTypes: true });
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+        const source = join(from, entry.name);
+        if (entry.isDirectory()) {
+            written.push(...copyTree(source, dir, join(rel, entry.name), opts));
+            continue;
+        }
+        const child = join(rel, target(entry.name));
+        if (opts.keep && existsSync(join(dir, child))) {
+            continue;
+        }
+        const body = entry.name.endsWith(TEMPLATE)
+            ? render(readFileSync(source, 'utf8'), opts.vars ?? {})
+            : readFileSync(source);
+        writeFileSync(join(dir, child), body);
+        written.push(child);
+    }
+    return written;
+}
 
 // ---------------------------------------------------------------------------
 // Telling the editor which instructions are not for it
@@ -168,88 +153,24 @@ Delete this file once there is something here to read.
 // up whatever `AGENTS.md` a run happened to leave behind. It is a *restricted*
 // setting, so it applies only in a trusted workspace; that is the right way
 // round, since an untrusted folder is not one to run agents in either.
-// ---------------------------------------------------------------------------
-
-const VSCODE_SETTINGS = `{
-    "chat.useNestedAgentsMdFiles": false,
-    "chat.tools.terminal.autoApprove": {
-        "zen": true
-    }
-}
-`;
-
-/**
- * Writes `.vscode/settings.json` under `dir`, replacing what is there. The file
- * is ours: it says how the editor is to treat a directory the agents write
- * into, and a stale copy of that answer is worse than none. Returns the
- * relative path.
- */
-export function editorSettings(dir: string): string {
-    const rel = join('.vscode', 'settings.json');
-    mkdirSync(join(dir, '.vscode'), { recursive: true });
-    writeFileSync(join(dir, rel), VSCODE_SETTINGS);
-    return rel;
-}
-
-// ---------------------------------------------------------------------------
-// The other half of the editor story
 //
 // `INSTRUCTIONS.md` addresses the *project's* agents. The editor's assistant
 // still needs a brief of its own, and what it needs to know is how this kind
 // of project is put together — the file formats, how a prompt is written, when
-// to add a skill rather than an agent. That is a whole `.github/` tree — the
-// standing brief, plus the prompt files and skills the editor picks up from
-// the same place — kept as files rather than template literals in here: they
-// are full of backticks and `${...}` examples, which a TS template literal
-// cannot hold without escaping every one of them into illegibility.
-//
-// `templates/.github/` mirrors what lands in the project one for one, so
-// adding a skill or a prompt file is adding a file there and nothing else.
+// to add a skill rather than an agent. That is what the `.github/` tree is: the
+// standing brief, plus the prompt files and skills the editor picks up from the
+// same place.
 // ---------------------------------------------------------------------------
 
-const GITHUB_TEMPLATE = fileURLToPath(new URL('../templates/.github', import.meta.url));
-const SANDBOX_TEMPLATE = fileURLToPath(new URL('../templates/sandbox', import.meta.url));
-
 /**
- * Writes the `.github/` tree under `dir`, replacing what is there — it
- * describes the file formats of the version of `zen` in hand, so the current
- * one is the only one worth having. Returns the relative paths written.
+ * Writes the editor's files under `dir`, replacing what is there. They are
+ * ours: they say how the editor is to treat a directory the agents write into,
+ * and they describe the file formats of the version of `zen` in hand, so the
+ * current answer is the only one worth having and a stale one is worse than
+ * none. Returns the relative paths written.
  */
-export function copilotInstructions(dir: string): string[] {
-    return copyTree(GITHUB_TEMPLATE, dir, '.github');
-}
-
-/**
- * Writes `sandbox/`, the Dockerfile the scaffolded `agents.yaml` builds. Unlike
- * the editor files this becomes the project's own — it is meant to be edited —
- * so anything already there is left alone.
- */
-export function sandboxTemplate(dir: string): string[] {
-    return copyTree(SANDBOX_TEMPLATE, dir, 'sandbox', { keep: true });
-}
-
-/**
- * Copies one template directory into `dir` at `rel`, depth first, sorted so
- * the list it returns is the same on every machine.
- */
-function copyTree(from: string, dir: string, rel: string, opts?: { keep?: boolean }): string[] {
-    const written: string[] = [];
-    mkdirSync(join(dir, rel), { recursive: true });
-    const entries = readdirSync(from, { withFileTypes: true });
-    entries.sort((a, b) => a.name.localeCompare(b.name));
-    for (const entry of entries) {
-        const child = join(rel, entry.name);
-        if (entry.isDirectory()) {
-            written.push(...copyTree(join(from, entry.name), dir, child, opts));
-            continue;
-        }
-        if (opts?.keep && existsSync(join(dir, child))) {
-            continue;
-        }
-        writeFileSync(join(dir, child), readFileSync(join(from, entry.name)));
-        written.push(child);
-    }
-    return written;
+export function editorFiles(dir: string): string[] {
+    return copyTree(join(TEMPLATES, 'editor'), dir, '', {});
 }
 
 export interface ScaffoldOptions {
@@ -263,32 +184,26 @@ export interface ScaffoldOptions {
 }
 
 /**
- * Writes a project. Never overwrites the project's own files: the caller
- * decides whether it may. The editor files are the exception — they are ours,
- * and are replaced.
+ * Writes a project. Never overwrites the project's own files — a second `init`
+ * over a directory fills in what is missing and leaves the rest alone — but the
+ * editor files are ours, and are replaced.
  */
 export function scaffold(opts: ScaffoldOptions): string[] {
-    const written: string[] = [];
-    const put = (rel: string, body: string): void => {
-        const path = join(opts.dir, rel);
-        mkdirSync(join(path, '..'), { recursive: true });
-        writeFileSync(path, body, { flag: 'wx' });
-        written.push(rel);
-    };
+    const written = copyTree(join(TEMPLATES, 'project'), opts.dir, '', {
+        keep: true,
+        vars: {
+            model: modelSection(opts.model, opts.modelOptions),
+            exa: opts.web ? part('exa.yaml') : '',
+        },
+    });
 
-    mkdirSync(join(opts.dir, 'agents', 'prompts'), { recursive: true });
+    // The two directories with no file to put in them: a skill is a folder
+    // someone adds, and sessions is written into on the first run.
     mkdirSync(join(opts.dir, 'agents', 'skills'), { recursive: true });
     mkdirSync(join(opts.dir, 'sessions'), { recursive: true });
 
-    put('INSTRUCTIONS.md', INSTRUCTIONS_MD);
-    put('agents.yaml', AGENTS_YAML(opts.model, opts.modelOptions, opts.web));
-    put(join('agents', 'prompts', 'default.md'), PROMPT);
-    put(join('assets', 'README.md'), ASSETS_README);
-    put('.gitignore', GITIGNORE);
-    written.push(...sandboxTemplate(opts.dir));
-
     // The project directory is what `zen open` opens, so this is where the
     // editor actually reads them.
-    written.push(editorSettings(opts.dir), ...copilotInstructions(opts.dir));
+    written.push(...editorFiles(opts.dir));
     return written;
 }

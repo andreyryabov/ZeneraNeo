@@ -1,0 +1,3 @@
+# Sessions hold run state, memory, blobs and whatever the agent wrote.
+# None of it is source.
+sessions/
