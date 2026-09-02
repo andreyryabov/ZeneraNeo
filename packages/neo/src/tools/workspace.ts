@@ -1,7 +1,7 @@
 import { realpathSync, statSync, type Stats } from 'node:fs';
 import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
-import { tool, type AnyTool } from '../types.ts';
+import { tool, type AnyTool, type ToolContext } from '../types.ts';
 
 // ---------------------------------------------------------------------------
 // Workspace tools
@@ -1152,9 +1152,51 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
         },
     });
 
-    return opts.readOnly
-        ? [readFileTool, listDir, findFiles]
-        : [readFileTool, listDir, findFiles, writeFileTool, applyPatch, movePath, deleteFile];
+    return named(
+        ws,
+        opts.readOnly
+            ? [readFileTool, listDir, findFiles]
+            : [readFileTool, listDir, findFiles, writeFileTool, applyPatch, movePath, deleteFile],
+    );
+}
+
+/** What each errno means, said the way the rest of these tools say things. */
+const ERRNO: Record<string, string> = {
+    ENOENT: 'does not exist',
+    ENOTDIR: 'is not a directory',
+    EISDIR: 'is a directory',
+    EEXIST: 'already exists',
+    ENOTEMPTY: 'is not empty',
+    EACCES: 'cannot be reached',
+    EPERM: 'cannot be reached',
+    ELOOP: 'is a loop of symlinks',
+};
+
+/**
+ * Every path these tools are given comes back under the name the model wrote
+ * it — except when the filesystem itself fails, because Node's errors name the
+ * host path: `ENOENT: no such file or directory, scandir '/Users/me/proj/src'`.
+ * That is a name the model has never been shown, cannot pass to another tool,
+ * and will read as evidence about where it is running. So a failure is
+ * rewritten into the same vocabulary as a success before it leaves.
+ */
+function named<TCtx>(ws: Workspace, tools: AnyTool<TCtx>[]): AnyTool<TCtx>[] {
+    return tools.map((t) => ({
+        ...t,
+        execute: async (args: never, tc: ToolContext<TCtx>) => {
+            try {
+                return await t.execute(args, tc);
+            } catch (err) {
+                const e = err as NodeJS.ErrnoException;
+                if (typeof e?.code !== 'string' || typeof e.path !== 'string') {
+                    throw err;
+                }
+                throw new Error(`${ws.show(e.path)} ${ERRNO[e.code] ?? `failed: ${e.code}`}`, {
+                    cause: err,
+                });
+            }
+        },
+    }));
 }
 
 // ---------------------------------------------------------------------------
