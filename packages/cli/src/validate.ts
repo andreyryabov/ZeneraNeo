@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { auditModels, credentialFor, type DeclaredRole, type ModelIssue } from './audit.ts';
 import { resolveBuild, type ResolvedBuild } from './image.ts';
-import { SHAPES, type KeyStore, type Service } from './keys.ts';
+import { SHAPES, envNames, form, type KeyStore, type Service } from './keys.ts';
 import { BuildError, ensurePodmanReady } from './podman.ts';
 
 // ---------------------------------------------------------------------------
@@ -488,7 +488,7 @@ function checkServices(
             continue;
         }
         const shape = SHAPES[service];
-        if (process.env[shape.env] || keys.active(service)) {
+        if (envNames(service).some((name) => process.env[name]) || keys.active(service)) {
             continue;
         }
         add({
@@ -498,7 +498,7 @@ function checkServices(
             message:
                 `uses the ${shape.label} tools, and nothing on this machine holds a ` +
                 `${shape.label} key — those tools will refuse every call`,
-            fix: `zen key add ${service}, or set $${shape.env}`,
+            fix: `zen key add ${service}, or set $${form(service).env}`,
         });
     }
 }

@@ -177,9 +177,11 @@ const forkBinding = z
  *
  * `env` names host variables to forward, and only names: values never appear
  * in the config, so a repository never carries one. Names that read like a
- * credential are refused outright. The CLI materialises the keyring into its
- * own environment before loading a project, so an unguarded passthrough would
- * hand every model key to whatever the agent decided to run.
+ * credential are refused outright — not because credentials never belong in
+ * the sandbox, but because `env` is the wrong door for them. Model keys go
+ * through `keys`, which forwards a known set by name and can be turned off in
+ * one place; a hand-written `env: [OPENAI_API_KEY]` would be a second, silent
+ * way in that no single switch could close.
  */
 const SECRETISH = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)/i;
 
@@ -221,6 +223,17 @@ const sandbox = z
         persist: z.boolean().optional(),
         /** host variables to forward, by name */
         env: z.array(z.string().min(1)).optional(),
+        /**
+         * Whether the model credentials reach the sandbox. On by default,
+         * because the scaffolded image installs `zen` itself and an agent that
+         * cannot run `zen models` inside its own sandbox is a surprise.
+         *
+         * Turning it off is the honest answer for a project whose agents write
+         * code they then execute: the container runs whatever the model wrote,
+         * so a forwarded key is a key that code can read and, on a `bridge`
+         * network, send somewhere.
+         */
+        keys: z.boolean().optional(),
     })
     .strict()
     .superRefine((value, ctx) => {

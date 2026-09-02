@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { parseConfig } from '../src/project/config.ts';
 import {
     Sandbox,
@@ -139,6 +139,24 @@ describe('starting a container', () => {
         expect(args).toContain('HTTPS_PROXY=http://p:3128');
     });
 
+    // The whole point of the separate channel: the key must not be visible to
+    // anyone who can run `ps` or `podman inspect`.
+    it('forwards a secret by name, never by value', async () => {
+        vi.stubEnv('ZN_TEST_API_KEY', 'sk-do-not-print');
+        const f = fresh();
+        await box(f, { secrets: ['ZN_TEST_API_KEY'] }).start();
+        const args = find(f, 'run')?.args ?? [];
+        expect(args).toContain('ZN_TEST_API_KEY');
+        expect(args.join(' ')).not.toContain('sk-do-not-print');
+    });
+
+    it('says nothing about a secret this host does not have', async () => {
+        vi.stubEnv('ZN_TEST_API_KEY', '');
+        const f = fresh();
+        await box(f, { secrets: ['ZN_TEST_API_KEY'] }).start();
+        expect(find(f, 'run')?.args ?? []).not.toContain('ZN_TEST_API_KEY');
+    });
+
     it('reuses a container that already exists, and starts a stopped one', async () => {
         const f = fake();
         f.reply('container inspect', { code: 0, stdout: 'exited\n' });
@@ -190,6 +208,17 @@ describe('the container name', () => {
     it('survives a key that is not a legal container name', () => {
         const f = fake();
         expect(box(f, { key: 'Session Name/../x' }).name).toMatch(/^zn-[a-z0-9-]+$/);
+    });
+
+    // Rotating a key must not abandon a persisted container's filesystem, so
+    // what a secret contributes to the identity is its name and not its value.
+    it('does not change when a forwarded secret does', () => {
+        const f = fake();
+        vi.stubEnv('ZN_TEST_API_KEY', 'sk-one');
+        const before = box(f, { secrets: ['ZN_TEST_API_KEY'] }).name;
+        vi.stubEnv('ZN_TEST_API_KEY', 'sk-two');
+        expect(box(f, { secrets: ['ZN_TEST_API_KEY'] }).name).toBe(before);
+        expect(box(f, { secrets: ['ZN_OTHER_API_KEY'] }).name).not.toBe(before);
     });
 });
 

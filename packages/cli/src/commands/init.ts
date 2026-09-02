@@ -5,7 +5,7 @@ import { one, parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { ensureHome } from '../home.ts';
 import { resolveBuild } from '../image.ts';
-import { isProvider, keyId, KeyStore, PROVIDERS, SHAPES, type Provider } from '../keys.ts';
+import { envNames, isProvider, keyId, KeyStore, PROVIDERS, type Provider } from '../keys.ts';
 import { probeAll } from '../liveness.ts';
 import { ensurePodmanReady } from '../podman.ts';
 import { isProjectDir, Registry } from '../projects.ts';
@@ -86,7 +86,7 @@ const DEFAULT_MODEL: Record<Provider, ModelChoice> = {
  * the wifi is down.
  */
 async function reachableProvider(store: KeyStore): Promise<Provider | undefined> {
-    const fromEnv = PROVIDERS.find((p) => process.env[SHAPES[p].env]);
+    const fromEnv = PROVIDERS.find((p) => envNames(p).some((name) => process.env[name]));
     if (fromEnv) {
         return fromEnv;
     }
@@ -125,7 +125,7 @@ async function reachableProvider(store: KeyStore): Promise<Provider | undefined>
  * `init`.
  */
 function hasExa(store: KeyStore): boolean {
-    return Boolean(process.env[SHAPES.exa.env]) || store.active('exa') !== undefined;
+    return envNames('exa').some((name) => process.env[name]) || store.active('exa') !== undefined;
 }
 
 export const init: Command = {

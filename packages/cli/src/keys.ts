@@ -1,6 +1,7 @@
-import { chmodSync, copyFileSync, existsSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
 import { EXA_API_KEY_ENV } from '@zenera/neo';
+import { chmodSync, copyFileSync, existsSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { isAbsolute, join, resolve } from 'node:path';
 import { assertPrivate, ensureDir, paths, readJson, writeJson } from './home.ts';
 import { CliError, EXIT, credentialError, usageError } from './term.ts';
 
@@ -43,68 +44,137 @@ export const OWNERS = [...PROVIDERS, ...SERVICES] as const;
 
 export type KeyOwner = Provider | Service;
 
-interface ProviderShape {
-    /** whether this is somewhere a model lives, or something a tool calls */
-    kind: 'model' | 'service';
-    /** environment variable the library reads */
-    env: string;
+/**
+ * One way a credential can arrive.
+ *
+ * A provider that accepts two accepts two of these, and they agree about
+ * nothing: not the variable, not whether the value is the secret or a path to
+ * it, not where you go to get one. So the alternative is a whole form rather
+ * than a wider `holds`.
+ */
+export interface CredentialForm {
     /** what the value is: a secret string, or a path to a credentials file */
     holds: 'secret' | 'file';
-    label: string;
+    /** environment variable the library reads */
+    env: string;
     /** where to get one, printed when there is none */
     where: string;
 }
 
+interface ProviderShape {
+    /** whether this is somewhere a model lives, or something a tool calls */
+    kind: 'model' | 'service';
+    label: string;
+    /** the ways in, first being the one this provider is usually reached by */
+    forms: [CredentialForm, ...CredentialForm[]];
+}
+
 /**
- * Vertex is the odd one. The GenAI SDK resolves Application Default
- * Credentials itself, so what is stored is a service-account *file* and what is
- * exported is a path — not a key. Pretending otherwise would mean inventing a
- * credential shape Google does not have.
+ * Vertex is the odd one, and it is odd twice.
+ *
+ * Its usual credential is not a key at all: the GenAI SDK resolves Application
+ * Default Credentials itself, so what is stored is a service-account *file* and
+ * what is exported is a path. But it also accepts an express-mode api key,
+ * which is an ordinary secret under an entirely different variable. The two are
+ * alternatives — express mode addresses no project — so which form a credential
+ * is gets decided per entry rather than per provider.
  */
 export const SHAPES: Record<KeyOwner, ProviderShape> = {
     openai: {
         kind: 'model',
-        env: 'OPENAI_API_KEY',
-        holds: 'secret',
         label: 'OpenAI',
-        where: 'https://platform.openai.com/api-keys',
+        forms: [
+            {
+                holds: 'secret',
+                env: 'OPENAI_API_KEY',
+                where: 'https://platform.openai.com/api-keys',
+            },
+        ],
     },
     anthropic: {
         kind: 'model',
-        env: 'ANTHROPIC_API_KEY',
-        holds: 'secret',
         label: 'Anthropic',
-        where: 'https://console.anthropic.com/settings/keys',
+        forms: [
+            {
+                holds: 'secret',
+                env: 'ANTHROPIC_API_KEY',
+                where: 'https://console.anthropic.com/settings/keys',
+            },
+        ],
     },
     google: {
         kind: 'model',
-        env: 'GEMINI_API_KEY',
-        holds: 'secret',
         label: 'Google AI Studio',
-        where: 'https://aistudio.google.com/apikey',
+        forms: [
+            {
+                holds: 'secret',
+                env: 'GEMINI_API_KEY',
+                where: 'https://aistudio.google.com/apikey',
+            },
+        ],
     },
     vertex: {
         kind: 'model',
-        env: 'GOOGLE_APPLICATION_CREDENTIALS',
-        holds: 'file',
         label: 'Vertex AI',
-        where: 'a service-account JSON key from the GCP console',
+        forms: [
+            {
+                holds: 'file',
+                env: 'GOOGLE_APPLICATION_CREDENTIALS',
+                where: 'a service-account JSON key from the GCP console',
+            },
+            {
+                holds: 'secret',
+                env: 'VERTEX_API_KEY',
+                where: 'an express-mode key from https://console.cloud.google.com/vertex-ai',
+            },
+        ],
     },
     openrouter: {
         kind: 'model',
-        env: 'OPENROUTER_API_KEY',
-        holds: 'secret',
         label: 'OpenRouter',
-        where: 'https://openrouter.ai/settings/keys',
+        forms: [
+            {
+                holds: 'secret',
+                env: 'OPENROUTER_API_KEY',
+                where: 'https://openrouter.ai/settings/keys',
+            },
+        ],
     },
     exa: {
         kind: 'service',
-        env: EXA_API_KEY_ENV,
-        holds: 'secret',
         label: 'Exa',
-        where: 'https://dashboard.exa.ai/api-keys',
+        forms: [
+            {
+                holds: 'secret',
+                env: EXA_API_KEY_ENV,
+                where: 'https://dashboard.exa.ai/api-keys',
+            },
+        ],
     },
 };
+
+/**
+ * The form a provider is usually reached by — for the questions that have to
+ * have one answer, like which variable to name when nothing is set yet.
+ */
+export function form(provider: KeyOwner): CredentialForm {
+    return SHAPES[provider].forms[0];
+}
+
+/** Every variable a provider's credential could arrive in, usual one first. */
+export function envNames(provider: KeyOwner): string[] {
+    return SHAPES[provider].forms.map((f) => f.env);
+}
+
+/** The variable this particular credential occupies. */
+export function envOf(entry: Pick<KeyEntry, 'provider' | 'holds' | 'env'>): string {
+    if (entry.env) {
+        return entry.env;
+    }
+    // Entries written before a provider had two forms carry no `env` of their own.
+    const forms = SHAPES[entry.provider].forms;
+    return (forms.find((f) => f.holds === entry.holds) ?? forms[0]).env;
+}
 
 export function isProvider(name: string): name is Provider {
     return (PROVIDERS as readonly string[]).includes(name);
@@ -141,6 +211,11 @@ export interface KeyEntry {
     holds: 'secret' | 'file';
     /** the secret itself, or a path relative to the key directory */
     value: string;
+    /** the variable it is exported as; absent on entries written before providers had two */
+    env?: string;
+    /** vertex, file-shaped only: what the library would otherwise have to be told twice */
+    project?: string;
+    location?: string;
     addedAt: string;
     check?: KeyCheck;
 }
@@ -174,6 +249,24 @@ export function parseRef(ref: string): { provider: KeyOwner; name?: string } {
         throw usageError(`"${name}" is not a usable key name`, 'letters, digits, - and _ only');
     }
     return { provider, name };
+}
+
+/** Which of a provider's forms a raw value is, decided by the value itself. */
+function formOf(provider: KeyOwner, raw: string): CredentialForm {
+    const { forms } = SHAPES[provider];
+    if (forms.length === 1) {
+        return forms[0];
+    }
+    const wanted = raw.length < 4096 && existsSync(resolve(raw)) ? 'file' : 'secret';
+    return forms.find((f) => f.holds === wanted) ?? forms[0];
+}
+
+/** What a credential cannot say about itself. */
+export interface KeyMeta {
+    /** GCP project id, for a Vertex service account */
+    project?: string;
+    /** GCP region, or `global` */
+    location?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -231,17 +324,27 @@ export class KeyStore {
      * directory: the point of a store is that the credential survives the
      * original being moved, renamed or cleaned up, and a stored path that
      * silently stops resolving is worse than no store at all.
+     *
+     * Which form a value is, when the provider accepts two, is read off the
+     * value: a path that is there is a credentials file, and anything else is a
+     * secret. Asking would be a flag to get wrong, and a service-account key
+     * and an api key are not mistakable for one another.
      */
-    add(provider: KeyOwner, name: string, raw: string): KeyEntry {
+    add(provider: KeyOwner, name: string, raw: string, meta: KeyMeta = {}): KeyEntry {
         if (!NAME.test(name)) {
             throw usageError(`"${name}" is not a usable key name`, 'letters, digits, - and _ only');
         }
-        const shape = SHAPES[provider];
+        const form = formOf(provider, raw);
         const entry: KeyEntry = {
             provider,
             name,
-            holds: shape.holds,
-            value: shape.holds === 'file' ? this.#absorb(provider, name, raw) : raw,
+            holds: form.holds,
+            value: form.holds === 'file' ? this.#absorb(provider, name, raw) : raw,
+            env: form.env,
+            // Express mode addresses no project, so carrying one would only ever
+            // be a way to build the combination the service refuses.
+            ...(form.holds === 'file' && meta.project ? { project: meta.project } : {}),
+            ...(form.holds === 'file' && meta.location ? { location: meta.location } : {}),
             addedAt: new Date().toISOString(),
         };
         const at = this.#file.entries.findIndex((e) => e.provider === provider && e.name === name);
@@ -291,9 +394,12 @@ export class KeyStore {
         writeJson(paths.keys(), this.#file);
     }
 
-    /** Absolute path behind a file-shaped entry. */
+    /**
+     * Absolute path behind a file-shaped entry. Stored entries name a file in
+     * the key directory; an ambient one already knows where it is.
+     */
     fileOf(entry: KeyEntry): string {
-        return join(paths.keyDir(), entry.value);
+        return isAbsolute(entry.value) ? entry.value : join(paths.keyDir(), entry.value);
     }
 
     /** The plaintext an entry stands for — the only way out of the store. */
@@ -316,11 +422,18 @@ export class KeyStore {
             if (!entry) {
                 continue;
             }
-            const { env: name } = SHAPES[provider];
-            if (process.env[name]) {
+            // Either variable being set means this provider is already answered
+            // for, so the stored alternative must not be exported alongside it.
+            if (envNames(provider).some((name) => process.env[name])) {
                 continue;
             }
-            env[name] = this.reveal(entry);
+            env[envOf(entry)] = this.reveal(entry);
+            if (entry.project && !process.env.GOOGLE_CLOUD_PROJECT) {
+                env.GOOGLE_CLOUD_PROJECT = entry.project;
+            }
+            if (entry.location && !process.env.GOOGLE_CLOUD_LOCATION) {
+                env.GOOGLE_CLOUD_LOCATION = entry.location;
+            }
         }
         return env;
     }
@@ -371,9 +484,91 @@ export function describe(store: KeyStore, entry: KeyEntry): string {
 }
 
 // ---------------------------------------------------------------------------
-// Gate
+// Ambient
 // ---------------------------------------------------------------------------
 
+/**
+ * A credential the keyring does not hold but the libraries will nonetheless
+ * find: a variable already in the environment, or the file `gcloud auth
+ * application-default login` writes.
+ *
+ * These have to be listed, because they are the reason a provider works when
+ * `zen key ls` says there is nothing for it — and the reason one keeps working
+ * after its entry is removed.
+ */
+export interface Ambient {
+    provider: KeyOwner;
+    /** the variable it arrived in; absent when it was found where the SDK looks */
+    env?: string;
+    holds: 'secret' | 'file';
+    value: string;
+}
+
+/** How an ambient credential is named on the command line: it has no key name. */
+export function ambientId(cred: Ambient): string {
+    return cred.env ? `${cred.provider}/$${cred.env}` : `${cred.provider}/adc`;
+}
+
+/**
+ * Where `gcloud auth application-default login` leaves its credentials. The
+ * GenAI SDK reads this without being told to, so it counts even though nothing
+ * in the environment mentions it.
+ */
+export function gcloudAdc(): string | undefined {
+    const dir = process.env.CLOUDSDK_CONFIG ?? join(homedir(), '.config', 'gcloud');
+    const path = join(dir, 'application_default_credentials.json');
+    return existsSync(path) ? path : undefined;
+}
+
+export function ambient(store: KeyStore, only?: KeyOwner[]): Ambient[] {
+    const found: Ambient[] = [];
+    for (const provider of only ?? OWNERS) {
+        for (const form of SHAPES[provider].forms) {
+            const value = process.env[form.env];
+            if (!value) {
+                continue;
+            }
+            // `materialize()` puts the store's own entries here. Reporting one
+            // of those as ambient would double-count it, and would claim the
+            // environment as a source that would survive removing the entry.
+            const active = store.active(provider);
+            if (active && envOf(active) === form.env && store.reveal(active) === value) {
+                continue;
+            }
+            found.push({ provider, env: form.env, holds: form.holds, value });
+        }
+    }
+    const adc = (only ?? OWNERS).includes('vertex') ? gcloudAdc() : undefined;
+    if (adc && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+        found.push({ provider: 'vertex', holds: 'file', value: adc });
+    }
+    return found;
+}
+
+/**
+ * Every credential variable this process is carrying, whatever put it there.
+ *
+ * Read off the environment rather than off the store, and deliberately: by the
+ * time anyone asks, `materialize()` has already run, so the environment is the
+ * union of the keyring and whatever the shell brought — which is exactly the
+ * set of credentials the run is actually using.
+ */
+export function credentials(): { env: string; holds: 'secret' | 'file'; value: string }[] {
+    const found: { env: string; holds: 'secret' | 'file'; value: string }[] = [];
+    for (const provider of OWNERS) {
+        for (const form of SHAPES[provider].forms) {
+            const value = process.env[form.env];
+            if (value) {
+                found.push({ env: form.env, holds: form.holds, value });
+            }
+        }
+    }
+    return found;
+}
+
+// ---------------------------------------------------------------------------
+// Gate
+// ---------------------------------------------------------------------------
 /**
  * Called before a run: says plainly that there is no way to reach a model,
  * rather than letting the SDK raise it three frames deeper as a 401.
@@ -384,7 +579,7 @@ export function describe(store: KeyStore, entry: KeyEntry): string {
  */
 export function assertUsable(store: KeyStore): void {
     const reachable = PROVIDERS.filter(
-        (p) => process.env[SHAPES[p].env] || store.active(p) !== undefined,
+        (p) => envNames(p).some((name) => process.env[name]) || store.active(p) !== undefined,
     );
     if (reachable.length === 0) {
         throw credentialError(

@@ -351,6 +351,12 @@ so the credential survives the original being moved, and the entry records that
 it is file-shaped so the CLI knows to export `GOOGLE_APPLICATION_CREDENTIALS`
 rather than an API key.
 
+Vertex is the one provider where that sniff decides something: anything that is
+_not_ a path is an express-mode key, stored as an ordinary secret under
+`VERTEX_API_KEY`. The two are alternatives — express mode addresses no project,
+and sending a key and a project together is a `403` — so the shape is recorded
+per entry, and `--project` / `--location` are accepted only alongside a file.
+
 `add` verifies before it stores, unless `--no-check`. A key that fails
 verification is still stored — refusing would be wrong when the network is
 down — but it is stored marked `dead` and `zen key ls` says so.

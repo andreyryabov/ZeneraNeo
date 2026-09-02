@@ -1,5 +1,6 @@
 import { EXA_BASE_URL, ModelRegistry, type ProviderSpec } from '@zenera/neo';
 import {
+    envOf,
     SHAPES,
     type KeyCheck,
     type KeyEntry,
@@ -122,25 +123,42 @@ export async function probe(store: KeyStore, entry: KeyEntry): Promise<KeyCheck>
     }
     const provider = entry.provider as Provider;
     const credential = store.reveal(entry);
-    if (shape.holds !== 'file') {
+    // What the entry holds, not what its provider usually holds: a Vertex
+    // express key is a secret like any other, and passing it as a value is what
+    // lets it be asked at the same time as the rest.
+    if (entry.holds !== 'file') {
         return ask(provider, { kind: provider, apiKey: credential });
     }
 
-    // Vertex is the exception, and `probeAll` knows it: what is stored is a
-    // service-account file, and Application Default Credentials are found
-    // through the environment or not at all. So this one is exported, asked,
-    // and put back — alone.
-    const previous = process.env[shape.env];
-    process.env[shape.env] = credential;
+    // A service-account file is the exception, and `probeAll` knows it:
+    // Application Default Credentials are found through the environment or not
+    // at all. So this one is exported, asked, and put back — alone.
+    const name = envOf(entry);
+    const restore = exportTemporarily({
+        [name]: credential,
+        ...(entry.project ? { GOOGLE_CLOUD_PROJECT: entry.project } : {}),
+        ...(entry.location ? { GOOGLE_CLOUD_LOCATION: entry.location } : {}),
+    });
     try {
         return await ask(provider, { kind: provider });
     } finally {
-        if (previous === undefined) {
-            delete process.env[shape.env];
-        } else {
-            process.env[shape.env] = previous;
-        }
+        restore();
     }
+}
+
+/** Sets variables, and hands back the undo. */
+function exportTemporarily(vars: Record<string, string>): () => void {
+    const previous = new Map(Object.keys(vars).map((name) => [name, process.env[name]]));
+    Object.assign(process.env, vars);
+    return () => {
+        for (const [name, value] of previous) {
+            if (value === undefined) {
+                delete process.env[name];
+            } else {
+                process.env[name] = value;
+            }
+        }
+    };
 }
 
 /** One authenticated round trip, and what its silence or refusal means. */
@@ -273,7 +291,7 @@ export async function probeAll(
     entries: readonly KeyEntry[],
     onProbe?: (entry: KeyEntry, done: number, total: number) => void,
 ): Promise<[KeyEntry, KeyCheck][]> {
-    const exclusive = (entry: KeyEntry): boolean => SHAPES[entry.provider].holds === 'file';
+    const exclusive = (entry: KeyEntry): boolean => entry.holds === 'file';
     const results = new Map<KeyEntry, KeyCheck>();
     let done = 0;
     const record = (entry: KeyEntry, check: KeyCheck): void => {

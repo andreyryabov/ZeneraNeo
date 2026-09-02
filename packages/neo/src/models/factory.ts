@@ -122,7 +122,8 @@ export interface ProviderSpec extends Credentials {
     /**
      * vertex only: GCP project id. Falls back to `GOOGLE_CLOUD_PROJECT`, then
      * to the `project_id` inside the service-account key file named by
-     * `GOOGLE_APPLICATION_CREDENTIALS`.
+     * `GOOGLE_APPLICATION_CREDENTIALS`. Ignored when an `apiKey` is given —
+     * express mode addresses no project.
      */
     project?: string;
     /** vertex only: a region, or `global` (env: `GOOGLE_CLOUD_LOCATION`, default `global`) */
@@ -690,6 +691,12 @@ function buildOpenRouter(
  * application-default login` — and refreshes them itself. That is why `vertex`
  * is `keyOptional`, and why it needs none of the bearer-token machinery the
  * OpenAI protocol uses for the same job.
+ *
+ * A key and a project are alternatives, not a pair. An express-mode key
+ * authenticates against `aiplatform.googleapis.com` with no project in the
+ * path; naming a project as well makes the SDK build a project-scoped url and
+ * then authenticate it with the key header — a combination the service refuses,
+ * and one nothing in the resulting 403 attributes to having set both.
  */
 function buildGenAI(
     kind: ProviderKind,
@@ -704,11 +711,14 @@ function buildGenAI(
     if (kind !== 'vertex') {
         return new GoogleGenAI({ apiKey, httpOptions });
     }
+    if (apiKey) {
+        return new GoogleGenAI({ vertexai: true, apiKey, httpOptions });
+    }
     const project =
         expand(opts.project, `${where}: project`) ??
         fromEnv('GOOGLE_CLOUD_PROJECT') ??
         projectFromKeyFile();
-    if (!project && !apiKey) {
+    if (!project) {
         throw new Error(
             `${where}: vertex needs \`project\`, or GOOGLE_CLOUD_PROJECT ` +
                 `(or \`apiKey\` for express mode)`,
@@ -716,7 +726,6 @@ function buildGenAI(
     }
     return new GoogleGenAI({
         vertexai: true,
-        apiKey,
         project,
         location:
             expand(opts.location, `${where}: location`) ??

@@ -263,6 +263,31 @@ describe('vertex', () => {
         expect(conn(new ModelRegistry().client('vertex')).apiKey).toBe('vx-express');
     });
 
+    // The bug this pins: with both set, the SDK built a project-scoped url and
+    // then authenticated it with the key header — which the service refuses,
+    // and refuses with a 403 that mentions neither the project nor the key.
+    // A key is an answer on its own, so nothing else is sent with it.
+    it('sends no project alongside an express-mode key, whatever the environment says', () => {
+        vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'acme-prod');
+        vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'europe-west4');
+        vi.stubEnv('VERTEX_API_KEY', 'vx-express');
+        const client = conn(new ModelRegistry().client('vertex'));
+        expect(client.vertexai).toBe(true);
+        expect(client.apiKey).toBe('vx-express');
+        expect(client.project).toBeFalsy();
+        expect(client.location).toBeFalsy();
+    });
+
+    it('ignores a project stated in the config when a key is given too', () => {
+        const client = conn(
+            new ModelRegistry()
+                .provider('vx', { kind: 'vertex', project: 'acme-prod', apiKey: 'vx-express' })
+                .client('vx'),
+        );
+        expect(client.apiKey).toBe('vx-express');
+        expect(client.project).toBeFalsy();
+    });
+
     it('passes model ids through untouched — no publisher prefix to add', () => {
         const models = new ModelRegistry().provider('vx', { kind: 'vertex', project: 'p' });
         expect(models.model('vx:gemini-2.5-pro').id).toBe('gemini-2.5-pro');

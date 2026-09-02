@@ -55,6 +55,8 @@ export interface EngineOptions {
     model?: string;
     /** sandbox image override — `--image` */
     image?: string;
+    /** whether credentials reach the sandbox — `--no-keys` sets this false */
+    keys?: boolean;
     /** answer the sandbox's install question without asking — `--yes` */
     yes?: boolean;
 }
@@ -114,6 +116,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
             workspace,
             readOnly: opts.readOnly,
             image: opts.image,
+            keys: opts.keys,
             mounts,
         });
         project = await loadProject(opts.project.dir, {

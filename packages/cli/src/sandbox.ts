@@ -9,8 +9,9 @@ import {
     type SandboxSpec,
 } from '@zenera/neo';
 import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { resolveBuild, type ResolvedBuild } from './image.ts';
+import { credentials } from './keys.ts';
 import { ensurePodmanReady } from './podman.ts';
 import type { SessionPaths } from './session.ts';
 import { warn } from './term.ts';
@@ -35,6 +36,48 @@ import { warn } from './term.ts';
 
 /** Where the persistent home lives, inside the container. */
 const HOME = '/home/agent';
+
+/** Where a credential *file* is mounted, inside the container. */
+const KEY_MOUNT = '/run/zenera/keys';
+
+/**
+ * The credentials the run is using, in the form a container takes.
+ *
+ * Two shapes, two mechanisms. A secret is forwarded by *name* — podman reads
+ * the value from its own environment, so nothing is written into an argv that
+ * `ps` will show. A service-account file has to be present as a file, so the
+ * one file is bind-mounted read-only and the variable is rewritten to where it
+ * landed; mounting the directory it came from would drag in whatever else the
+ * user keeps beside it.
+ *
+ * This is the part of the design that gives something away, and it should be
+ * said plainly: the sandbox runs code the model wrote, and a key it can read
+ * is a key it can send. `keys: false`, or `network: none`, is the answer for a
+ * project where that is not an acceptable trade.
+ */
+function forwarded(): { secrets: string[]; env: Record<string, string>; mounts: SandboxMount[] } {
+    const secrets: string[] = [];
+    const env: Record<string, string> = {};
+    const mounts: SandboxMount[] = [];
+    for (const cred of credentials()) {
+        if (cred.holds === 'file') {
+            const at = `${KEY_MOUNT}/${basename(cred.value)}`;
+            mounts.push({ host: cred.value, at, readOnly: true });
+            env[cred.env] = at;
+            continue;
+        }
+        secrets.push(cred.env);
+    }
+    // Not secrets, and useless without one: a service account says which
+    // project it belongs to but never which region to call.
+    for (const name of ['GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION']) {
+        const value = process.env[name];
+        if (value) {
+            env[name] = value;
+        }
+    }
+    return { secrets, env, mounts };
+}
 
 export interface SandboxSetup {
     pool: SandboxPool;
@@ -62,6 +105,8 @@ export interface SandboxInputs {
     mounts?: readonly SandboxMount[];
     /** `--image` */
     image?: string;
+    /** `--no-keys`: refuse to forward credentials, whatever the config says */
+    keys?: boolean;
 }
 
 export function buildSandbox(opts: SandboxInputs): SandboxSetup {
@@ -70,22 +115,35 @@ export function buildSandbox(opts: SandboxInputs): SandboxSetup {
     const base = {
         ...(opts.config.sandbox ?? {}),
         ...((opts.image ?? build?.tag) ? { image: opts.image ?? build?.tag } : {}),
+        ...(opts.keys === false ? { keys: false } : {}),
     };
     const home = join(opts.session.data, 'sandbox', 'home');
 
     const mounts: SandboxMount[] = [{ host: home, at: HOME }, ...(opts.mounts ?? [])];
+    const keys = base.keys === false ? undefined : forwarded();
+    if (keys) {
+        mounts.push(...keys.mounts);
+    }
     // Skills and assets are mounted read-only, and a python script run from a
     // read-only directory fails on writing its own `__pycache__` — a confusing
     // error about a file nobody asked for.
-    const spec = toSpec(base, { HOME, PYTHONDONTWRITEBYTECODE: '1' });
+    const extra = { HOME, PYTHONDONTWRITEBYTECODE: '1', ...(keys?.env ?? {}) };
+    const spec = toSpec(base, extra, keys?.secrets);
 
     const agents: Record<string, SandboxSpec> = {};
     for (const agent of opts.config.agents) {
         if (agent.sandbox) {
-            agents[agent.name] = toSpec(merge(base, agent.sandbox), {
-                HOME,
-                PYTHONDONTWRITEBYTECODE: '1',
-            });
+            const merged = merge(base, agent.sandbox);
+            // An agent that opts out gets neither the variables nor the mount,
+            // but the mount is on the pool and cannot be taken back per agent —
+            // so the variable is what actually decides, and without it the file
+            // sitting there is not a credential anything will look for.
+            const own = merged.keys === false ? undefined : keys;
+            agents[agent.name] = toSpec(
+                merged,
+                { HOME, PYTHONDONTWRITEBYTECODE: '1', ...(own?.env ?? {}) },
+                own?.secrets,
+            );
         }
     }
 
@@ -123,7 +181,11 @@ function merge(base: SandboxConfig, agent: SandboxConfig): SandboxConfig {
  * is simply not forwarded — an empty string in the container is a different
  * thing from an absent one, and tools test for absence.
  */
-function toSpec(config: SandboxConfig, extra: Record<string, string>): SandboxSpec {
+function toSpec(
+    config: SandboxConfig,
+    extra: Record<string, string>,
+    secrets?: readonly string[],
+): SandboxSpec {
     const env: Record<string, string> = { ...extra };
     for (const name of config.env ?? []) {
         const value = process.env[name];
@@ -141,6 +203,7 @@ function toSpec(config: SandboxConfig, extra: Record<string, string>): SandboxSp
         user: config.user,
         persist: config.persist,
         env,
+        secrets,
     };
 }
 

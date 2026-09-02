@@ -1,17 +1,17 @@
-import { mkdirSync } from 'node:fs';
-import { resolve } from 'node:path';
 import {
     credentialError,
     ensureHome,
     ensurePodmanReady,
+    envNames,
     invalidError,
     KeyStore,
     paths,
     PROVIDERS,
-    SHAPES,
     type Provider,
 } from '@zenera/cli/lib';
 import { createModel, type Model } from '@zenera/neo';
+import { mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { Box } from './box.ts';
 import { Cache, type CacheOptions } from './cache.ts';
 import { ensureImage } from './image.ts';
@@ -118,7 +118,7 @@ export async function open(opts: SetupOptions): Promise<Setup> {
  */
 function defaultRef(keys: KeyStore): string {
     const provider =
-        PROVIDERS.find((p) => process.env[SHAPES[p].env]) ??
+        PROVIDERS.find((p) => envNames(p).some((name) => process.env[name])) ??
         PROVIDERS.find((p) => keys.active(p) !== undefined);
     if (!provider) {
         throw credentialError(

@@ -18,6 +18,7 @@ interface Flags {
     workspace?: string;
     model?: string;
     image?: string;
+    'no-keys'?: boolean;
     'read-only'?: boolean;
     yes?: boolean;
     quiet?: boolean;
@@ -37,6 +38,7 @@ export const run: Command = {
         '  --model <ref>          Override the default model.',
         '  --image <ref>          Override the sandbox image commands run in.',
         '  --read-only            Give the agent no way to write.',
+        '  --no-keys              Keep the API keys out of the sandbox.',
         '  --quiet                Answer only; no narration.',
         '  --plain                One shot, even on a terminal.',
         '  --theme <dark|light>   Force the palette. Detected otherwise; $ZENERA_THEME.',
@@ -63,6 +65,7 @@ export const run: Command = {
                 workspace: { type: 'string' },
                 model: { type: 'string' },
                 image: { type: 'string' },
+                'no-keys': { type: 'boolean' },
                 'read-only': { type: 'boolean' },
                 yes: { type: 'boolean' },
                 quiet: { type: 'boolean' },
@@ -112,6 +115,7 @@ export const run: Command = {
             readOnly: values['read-only'],
             model: values.model,
             image: values.image,
+            keys: values['no-keys'] ? false : undefined,
             yes: values.yes || ctx.json,
         });
 

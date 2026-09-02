@@ -8,7 +8,17 @@ import { auditModels } from '../src/audit.ts';
 import { ALIASES, COMMANDS, EXTERNAL, type External } from '../src/commands/index.ts';
 import { hasExternal, loadExternal } from '../src/external.ts';
 import { isStamp, stamp, stampInstant } from '../src/ids.ts';
-import { assertUsable, mask, parseRef, type KeyEntry, type KeyStore } from '../src/keys.ts';
+import {
+    ambient,
+    assertUsable,
+    credentials,
+    envNames,
+    envOf,
+    mask,
+    parseRef,
+    type KeyEntry,
+    type KeyStore,
+} from '../src/keys.ts';
 import { engineDisk, ensurePodmanReady, ownedContainers } from '../src/podman.ts';
 import { dirSize } from '../src/projects.ts';
 import { scaffold } from '../src/scaffold.ts';
@@ -165,6 +175,80 @@ describe('keys', () => {
             blank();
             expect(() => assertUsable(only('exa'))).toThrow(/no credentials/);
             expect(() => assertUsable(only('openai'))).not.toThrow();
+        });
+    });
+
+    // Vertex is reached two ways that have nothing in common: a service-account
+    // file the SDK resolves for itself, and an express-mode api key. Which one
+    // an entry is decides the variable it occupies, so a keyring that knew only
+    // the provider would export the wrong name for one of them.
+    describe('a provider with two shapes', () => {
+        const kept = { ...process.env };
+        afterEach(() => {
+            process.env = { ...kept };
+        });
+
+        const blank = (): void => {
+            for (const name of Object.keys(process.env)) {
+                if (/_API_KEY$|^GOOGLE_APPLICATION_CREDENTIALS$|^CLOUDSDK_CONFIG$/.test(name)) {
+                    delete process.env[name];
+                }
+            }
+            // A developer's own gcloud login must not decide what this asserts.
+            process.env.CLOUDSDK_CONFIG = join(dir, 'no-gcloud');
+        };
+
+        const dir = mkdtempSync(join(tmpdir(), 'zen-keys-'));
+        afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+        const empty = { active: () => undefined } as unknown as KeyStore;
+
+        it('names both variables it could arrive in', () => {
+            expect(envNames('vertex')).toEqual([
+                'GOOGLE_APPLICATION_CREDENTIALS',
+                'VERTEX_API_KEY',
+            ]);
+            expect(envNames('openai')).toEqual(['OPENAI_API_KEY']);
+        });
+
+        it('exports each entry under the variable its own shape uses', () => {
+            const file = { provider: 'vertex', holds: 'file' } as KeyEntry;
+            const key = { provider: 'vertex', holds: 'secret' } as KeyEntry;
+            expect(envOf(file)).toBe('GOOGLE_APPLICATION_CREDENTIALS');
+            expect(envOf(key)).toBe('VERTEX_API_KEY');
+        });
+
+        it('honours the variable an entry recorded, over anything inferred', () => {
+            const entry = { provider: 'vertex', holds: 'secret', env: 'LEGACY' } as KeyEntry;
+            expect(envOf(entry)).toBe('LEGACY');
+        });
+
+        it('reports a credential the environment brought, under either name', () => {
+            blank();
+            process.env.VERTEX_API_KEY = 'vx-express';
+            expect(ambient(empty, ['vertex'])).toEqual([
+                { provider: 'vertex', env: 'VERTEX_API_KEY', holds: 'secret', value: 'vx-express' },
+            ]);
+
+            process.env.GOOGLE_APPLICATION_CREDENTIALS = '/tmp/sa.json';
+            expect(ambient(empty, ['vertex']).map((c) => c.env)).toEqual([
+                'GOOGLE_APPLICATION_CREDENTIALS',
+                'VERTEX_API_KEY',
+            ]);
+        });
+
+        it('collects what a run is actually carrying, whatever put it there', () => {
+            blank();
+            process.env.OPENAI_API_KEY = 'sk-openai';
+            process.env.GOOGLE_APPLICATION_CREDENTIALS = '/tmp/sa.json';
+            expect(credentials()).toEqual([
+                { env: 'OPENAI_API_KEY', holds: 'secret', value: 'sk-openai' },
+                {
+                    env: 'GOOGLE_APPLICATION_CREDENTIALS',
+                    holds: 'file',
+                    value: '/tmp/sa.json',
+                },
+            ]);
         });
     });
 });

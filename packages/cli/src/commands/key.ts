@@ -3,14 +3,19 @@ import { parse } from '../args.ts';
 import type { Command, Context } from '../command.ts';
 import { ensureHome } from '../home.ts';
 import {
+    ambient,
+    ambientId,
     assertNotEmpty,
     describe,
+    envNames,
+    envOf,
     keyId,
     KeyStore,
     mask,
     OWNERS,
     parseRef,
     SHAPES,
+    type Ambient,
     type KeyCheck,
     type KeyEntry,
     type KeyOwner,
@@ -56,22 +61,46 @@ function state(entry: KeyEntry): string {
     return entry.check ? MARK[entry.check.state] : dim('unchecked');
 }
 
-function rows(store: KeyStore): string[] {
+/**
+ * An ambient credential borrowed into the shape the rest of this file works
+ * in. It is not in the store and never will be: `store.find` misses it, so
+ * `store.record` drops its check and nothing is written to disk. That is the
+ * intent — it can be listed and probed, not chosen or forgotten.
+ */
+function asEntry(cred: Ambient): KeyEntry {
+    return {
+        provider: cred.provider,
+        name: cred.env ? `$${cred.env}` : 'adc',
+        holds: cred.holds,
+        value: cred.value,
+        env: cred.env,
+        addedAt: new Date().toISOString(),
+    };
+}
+
+function rows(store: KeyStore, borrowed: readonly [Ambient, KeyEntry][]): string[] {
     const out: string[][] = [
         [bold(''), bold('KEY'), bold('VALUE'), bold('STATE'), bold('CHECKED')],
     ];
     for (const provider of OWNERS) {
         for (const entry of store.for(provider)) {
-            const shadowed = Boolean(process.env[SHAPES[provider].env]);
+            const shadow = envNames(provider).find((name) => process.env[name]);
             out.push([
                 store.isActive(entry) ? green('*') : ' ',
                 keyId(entry),
                 dim(describe(store, entry)),
                 state(entry),
                 dim(entry.check ? ago(entry.check.at) : '—') +
-                    (shadowed && store.isActive(entry)
-                        ? yellow(`  shadowed by $${SHAPES[provider].env}`)
-                        : ''),
+                    (shadow && store.isActive(entry) ? yellow(`  shadowed by $${shadow}`) : ''),
+            ]);
+        }
+        for (const [cred, entry] of borrowed.filter(([c]) => c.provider === provider)) {
+            out.push([
+                dim('~'),
+                dim(ambientId(cred)),
+                dim(describe(store, entry)),
+                state(entry),
+                dim(cred.env ? 'from the environment' : 'from gcloud'),
             ]);
         }
     }
@@ -107,35 +136,53 @@ async function checkAll(
 const ls: Sub = async (ctx, args) => {
     const { values } = parse<{ check?: boolean }>(args, { check: { type: 'boolean' } }, USAGE);
     const store = await KeyStore.open();
+    const borrowed = ambient(store).map((cred) => [cred, asEntry(cred)] as [Ambient, KeyEntry]);
 
     if (values.check) {
-        const checks = await checkAll(ctx, store, store.entries);
+        // Ambient credentials are checked alongside the stored ones and, unlike
+        // them, forgotten again: there is nowhere to write the result, and a
+        // variable that changes between runs would make a cached one a lie.
+        const checks = await checkAll(ctx, store, [
+            ...store.entries,
+            ...borrowed.map(([, entry]) => entry),
+        ]);
         for (const [entry, check] of checks) {
             store.record(entry, check);
+            entry.check = check;
         }
         store.save();
     }
 
     if (ctx.json) {
-        json(
-            store.entries.map((e) => ({
+        json({
+            keys: store.entries.map((e) => ({
                 ...e,
                 value: e.holds === 'file' ? store.fileOf(e) : mask(e.value),
                 active: store.isActive(e),
-                env: SHAPES[e.provider].env,
+                env: envOf(e),
             })),
-        );
+            ambient: borrowed.map(([cred, entry]) => ({
+                provider: cred.provider,
+                id: ambientId(cred),
+                env: cred.env ?? null,
+                holds: cred.holds,
+                value: cred.holds === 'file' ? cred.value : mask(cred.value),
+                check: entry.check,
+            })),
+        });
         return;
     }
 
-    if (store.entries.length === 0) {
+    if (store.entries.length === 0 && borrowed.length === 0) {
         note('the keyring is empty');
         note(dim('add one: zen key add openai'));
         return;
     }
-    writeAll(rows(store));
+    writeAll(rows(store, borrowed));
 
-    const missing = OWNERS.filter((p) => !store.active(p) && !process.env[SHAPES[p].env]);
+    const missing = OWNERS.filter(
+        (p) => !store.active(p) && !borrowed.some(([c]) => c.provider === p),
+    );
     if (missing.length) {
         note('');
         note(dim(`no key for: ${missing.join(', ')}`));
@@ -148,10 +195,20 @@ const ls: Sub = async (ctx, args) => {
  * Piped stdin or an echo-off prompt are the only two ways in.
  */
 const add: Sub = async (ctx, args) => {
-    const { values, positionals } = parse<{ name?: string; 'no-check'?: boolean }>(
+    const { values, positionals } = parse<{
+        name?: string;
+        'no-check'?: boolean;
+        project?: string;
+        location?: string;
+    }>(
         args,
-        { name: { type: 'string' }, 'no-check': { type: 'boolean' } },
-        'zen key add <provider>[/name] [--name <name>] [--no-check]',
+        {
+            name: { type: 'string' },
+            'no-check': { type: 'boolean' },
+            project: { type: 'string' },
+            location: { type: 'string' },
+        },
+        'zen key add <provider>[/name] [--name <name>] [--project <id>] [--location <region>] [--no-check]',
     );
 
     const ref = positionals[0];
@@ -163,6 +220,13 @@ const add: Sub = async (ctx, args) => {
     const name = values.name ?? parsed.name ?? 'default';
     const shape = SHAPES[provider];
 
+    if ((values.project || values.location) && provider !== 'vertex') {
+        throw usageError(
+            `--project and --location mean nothing to ${shape.label}`,
+            'they configure a Vertex service account',
+        );
+    }
+
     ensureHome();
     const store = await KeyStore.open();
 
@@ -172,15 +236,22 @@ const add: Sub = async (ctx, args) => {
         }
     }
 
-    const raw = (await readStdin()) ?? (await promptFor(shape.holds, shape.label, shape.where));
+    const raw = (await readStdin()) ?? (await promptFor(shape));
     if (!raw) {
         throw usageError('no value given');
     }
-    if (shape.holds === 'file' && !existsSync(raw)) {
+
+    // A provider with one form can say up front that a path is wrong. One with
+    // two cannot: a value that is not a path is not a mistake there, it is the
+    // other kind of credential, and `add` decides which by looking.
+    if (shape.forms.length === 1 && shape.forms[0].holds === 'file' && !existsSync(raw)) {
         throw usageError(`no such file: ${raw}`);
     }
 
-    const entry = store.add(provider, name, raw);
+    const entry = store.add(provider, name, raw, {
+        project: values.project,
+        location: values.location,
+    });
 
     // Verified before it is trusted, but stored either way: a key that cannot
     // be checked right now — offline, behind a proxy — is not a key that is
@@ -200,21 +271,40 @@ const add: Sub = async (ctx, args) => {
     if (ctx.json) {
         json({
             key: keyId(entry),
-            env: shape.env,
+            env: envOf(entry),
             active: store.isActive(entry),
             check: entry.check,
         });
         return;
     }
-    note(`${green('added')} ${bold(keyId(entry))} ${dim(describe(store, entry))} ${state(entry)}`);
-    if (process.env[shape.env]) {
-        note(yellow(`$${shape.env} is set and will win over this`));
+    note(
+        `${green('added')} ${bold(keyId(entry))} ${dim(describe(store, entry))} ` +
+            `${dim(`→ $${envOf(entry)}`)} ${state(entry)}`,
+    );
+    if (process.env[envOf(entry)]) {
+        note(yellow(`$${envOf(entry)} is set and will win over this`));
+    }
+    if (provider === 'vertex' && entry.holds === 'file' && !entry.project) {
+        note(dim('no --project given; the project_id inside the file will be used'));
     }
 };
 
-async function promptFor(holds: 'secret' | 'file', label: string, where: string): Promise<string> {
-    note(dim(`${label} — ${where}`));
-    return holds === 'file'
+/**
+ * A provider with two forms cannot ask for one of them. It asks with the echo
+ * off, because one of the two answers is a secret and there is no way to know
+ * which is coming until it arrives.
+ */
+async function promptFor(shape: (typeof SHAPES)[KeyOwner]): Promise<string> {
+    const [first, ...rest] = shape.forms;
+    if (rest.length) {
+        note(dim(`${shape.label} — ${first.where},`));
+        for (const form of rest) {
+            note(dim(`  or ${form.where}`));
+        }
+        return askSecret('Paste the key, or a path to the file:');
+    }
+    note(dim(`${shape.label} — ${first.where}`));
+    return first.holds === 'file'
         ? ask('Path to the credentials file:')
         : askSecret('Paste the key (it will not be shown):');
 }
@@ -233,7 +323,7 @@ const use: Sub = async (ctx, args) => {
     const entry = store.use(provider, name);
     store.save();
     if (ctx.json) {
-        json({ key: keyId(entry), env: SHAPES[provider].env });
+        json({ key: keyId(entry), env: envOf(entry) });
         return;
     }
     note(`${green('using')} ${bold(keyId(entry))} for ${SHAPES[provider].label}`);
@@ -335,7 +425,7 @@ const show: Sub = async (ctx, args) => {
     if (ctx.json) {
         json({
             key: keyId(entry),
-            env: SHAPES[entry.provider].env,
+            env: envOf(entry),
             value,
             revealed: Boolean(values.reveal),
         });
@@ -350,8 +440,10 @@ const show: Sub = async (ctx, args) => {
     writeAll(
         table([
             [dim('key'), keyId(entry)],
-            [dim('env'), SHAPES[entry.provider].env],
+            [dim('env'), envOf(entry)],
             [dim('value'), value],
+            ...(entry.project ? [[dim('project'), entry.project]] : []),
+            ...(entry.location ? [[dim('location'), entry.location]] : []),
             [dim('state'), state(entry)],
             [dim('added'), ago(entry.addedAt)],
         ]),
@@ -374,8 +466,18 @@ const env: Sub = async (ctx, args) => {
     const vars: Record<string, string> = {};
     for (const provider of only ?? OWNERS) {
         const entry = store.active(provider);
-        if (entry) {
-            vars[SHAPES[provider].env] = store.reveal(entry);
+        if (!entry) {
+            continue;
+        }
+        vars[envOf(entry)] = store.reveal(entry);
+        // A service account says which project it belongs to but not which
+        // region to call, and a shell that has the file and not the region is
+        // still a shell that cannot reach a model.
+        if (entry.project) {
+            vars.GOOGLE_CLOUD_PROJECT = entry.project;
+        }
+        if (entry.location) {
+            vars.GOOGLE_CLOUD_LOCATION = entry.location;
         }
     }
     if (ctx.json) {
@@ -406,10 +508,15 @@ export const key: Command = {
     usage: USAGE,
     details: [
         'Keys live in ~/.zenera/neo/keys.json (0600) and are materialised into',
-        'the environment before a run. A real environment variable always wins.',
+        'the environment before a run. A real environment variable always wins,',
+        'and is listed as ~ so it is clear where a working provider comes from.',
         '',
         'Model providers: openai, anthropic, google, vertex, openrouter.',
         'Services the tools call: exa.',
+        '',
+        'Vertex takes either shape: a service-account JSON file, which wants',
+        '--project and --location too, or an express-mode API key, which wants',
+        'neither. Which one you gave is read off the value.',
         '',
         '  zen key ls [--check]              Everything stored, and its state.',
         '  zen key add <provider>[/name]     Read a key from stdin, or ask for it.',
