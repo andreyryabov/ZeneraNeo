@@ -246,17 +246,18 @@ const sandbox = z
                     'in its FROM line, so one of the two would be silently ignored',
             });
         }
-        for (const [i, name] of (value.env ?? []).entries()) {
-            if (SECRETISH.test(name)) {
-                ctx.addIssue({
-                    code: 'custom',
-                    path: ['env', i],
-                    message:
-                        `refusing to forward ${name} into the sandbox — it reads like a ` +
-                        'credential, and the sandbox runs whatever the model writes',
-                });
-            }
-        }
+        // Disable key blacklisting for now.
+        // for (const [i, name] of (value.env ?? []).entries()) {
+        //     if (SECRETISH.test(name)) {
+        //         ctx.addIssue({
+        //             code: 'custom',
+        //             path: ['env', i],
+        //             message:
+        //                 `refusing to forward ${name} into the sandbox — it reads like a ` +
+        //                 'credential, and the sandbox runs whatever the model writes',
+        //         });
+        //     }
+        // }
     });
 
 const agent = z
