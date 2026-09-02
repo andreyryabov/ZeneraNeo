@@ -29,7 +29,7 @@ standalone OpenAPI document.
 Node.js 24+. Install it alongside the CLI:
 
 ```sh
-npm i -g @zenera/cli @zenera/rag openai
+npm i -g @zenera/cli @zenera/rag
 zen key add openai          # the keyring `zen` already uses
 ```
 

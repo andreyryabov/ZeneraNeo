@@ -16,7 +16,7 @@ serves it — the response bodies are written, once, by a model.**
 Node.js 24+ and [podman](https://podman.io). Install it alongside the CLI:
 
 ```sh
-npm i -g @zenera/cli @zenera/faker openai
+npm i -g @zenera/cli @zenera/faker
 zen key add openai          # the keyring `zen` already uses
 ```
 

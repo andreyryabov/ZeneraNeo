@@ -26,7 +26,7 @@ same everywhere, and it never carries your keys with it.
 Four commands, from nothing to an answer:
 
 ```sh
-npm i -g @zenera/cli openai   # the CLI, plus one vendor SDK
+npm i -g @zenera/cli         # every vendor SDK comes with it
 zen key add openai           # prompts with the echo off; stored in ~/.zenera
 zen init my-project          # scaffolds a project and registers it
 cd my-project && zen run "introduce yourself"
@@ -41,12 +41,11 @@ The rest of this page is the same thing, slowly.
 
 ## 1 · Install
 
-Node.js 24+. Install the CLI together with at least one vendor SDK — they are
-**optional peer dependencies**, so you only pay for the ones you use.
+Node.js 24+. One command — the OpenAI, Anthropic, Google and OpenRouter SDKs
+all ship with the CLI, so any provider works out of the box.
 
 ```sh
-npm i -g @zenera/cli openai
-#                or @anthropic-ai/sdk, @google/genai, @openrouter/sdk — any mix
+npm i -g @zenera/cli
 ```
 
 Or try it without installing anything: `npx @zenera/cli --help`.
@@ -384,8 +383,9 @@ Full specification: [packages/cli/DESIGN.md](packages/cli/DESIGN.md).
   an instruction, a model, tools, skills, handoffs and fork. That is the list.
 - **Everything is recorded.** Every run writes its input, output, state and a
   self-contained `report.html` — the graph, every request, every token.
-- **Two runtime dependencies.** `yaml` and `zod`. The vendor SDKs are optional
-  peers, loaded only when you actually talk to that vendor.
+- **Two runtime dependencies.** The library needs `yaml` and `zod`. The vendor
+  SDKs are optional peers, loaded only when you actually talk to that vendor —
+  the CLI ships all four so that `zen` works out of the box.
 
 ---
 

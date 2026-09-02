@@ -51,26 +51,10 @@
         "@inkjs/ui": "^2.0.0",
         "ink": "^7.1.1",
         "react": "^19.2.8",
-        "@zenera/neo": "^1.1.2"
-    },
-    "peerDependencies": {
+        "@zenera/neo": "^1.1.2",
         "@anthropic-ai/sdk": "^0.120.0",
         "@google/genai": "^2.18.0",
         "@openrouter/sdk": "^1.2.80",
         "openai": "^6.0.0"
-    },
-    "peerDependenciesMeta": {
-        "@anthropic-ai/sdk": {
-            "optional": true
-        },
-        "@google/genai": {
-            "optional": true
-        },
-        "@openrouter/sdk": {
-            "optional": true
-        },
-        "openai": {
-            "optional": true
-        }
     }
 }

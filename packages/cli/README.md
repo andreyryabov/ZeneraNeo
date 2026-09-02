@@ -22,12 +22,11 @@ carries your keys with it.
 
 ## Install
 
-Node.js 24+. Install the CLI together with at least one vendor SDK — they are
-**optional peer dependencies**, so you only pay for the ones you use.
+Node.js 24+. One command — the OpenAI, Anthropic, Google and OpenRouter SDKs
+all ship with the CLI, so any provider works out of the box.
 
 ```sh
-npm i -g @zenera/cli openai
-#                or @anthropic-ai/sdk, @google/genai, @openrouter/sdk — any mix of them
+npm i -g @zenera/cli
 ```
 
 Or without installing anything:
@@ -41,7 +40,7 @@ npx @zenera/cli --help
 Four commands, from nothing to an answer:
 
 ```sh
-npm i -g @zenera/cli openai   # the CLI, plus one vendor SDK
+npm i -g @zenera/cli         # every vendor SDK comes with it
 zen key add openai           # prompts with the echo off; stored in ~/.zenera
 zen init my-project          # scaffolds a project and registers it
 cd my-project && zen run "introduce yourself"
