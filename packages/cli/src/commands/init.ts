@@ -1,10 +1,13 @@
+import { readProjectConfig } from '@zenera/neo';
 import { existsSync, readdirSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { one, parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { ensureHome } from '../home.ts';
+import { resolveBuild } from '../image.ts';
 import { isProvider, keyId, KeyStore, PROVIDERS, SHAPES, type Provider } from '../keys.ts';
 import { probeAll } from '../liveness.ts';
+import { ensurePodmanReady } from '../podman.ts';
 import { isProjectDir, Registry } from '../projects.ts';
 import { scaffold } from '../scaffold.ts';
 import {
@@ -94,8 +97,9 @@ async function reachableProvider(store: KeyStore): Promise<Provider | undefined>
     }
 
     const bar = progress();
-    const checks = await probeAll(store, active, (entry, index, total) =>
-        bar.update(dim(`checking ${keyId(entry)} … ${index + 1}/${total}`)),
+    bar.update(dim(`checking ${active.length} key${active.length === 1 ? '' : 's'} …`));
+    const checks = await probeAll(store, active, (entry, done, total) =>
+        bar.update(dim(`checked ${keyId(entry)} … ${done}/${total}`)),
     );
     bar.done();
     for (const [entry, check] of checks) {
@@ -137,6 +141,9 @@ export const init: Command = {
         '`exa:*` when the keyring holds an Exa key. Without --model, the',
         'keyring is checked and the model is picked from a credential the',
         'provider accepts.',
+        '',
+        'The sandbox image is built here too, so the first run does not have',
+        'to. A machine without a container engine is told, and carries on.',
     ],
     run: async (ctx) => {
         const { values, positionals } = parse<Flags>(
@@ -169,22 +176,36 @@ export const init: Command = {
             : DEFAULT_MODEL[provider ?? 'openai'];
         const model = choice.ref;
         const web = hasExa(store);
-        const files = scaffold({ dir, model, modelOptions: choice.options, web });
+        const written = scaffold({ dir, model, modelOptions: choice.options, web });
 
         const registry = await Registry.open();
         registry.add(name, dir);
         registry.save();
 
+        if (!ctx.json) {
+            note(`${green('created')} ${bold(name)} ${dim(dir)}`);
+            for (const file of written.files.filter((f) => !f.startsWith('.'))) {
+                note(`  ${dim(file)}`);
+            }
+            note();
+        }
+
+        const sandbox = await prepareSandbox(dir, ctx.json);
+
         if (ctx.json) {
-            json({ name, path: dir, model, files, credential: provider ?? null, web });
+            json({
+                name,
+                path: dir,
+                model,
+                files: written.files,
+                editor: written.editor,
+                credential: provider ?? null,
+                web,
+                sandbox,
+            });
             return;
         }
 
-        note(`${green('created')} ${bold(name)} ${dim(dir)}`);
-        for (const file of files) {
-            note(`  ${dim(file)}`);
-        }
-        note();
         if (web) {
             note(`${green('exa key found')} ${dim('— the default agent gets web search')}`);
             note();
@@ -200,3 +221,44 @@ export const init: Command = {
         write(dir);
     },
 };
+
+/**
+ * Builds the sandbox image the project was just given, here rather than on the
+ * first run.
+ *
+ * It has to happen once either way, and the two moments are not equally good:
+ * a build during `init` is a command that is visibly setting a project up,
+ * while the same minutes during `zen run` land in the middle of a question
+ * somebody asked and read as a hung model.
+ *
+ * Never fatal. A machine with no container engine has a perfectly good project
+ * on it — one whose agent cannot start a shell yet — and refusing to finish
+ * `init` over that would throw away everything already written.
+ */
+async function prepareSandbox(dir: string, quiet: boolean): Promise<boolean> {
+    let image: string | undefined;
+    try {
+        const { root, config } = readProjectConfig(dir);
+        const build = resolveBuild(root, config.sandbox);
+        image = build?.tag ?? config.sandbox?.image;
+        if (!build && !image) {
+            return false;
+        }
+        // Nothing to answer: `init` is not the place to be asked whether to
+        // install a package manager's worth of software.
+        await ensurePodmanReady({ image, build, yes: true });
+        if (!quiet) {
+            note(`${green('sandbox ready')} ${dim(image ?? '')}`);
+            note();
+        }
+        return true;
+    } catch (err) {
+        if (!quiet) {
+            const why = err instanceof Error ? err.message : String(err);
+            note(`${yellow('sandbox not ready')} ${dim(`— ${why}`)}`);
+            note(`  ${cyan('zen sandbox up')} ${dim('— or the first run will try again')}`);
+            note();
+        }
+        return false;
+    }
+}

@@ -1,4 +1,4 @@
-import { EXA_BASE_URL, ModelRegistry } from '@zenera/neo';
+import { EXA_BASE_URL, ModelRegistry, type ProviderSpec } from '@zenera/neo';
 import {
     SHAPES,
     type KeyCheck,
@@ -110,18 +110,45 @@ async function within<T>(work: Promise<T>): Promise<T> {
  * The client is built through the library's own registry rather than by
  * requiring the SDKs directly, so a missing optional dependency produces the
  * library's "run: npm i openai" message instead of a raw MODULE_NOT_FOUND.
+ *
+ * A secret is handed to the registry as a value rather than exported first,
+ * which is what lets several of these run at once: two probes sharing
+ * `process.env` would each read the other's key.
  */
 export async function probe(store: KeyStore, entry: KeyEntry): Promise<KeyCheck> {
     const shape = SHAPES[entry.provider];
     if (shape.kind === 'service') {
         return probeService(entry.provider as Service, store.reveal(entry));
     }
+    const provider = entry.provider as Provider;
+    const credential = store.reveal(entry);
+    if (shape.holds !== 'file') {
+        return ask(provider, { kind: provider, apiKey: credential });
+    }
+
+    // Vertex is the exception, and `probeAll` knows it: what is stored is a
+    // service-account file, and Application Default Credentials are found
+    // through the environment or not at all. So this one is exported, asked,
+    // and put back — alone.
     const previous = process.env[shape.env];
-    process.env[shape.env] = store.reveal(entry);
+    process.env[shape.env] = credential;
+    try {
+        return await ask(provider, { kind: provider });
+    } finally {
+        if (previous === undefined) {
+            delete process.env[shape.env];
+        } else {
+            process.env[shape.env] = previous;
+        }
+    }
+}
+
+/** One authenticated round trip, and what its silence or refusal means. */
+async function ask(provider: Provider, spec: ProviderSpec): Promise<KeyCheck> {
     try {
         const registry = new ModelRegistry();
-        registry.provider('probe', { kind: entry.provider as Provider });
-        await within(authenticate(entry.provider as Provider, registry.client('probe')));
+        registry.provider('probe', spec);
+        await within(authenticate(provider, registry.client('probe')));
         return { state: 'live', at: new Date().toISOString() };
     } catch (err) {
         if (err instanceof Deadline) {
@@ -132,12 +159,6 @@ export async function probe(store: KeyStore, entry: KeyEntry): Promise<KeyCheck>
             };
         }
         return classify(err);
-    } finally {
-        if (previous === undefined) {
-            delete process.env[shape.env];
-        } else {
-            process.env[shape.env] = previous;
-        }
     }
 }
 
@@ -231,11 +252,17 @@ async function authenticate(provider: Provider, client: unknown): Promise<void> 
 }
 
 /**
- * Probes many entries, one at a time. In flight together would be quicker, but
- * `probe` reaches the SDKs the only way they can be reached — through
- * `process.env` — and two probes sharing that variable would each read the
- * other's key. One at a time is also what makes progress reportable: there is
- * exactly one answer being waited on, and `onProbe` can name it.
+ * Probes many entries together, because they are independent questions asked
+ * of different vendors and the answer is a round trip apiece: in sequence,
+ * five keys is five deadlines end to end, and `zen init` spends them all
+ * before it writes a file.
+ *
+ * The exception is a credential the SDK can only be given through the
+ * environment — the vertex service-account file — since two of those in flight
+ * would each read the other's path. Those go one at a time, after the rest.
+ *
+ * `onProbe` therefore reports what has *finished* rather than what is being
+ * waited on; with several in the air there is no single one to name.
  *
  * Pairs rather than a map, because the caller needs the entry itself to record
  * the result against, and a map keyed by a string would only have to be
@@ -244,12 +271,26 @@ async function authenticate(provider: Provider, client: unknown): Promise<void> 
 export async function probeAll(
     store: KeyStore,
     entries: readonly KeyEntry[],
-    onProbe?: (entry: KeyEntry, index: number, total: number) => void,
+    onProbe?: (entry: KeyEntry, done: number, total: number) => void,
 ): Promise<[KeyEntry, KeyCheck][]> {
-    const out: [KeyEntry, KeyCheck][] = [];
-    for (const [index, entry] of entries.entries()) {
-        onProbe?.(entry, index, entries.length);
-        out.push([entry, await probe(store, entry)]);
+    const exclusive = (entry: KeyEntry): boolean => SHAPES[entry.provider].holds === 'file';
+    const results = new Map<KeyEntry, KeyCheck>();
+    let done = 0;
+    const record = (entry: KeyEntry, check: KeyCheck): void => {
+        results.set(entry, check);
+        onProbe?.(entry, ++done, entries.length);
+    };
+
+    await Promise.all(
+        entries
+            .filter((entry) => !exclusive(entry))
+            .map(async (entry) => record(entry, await probe(store, entry))),
+    );
+    for (const entry of entries.filter(exclusive)) {
+        record(entry, await probe(store, entry));
     }
-    return out;
+
+    // Back into the caller's order: which one answered first is an accident of
+    // the network, and a list that reshuffles itself between runs is unreadable.
+    return entries.map((entry) => [entry, results.get(entry) as KeyCheck]);
 }

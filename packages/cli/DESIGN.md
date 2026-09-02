@@ -177,9 +177,10 @@ a server's simply does not settle until a signal arrives.
 
 ### 5.1 `zen init [dir]`
 
-Scaffolds the project — an empty `INSTRUCTIONS.md`, a minimal `agents.yaml`
-naming one `default` agent, and empty `agents/prompts/` and `agents/skills/` —
-and adds the path to `projects.json`.
+Scaffolds the project — an empty `INSTRUCTIONS.md`, an empty
+`SPECIFICATION.md`, a minimal `agents.yaml` naming one `default` agent, and
+empty `agents/prompts/` and `agents/skills/` — and adds the path to
+`projects.json`.
 
 That agent gets `workspace:*` and `sandbox:*`: an agent that can read and write
 files but cannot run the test it just changed is a demo, not a project, and the
@@ -192,10 +193,29 @@ verdict and `unknown` is not, so a flaky network still scaffolds. When nothing
 is reachable the project is still written, with the missing key said once, here,
 instead of by the first run.
 
+The probes go together rather than in turn. They are independent questions to
+different vendors, each worth a round trip and a fifteen-second deadline, so in
+sequence a keyring of five spends all five before writing a file. The one
+exception is a credential the SDK can only be handed through the environment —
+the Vertex service-account file — since two of those in flight would each read
+the other's path; those go one at a time, after the rest.
+
+The sandbox image is then built, here rather than on the first run. It has to
+happen once either way, and the two moments are not equally good: minutes spent
+during a command that is visibly setting a project up read as setup, while the
+same minutes in the middle of a question somebody asked read as a hung model.
+A machine with no container engine is told so and `init` still succeeds — the
+project is fine, its agent just cannot start a shell yet.
+
 Refuses a non-empty directory unless `--force`, because the alternative is
 silently merging into someone's source tree. The project name defaults to the
 directory's, and `--name` overrides it; a name already in the registry pointing
 somewhere else is a usage error, not a silent overwrite.
+
+The files it lists are the project's own. The editor's — `.vscode/settings.json`
+and the `.github/` tree — are written too but not printed: they are plumbing for
+a tool that may not even be installed, and there are more of them than there are
+of the project, so listing them buries what was actually made.
 
 It also writes `.vscode/settings.json`:
 

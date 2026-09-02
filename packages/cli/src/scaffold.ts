@@ -183,13 +183,25 @@ export interface ScaffoldOptions {
     web?: boolean;
 }
 
+export interface Scaffolded {
+    /** the project's own files, in the order they were written */
+    files: string[];
+    /** `.vscode/` and `.github/` — written alongside, and nobody's to edit */
+    editor: string[];
+}
+
 /**
  * Writes a project. Never overwrites the project's own files — a second `init`
  * over a directory fills in what is missing and leaves the rest alone — but the
  * editor files are ours, and are replaced.
+ *
+ * The two are returned apart because they are read differently: the project's
+ * files are the thing that was just made, and worth listing; the editor's are
+ * plumbing for a tool that may not even be installed, and listing them buries
+ * the first set under twice as many lines about the second.
  */
-export function scaffold(opts: ScaffoldOptions): string[] {
-    const written = copyTree(join(TEMPLATES, 'project'), opts.dir, '', {
+export function scaffold(opts: ScaffoldOptions): Scaffolded {
+    const files = copyTree(join(TEMPLATES, 'project'), opts.dir, '', {
         keep: true,
         vars: {
             model: modelSection(opts.model, opts.modelOptions),
@@ -197,13 +209,16 @@ export function scaffold(opts: ScaffoldOptions): string[] {
         },
     });
 
-    // The two directories with no file to put in them: a skill is a folder
-    // someone adds, and sessions is written into on the first run.
+    // The directories with no file to put in them: a skill is a folder someone
+    // adds, sessions is written into on the first run, and `.tmp` is scratch —
+    // there so an agent has somewhere inside the workspace to put a working
+    // file, which is somewhere the sandbox can still reach after the container
+    // it was written from is gone.
     mkdirSync(join(opts.dir, 'agents', 'skills'), { recursive: true });
     mkdirSync(join(opts.dir, 'sessions'), { recursive: true });
+    mkdirSync(join(opts.dir, '.tmp'), { recursive: true });
 
     // The project directory is what `zen open` opens, so this is where the
     // editor actually reads them.
-    written.push(...editorFiles(opts.dir));
-    return written;
+    return { files, editor: editorFiles(opts.dir) };
 }

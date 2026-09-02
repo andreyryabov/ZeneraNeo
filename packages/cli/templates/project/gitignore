@@ -1,3 +1,6 @@
 # Sessions hold run state, memory, blobs and whatever the agent wrote.
 # None of it is source.
 sessions/
+
+# Scratch, inside the workspace so the sandbox can reach it.
+.tmp/

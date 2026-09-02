@@ -484,7 +484,12 @@ describe('the scaffold', () => {
         mkdirSync(dir, { recursive: true });
         const written = scaffold({ dir, model: 'gpt-4o' });
 
-        expect(written).toContain(join('sandbox', 'Dockerfile'));
+        expect(written.files).toContain(join('sandbox', 'Dockerfile'));
+        // The editor's files are written, but they are not what was created.
+        expect(
+            written.files.filter((f) => f.startsWith('.github') || f.startsWith('.vscode')),
+        ).toEqual([]);
+        expect(written.editor).toContain(join('.vscode', 'settings.json'));
         expect(readFileSync(join(dir, 'sandbox', 'Dockerfile'), 'utf8')).toMatch(/^FROM /m);
         expect(readFileSync(join(dir, 'agents.yaml'), 'utf8')).toContain(
             'dockerfile: sandbox/Dockerfile',

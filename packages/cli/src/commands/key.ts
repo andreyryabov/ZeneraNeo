@@ -85,8 +85,8 @@ function rows(store: KeyStore): string[] {
 type Sub = (ctx: Context, args: readonly string[]) => Promise<void>;
 
 /**
- * Checking is a network round trip per key, so it says which one it is waiting
- * on. Silence for ten seconds is indistinguishable from a hang.
+ * Checking is a network round trip per key, so it says which ones have come
+ * back. Silence for ten seconds is indistinguishable from a hang.
  */
 async function checkAll(
     ctx: Context,
@@ -94,9 +94,10 @@ async function checkAll(
     targets: readonly KeyEntry[],
 ): Promise<[KeyEntry, KeyCheck][]> {
     const bar = ctx.json ? undefined : progress();
+    bar?.update(dim(`checking ${targets.length} key${targets.length === 1 ? '' : 's'} …`));
     try {
-        return await probeAll(store, targets, (entry, index, total) =>
-            bar?.update(dim(`checking ${keyId(entry)} … ${index + 1}/${total}`)),
+        return await probeAll(store, targets, (entry, done, total) =>
+            bar?.update(dim(`checked ${keyId(entry)} … ${done}/${total}`)),
         );
     } finally {
         bar?.done();
