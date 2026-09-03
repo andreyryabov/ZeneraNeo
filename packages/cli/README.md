@@ -235,7 +235,9 @@ A model reference is `[provider[/api]:]model`, and the first segment names a
 `google:gemini-3.5-flash` are the same model reached through two different
 services, needing two different credentials — and a bare `gpt-5.4-mini` goes to
 the default provider, `openai`. `zen models` resolves every reference in a
-project against what is stored, and calls nothing.
+project against what is stored, and calls nothing; `zen models --check` spends a
+few tokens asking each of them to answer, which is the only way to catch a model
+id this account is not served.
 
 ### Vertex AI
 

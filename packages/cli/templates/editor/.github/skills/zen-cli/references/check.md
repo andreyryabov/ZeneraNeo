@@ -81,12 +81,20 @@ reasoning_effort are not supported … in /v1/chat/completions"_. Set
 ## `zen models`
 
 ```
-zen models [--project <name|dir>]
+zen models [name|dir] [--project <name|dir>] [--check]
 ```
 
 The narrower question: what each agent would actually talk to. It resolves every
 provider, model and embedding the project declares, says which credential each
-one needs and whether it is present, and calls nothing.
+one needs and whether it is present, and — by default — calls nothing.
+
+`--check` is the exception, and the one thing here that spends: it sends a
+handful of tokens to every distinct model and embedding the project would use.
+That is the only way to learn that a model id is misspelt, retired, or not
+granted to this account — a credential that authenticates says nothing about the
+id it is spent on. A model the provider refuses is an error (exit 3); one that
+never answered is a warning, because a dropped connection is not a broken
+project.
 
 Reach for `zen models` when a run says a model has no credential and for
 `zen check` when something structural is wrong.

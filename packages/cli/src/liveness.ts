@@ -1,4 +1,11 @@
-import { EXA_BASE_URL, ModelRegistry, type ProviderSpec } from '@zenera/neo';
+import {
+    EXA_BASE_URL,
+    ModelRegistry,
+    text,
+    type Embedder,
+    type Model,
+    type ProviderSpec,
+} from '@zenera/neo';
 import {
     envOf,
     SHAPES,
@@ -86,15 +93,21 @@ const firstLine = (s: string): string => s.split('\n')[0].slice(0, 160);
 
 const DEADLINE_MS = 15_000;
 
+/**
+ * A model is asked to think, not merely to authenticate, so it is given longer
+ * — a reasoning model can spend half a minute on one word and still be working.
+ */
+const MODEL_DEADLINE_MS = 90_000;
+
 class Deadline extends Error {}
 
-async function within<T>(work: Promise<T>): Promise<T> {
+async function within<T>(work: Promise<T>, ms = DEADLINE_MS): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
         return await Promise.race([
             work,
             new Promise<never>((_, reject) => {
-                timer = setTimeout(() => reject(new Deadline()), DEADLINE_MS);
+                timer = setTimeout(() => reject(new Deadline()), ms);
                 // The abandoned request must not keep the process alive.
                 timer.unref?.();
             }),
@@ -311,4 +324,122 @@ export async function probeAll(
     // Back into the caller's order: which one answered first is an accident of
     // the network, and a list that reshuffles itself between runs is unreadable.
     return entries.map((entry) => [entry, results.get(entry) as KeyCheck]);
+}
+
+// ---------------------------------------------------------------------------
+// Models
+//
+// A credential that authenticates says nothing about the model id it is spent
+// on: `gemini-3.5-flash` with an OpenAI key, a deprecated snapshot, a model the
+// account was never granted — all of them pass every check this file otherwise
+// performs and then fail on the first turn of a real run. The only thing that
+// answers the question is asking the model itself, so this asks it: one word
+// in, one word out, per distinct model the project would use.
+// ---------------------------------------------------------------------------
+
+/** Words a vendor uses when the credential was fine and the model id was not. */
+const UNSERVED = [
+    'model_not_found',
+    'does not exist',
+    'not found',
+    'unknown model',
+    'invalid model',
+    'no endpoints found',
+    'is not supported',
+    'not supported',
+    'no access',
+];
+
+/** What the project calls a model, and the thing that call resolved to. */
+export type ModelTarget =
+    | { ref: string; kind: 'model'; model: Model }
+    | { ref: string; kind: 'embedding'; embedder: Embedder };
+
+export interface ModelProbe {
+    /** the reference as the config writes it — an alias, or a full ref */
+    ref: string;
+    /** the id that goes on the wire */
+    id: string;
+    kind: 'model' | 'embedding';
+    check: KeyCheck;
+    /** how long the round trip took, for the one that is merely slow */
+    ms: number;
+}
+
+const targetId = (target: ModelTarget): string =>
+    target.kind === 'model' ? target.model.id : target.embedder.id;
+
+/**
+ * Refused by the provider, unreachable, or served. A rejected *model* and a
+ * rejected *key* are both `dead` on purpose: either way this project cannot
+ * run, and the detail line says which it was.
+ */
+function classifyModel(err: unknown): KeyCheck {
+    const at = new Date().toISOString();
+    const message = err instanceof Error ? err.message : String(err);
+    const e = err as { status?: number; statusCode?: number; name?: string };
+    const haystack = `${e?.status ?? e?.statusCode ?? ''} ${message}`.toLowerCase();
+    if (err instanceof Deadline || e?.name === 'AbortError' || e?.name === 'TimeoutError') {
+        return { state: 'unknown', at, detail: `no answer in ${MODEL_DEADLINE_MS / 1000}s` };
+    }
+    if (UNSERVED.some((needle) => haystack.includes(needle))) {
+        return { state: 'dead', at, detail: firstLine(message) };
+    }
+    return classify(err);
+}
+
+/**
+ * The smallest real call the model can be asked for. It costs a handful of
+ * tokens, which is the point: anything cheaper than a completion does not
+ * exercise the thing that breaks.
+ */
+async function askModel(target: ModelTarget, signal: AbortSignal): Promise<void> {
+    if (target.kind === 'embedding') {
+        await target.embedder.embed({ input: ['ping'], signal });
+        return;
+    }
+    await target.model.generate({
+        system: 'Reply with the single word: ok',
+        messages: [{ role: 'user', content: [text('ping')] }],
+        tools: [],
+        signal,
+    });
+}
+
+export async function probeModel(target: ModelTarget): Promise<ModelProbe> {
+    const started = Date.now();
+    const common = { ref: target.ref, id: targetId(target), kind: target.kind };
+    try {
+        // The signal cancels the request; the deadline a little behind it is
+        // the answer for an SDK that decides to ignore the signal.
+        const work = askModel(target, AbortSignal.timeout(MODEL_DEADLINE_MS));
+        await within(work, MODEL_DEADLINE_MS + 5_000);
+        return {
+            ...common,
+            check: { state: 'live', at: new Date().toISOString() },
+            ms: Date.now() - started,
+        };
+    } catch (err) {
+        return { ...common, check: classifyModel(err), ms: Date.now() - started };
+    }
+}
+
+/**
+ * One round trip per model, run together — they are independent questions, and
+ * a project with four models should not take four deadlines to answer. Nothing
+ * here touches `process.env`, so unlike the credential probes there is no case
+ * that has to go alone.
+ */
+export async function probeModels(
+    targets: readonly ModelTarget[],
+    onProbe?: (target: ModelTarget, done: number, total: number) => void,
+): Promise<ModelProbe[]> {
+    let done = 0;
+    return await Promise.all(
+        targets.map(async (target) => {
+            const result = await probeModel(target);
+            onProbe?.(target, ++done, targets.length);
+            return result;
+        }),
+    );
 }

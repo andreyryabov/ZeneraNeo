@@ -111,17 +111,17 @@ two.
 
 ## 4. Commands
 
-| Command   | Does                                                                     |
-| --------- | ------------------------------------------------------------------------ |
-| `init`    | Creates a project here, or in `<dir>`, and registers it.                 |
-| `list`    | Every known project: sessions, last run, whether one is live.            |
-| `open`    | Opens a project in your editor.                                          |
-| `key`     | The credential store (§6).                                               |
-| `run`     | Runs the project — the TUI on a terminal, one shot otherwise (§7).       |
-| `inspect` | Opens or rebuilds a run's `report.html`.                                 |
-| `models`  | Resolves providers and models and validates the config, calling nothing. |
-| `sandbox` | Checks and prepares the container command-line tools run in (§9).        |
-| `version` | CLI, library and Node versions.                                          |
+| Command   | Does                                                                         |
+| --------- | ---------------------------------------------------------------------------- |
+| `init`    | Creates a project here, or in `<dir>`, and registers it.                     |
+| `list`    | Every known project: sessions, last run, whether one is live.                |
+| `open`    | Opens a project in your editor.                                              |
+| `key`     | The credential store (§6).                                                   |
+| `run`     | Runs the project — the TUI on a terminal, one shot otherwise (§7).           |
+| `inspect` | Opens or rebuilds a run's `report.html`.                                     |
+| `models`  | Resolves providers and models and validates the config; `--check` asks them. |
+| `sandbox` | Checks and prepares the container command-line tools run in (§9).            |
+| `version` | CLI, library and Node versions.                                              |
 
 And, when the package providing it is installed:
 

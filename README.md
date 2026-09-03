@@ -214,15 +214,16 @@ session, recorded in full whether or not you were watching.
 
 ```sh
 zen check my-project                      # validate the project and every file it names
-zen models --project my-project           # resolve providers, models and credentials, calling nothing
+zen models my-project                     # resolve providers, models and credentials, calling nothing
+zen models my-project --check             # …and ask each model whether it will actually serve you
 zen inspect --project my-project --open   # the last run's report.html
 zen list --sessions                       # every project, its sessions and last run
 ```
 
-Named for clarity again: drop the flag and each of these reads the project you
-are standing in. `check` takes a bare directory too, so an unregistered
-checkout can be validated before it is ever run. `list` is the one command that
-is about all of them at once.
+Named for clarity again: drop the name and each of these reads the project you
+are standing in. `check` and `models` take a bare name or directory, so an
+unregistered checkout can be validated before it is ever run. `list` is the one
+command that is about all of them at once.
 
 Every run writes a self-contained `report.html`: the agent graph, every request,
 every tool call, every token.

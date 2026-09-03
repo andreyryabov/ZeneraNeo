@@ -1,4 +1,4 @@
-import type { ProcResult, runProcess } from '@zenera/neo';
+import type { Embedder, EmbeddingRequest, Model, ProcResult, runProcess } from '@zenera/neo';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,6 +19,7 @@ import {
     type KeyEntry,
     type KeyStore,
 } from '../src/keys.ts';
+import { probeModels } from '../src/liveness.ts';
 import { engineDisk, ensurePodmanReady, ownedContainers } from '../src/podman.ts';
 import { dirSize } from '../src/projects.ts';
 import { scaffold } from '../src/scaffold.ts';
@@ -294,6 +295,59 @@ describe('the streaming window', () => {
 
     it('asks for no more rows than there are', () => {
         expect(windowOf('one\ntwo', 40, 6)).toEqual(['one', 'two']);
+    });
+});
+
+describe('the model probe', () => {
+    const served: Model = {
+        id: 'gpt-stub',
+        generate: async () => ({ text: 'ok', toolCalls: [] }),
+    };
+    const refuses = (err: unknown): Model => ({
+        id: 'gpt-stub',
+        generate: async () => {
+            throw err;
+        },
+    });
+    const fails = (message: string, status?: number): Error =>
+        Object.assign(new Error(message), status === undefined ? {} : { status });
+
+    it('reports a model that answers, and what it answered as', async () => {
+        const [probe] = await probeModels([{ ref: 'main', kind: 'model', model: served }]);
+        expect(probe).toMatchObject({ ref: 'main', id: 'gpt-stub', kind: 'model' });
+        expect(probe!.check.state).toBe('live');
+    });
+
+    // The whole point of asking: a credential that works, spent on a model id
+    // that does not. Nothing short of the call says so.
+    it('calls an unserved model id dead, not unknown', async () => {
+        const err = fails('The model `gpt-9` does not exist or you do not have access', 404);
+        const [probe] = await probeModels([{ ref: 'main', kind: 'model', model: refuses(err) }]);
+        expect(probe!.check.state).toBe('dead');
+    });
+
+    it('keeps the credential refusal and the unreachable host apart', async () => {
+        const [refused, silent] = await probeModels([
+            { ref: 'a', kind: 'model', model: refuses(fails('invalid_api_key', 401)) },
+            { ref: 'b', kind: 'model', model: refuses(fails('fetch failed')) },
+        ]);
+        expect(refused!.check.state).toBe('dead');
+        expect(silent!.check.state).toBe('unknown');
+    });
+
+    it('asks an embedder for a vector instead of a completion', async () => {
+        let asked: EmbeddingRequest | undefined;
+        const embedder: Embedder = {
+            id: 'embed-stub',
+            embed: async (req) => {
+                asked = req;
+                return { vectors: [[1]], dimensions: 1 };
+            },
+        };
+        const [probe] = await probeModels([{ ref: 'main', kind: 'embedding', embedder }]);
+        expect(probe).toMatchObject({ id: 'embed-stub', kind: 'embedding' });
+        expect(probe!.check.state).toBe('live');
+        expect(asked?.input).toHaveLength(1);
     });
 });
 
