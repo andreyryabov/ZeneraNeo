@@ -296,6 +296,7 @@ complete instruction: no configuration, no paths, nothing to remember. Add
 | `run`     | Runs the project — the TUI on a terminal, a single answer otherwise.  |
 | `open`    | Opens a project in your editor.                                       |
 | `key`     | The credential keyring — add, check, switch, remove.                  |
+| `models`  | What this machine can use — list, search, test, pick.                 |
 | `check`   | Validates `agents.yaml` and every file it names, and asks the models. |
 | `inspect` | Opens or rebuilds a run's `report.html`.                              |
 | `sandbox` | Checks and prepares the container that command-line tools run in.     |

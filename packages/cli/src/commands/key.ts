@@ -54,6 +54,7 @@ const USAGE = 'zen key <ls|add|use|check|rm|show|env> [ref] [options]';
 const MARK: Record<Liveness, string> = {
     live: green('live'),
     dead: red('dead'),
+    blocked: yellow('blocked'),
     unknown: dim('unknown'),
 };
 
@@ -264,6 +265,11 @@ const add: Sub = async (ctx, args) => {
         store.record(entry, check);
         if (check.state === 'dead') {
             note(`${red('rejected')} ${check.detail ?? 'the provider refused this key'}`);
+        } else if (check.state === 'blocked') {
+            note(`${yellow('blocked')} ${check.detail ?? 'the account cannot use this key'}`);
+            if (check.fix) {
+                note(dim(`  ${check.fix}`));
+            }
         }
     }
     store.save();
@@ -354,8 +360,18 @@ const check: Sub = async (ctx, args) => {
             ]),
         ),
     );
+    for (const [entry, result] of checks) {
+        if (result.fix) {
+            note(dim(`${keyId(entry)}: ${result.fix}`));
+        }
+    }
     if (checks.some(([, r]) => r.state === 'dead')) {
         throw credentialError('at least one key was refused');
+    }
+    // Separately, because the action is not the same one: these authenticated,
+    // and a replacement key would be refused for exactly the same reason.
+    if (checks.some(([, r]) => r.state === 'blocked')) {
+        throw credentialError('at least one key authenticated but cannot be used');
     }
 };
 
@@ -445,6 +461,7 @@ const show: Sub = async (ctx, args) => {
             ...(entry.project ? [[dim('project'), entry.project]] : []),
             ...(entry.location ? [[dim('location'), entry.location]] : []),
             [dim('state'), state(entry)],
+            ...(entry.check?.fix ? [[dim('fix'), entry.check.fix]] : []),
             [dim('added'), ago(entry.addedAt)],
         ]),
     );

@@ -21,6 +21,7 @@ zen list     [--sessions] [--prune]
 zen run      [project] [prompt] [options]
 zen open     [project] [--editor <cmd>] [--wait]
 zen key      <ls|add|use|check|rm|show|env> [ref] [options]
+zen models   <providers|ls|search|show|test|pick> [ref] [options]
 zen check    [name|dir] [--project <name|dir>] [--no-sandbox] [--no-models] [--strict] [--quiet]
 zen inspect  [run] [--session <id>] [--open] [--rebuild] [--serve [port]]
 zen sandbox  [status|up|pull|clean|disk] [options]
@@ -43,6 +44,7 @@ guess a flag, and do not read them all.
 | Running: the TUI, one-shot answers, sessions, workspaces, overrides | [run.md](./references/run.md)           |
 | Validating: `zen check`, what it can and cannot see                 | [check.md](./references/check.md)       |
 | API keys, providers, the keyring, "no credential" errors            | [keys.md](./references/keys.md)         |
+| Which models exist, whether one works, recovering from a refusal    | [models.md](./references/models.md)     |
 | The container shell commands run in, images, `persist`              | [sandbox.md](./references/sandbox.md)   |
 | Run reports, trajectories, what a session directory holds           | [inspect.md](./references/inspect.md)   |
 | `zen faker` — a mock API from an OpenAPI/Swagger document           | [faker.md](./references/faker.md)       |
@@ -57,6 +59,8 @@ zen run                               the TUI
 zen run "what changed?"               one answer, this directory as the workspace
 zen inspect --open                    what the model was actually given
 zen key ls --check                    which credentials still work
+zen models test <ref>                 whether one model actually answers
+zen models pick --embedding           the first embedder that does, on stdout
 ```
 
 Run `zen check` after any edit to `agents.yaml`, a prompt or a skill: it reads

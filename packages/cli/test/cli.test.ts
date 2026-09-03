@@ -2,11 +2,20 @@ import type { Embedder, EmbeddingRequest, Model, ProcResult, runProcess } from '
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { extract, split } from '../src/args.ts';
 import { auditModels } from '../src/audit.ts';
+import {
+    CATALOG_TTL_MS,
+    CURATED,
+    fetchCatalog,
+    loadCatalog,
+    matches,
+    type CatalogEntry,
+} from '../src/catalog.ts';
 import { ALIASES, COMMANDS, EXTERNAL, type External } from '../src/commands/index.ts';
 import { hasExternal, loadExternal } from '../src/external.ts';
+import { paths, writeJson } from '../src/home.ts';
 import { isStamp, stamp, stampInstant } from '../src/ids.ts';
 import {
     ambient,
@@ -19,7 +28,7 @@ import {
     type KeyEntry,
     type KeyStore,
 } from '../src/keys.ts';
-import { probeModels } from '../src/liveness.ts';
+import { classify, probeModels } from '../src/liveness.ts';
 import { engineDisk, ensurePodmanReady, ownedContainers } from '../src/podman.ts';
 import { dirSize } from '../src/projects.ts';
 import { scaffold } from '../src/scaffold.ts';
@@ -319,11 +328,16 @@ describe('the model probe', () => {
     });
 
     // The whole point of asking: a credential that works, spent on a model id
-    // that does not. Nothing short of the call says so.
-    it('calls an unserved model id dead, not unknown', async () => {
+    // that does not. Nothing short of the call says so — and the answer is
+    // `blocked` rather than `dead`, because a new key would be refused for
+    // exactly the same reason and the fix is a different model.
+    it('calls an unserved model id blocked, and points at the listing', async () => {
         const err = fails('The model `gpt-9` does not exist or you do not have access', 404);
-        const [probe] = await probeModels([{ ref: 'main', kind: 'model', model: refuses(err) }]);
-        expect(probe!.check.state).toBe('dead');
+        const [probe] = await probeModels([
+            { ref: 'openai:gpt-9', kind: 'model', model: refuses(err) },
+        ]);
+        expect(probe!.check.state).toBe('blocked');
+        expect(probe!.check.fix).toBe('zen models ls openai');
     });
 
     it('keeps the credential refusal and the unreachable host apart', async () => {
@@ -1122,5 +1136,288 @@ describe('the sandbox check', () => {
         expect(of(report, 'error')).toContain('sandbox.dockerfile.missing');
         // A file that is not there cannot be built, so the engine is never asked.
         expect(e.seen.some((l) => l.includes('build'))).toBe(false);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// The catalog
+//
+// The vendor adapters are the part most likely to break without anyone
+// noticing: a payload reshapes, a listing quietly returns nothing, and the
+// only symptom is a shorter list. Stubbed clients keep them honest offline.
+// ---------------------------------------------------------------------------
+
+describe('reading a provider listing', () => {
+    const pages = <T>(...items: T[]) => ({ models: { list: async () => items } });
+
+    it('reads a role off an OpenAI id, and drops what cannot be reached', async () => {
+        const rows = await fetchCatalog('openai', {
+            models: {
+                list: async () => [
+                    { id: 'gpt-4o' },
+                    { id: 'text-embedding-3-small' },
+                    { id: 'dall-e-3' },
+                    { id: 'chatgpt-image-latest' },
+                    { id: 'omni-moderation-latest' },
+                ],
+            },
+        });
+        const roles = Object.fromEntries(rows.map((r) => [r.id, r.roles]));
+        expect(roles).toEqual({
+            'gpt-4o': ['chat'],
+            'text-embedding-3-small': ['embedding'],
+            'dall-e-3': ['image'],
+            'chatgpt-image-latest': ['image'],
+        });
+        expect(rows[0]!.ref).toBe('openai:gpt-4o');
+    });
+
+    // OpenAI's listing has no dimensions field at all, and a blank there sends
+    // someone to the docs for something this file already knows.
+    it('fills an OpenAI embedding width in from the built-in list', async () => {
+        const [row] = await fetchCatalog('openai', {
+            models: { list: async () => [{ id: 'text-embedding-3-small' }] },
+        });
+        expect(row!.dimensions).toBe(1536);
+        expect(row!.source).toBe('live');
+    });
+
+    it('never invents an Anthropic embedding model', async () => {
+        const rows = await fetchCatalog('anthropic', {
+            models: {
+                list: async () => [{ id: 'claude-haiku-4-5', display_name: 'Claude Haiku 4.5' }],
+            },
+        });
+        expect(rows.every((r) => r.roles.includes('chat'))).toBe(true);
+        expect(rows.some((r) => r.roles.includes('embedding'))).toBe(false);
+    });
+
+    it('asks Google for base models, not tuned ones', async () => {
+        let asked: unknown;
+        await fetchCatalog('vertex', {
+            models: {
+                list: async (params: unknown) => {
+                    asked = params;
+                    return [];
+                },
+            },
+        });
+        // Without this the SDK lists tuned models, and an account with none
+        // looks like an account with no models at all.
+        expect(asked).toMatchObject({ config: { queryBase: true } });
+    });
+
+    it('strips the resource prefix and reads the role off supportedActions', async () => {
+        const rows = await fetchCatalog(
+            'vertex',
+            pages(
+                {
+                    name: 'models/gemini-2.5-flash',
+                    supportedActions: ['generateContent'],
+                    inputTokenLimit: 1_048_576,
+                },
+                {
+                    name: 'publishers/google/models/text-embedding-005',
+                    supportedActions: ['embedContent'],
+                },
+            ),
+        );
+        expect(rows.map((r) => [r.id, r.roles])).toEqual([
+            ['gemini-2.5-flash', ['chat']],
+            ['text-embedding-005', ['embedding']],
+        ]);
+        expect(rows[0]!.contextLength).toBe(1_048_576);
+    });
+
+    // Vertex lists the whole Model Garden. Those rows are deployment recipes,
+    // and asking one a question fails in a way no error message explains.
+    it('leaves out Model Garden rows the GenAI API will not serve', async () => {
+        const rows = await fetchCatalog(
+            'vertex',
+            pages(
+                { name: 'publishers/google/models/bart-large-cnn' },
+                { name: 'publishers/google/models/alphafold3-request' },
+                { name: 'publishers/google/models/gemini-3-experimental' },
+            ),
+        );
+        expect(rows.map((r) => r.id)).toEqual(['gemini-3-experimental']);
+    });
+
+    it('walks every OpenRouter page and folds in the separate embedding list', async () => {
+        const chat = (id: string) => ({
+            id,
+            name: id,
+            contextLength: 200_000,
+            pricing: { prompt: '0', completion: '0' },
+            architecture: { inputModalities: ['text', 'image'], outputModalities: ['text'] },
+            supportedParameters: ['tools'],
+        });
+        const rows = await fetchCatalog('openrouter', {
+            models: {
+                list: async () => [
+                    { result: { data: [chat('a/one')] } },
+                    { result: { data: [chat('a/two')] } },
+                ],
+            },
+            embeddings: {
+                listModels: async () => [{ result: { data: [{ id: 'a/embed' }] } }],
+            },
+        });
+        expect(rows.map((r) => r.id)).toEqual(['a/one', 'a/two', 'a/embed']);
+        expect(rows[0]).toMatchObject({
+            roles: ['chat'],
+            supports: { tools: true, vision: true },
+            pricing: { free: true },
+        });
+        expect(rows[2]!.roles).toEqual(['embedding']);
+    });
+
+    // The embeddings endpoint is the newer of the two and the one a gateway is
+    // most likely not to proxy. Losing every chat model over it is a bad trade.
+    it('still returns chat models when the embedding listing fails', async () => {
+        const rows = await fetchCatalog('openrouter', {
+            models: { list: async () => [{ result: { data: [{ id: 'a/one' }] } }] },
+            embeddings: {
+                listModels: async () => {
+                    throw new Error('404 not found');
+                },
+            },
+        });
+        expect(rows.map((r) => r.id)).toEqual(['a/one']);
+    });
+});
+
+describe('where a listing comes from', () => {
+    const root = mkdtempSync(join(tmpdir(), 'zen-catalog-'));
+    // Set per test rather than once: neighbouring suites snapshot and restore
+    // the whole environment, and a value written at collection time is gone by
+    // the time anything here runs.
+    beforeEach(() => {
+        process.env.ZENERA_HOME = root;
+    });
+    afterAll(() => {
+        rmSync(root, { recursive: true, force: true });
+    });
+
+    const cache = (provider: string, fetchedAt: string, ids: string[]): void =>
+        writeJson(join(paths.catalog(), `${provider}.json`), {
+            version: 1,
+            provider,
+            fetchedAt,
+            entries: ids.map((id) => ({
+                ref: `${provider}:${id}`,
+                id,
+                provider,
+                roles: ['chat'],
+                source: 'live',
+            })),
+        });
+
+    it('falls back to the built-in list when there is nothing else', async () => {
+        const cat = await loadCatalog('anthropic', { offline: true });
+        expect(cat.origin).toBe('curated');
+        expect(cat.entries.every((e) => e.source === 'curated')).toBe(true);
+        expect(cat.entries.map((e) => e.id)).toEqual(CURATED.anthropic.map((e) => e.id));
+    });
+
+    it('uses a cache written inside the day without asking anyone', async () => {
+        cache('openai', new Date().toISOString(), ['cached-model']);
+        const cat = await loadCatalog('openai', { offline: true });
+        expect(cat.origin).toBe('cache');
+        expect(cat.entries.map((e) => e.id)).toEqual(['cached-model']);
+    });
+
+    // Yesterday's real answer from this account beats today's guess about
+    // accounts in general.
+    it('prefers a stale cache to the built-in list', async () => {
+        cache('google', new Date(Date.now() - 2 * CATALOG_TTL_MS).toISOString(), ['old-model']);
+        const cat = await loadCatalog('google', { offline: true });
+        expect(cat.origin).toBe('stale');
+        expect(cat.entries.map((e) => e.id)).toEqual(['old-model']);
+    });
+
+    it('ignores a cache written by a version that is not this one', async () => {
+        writeJson(join(paths.catalog(), 'openrouter.json'), {
+            version: 99,
+            provider: 'openrouter',
+            fetchedAt: new Date().toISOString(),
+            entries: [{ ref: 'openrouter:x', id: 'x', provider: 'openrouter', roles: ['chat'] }],
+        });
+        const cat = await loadCatalog('openrouter', { offline: true });
+        expect(cat.origin).toBe('curated');
+    });
+});
+
+describe('narrowing a list of models', () => {
+    const row = (over: Partial<CatalogEntry>): CatalogEntry => ({
+        ref: 'openrouter:a/one',
+        id: 'a/one',
+        provider: 'openrouter',
+        roles: ['chat'],
+        source: 'live',
+        ...over,
+    });
+
+    it('wants every word, so a second one narrows rather than widens', () => {
+        const claude = row({ name: 'Anthropic: Claude Haiku 4.5' });
+        expect(matches(claude, 'claude haiku')).toBe(true);
+        expect(matches(claude, 'claude sonnet')).toBe(false);
+    });
+
+    it('matches the ref as well as the name', () => {
+        expect(matches(row({}), 'a/one')).toBe(true);
+    });
+
+    it('keeps a row only if it holds one of the roles asked for', () => {
+        const embed = row({ roles: ['embedding'] });
+        expect(matches(embed, '', { roles: ['embedding'] })).toBe(true);
+        expect(matches(embed, '', { roles: ['chat'] })).toBe(false);
+        expect(matches(embed, '', { roles: [] })).toBe(true);
+    });
+
+    it('treats an unknown context length as too small rather than as a match', () => {
+        expect(matches(row({}), '', { minContext: 1000 })).toBe(false);
+        expect(matches(row({ contextLength: 2000 }), '', { minContext: 1000 })).toBe(true);
+    });
+});
+
+describe('telling a blocked account from a bad key', () => {
+    const fails = (message: string, status?: number): Error =>
+        Object.assign(new Error(message), status === undefined ? {} : { status });
+
+    // The case this whole verdict exists for: a perfectly good service-account
+    // key against a project where the API was never switched on. It arrives as
+    // a 403, and calling it `dead` sends someone off to rotate a working key.
+    it('calls a disabled API blocked, and says which one in which project', () => {
+        const check = classify(
+            fails(
+                '{"error":{"code":403,"status":"PERMISSION_DENIED","message":"Vertex AI API has ' +
+                    'not been used in project my-proj before or it is disabled. Enable it by ' +
+                    'visiting https://console.developers.google.com/apis/api/aiplatform.googleapis' +
+                    '.com/overview?project=my-proj then retry."}}',
+                403,
+            ),
+        );
+        expect(check.state).toBe('blocked');
+        expect(check.fix).toBe(
+            'gcloud services enable aiplatform.googleapis.com --project my-proj',
+        );
+        // The sentence, not the JSON envelope it arrived in.
+        expect(check.detail).toMatch(/^Vertex AI API has not been used/);
+    });
+
+    it('still calls a rejected credential dead', () => {
+        expect(classify(fails('invalid_api_key', 401)).state).toBe('dead');
+        expect(classify(fails('403 permission_denied on this resource', 403)).state).toBe('dead');
+    });
+
+    it('calls an empty balance blocked, and a rate limit live', () => {
+        expect(classify(fails('Your credit balance is too low', 400)).state).toBe('blocked');
+        // 429 is this minute's problem; the account is fine.
+        expect(classify(fails('Rate limit exceeded, quota exceeded', 429)).state).toBe('live');
+    });
+
+    it('keeps an unreachable provider out of both', () => {
+        expect(classify(fails('fetch failed')).state).toBe('unknown');
     });
 });

@@ -156,6 +156,7 @@ you are not expected to hand-author `agents.yaml`.
 | `list`    | Every known project: sessions, last run, whether one is live.        |
 | `open`    | Opens a project in your editor.                                      |
 | `key`     | The credential keyring — add, check, switch, remove.                 |
+| `models`  | What this machine can use — list, search, test, pick.                |
 | `run`     | Runs the project — the TUI on a terminal, a single answer otherwise. |
 | `inspect` | Opens or rebuilds a run's `report.html`.                             |
 | `check`   | Validates the project and every file it names, and asks the models.  |
@@ -238,6 +239,46 @@ the default provider, `openai`. `zen check` resolves every reference in a
 project against what is stored, says which credential each one needs, and spends
 a few tokens asking each of them to answer — the only way to catch a model id
 this account is not served. `--no-models` stops before the asking.
+
+### Which models you can use
+
+`zen check` answers _does my project work_. `zen models` answers _what can I
+use_, needs no project, and asks the providers themselves:
+
+```sh
+zen models                                  # who has a credential, and what is cached
+zen models openai                           # everything OpenAI serves this account
+zen models search haiku --tools --free      # narrow it
+zen models show openrouter:anthropic/claude-haiku-4.5
+zen models test vertex:gemini-embedding-001 # one real call, one verdict
+zen models pick --embedding                 # the first ref that answers, on stdout
+```
+
+Listings are cached for a day in `~/.zenera/neo/catalog`. When a provider cannot
+be asked the last listing is used and said to be stale; only if there was never
+one does a short built-in list stand in.
+
+`test` distinguishes three failures, because they want three different actions.
+A **refused** model means the credential was rejected. A **blocked** one means
+the credential was accepted and the account then said no — an API switched off,
+an empty balance, a model this key was never granted — and the fix comes with
+it:
+
+```
+$ zen models test vertex:gemini-embedding-001
+vertex:gemini-embedding-001  blocked  Vertex AI API has not been used in project my-proj …
+vertex:gemini-embedding-001: gcloud services enable aiplatform.googleapis.com --project my-proj
+error 1 of 1 did not answer
+        find one that does: zen models pick --embedding
+```
+
+`pick` tries a short list of candidates one at a time and stops at the first
+that works, printing the bare ref on stdout — so recovering from the above is
+one substitution, whether a person or an agent is doing it:
+
+```sh
+zen rag schema index --embedding "$(zen models pick --embedding)" ./specs/*.yaml
+```
 
 ### Vertex AI
 

@@ -195,13 +195,21 @@ export function assertOwner(name: string): KeyOwner {
 // Records
 // ---------------------------------------------------------------------------
 
-export type Liveness = 'live' | 'dead' | 'unknown';
+/**
+ * `blocked` is the credential being fine and the *account* not: an api switched
+ * off in the project, a spent balance, a model this key was never granted. It
+ * is split out of `dead` because the two want opposite actions — rotating a key
+ * that authenticated perfectly is the wrong afternoon.
+ */
+export type Liveness = 'live' | 'dead' | 'blocked' | 'unknown';
 
 export interface KeyCheck {
     state: Liveness;
     at: string;
     /** the provider's own words when it said no, or ours when we could not ask */
     detail?: string;
+    /** what to actually do about it, when the refusal implies something specific */
+    fix?: string;
 }
 
 export interface KeyEntry {

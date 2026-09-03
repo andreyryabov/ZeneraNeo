@@ -435,6 +435,9 @@ function answer(m: ModelReport): string {
     if (m.check.state === 'live') {
         return `${green('answers')} ${dim(duration(m.check.ms))}`;
     }
+    if (m.check.state === 'blocked') {
+        return yellow('blocked');
+    }
     return m.check.state === 'dead' ? red('refused') : yellow('no answer');
 }
 

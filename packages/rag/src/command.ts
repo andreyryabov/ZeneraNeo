@@ -1,6 +1,7 @@
 import {
     bold,
     CliError,
+    CURATED,
     cyan,
     dim,
     ensureHome,
@@ -519,16 +520,13 @@ async function embedder(ref: string | undefined): Promise<Embedder> {
 }
 
 /**
- * Well-known embedding models per provider. A list rather than a lookup: any
- * ref the registry can parse works, and these are the ones worth typing.
- * Anthropic is absent because it publishes no embeddings API at all.
+ * Well-known embedding models per provider, read off the CLI's catalog table so
+ * there is one list rather than two that drift. Any ref the registry can parse
+ * works; these are the ones worth typing. Anthropic has none because it
+ * publishes no embeddings API at all.
  */
-const EMBEDDINGS: Partial<Record<Provider, readonly string[]>> = {
-    openai: ['text-embedding-3-small', 'text-embedding-3-large'],
-    google: ['gemini-embedding-001'],
-    vertex: ['gemini-embedding-001', 'text-embedding-005'],
-    openrouter: ['openai/text-embedding-3-small'],
-};
+const embeddingsOf = (provider: Provider): string[] =>
+    CURATED[provider].filter((m) => m.roles.includes('embedding')).map((m) => m.id);
 
 /** What could be passed, with the ones this machine can actually use first. */
 function choices(keys: KeyStore, fromEnv: ReadonlySet<Provider>): CliError {
@@ -536,7 +534,7 @@ function choices(keys: KeyStore, fromEnv: ReadonlySet<Provider>): CliError {
     const rest: string[][] = [];
 
     for (const provider of PROVIDERS) {
-        for (const model of EMBEDDINGS[provider] ?? []) {
+        for (const model of embeddingsOf(provider)) {
             const source = fromEnv.has(provider)
                 ? 'environment'
                 : keys.active(provider)
@@ -554,7 +552,12 @@ function choices(keys: KeyStore, fromEnv: ReadonlySet<Provider>): CliError {
         note(dim('  no provider on this machine has a credential — try: zen key add openai'));
         note('');
     }
-    return usageError('no embedder named', 'pass --embedding <ref>, one of the above');
+    // `pick` is the one that ends the question rather than restating it: it
+    // tries them and prints the first that answers.
+    return usageError(
+        'no embedder named',
+        'pass --embedding <ref>, or run: zen models pick --embedding',
+    );
 }
 
 function formatOf(value: string | undefined): Format {

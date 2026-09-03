@@ -30,6 +30,8 @@ export const paths = {
     keys: (): string => join(home(), 'keys.json'),
     keyDir: (): string => join(home(), 'keys'),
     faker: (): string => join(home(), 'faker'),
+    /** cached model listings, one file per provider — public data, not secrets */
+    catalog: (): string => join(home(), 'catalog'),
 };
 
 /** Creates a directory owner-only, and leaves an existing one's mode alone. */

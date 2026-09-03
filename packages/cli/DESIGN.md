@@ -42,6 +42,7 @@ nothing but the convenience of being listed.
     projects.json      index of known projects — a cache, never the truth
     keys.json          credential index, mode 0600
     keys/              file-shaped credentials (Google ADC), mode 0700
+    catalog/           model listings per provider, mode 0644 — public, and a cache
 ```
 
 `ZENERA_HOME` overrides the root, which is what makes the whole thing testable
@@ -117,6 +118,7 @@ two.
 | `list`    | Every known project: sessions, last run, whether one is live.              |
 | `open`    | Opens a project in your editor.                                            |
 | `key`     | The credential store (§6).                                                 |
+| `models`  | What this machine can use: list, search, test, pick (§6.5).                |
 | `run`     | Runs the project — the TUI on a terminal, one shot otherwise (§7).         |
 | `inspect` | Opens or rebuilds a run's `report.html`.                                   |
 | `check`   | Reports on the project in full: files, wiring, credentials, models (§9.2). |
@@ -375,6 +377,14 @@ your key is wrong) versus _unknown_ (we could not ask — your network is wrong)
 Collapsing them into one red mark is the classic way to send someone hunting for
 the wrong bug.
 
+There is a third, and it earns its place the same way. _blocked_ is the
+credential authenticating and the **account** then refusing: an API switched off
+in the project, an empty balance, a model this key was never granted. All of
+those arrive as a 403, alongside genuine rejections, and all of them are made
+worse by rotating the key. A `blocked` check carries a `fix` — for the
+`SERVICE_DISABLED` case the exact `gcloud services enable <api> --project <id>`,
+dug out of the console URL the vendor buried it in.
+
 ### 6.4 Handling
 
 - `~/.zenera/neo` is `0700`, `keys.json` and everything in `keys/` is `0600`,
@@ -385,6 +395,65 @@ the wrong bug.
   `--reveal` is the only path to plaintext, on a TTY only, never through `--json`.
 - Nothing is ever written into the project. Credentials live in `$HOME`, so a
   project directory is safe to commit by construction.
+
+### 6.5 Models — `zen models`
+
+`zen check` answers _does my project work_. `zen models` answers _what can I
+use_, needs no project, and is the other half of the same question.
+
+| Subcommand                 | Does                                                         |
+| -------------------------- | ------------------------------------------------------------ |
+| `zen models`               | Providers, their credential source, and what is cached.      |
+| `zen models ls [provider]` | Everything a provider serves.                                |
+| `zen models search <q>`    | Narrow it: `--tools`, `--vision`, `--free`, `--min-context`. |
+| `zen models show <ref>`    | One model, every field the vendor gave.                      |
+| `zen models test <ref> …`  | One real minimal call, per ref.                              |
+| `zen models pick`          | `--chat` or `--embedding`: the first ref that answers.       |
+
+`zen models <provider>` is short for `ls <provider>`, because it is what people
+type. Safe only because no provider is named after a subcommand — a collision
+would have to be resolved in favour of the subcommand, and silently.
+
+**Listings come from the vendors.** Four adapters, each given the client
+`ModelRegistry` already built, so a missing optional SDK surfaces as the
+library's own install line. OpenAI's listing is three fields and the role has to
+be read off the id; Anthropic's is all chat, and emitting an embedding row would
+be inventing an endpoint that does not exist; Google's needs `queryBase: true`
+or it lists _tuned_ models and an account with none looks like an account with
+nothing; OpenRouter's is the richest and arrives in two paginated endpoints,
+chat and embeddings, walked separately.
+
+Vertex additionally lists the whole Model Garden. Those rows carry no
+`supportedActions` and no token limits because they are deployment recipes, not
+model ids, and asking one a question fails in a way no error message explains.
+They are dropped.
+
+**The cache is `~/.zenera/neo/catalog/<provider>.json`, one day old at most,**
+`0644` because it is public data and someone will want to look at it. The order
+when it is cold is: fresh cache, the provider, a _stale_ cache, then a short
+built-in table. Stale-before-built-in is the part worth defending — yesterday's
+real answer from this account beats today's guess about accounts in general, and
+a listing that failed because the wifi dropped must not silently shrink the list
+to four rows. Every row carries its own `source`, so a guess is never mistaken
+for the vendor's word.
+
+**`pick` is the recovery path**, and the reason the command exists. It walks a
+short ordered candidate list, cheapest and fastest first, probing one at a time
+and stopping at the first that answers. Sequential on purpose: the goal is _one_
+working ref, and firing eight billable calls to find it is the wrong trade —
+particularly for the caller most likely to be running it, which is an agent that
+has just been refused. The ref goes to stdout alone and unstyled, so
+`$(zen models pick --embedding)` is the ref and nothing else.
+
+The loop this closes:
+
+```
+zen check                            → embedding "index" blocked: … zen models pick --embedding
+zen models pick --embedding          → openai:text-embedding-3-small
+```
+
+There is no `test --all`. A matrix sweep across every model on the machine is a
+bill, not a diagnostic.
 
 ## 7. Running — `zen run`
 

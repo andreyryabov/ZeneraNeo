@@ -1540,8 +1540,34 @@ There is no compiler for prose. Substitutes, in order of value:
    credential resolves, not that the route serves images or honours `tools`; on a
    gateway that gap is a request-time 404 (§7.5).
 
+### When a model or embedder will not answer
+
+`zen check` names the model and the verdict. Act on the verdict, not on the
+first thing that looks like a credential problem:
+
+```sh
+zen models test <ref>          # one real call, one verdict
+```
+
+- **refused** — the credential was rejected. `zen key check <provider>`.
+- **blocked** — the credential was _accepted_ and the account said no: an API
+  switched off, an empty balance, a model this key was never granted. **Do not
+  rotate the key** — a new one is refused identically. The fix is printed under
+  the verdict; for a disabled Google API it is the exact `gcloud services
+enable …` line.
+- **no answer** — the network. Try again.
+
+Either run the printed fix, or take a model that works and put the ref it prints
+into `agents.yaml`:
+
+```sh
+zen models pick --embedding    # or --chat; the ref goes to stdout, alone
+```
+
+Then re-run `zen check`.
+
 CLI (`zen --help` for the authoritative list): `zen init`, `zen run`, `zen check`,
-`zen inspect`, `zen key`, `zen list`. **stdout is the answer, stderr
+`zen inspect`, `zen key`, `zen models`, `zen list`. **stdout is the answer, stderr
 is the narration**; every command takes `--json`. Exit codes: `0` ok, `1` failed,
 `2` usage, `3` invalid project, `4` no usable credential.
 
@@ -1631,6 +1657,7 @@ Before finishing any change here:
 | Answers from stale knowledge of the world  | Grant `web_search` + `web_read`, and say when — §3.8                |
 | Cites a page it only saw the excerpt of    | A prompt line: `web_read` before quoting — §3.8                     |
 | Every web call refuses                     | No Exa key: `zen key add exa` — `zen check` warns — §3.8            |
+| A model or embedder refuses every call     | `zen models test <ref>` — if `blocked`, `zen models pick` — §8      |
 | Answers instead of routing                 | Router prompt prohibition; check `handoffs:`                        |
 | Routes to the wrong specialist             | The target agents' `description:` fields                            |
 | Loses a detail after a handoff             | Say it in the handoff; check the collapse policy                    |

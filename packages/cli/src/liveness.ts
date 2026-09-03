@@ -23,6 +23,11 @@ import {
 // the credential and said no — versus *unknown* — we could not ask. Collapsing
 // them into one red mark is the classic way to send someone hunting for the
 // wrong bug: rotating a perfectly good key because the office wifi was down.
+//
+// *blocked* is the third: the credential authenticated and the account then
+// refused. A disabled api, an empty balance, a model this key was never granted
+// — all arrive as a 403 alongside genuine rejections, and all of them are made
+// worse by rotating the key.
 // ---------------------------------------------------------------------------
 
 /** Words a provider uses when the credential itself is the problem. */
@@ -52,7 +57,41 @@ const UNREACHED = [
     'socket hang up',
 ];
 
-function classify(err: unknown): KeyCheck {
+/** Words for an api the account has switched off, or never switched on. */
+const DISABLED = [
+    'service_disabled',
+    'accessnotconfigured',
+    'has not been used in project',
+    'is disabled',
+    'api is not enabled',
+];
+
+/** Words for an account that authenticated and then declined to serve. */
+const UNFUNDED = [
+    'insufficient_quota',
+    'billing',
+    'credit balance is too low',
+    'exceeded your current quota',
+    'quota exceeded',
+    'resource_exhausted',
+    'payment required',
+];
+
+/**
+ * Google names both the api and the project in its refusal, and buries them in
+ * a console url. Digging them back out turns a paragraph into the one command
+ * that fixes it.
+ */
+function enablement(message: string): string | undefined {
+    const service = /apis\/api\/([a-z0-9.-]+\.googleapis\.com)/i.exec(message)?.[1];
+    if (!service) {
+        return undefined;
+    }
+    const project = /[?&]project=([a-z0-9-]+)/i.exec(message)?.[1];
+    return `gcloud services enable ${service}${project ? ` --project ${project}` : ''}`;
+}
+
+export function classify(err: unknown): KeyCheck {
     const at = new Date().toISOString();
     // OpenAI, Anthropic and the GenAI SDK all say `status`; OpenRouter's says
     // `statusCode`. Reading only the first would classify a revoked key as
@@ -62,6 +101,26 @@ function classify(err: unknown): KeyCheck {
     const message = err instanceof Error ? err.message : String(err);
     const haystack = `${status ?? ''} ${message}`.toLowerCase();
 
+    // Ahead of the 401/403 arm, because both of these arrive as a 403 and both
+    // are about the account rather than the key.
+    if (DISABLED.some((needle) => haystack.includes(needle))) {
+        return {
+            state: 'blocked',
+            at,
+            detail: firstLine(message),
+            fix: enablement(message) ?? 'enable the api for this project in the vendor console',
+        };
+    }
+    // A 429 is this minute's rate limit, not an empty account, and the two
+    // share vocabulary — so a status that says "slow down" wins.
+    if (status !== 429 && UNFUNDED.some((needle) => haystack.includes(needle))) {
+        return {
+            state: 'blocked',
+            at,
+            detail: firstLine(message),
+            fix: 'add credit or raise the quota in the vendor console',
+        };
+    }
     if (status === 401 || status === 403) {
         return { state: 'dead', at, detail: `${status} ${firstLine(message)}` };
     }
@@ -79,7 +138,28 @@ function classify(err: unknown): KeyCheck {
     return { state: 'unknown', at, detail: firstLine(message) };
 }
 
-const firstLine = (s: string): string => s.split('\n')[0].slice(0, 160);
+/**
+ * The one sentence worth showing.
+ *
+ * Google's SDK throws with the whole JSON error body as the message, and a
+ * table cell holding `{"error":{"code":403,"message":"…` is a cell nobody
+ * reads. The sentence inside it is the part a person or an agent acts on, so
+ * that is what comes out when there is one.
+ */
+const firstLine = (s: string): string => {
+    const start = s.indexOf('{');
+    if (start !== -1) {
+        try {
+            const body = JSON.parse(s.slice(start)) as { error?: { message?: string } };
+            if (typeof body.error?.message === 'string') {
+                return body.error.message.split('\n')[0]!.slice(0, 200);
+            }
+        } catch {
+            // Not JSON, or truncated JSON. The raw line is still better than nothing.
+        }
+    }
+    return s.split('\n')[0]!.slice(0, 200);
+};
 
 // ---------------------------------------------------------------------------
 // Deadline
@@ -364,17 +444,21 @@ export interface ModelProbe {
     check: KeyCheck;
     /** how long the round trip took, for the one that is merely slow */
     ms: number;
+    /** embeddings only: the width the model actually returned */
+    dimensions?: number;
 }
 
 const targetId = (target: ModelTarget): string =>
     target.kind === 'model' ? target.model.id : target.embedder.id;
 
 /**
- * Refused by the provider, unreachable, or served. A rejected *model* and a
- * rejected *key* are both `dead` on purpose: either way this project cannot
- * run, and the detail line says which it was.
+ * Refused by the provider, unreachable, or served.
+ *
+ * A model this account cannot use is `blocked`, not `dead`: the credential was
+ * accepted and the id was the thing refused, so the fix is another model rather
+ * than another key. `dead` is left to mean the credential itself was rejected.
  */
-function classifyModel(err: unknown): KeyCheck {
+function classifyModel(err: unknown, target: ModelTarget): KeyCheck {
     const at = new Date().toISOString();
     const message = err instanceof Error ? err.message : String(err);
     const e = err as { status?: number; statusCode?: number; name?: string };
@@ -383,20 +467,33 @@ function classifyModel(err: unknown): KeyCheck {
         return { state: 'unknown', at, detail: `no answer in ${MODEL_DEADLINE_MS / 1000}s` };
     }
     if (UNSERVED.some((needle) => haystack.includes(needle))) {
-        return { state: 'dead', at, detail: firstLine(message) };
+        return { state: 'blocked', at, detail: firstLine(message), fix: instead(target) };
     }
-    return classify(err);
+    const check = classify(err);
+    return check.state === 'blocked' && !check.fix ? { ...check, fix: instead(target) } : check;
+}
+
+/** The command that finds something this account can actually use. */
+function instead(target: ModelTarget): string {
+    const provider = target.ref.includes(':') ? target.ref.split(':')[0] : undefined;
+    return provider
+        ? `zen models ls ${provider}`
+        : `zen models pick --${target.kind === 'embedding' ? 'embedding' : 'chat'}`;
 }
 
 /**
  * The smallest real call the model can be asked for. It costs a handful of
  * tokens, which is the point: anything cheaper than a completion does not
  * exercise the thing that breaks.
+ *
+ * An embedding answers with its width, which is worth carrying back: a model
+ * that serves the wrong number of dimensions is not interchangeable with the
+ * one an index was built on.
  */
-async function askModel(target: ModelTarget, signal: AbortSignal): Promise<void> {
+async function askModel(target: ModelTarget, signal: AbortSignal): Promise<number | undefined> {
     if (target.kind === 'embedding') {
-        await target.embedder.embed({ input: ['ping'], signal });
-        return;
+        const res = await target.embedder.embed({ input: ['ping'], signal });
+        return res.dimensions;
     }
     await target.model.generate({
         system: 'Reply with the single word: ok',
@@ -404,6 +501,7 @@ async function askModel(target: ModelTarget, signal: AbortSignal): Promise<void>
         tools: [],
         signal,
     });
+    return undefined;
 }
 
 export async function probeModel(target: ModelTarget): Promise<ModelProbe> {
@@ -413,14 +511,15 @@ export async function probeModel(target: ModelTarget): Promise<ModelProbe> {
         // The signal cancels the request; the deadline a little behind it is
         // the answer for an SDK that decides to ignore the signal.
         const work = askModel(target, AbortSignal.timeout(MODEL_DEADLINE_MS));
-        await within(work, MODEL_DEADLINE_MS + 5_000);
+        const dimensions = await within(work, MODEL_DEADLINE_MS + 5_000);
         return {
             ...common,
             check: { state: 'live', at: new Date().toISOString() },
             ms: Date.now() - started,
+            ...(dimensions === undefined ? {} : { dimensions }),
         };
     } catch (err) {
-        return { ...common, check: classifyModel(err), ms: Date.now() - started };
+        return { ...common, check: classifyModel(err, target), ms: Date.now() - started };
     }
 }
 

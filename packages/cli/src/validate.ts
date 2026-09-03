@@ -141,7 +141,7 @@ export interface ModelReport {
     credential: 'present' | 'missing' | 'rejected' | 'unknown';
     detail?: string;
     /** the provider's own answer, when the model was actually asked */
-    check?: { state: Liveness; detail?: string; ms: number };
+    check?: { state: Liveness; detail?: string; fix?: string; ms: number };
     /** agents that would use it */
     usedBy: string[];
 }
@@ -491,6 +491,11 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
  * every run of this project will meet the same answer. Silence is a warning —
  * it is the network's problem, not the project's, and a report that failed
  * because a train went into a tunnel would teach the wrong lesson.
+ *
+ * A *blocked* model is an error too, but a different one: the credential was
+ * accepted and the account then refused, so the fix is the vendor's own —
+ * enabling an api, adding credit, choosing a model this account is granted.
+ * Telling someone to check their spelling there costs them an afternoon.
  */
 async function askModels(
     targets: readonly [ModelReport, ModelTarget][],
@@ -507,12 +512,24 @@ async function askModels(
         report.check = {
             state: probe.check.state,
             ...(probe.check.detail ? { detail: probe.check.detail } : {}),
+            ...(probe.check.fix ? { fix: probe.check.fix } : {}),
             ms: probe.ms,
         };
         if (probe.check.state === 'live') {
             return;
         }
         const where = `${report.role} "${report.name}"${report.provider ? ` (${report.provider})` : ''}`;
+        if (probe.check.state === 'blocked') {
+            const pick = report.role === 'embedding' ? '--embedding' : '--chat';
+            add({
+                severity: 'error',
+                code: `${report.role}.blocked`,
+                where,
+                message: `the credential was accepted and then refused: ${probe.check.detail ?? 'no reason given'}`,
+                fix: `${probe.check.fix ?? 'resolve it in the vendor console'}, or find one that works: zen models pick ${pick}`,
+            });
+            return;
+        }
         add(
             probe.check.state === 'dead'
                 ? {

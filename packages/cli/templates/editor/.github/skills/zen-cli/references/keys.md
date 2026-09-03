@@ -97,6 +97,11 @@ the verdict:
 - **live** — authenticated. A rate-limited answer counts as live, because it
   proves the credential.
 - **dead** — the provider rejected it. A verdict.
+- **blocked** — the credential was accepted and the **account** refused: an API
+  switched off in the project, an empty balance, a model this key was never
+  granted. Do not rotate the key; a new one is refused identically. The check
+  carries a `fix` — for a disabled Google API, the exact
+  `gcloud services enable <api> --project <id>`.
 - **unknown** — the provider could not be asked. Says nothing about the key;
   usually the network.
 

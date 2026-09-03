@@ -41,10 +41,13 @@ export interface ModelIssue {
     provider: string;
     /** the variable that would carry the credential */
     env: string;
-    /** `missing` — nothing to authenticate with. `dead` — rejected when checked. */
-    reason: 'missing' | 'dead';
+    /** `missing` — nothing to authenticate with. `dead` — rejected when checked.
+     *  `blocked` — accepted, and then refused by the account behind it. */
+    reason: 'missing' | 'dead' | 'blocked';
     /** the provider's own words, when it was the one to say no */
     detail?: string;
+    /** what to do about a refusal that a new key would not fix */
+    fix?: string;
     /** the keyring provider the fix names, when the kind is one of them */
     add?: Provider;
 }
@@ -162,14 +165,15 @@ export function auditModels(projectDir: string, store: KeyStore): ModelIssue[] {
             // reinstated between the check and the run, and a stale verdict must
             // not be the thing that stops a run from being attempted.
             const check = provider ? store.active(provider)?.check : undefined;
-            if (check?.state === 'dead') {
+            if (check?.state === 'dead' || check?.state === 'blocked') {
                 issues.push({
                     name,
                     role,
                     provider: need.provider,
                     env,
-                    reason: 'dead',
+                    reason: check.state,
                     detail: check.detail,
+                    fix: check.fix,
                     add: provider,
                 });
             }
@@ -191,6 +195,10 @@ export function describeIssue(issue: ModelIssue): string {
         return `${what} has no credential — ${issue.env} is not set; ${dim(fix)}`;
     }
     const why = issue.detail ? `: ${issue.detail}` : '';
+    if (issue.reason === 'blocked') {
+        const pick = `zen models pick --${issue.role === 'embedding' ? 'embedding' : 'chat'}`;
+        return `${what} authenticated and was then refused${why} — ${dim(issue.fix ?? pick)}`;
+    }
     const fix = `zen key check ${issue.add ?? ''}`.trim();
     return `${what} was rejected when last checked${why} — ${dim(fix)}`;
 }
