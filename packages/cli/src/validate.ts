@@ -22,7 +22,8 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { auditModels, credentialFor, type DeclaredRole, type ModelIssue } from './audit.ts';
 import { resolveBuild, type ResolvedBuild } from './image.ts';
-import { SHAPES, envNames, form, type KeyStore, type Service } from './keys.ts';
+import { SHAPES, envNames, form, type KeyStore, type Liveness, type Service } from './keys.ts';
+import { probeModels, type ModelTarget } from './liveness.ts';
 import { BuildError, ensurePodmanReady } from './podman.ts';
 
 // ---------------------------------------------------------------------------
@@ -40,17 +41,20 @@ import { BuildError, ensurePodmanReady } from './podman.ts';
 // Two consequences shape the whole module. Nothing here throws for a problem
 // *in the project* — a throw would end the walk and cost the findings after it
 // — so every check that could throw is wrapped and turned into a `Finding`.
-// And nothing here needs a credential or a network: a check that only works on
-// a machine already set up is no use to the machine that is not.
+// And nothing here *needs* a credential or a network: a check that only works
+// on a machine already set up is no use to the machine that is not.
 //
-// The sandbox is the one exception, and it is deliberate. A Dockerfile that
-// does not build is a broken project, and nothing short of building it says so
-// — the file parses, the path exists, and the failure waits for the first run.
-// So the check builds it and runs one command in it. That is the only thing
-// here that starts anything, it happens against a temporary directory rather
-// than anyone's workspace, it takes the container down again on the way out,
-// and `--no-sandbox` turns it off. A missing container engine stays a warning,
-// because the machine that is not set up yet is still owed the rest.
+// Two steps are the exception, and both are deliberate. A Dockerfile that does
+// not build is a broken project, and nothing short of building it says so — the
+// file parses, the path exists, and the failure waits for the first run. So the
+// check builds it and runs one command in it, against a temporary directory
+// rather than anyone's workspace, and takes the container down again on the way
+// out. For the same reason it asks each model it can pay for to answer once: a
+// credential that authenticates says nothing about the model id it is spent on,
+// so a misspelt or retired id is invisible to every reading of the files.
+// `--no-sandbox` and `--no-models` turn them off. A missing container engine, or
+// a provider that never answered, stays a warning — the machine that is not set
+// up yet is still owed the rest.
 // ---------------------------------------------------------------------------
 
 /**
@@ -136,6 +140,8 @@ export interface ModelReport {
     env?: string;
     credential: 'present' | 'missing' | 'rejected' | 'unknown';
     detail?: string;
+    /** the provider's own answer, when the model was actually asked */
+    check?: { state: Liveness; detail?: string; ms: number };
     /** agents that would use it */
     usedBy: string[];
 }
@@ -206,6 +212,15 @@ export interface ValidateOptions {
         /** the test seam, as elsewhere — a check can be watched without an engine */
         exec?: Runner;
         /** called with each slow step, so the caller can narrate one */
+        onProgress?: (what: string) => void;
+    };
+    /**
+     * Whether to ask each model that has a credential to answer once. Costs a
+     * few tokens apiece and needs the network, so like the sandbox it is named
+     * separately. Without `keys` there is nothing to ask with and it is skipped.
+     */
+    models?: {
+        enabled: boolean;
         onProgress?: (what: string) => void;
     };
 }
@@ -447,20 +462,75 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
     // Models and credentials
     // -----------------------------------------------------------------------
 
-    const resolved = checkModels(root, config, opts.keys, add);
+    // Nothing to ask with is the same as not asking: the missing credential is
+    // already a finding, and a call that cannot be made teaches nothing twice.
+    const asking = opts.models?.enabled && opts.keys ? opts.models : undefined;
+    const resolved = checkModels(root, config, opts.keys, add, Boolean(asking));
     providers = resolved.providers;
     models.push(...resolved.models);
 
     checkServices(agents, available, opts.keys, add);
 
-    // Last, because it is the only step that starts anything: everything a
-    // reading of the files can tell you is already on the report by now, so an
-    // interrupted check is still a useful one.
+    // Last, and in this order, because these are the two steps that leave the
+    // machine: everything a reading of the files can tell you is already on the
+    // report by now, so an interrupted check is still a useful one.
+    if (asking && resolved.targets.length) {
+        await askModels(resolved.targets, asking, add);
+    }
     if (opts.sandbox?.enabled && sandboxSummary(config, agents).used) {
         probed = await probeSandbox(config, build, opts.sandbox, add);
     }
 
     return done();
+}
+
+/**
+ * One round trip per model, and a verdict per model.
+ *
+ * A refusal is an error: the provider looked at this reference and said no, and
+ * every run of this project will meet the same answer. Silence is a warning —
+ * it is the network's problem, not the project's, and a report that failed
+ * because a train went into a tunnel would teach the wrong lesson.
+ */
+async function askModels(
+    targets: readonly [ModelReport, ModelTarget][],
+    opts: NonNullable<ValidateOptions['models']>,
+    add: Add,
+): Promise<void> {
+    opts.onProgress?.(`asking ${targets.length} model${targets.length === 1 ? '' : 's'}`);
+    const probes = await probeModels(
+        targets.map(([, target]) => target),
+        (target, done, total) => opts.onProgress?.(`asked ${target.ref} … ${done}/${total}`),
+    );
+    probes.forEach((probe, i) => {
+        const [report] = targets[i]!;
+        report.check = {
+            state: probe.check.state,
+            ...(probe.check.detail ? { detail: probe.check.detail } : {}),
+            ms: probe.ms,
+        };
+        if (probe.check.state === 'live') {
+            return;
+        }
+        const where = `${report.role} "${report.name}"${report.provider ? ` (${report.provider})` : ''}`;
+        add(
+            probe.check.state === 'dead'
+                ? {
+                      severity: 'error',
+                      code: `${report.role}.refused`,
+                      where,
+                      message: `the provider refused it: ${probe.check.detail ?? 'no reason given'}`,
+                      fix: `check that ${probe.id} is spelt right, still served, and granted to this account`,
+                  }
+                : {
+                      severity: 'warning',
+                      code: `${report.role}.unreachable`,
+                      where,
+                      message: `it could not be asked: ${probe.check.detail ?? 'no answer'}`,
+                      fix: 'try again, or pass --no-models to skip this',
+                  },
+        );
+    });
 }
 
 /**
@@ -1434,7 +1504,12 @@ function checkModels(
     config: ProjectConfig,
     keys: KeyStore | undefined,
     add: Add,
-): { providers: string[]; models: ModelReport[] } {
+    probe = false,
+): {
+    providers: string[];
+    models: ModelReport[];
+    targets: [ModelReport, ModelTarget][];
+} {
     let registry;
     try {
         registry = projectRegistry(config);
@@ -1446,7 +1521,7 @@ function checkModels(
             message: err instanceof Error ? err.message : String(err),
             fix: 'see the `providers:` section of docs/agents-yaml.md',
         });
-        return { providers: [], models: [] };
+        return { providers: [], models: [], targets: [] };
     }
 
     // Declared under an alias first, so an alias keeps its own name in the
@@ -1501,6 +1576,7 @@ function checkModels(
     }
 
     const models: ModelReport[] = [];
+    const targets: [ModelReport, ModelTarget][] = [];
 
     const describe = (
         role: DeclaredRole,
@@ -1561,6 +1637,32 @@ function checkModels(
             });
         }
         models.push(report);
+
+        // Only what there is something to ask with. Constructing the client is
+        // what reads the credential, so a model with none cannot be built, let
+        // alone asked — and the missing key is already a finding of its own.
+        if (probe && report.credential === 'present') {
+            try {
+                targets.push([
+                    report,
+                    role === 'model'
+                        ? { ref: name, kind: 'model', model: registry.model(ref as ModelRef) }
+                        : {
+                              ref: name,
+                              kind: 'embedding',
+                              embedder: registry.embedder(ref as EmbeddingRef),
+                          },
+                ]);
+            } catch (err) {
+                add({
+                    severity: 'error',
+                    code: `${role}.unusable`,
+                    where: whereFor(config, role, name, usedBy),
+                    message: err instanceof Error ? err.message : String(err),
+                    fix: 'the provider is declared but cannot be built — see `providers:`',
+                });
+            }
+        }
     };
 
     for (const [name, { ref, usedBy }] of declared) {
@@ -1575,7 +1677,7 @@ function checkModels(
         describe('embedding', config.embedding, config.embedding, []);
     }
 
-    return { providers: registry.names(), models };
+    return { providers: registry.names(), models, targets };
 }
 
 /** The config key a bad reference was written under. */

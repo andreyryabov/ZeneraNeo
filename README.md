@@ -214,6 +214,7 @@ session, recorded in full whether or not you were watching.
 
 ```sh
 zen check my-project                      # validate the project and every file it names
+zen check my-project --no-models          # …without spending a token asking each model
 zen models my-project                     # resolve providers, models and credentials, calling nothing
 zen models my-project --check             # …and ask each model whether it will actually serve you
 zen inspect --project my-project --open   # the last run's report.html

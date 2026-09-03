@@ -3,6 +3,7 @@ import { basename, dirname, resolve } from 'node:path';
 import { one, parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { KeyStore } from '../keys.ts';
+import { duration } from '../narrate.ts';
 import { Registry } from '../projects.ts';
 import { project as resolveProject } from '../resolve.ts';
 import {
@@ -25,15 +26,18 @@ import {
     validateProject,
     type AgentReport,
     type Finding,
+    type ModelReport,
     type Report,
     type Severity,
 } from '../validate.ts';
 
-const USAGE = 'zen check [name|dir] [--project <name|dir>] [--no-sandbox] [--strict] [--quiet]';
+const USAGE =
+    'zen check [name|dir] [--project <name|dir>] [--no-sandbox] [--no-models] [--strict] [--quiet]';
 
 interface Flags {
     project?: string;
     'no-sandbox'?: boolean;
+    'no-models'?: boolean;
     strict?: boolean;
     quiet?: boolean;
 }
@@ -48,12 +52,16 @@ interface Flags {
 // stable code and a fix, and the whole thing goes to stdout — it is the answer,
 // not narration.
 //
-// Nothing is contacted or paid for. The one thing that *runs* is the sandbox:
-// the project's image is built and one command is executed in it, because a
-// Dockerfile that does not build is a broken project and nothing short of
-// building it says so. It happens against a temporary directory, the container
-// is removed on the way out, and `--no-sandbox` skips it — so the report is
-// still worth having on the machine that has no container engine at all.
+// Almost nothing is contacted or paid for. The two exceptions earn their keep.
+// The sandbox: the project's image is built and one command is executed in it,
+// because a Dockerfile that does not build is a broken project and nothing
+// short of building it says so. It happens against a temporary directory, the
+// container is removed on the way out, and `--no-sandbox` skips it. And the
+// models: each one that has a credential is asked to answer once, because a key
+// that authenticates says nothing about the id it is spent on, and a misspelt or
+// retired model is invisible to every reading of the files. That costs a few
+// tokens and `--no-models` skips it — so the report is still worth having on the
+// machine that has no container engine and no key at all.
 // ---------------------------------------------------------------------------
 
 export const check: Command = {
@@ -71,6 +79,11 @@ export const check: Command = {
         'it starts, and --no-sandbox skips it. No container engine is a warning,',
         'not an error.',
         '',
+        'It also asks every model it holds a credential for to answer once — a few',
+        'tokens apiece, and the only way to learn that a model id is misspelt,',
+        'retired, or not granted to this account. A refusal is an error; a model',
+        'that never answered is a warning. --no-models skips it.',
+        '',
         'Unlike a run, it does not stop at the first problem — the report lists',
         'everything it found, each with a code and the fix for it.',
         '',
@@ -86,6 +99,7 @@ export const check: Command = {
             {
                 project: { type: 'string' },
                 'no-sandbox': { type: 'boolean' },
+                'no-models': { type: 'boolean' },
                 strict: { type: 'boolean' },
                 quiet: { type: 'boolean' },
             },
@@ -116,6 +130,10 @@ export const check: Command = {
             keys,
             sandbox: {
                 enabled: !values['no-sandbox'],
+                onProgress: (what) => bar.update(dim(what)),
+            },
+            models: {
+                enabled: !values['no-models'],
                 onProgress: (what) => bar.update(dim(what)),
             },
         });
@@ -266,6 +284,7 @@ function render(report: Report): string[] {
                     dim(m.provider ? `${m.provider} (${m.kind})` : red('unresolved')),
                     dim(m.env ?? ''),
                     credential(m.credential),
+                    answer(m),
                     // Nothing consumes an embedding yet, so `usedBy` would
                     // always read "declared, unused" and say the wrong thing.
                     dim(
@@ -407,6 +426,17 @@ function credential(state: string): string {
         return red('missing');
     }
     return state === 'rejected' ? red('rejected') : dim('unchecked');
+}
+
+/** What the provider said when the model itself was asked, if it was. */
+function answer(m: ModelReport): string {
+    if (!m.check) {
+        return dim('not asked');
+    }
+    if (m.check.state === 'live') {
+        return `${green('answers')} ${dim(duration(m.check.ms))}`;
+    }
+    return m.check.state === 'dead' ? red('refused') : yellow('no answer');
 }
 
 function tallyLine(report: Report): string {

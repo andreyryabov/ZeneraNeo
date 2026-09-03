@@ -615,9 +615,9 @@ image is the gap that leaves, since `podman build` defaults to `--pull=missing`;
 
 ### 9.2 What `zen check` does with it
 
-`zen check` is otherwise a reading of files, and says so. The sandbox is the
-exception: a Dockerfile that does not build is a broken project, and nothing
-short of building it says so. So the check builds the image and runs one
+`zen check` is otherwise a reading of files, and says so. The sandbox is one of
+two exceptions: a Dockerfile that does not build is a broken project, and
+nothing short of building it says so. So the check builds the image and runs one
 command in it — against a temporary directory, never the workspace, with no
 host environment forwarded and `persist` off, so nothing survives it.
 
@@ -625,6 +625,15 @@ It is skipped when no agent can reach a shell, skipped by `--no-sandbox`, and a
 host with no container engine is a **warning** rather than an error: that is the
 host most likely to be running the check in the first place. A build that runs
 and fails is the one case that fails the check.
+
+The other exception is the models. A credential that authenticates says nothing
+about the id it is spent on, so the check asks each model that has one to answer
+a single word — a few tokens apiece, and the only reading that catches a misspelt,
+retired or ungranted model. It runs after everything the files alone can say, so
+an interrupted check is still a useful one; a refusal is an **error** because
+every run will meet the same answer, and silence is a **warning** because that is
+the network's fault and not the project's. `--no-models` skips it, and
+`zen models --check` is the same probe on its own.
 
 ### 9.3 Where the disk goes
 
