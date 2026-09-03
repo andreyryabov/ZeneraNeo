@@ -305,13 +305,10 @@ want the runtime inside your own application rather than on a terminal:
 
 ## Documentation
 
-Full specification:
-[packages/cli/DESIGN.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/DESIGN.md).
-Also
-[DESIGN.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/DESIGN.md) ·
 [docs/projects.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/projects.md)
-·
-[docs/agents-yaml.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/agents-yaml.md).
+— the folder a project is ·
+[docs/agents-yaml.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/agents-yaml.md)
+— every key in the configuration file.
 
 ## License
 

@@ -62,15 +62,17 @@ rather than surfacing three turns into a production run as a confused model.
 Config can _name_ things; it cannot _contain_ code. These options are the seam
 where code re-enters the declarative system.
 
-| Option      | Purpose                                                                                    |
-| ----------- | ------------------------------------------------------------------------------------------ |
-| `tools`     | Tool implementations by name. Resolves both `agents[].tools` and a skill's `tools:` header |
-| `providers` | Provider specs, merged **over** `providers:` — how ops repoints a key without a commit     |
-| `models`    | Aliases merged **over** `models:` — the host decides what `fast` means this week           |
-| `registry`  | An existing `ModelRegistry` to populate instead of a fresh one; share it to share clients  |
-| `memory`    | `MemoryStore[]` handed to the runner                                                       |
-| `payloads`  | A `PayloadStore` handed to the runner                                                      |
-| `skills`    | Extra `SkillProvider`s, appended to the one the project declares                           |
+| Option       | Purpose                                                                                    |
+| ------------ | ------------------------------------------------------------------------------------------ |
+| `tools`      | Tool implementations by name. Resolves both `agents[].tools` and a skill's `tools:` header |
+| `providers`  | Provider specs, merged **over** `providers:` — how ops repoints a key without a commit     |
+| `models`     | Aliases merged **over** `models:` — the host decides what `fast` means this week           |
+| `embeddings` | The same, for `embeddings:` — host last, for the same reason                               |
+| `registry`   | An existing `ModelRegistry` to populate instead of a fresh one; share it to share clients  |
+| `memory`     | `MemoryStore[]` handed to the runner                                                       |
+| `payloads`   | A `PayloadStore` handed to the runner                                                      |
+| `skills`     | Extra `SkillProvider`s, appended to the one the project declares                           |
+| `skillsAt`   | Where the host mounted the skill catalog, so a skill can point at its own files            |
 
 Host options always win. A repository describes intent; a deployment overrides
 it, never the other way round.
@@ -87,16 +89,18 @@ change as skills activate, every chat on a shared project opens with a
 byte-identical `[tool schemas][system prompt]` prefix. That is a provider cache
 hit _across_ conversations, not merely within one.
 
-| Member               | What it is                                               |
-| -------------------- | -------------------------------------------------------- |
-| `root`, `source`     | Resolved project directory, and the config file read     |
-| `config`             | The parsed, validated `ProjectConfig`                    |
-| `entry`              | Name of the agent a run starts on                        |
-| `agents`, `registry` | The assembled agents                                     |
-| `models`             | The `ModelRegistry`, with its memoized clients           |
-| `skillProviders`     | The catalogs bound agents draw on                        |
-| `runner(overrides?)` | The shared `AgentRunner`; pass overrides for a fresh one |
-| `run(input, opts?)`  | Starts a run on `entry` with the shared runner           |
+| Member               | What it is                                                |
+| -------------------- | --------------------------------------------------------- |
+| `root`, `source`     | Resolved project directory, and the config file read      |
+| `config`             | The parsed, validated `ProjectConfig`                     |
+| `entry`              | Name of the agent a run starts on                         |
+| `agents`, `registry` | The assembled agents                                      |
+| `models`             | The `ModelRegistry`, with its memoized clients            |
+| `embedder(name?)`    | A declared vectoriser, memoized; the default when unnamed |
+| `assets`             | The resolved reference directory, or `undefined`          |
+| `skillProviders`     | The catalogs bound agents draw on                         |
+| `runner(overrides?)` | The shared `AgentRunner`; pass overrides for a fresh one  |
+| `run(input, opts?)`  | Starts a run on `entry` with the shared runner            |
 
 ## Prompts
 
@@ -216,6 +220,70 @@ container is created, so it could not vary by hand-off, and an agent that may
 see only part of the material is a different project.
 
 `AgentProject.assets` is the resolved directory, or `undefined`.
+
+## Tools and the sandbox
+
+Config can name a tool; it cannot contain one. Nothing is wired in by default —
+the file tools and the shell tools are ordinary arrays the host passes in, which
+is what keeps a loaded project from being able to touch anything the host did
+not hand it.
+
+```ts
+import { loadProject, workspaceTools, sandboxTools, SANDBOX_MOUNT } from '@zenera/neo';
+
+const project = await loadProject('./my-project', {
+    tools: [...workspaceTools({ root: workspace, mount: SANDBOX_MOUNT }), ...sandboxTools(pool)],
+});
+```
+
+- `workspaceTools({ root, readOnly, mount, mounts })` — `read_file`, `list_dir`,
+  `find_files`, and `write_file`, `apply_patch`, `move_file`, `delete_file` when
+  it is writable. Everything is contained to `root`, resolving symlinks first.
+- `sandboxTools(pool)` — `run_command`, `run_command_background`,
+  `read_command_output`, `stop_command`, all in group `sandbox`.
+
+Pass `mount` and both sets speak the same names: a path a command prints in the
+container is a path `read_file` accepts. That is the reason for the key, and it
+is worth setting whenever both are present.
+
+**The loader never starts a container.** `sandbox:` is validated and left on
+`project.config.sandbox` for the host to act on, because building an image and
+running a container are host concerns — `SandboxSpec` does not know what a
+Dockerfile is. `zen run` resolves that block into a `SandboxPool` and passes the
+tools above; a host embedding the runtime does the same thing itself.
+
+`SandboxPool.for(agent)` merges `agents[].sandbox` over the project block and
+dedupes by the resulting spec, so identical specs share one container and an
+agent that names its own image gets its own.
+
+## Embeddings
+
+`embeddings:` and `embedding:` declare vectorisers against the same
+`providers:` and the same memoized clients as models.
+
+```ts
+const embedder = project.embedder(); // the project's `embedding:`
+const named = project.embedder('wide'); // an entry in `embeddings:`
+
+const { vectors } = await embedder!.embed({
+    input: ['the text to place'],
+    taskType: 'query', // or 'document' — it describes the text, not the model
+});
+```
+
+Both return `undefined` when the project declares nothing. Only `embedding:`
+resolves at load; a named one resolves the first time it is asked for, so
+declaring an entry whose credential is missing costs nothing until it is used.
+
+Vectors come back **normalised to unit length** unless the request says
+`normalize: false`. That is a guarantee of the `Embedder` contract rather than
+of any one vendor: truncating to `dimensions` is a raw Matryoshka slice that
+only some models rescale, and cosine similarity divides the magnitude out, so a
+caller comparing by dot product would get quietly worse results and never an
+error.
+
+No agent consumes an embedder on its own. This is a seam for the host — a
+retriever, a memory store, an index — which is why there is no per-agent key.
 
 ## Entry point
 

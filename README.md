@@ -365,8 +365,6 @@ Details: [packages/faker/README.md](packages/faker/README.md) ·
   environment just before a run, so a real env var always wins and a project
   checked out on a machine without `zen` still runs.
 
-Full specification: [packages/cli/DESIGN.md](packages/cli/DESIGN.md).
-
 ---
 
 ## What people build with it

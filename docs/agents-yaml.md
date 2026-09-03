@@ -19,7 +19,11 @@ providers: {} # named connections
 provider: openai # which provider a bare model id belongs to
 models: {} # named model configurations
 model: fast # fallback for agents that do not pin their own
+embeddings: {} # named vectorisers
+embedding: main # the one `embedder()` hands back when asked for none
 skills: agents/skills # one directory, or a list
+assets: assets # reference material, read-only at /assets
+sandbox: {} # the container shell commands run in
 
 agents:
     - name: intake
@@ -43,18 +47,20 @@ they should be unambiguous in both.
 
 ## Top-level keys
 
-| Key         | Type                   | Meaning                                                    |
-| ----------- | ---------------------- | ---------------------------------------------------------- |
-| `version`   | `1`                    | Schema version. Defaults to `1`                            |
-| `default`   | name                   | Entry agent. Wins over any `default: true`                 |
-| `providers` | map of name → provider | Named connections                                          |
-| `provider`  | name                   | The provider a bare model id belongs to (otherwise openai) |
-| `models`    | map of name → model    | Named model configurations                                 |
-| `model`     | model ref              | Fallback for agents that do not pin their own              |
-| `skills`    | string or string[]     | Skill directories, merged into one catalog                 |
-| `assets`    | string                 | Reference material, mounted read-only at `/assets`         |
-| `sandbox`   | sandbox                | The container `run_command` and friends execute in         |
-| `agents`    | agent[]                | At least one                                               |
+| Key          | Type                    | Meaning                                                    |
+| ------------ | ----------------------- | ---------------------------------------------------------- |
+| `version`    | `1`                     | Schema version. Defaults to `1`                            |
+| `default`    | name                    | Entry agent. Wins over any `default: true`                 |
+| `providers`  | map of name → provider  | Named connections                                          |
+| `provider`   | name                    | The provider a bare model id belongs to (otherwise openai) |
+| `models`     | map of name → model     | Named model configurations                                 |
+| `model`      | model ref               | Fallback for agents that do not pin their own              |
+| `embeddings` | map of name → embedding | Named vectorisers                                          |
+| `embedding`  | embedding ref           | The one `embedder()` returns when asked for none           |
+| `skills`     | string or string[]      | Skill directories, merged into one catalog                 |
+| `assets`     | string                  | Reference material, mounted read-only at `/assets`         |
+| `sandbox`    | sandbox                 | The container `run_command` and friends execute in         |
+| `agents`     | agent[]                 | At least one                                               |
 
 ---
 
@@ -453,6 +459,48 @@ A `model:` value anywhere is resolved as:
 
 Results are memoized, so two agents naming `fast` share one model over one
 client, and a bad ref raises its error once, at the agent that wrote it.
+
+---
+
+## `embeddings:`
+
+Vectorisers, named the same way models are, and reached through the same
+`providers:` and the same memoized clients.
+
+```yaml
+embeddings:
+    main: vertex:gemini-embedding-001 # shorthand
+    wide:
+        provider: openai
+        model: text-embedding-3-large
+        dimensions: 1536
+
+embedding: main # what `embedder()` returns when asked for none
+```
+
+| Field        | Applies to | Meaning                                               |
+| ------------ | ---------- | ----------------------------------------------------- |
+| `provider`   | all        | A name from `providers:`, or a built-in kind          |
+| `model`      | all        | Required. Sent to the API verbatim                    |
+| `dimensions` | all        | Truncate to this width, where the model supports it   |
+| `title`      | gemini     | A document title the retrieval task type weighs       |
+| `maxBatch`   | gemini     | Texts per request; every `gemini-embedding-*` takes 1 |
+| `routing`    | openrouter | Who serves the request                                |
+
+Deliberately smaller than a model entry: an embedding call has no conversation,
+no tools and no reasoning, so a connection, an id and a width is all there is to
+say. There is **no `api:`** — `/v1/responses` has no embeddings endpoint, and
+naming one is an error. There is no `taskType` either: that describes the text
+rather than the model, so it belongs to the call.
+
+This is **not a per-agent key**. Nothing in the runtime consumes an embedder on
+an agent's behalf yet, and a key nothing honours is worse than a key that is not
+there. What reads it is a host, through `AgentProject.embedder(name?)` — with no
+argument, the project's `embedding:`, and `undefined` when it declares none.
+Only `embedding:` resolves at load; a named one resolves when it is asked for.
+
+Anthropic publishes no embeddings API, so a `provider` pointing at it is an
+error whatever the model says.
 
 ---
 
