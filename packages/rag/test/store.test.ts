@@ -1,6 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import { buildIndex } from '../src/schema/build.ts';
@@ -46,6 +46,7 @@ describe('the manifest', () => {
         });
         expect(manifest.sources.map((s) => s.title)).toEqual(['Petstore', 'Billing']);
         expect(manifest.sources.map((s) => s.dialect)).toEqual(['openapi-3.1', 'swagger-2.0']);
+        expect(manifest.sources.every((s) => !isAbsolute(s.path))).toBe(true);
         expect(manifest.counts.methods).toBe(6);
         expect(manifest.counts.entities).toBeGreaterThan(manifest.counts.properties);
     });

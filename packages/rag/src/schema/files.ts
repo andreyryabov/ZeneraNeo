@@ -1,7 +1,7 @@
+import { CliError, EXIT } from '@zenera/cli/lib';
 import { MultiDirectedGraph } from 'graphology';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { CliError, EXIT } from '@zenera/cli/lib';
 import type { ApiGraph, EdgeAttrs, NodeAttrs } from './graph.ts';
 import type { Schema } from './schema.ts';
 import type { Operation } from './spec.ts';
@@ -20,7 +20,7 @@ import type { Operation } from './spec.ts';
 // on first use.
 // ---------------------------------------------------------------------------
 
-export const INDEX_VERSION = 1;
+export const INDEX_VERSION = 2;
 
 export const MANIFEST_FILE = 'manifest.json';
 export const GRAPH_FILE = 'graph.json';
@@ -29,6 +29,7 @@ export const OPERATIONS_FILE = 'operations.json';
 export const LANCE_DIR = 'lance';
 
 export interface SourceRecord {
+    /** relative to the index directory: an agent reads this tree mounted elsewhere */
     path: string;
     sha256: string;
     dialect: string;

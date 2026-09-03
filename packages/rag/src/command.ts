@@ -172,7 +172,7 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
         batch: values.batch ? count(values.batch, '--batch') : undefined,
         onRead: loud
             ? (summary) => {
-                  printSources(summary.sources, ctx.cwd);
+                  printSources(summary.sources, ctx.cwd, out);
                   // The first batch can take a while and says nothing while it
                   // does; this is the line that makes that a wait, not a hang.
                   note(dim(`  embedding ${summary.counts.entities} entities with ${chosen.id} …`));
@@ -212,9 +212,9 @@ function elapsed(since: number): string {
     return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60}s`;
 }
 
-function printSources(sources: readonly SourceRecord[], cwd: string): void {
+function printSources(sources: readonly SourceRecord[], cwd: string, dir: string): void {
     const rows = sources.map((s) => ({
-        name: relative(cwd, s.path) || s.path,
+        name: relative(cwd, resolve(dir, s.path)) || s.path,
         dialect: s.dialect,
         cells: [s.paths, s.methods, s.types, s.properties],
     }));
@@ -490,7 +490,7 @@ async function stats(args: readonly string[], ctx: Context): Promise<void> {
             ],
         ]),
     );
-    printSources(manifest.sources, ctx.cwd);
+    printSources(manifest.sources, ctx.cwd, dir);
     notes(table([['  entities', String(manifest.counts.entities)]]).map(dim));
 }
 

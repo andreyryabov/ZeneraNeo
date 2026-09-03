@@ -106,6 +106,7 @@ need the word explained again, it needs the list of types that have one.
 
 ```
 schema-db/
+├── README.md         what this index holds — a live progress report while it builds
 ├── manifest.json     written last — its absence means "not indexed"
 ├── graph.json        topology and light attributes, read whole
 ├── schemas.json      the raw schemas, read the first time one is needed in full
@@ -115,6 +116,19 @@ schema-db/
 
 The manifest records which embedder made the vectors, and a search with a
 different one is refused rather than answered with noise.
+
+Indexing a large document is minutes of silence, so the directory says what is
+happening to it. `README.md` appears first as a progress report — the documents,
+the embedder, the step, how many entities have been embedded of how many, and
+how long it has been going — rewritten at most every five seconds, and replaced
+on completion by a description of what the index turned out to hold. A build
+that dies leaves it saying so. While one runs, `.lock` names the process; a
+second build of the same directory is refused, unless the lock is stale.
+
+Nothing written into either file is an absolute path, and neither are the source
+paths in the manifest: a project's `assets/` is mounted at `/assets` inside an
+agent's sandbox, so an index built there is read under a name this machine never
+sees.
 
 ## Notes
 

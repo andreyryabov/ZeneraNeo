@@ -1,4 +1,5 @@
 import type { Embedder } from '@zenera/neo';
+import { relative } from 'node:path';
 import { toEntities, type EntityRecord } from './entities.ts';
 import {
     INDEX_VERSION,
@@ -8,6 +9,7 @@ import {
     type SourceRecord,
 } from './files.ts';
 import { buildGraph } from './graph.ts';
+import { beginBuild, type Journal } from './progress.ts';
 import { loadSpecs, type Corpus } from './spec.ts';
 import { writeStore } from './store.ts';
 
@@ -49,45 +51,63 @@ export interface BuildResult {
 const DEFAULT_BATCH = 96;
 
 export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
-    const corpus = await loadSpecs(options.files);
-    const { graph, types } = buildGraph(corpus);
-    const entities = toEntities(graph);
-
-    const summary: BuildSummary = {
-        sources: sourcesOf(corpus, entities, options.files),
-        counts: {
-            methods: entities.filter((e) => e.kind === 'method').length,
-            types: entities.filter((e) => e.kind === 'type').length,
-            properties: entities.filter((e) => e.kind === 'property').length,
-            entities: entities.length,
-        },
-    };
-    options.onRead?.(summary);
-
-    const vectors = await embedAll(entities, options);
-    const written = await writeStore(options.out, entities, vectors);
-
-    const manifest: Manifest = {
-        version: INDEX_VERSION,
-        createdAt: new Date().toISOString(),
+    const journal = beginBuild({
+        dir: options.out,
+        files: options.files,
+        embedding: options.embeddingRef ?? options.embedder.id,
         indexer: options.indexer,
-        embedding: {
-            ref: options.embeddingRef ?? options.embedder.id,
-            id: options.embedder.id,
-            dimensions: vectors[0]?.length ?? 0,
-        },
-        sources: summary.sources,
-        counts: summary.counts,
-        indexes: { fts: written.fts, vector: written.vector },
-    };
+    });
 
-    await writeIndex(options.out, { manifest, graph, types, operations: corpus.operations });
-    return { manifest, entities };
+    try {
+        const corpus = await loadSpecs(options.files);
+        journal.phase('graph');
+        const { graph, types } = buildGraph(corpus);
+        const entities = toEntities(graph);
+
+        const summary: BuildSummary = {
+            sources: sourcesOf(corpus, entities, options.files, options.out),
+            counts: {
+                methods: entities.filter((e) => e.kind === 'method').length,
+                types: entities.filter((e) => e.kind === 'type').length,
+                properties: entities.filter((e) => e.kind === 'property').length,
+                entities: entities.length,
+            },
+        };
+        journal.read(summary.counts);
+        options.onRead?.(summary);
+
+        journal.phase('embedding');
+        const vectors = await embedAll(entities, options, journal);
+        journal.phase('writing');
+        const written = await writeStore(options.out, entities, vectors);
+
+        const manifest: Manifest = {
+            version: INDEX_VERSION,
+            createdAt: new Date().toISOString(),
+            indexer: options.indexer,
+            embedding: {
+                ref: options.embeddingRef ?? options.embedder.id,
+                id: options.embedder.id,
+                dimensions: vectors[0]?.length ?? 0,
+            },
+            sources: summary.sources,
+            counts: summary.counts,
+            indexes: { fts: written.fts, vector: written.vector },
+        };
+
+        await writeIndex(options.out, { manifest, graph, types, operations: corpus.operations });
+        journal.finish(manifest);
+        return { manifest, entities };
+    } catch (err) {
+        journal.fail(err);
+        throw err;
+    }
 }
 
 async function embedAll(
     entities: readonly EntityRecord[],
     options: BuildOptions,
+    journal: Journal,
 ): Promise<Float32Array[]> {
     const size = options.batch ?? DEFAULT_BATCH;
     const out: Float32Array[] = [];
@@ -105,6 +125,7 @@ async function embedAll(
             );
         }
         out.push(...response.vectors.map((v) => Float32Array.from(v)));
+        journal.progress(out.length, entities.length);
         options.onProgress?.(out.length, entities.length);
     }
     return out;
@@ -119,12 +140,14 @@ function sourcesOf(
     corpus: Corpus,
     entities: readonly EntityRecord[],
     files: readonly string[],
+    out: string,
 ): SourceRecord[] {
     return corpus.docs.map((doc, index) => {
         const mine = entities.filter((e) => e.source === doc.source);
         const operations = corpus.operations.filter((op) => op.source === doc.source);
+        const file = files[index];
         return {
-            path: files[index] ?? doc.source,
+            path: file ? relative(out, file) : doc.source,
             sha256: doc.sha256,
             dialect: doc.dialect,
             title: doc.title,
