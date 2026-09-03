@@ -18,4 +18,6 @@ COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
-RUN npm install -g @zenera/cli @zenera/rag
+# Pinned to the `zen` that wrote this file, so the tools in the container are
+# the ones the session outside it was built by. Bump both together.
+RUN npm install -g @zenera/cli@{{version}} @zenera/rag@{{version}}

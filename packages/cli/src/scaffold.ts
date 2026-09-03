@@ -30,6 +30,15 @@ const TEMPLATES = fileURLToPath(new URL('../templates', import.meta.url));
 /** The suffix on a file with `{{...}}` in it, dropped when the file lands. */
 const TEMPLATE = '.tmpl';
 
+/**
+ * This `zen`'s own version, which the scaffold pins the sandbox's tools to.
+ * The publishable packages move in lockstep, so one number covers them all.
+ */
+function ownVersion(): string {
+    const manifest = fileURLToPath(new URL('../package.json', import.meta.url));
+    return (JSON.parse(readFileSync(manifest, 'utf8')) as { version: string }).version;
+}
+
 type Vars = Record<string, string>;
 
 /**
@@ -206,6 +215,7 @@ export function scaffold(opts: ScaffoldOptions): Scaffolded {
         vars: {
             model: modelSection(opts.model, opts.modelOptions),
             exa: opts.web ? part('exa.yaml') : '',
+            version: ownVersion(),
         },
     });
 

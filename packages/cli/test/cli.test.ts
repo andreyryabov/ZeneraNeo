@@ -14,6 +14,7 @@ import {
     type CatalogEntry,
 } from '../src/catalog.ts';
 import { ALIASES, COMMANDS, EXTERNAL, type External } from '../src/commands/index.ts';
+import { cliManifest, versionOf } from '../src/commands/version.ts';
 import { hasExternal, loadExternal } from '../src/external.ts';
 import { paths, writeJson } from '../src/home.ts';
 import { isStamp, stamp, stampInstant } from '../src/ids.ts';
@@ -642,7 +643,10 @@ describe('the scaffold', () => {
             written.files.filter((f) => f.startsWith('.github') || f.startsWith('.vscode')),
         ).toEqual([]);
         expect(written.editor).toContain(join('.vscode', 'settings.json'));
-        expect(readFileSync(join(dir, 'sandbox', 'Dockerfile'), 'utf8')).toMatch(/^FROM /m);
+        const dockerfile = readFileSync(join(dir, 'sandbox', 'Dockerfile'), 'utf8');
+        expect(dockerfile).toMatch(/^FROM /m);
+        // The tools in the container are the ones that wrote the project.
+        expect(dockerfile).toContain(`@zenera/cli@${await versionOf(cliManifest)}`);
         expect(readFileSync(join(dir, 'agents.yaml'), 'utf8')).toContain(
             'dockerfile: sandbox/Dockerfile',
         );
