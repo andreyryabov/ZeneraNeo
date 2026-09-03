@@ -9,28 +9,37 @@ import type { Operation } from './spec.ts';
 // ---------------------------------------------------------------------------
 // What an index is, on disk
 //
-// Four things in a directory, and the order they are written in is the whole
-// crash story: the manifest goes last, so a half-built index has no manifest
-// and reads as "not indexed" rather than as a store that quietly lost half its
-// operations.
+// A directory, and the order it is written in is the whole crash story: the
+// manifest goes last, so a half-built index has no manifest and reads as "not
+// indexed" rather than as a store that quietly lost half its operations.
 //
 // `graph.json` is deliberately thin — names, directions, edges — because it is
 // parsed whole on every search. The schemas are the bulk of the bytes and are
 // wanted only when something is being printed, so they live apart and are read
 // on first use.
+//
+// `sources/` holds the documents themselves, bundled, so the index is one
+// portable thing: nothing in it names a path outside itself, it can be moved or
+// shipped whole, and the graph can be rebuilt — or re-embedded with another
+// model — without going looking for the files it was made from.
 // ---------------------------------------------------------------------------
 
-export const INDEX_VERSION = 2;
+export const INDEX_VERSION = 3;
 
 export const MANIFEST_FILE = 'manifest.json';
 export const GRAPH_FILE = 'graph.json';
 export const SCHEMAS_FILE = 'schemas.json';
 export const OPERATIONS_FILE = 'operations.json';
 export const LANCE_DIR = 'lance';
+export const SOURCES_DIR = 'sources';
 
 export interface SourceRecord {
-    /** relative to the index directory: an agent reads this tree mounted elsewhere */
-    path: string;
+    /** the document's name within the index: what every entity's `source` says */
+    name: string;
+    /** what the file was called on the machine that built this */
+    file: string;
+    /** the bundled copy, relative to the index; absent when none was kept */
+    path?: string;
     sha256: string;
     dialect: string;
     title: string;
@@ -65,6 +74,8 @@ export interface WrittenIndex {
     graph: ApiGraph;
     types: Readonly<Record<string, Schema>>;
     operations: readonly Operation[];
+    /** the bundled documents to keep beside the index, by name */
+    documents: Readonly<Record<string, string>>;
 }
 
 export interface OpenIndex {
@@ -84,6 +95,14 @@ export async function writeIndex(dir: string, index: WrittenIndex): Promise<void
     await writeFile(join(dir, GRAPH_FILE), JSON.stringify(index.graph.export()));
     await writeFile(join(dir, SCHEMAS_FILE), JSON.stringify(index.types));
     await writeFile(join(dir, OPERATIONS_FILE), JSON.stringify(index.operations));
+
+    const documents = Object.entries(index.documents);
+    if (documents.length > 0) {
+        await mkdir(join(dir, SOURCES_DIR), { recursive: true });
+        for (const [name, text] of documents) {
+            await writeFile(join(dir, SOURCES_DIR, `${name}.json`), text);
+        }
+    }
     await writeFile(join(dir, MANIFEST_FILE), `${JSON.stringify(index.manifest, null, 4)}\n`);
 }
 

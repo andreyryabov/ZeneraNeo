@@ -111,6 +111,7 @@ schema-db/
 ├── graph.json        topology and light attributes, read whole
 ├── schemas.json      the raw schemas, read the first time one is needed in full
 ├── operations.json   likewise, for the OpenAPI subset
+├── sources/          the documents themselves, bundled, exactly as indexed
 └── lance/            one table: a row per node, one text column, one vector
 ```
 
@@ -125,10 +126,17 @@ on completion by a description of what the index turned out to hold. A build
 that dies leaves it saying so. While one runs, `.lock` names the process; a
 second build of the same directory is refused, unless the lock is stale.
 
-Nothing written into either file is an absolute path, and neither are the source
-paths in the manifest: a project's `assets/` is mounted at `/assets` inside an
-agent's sandbox, so an index built there is read under a name this machine never
-sees.
+**An index is one portable thing.** Nothing in it names a path outside itself:
+a document is known by a short name taken from its filename, and the document
+itself is copied into `sources/` as it was indexed — bundled, so every external
+`$ref` is already resolved and the copy stands alone. The directory can be moved,
+committed or shipped whole and still says what it is made of. This matters
+because a project's `assets/` is mounted at `/assets` inside an agent's sandbox,
+so an index built here is read under a name this machine never sees. `--no-sources`
+leaves the copies out, for an index that will never travel.
+
+The copies are a record, not an input: rebuilding reads the files you name, not
+the ones in `sources/`.
 
 ## Notes
 

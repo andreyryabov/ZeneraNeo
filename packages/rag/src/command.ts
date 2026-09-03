@@ -73,6 +73,7 @@ export const command: Command = {
                 '  --batch <n>',
                 dim('Texts per embedding request, and how often progress prints. Default 96.'),
             ],
+            ['  --no-sources', dim('Do not keep a copy of each document in the index.')],
         ]),
         '',
         'Search terms (repeatable)',
@@ -140,6 +141,7 @@ interface IndexFlags {
     out?: string;
     embedding?: string;
     batch?: string;
+    'no-sources'?: boolean;
     quiet?: boolean;
 }
 
@@ -150,6 +152,7 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
             out: { type: 'string', short: 'o' },
             embedding: { type: 'string' },
             batch: { type: 'string' },
+            'no-sources': { type: 'boolean' },
             quiet: { type: 'boolean' },
         },
         INDEX_USAGE,
@@ -170,9 +173,10 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
         embeddingRef: values.embedding,
         indexer: 'zenera-rag',
         batch: values.batch ? count(values.batch, '--batch') : undefined,
+        sources: !values['no-sources'],
         onRead: loud
             ? (summary) => {
-                  printSources(summary.sources, ctx.cwd, out);
+                  printSources(summary.sources);
                   // The first batch can take a while and says nothing while it
                   // does; this is the line that makes that a wait, not a hang.
                   note(dim(`  embedding ${summary.counts.entities} entities with ${chosen.id} …`));
@@ -212,9 +216,9 @@ function elapsed(since: number): string {
     return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60}s`;
 }
 
-function printSources(sources: readonly SourceRecord[], cwd: string, dir: string): void {
+function printSources(sources: readonly SourceRecord[]): void {
     const rows = sources.map((s) => ({
-        name: relative(cwd, resolve(dir, s.path)) || s.path,
+        name: s.file,
         dialect: s.dialect,
         cells: [s.paths, s.methods, s.types, s.properties],
     }));
@@ -490,7 +494,7 @@ async function stats(args: readonly string[], ctx: Context): Promise<void> {
             ],
         ]),
     );
-    printSources(manifest.sources, ctx.cwd, dir);
+    printSources(manifest.sources);
     notes(table([['  entities', String(manifest.counts.entities)]]).map(dim));
 }
 

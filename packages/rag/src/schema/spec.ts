@@ -1,7 +1,7 @@
 import SwaggerParser from '@apidevtools/swagger-parser';
+import { CliError, EXIT } from '@zenera/cli/lib';
 import { createHash } from 'node:crypto';
 import { basename, extname } from 'node:path';
-import { CliError, EXIT } from '@zenera/cli/lib';
 import { docOf, isObject, normalize, type Dialect, type Schema } from './schema.ts';
 
 // ---------------------------------------------------------------------------
@@ -63,7 +63,10 @@ export interface Operation {
 }
 
 export interface ApiDoc {
+    /** the document's name within this index, unique in the corpus */
     source: string;
+    /** what the file was called on the machine that read it */
+    file: string;
     sha256: string;
     dialect: Dialect;
     title: string;
@@ -77,6 +80,8 @@ export interface Corpus {
     types: Record<string, Schema>;
     /** which document each type id came from */
     typeSource: Record<string, string>;
+    /** the bundled document behind each `source`, as JSON text */
+    documents: Record<string, string>;
 }
 
 /** A `CliError` so an unreadable document exits 3 wherever it is raised. */
@@ -103,6 +108,8 @@ interface Loaded {
     operations: Operation[];
     /** component name as written in the document -> normalized schema */
     types: Map<string, Schema>;
+    /** the bundled document, serialized before anything derived from it exists */
+    document: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -114,13 +121,28 @@ export async function loadSpecs(files: readonly string[]): Promise<Corpus> {
         throw new SpecError('no document given', 'name at least one openapi/swagger file');
     }
     const loaded: Loaded[] = [];
+    const taken = new Set<string>();
     for (const file of files) {
-        loaded.push(await loadSpec(file));
+        loaded.push(await loadSpec(file, distinct(slugOf(file), taken)));
     }
     return settle(loaded);
 }
 
-async function loadSpec(file: string): Promise<Loaded> {
+/**
+ * The slug is the document's identity everywhere below this file — the node
+ * attribute, the store column, the name its copy is written under — so two
+ * `api.yaml`s in different directories must not answer to the same word.
+ */
+function distinct(slug: string, taken: Set<string>): string {
+    let candidate = slug;
+    for (let n = 2; taken.has(candidate); n++) {
+        candidate = `${slug}_${n}`;
+    }
+    taken.add(candidate);
+    return candidate;
+}
+
+async function loadSpec(file: string, slug: string): Promise<Loaded> {
     let raw: RawDoc;
     try {
         raw = (await SwaggerParser.bundle(file)) as RawDoc;
@@ -131,6 +153,8 @@ async function loadSpec(file: string): Promise<Loaded> {
         );
     }
 
+    // `bundle` has resolved every external `$ref`, so this text stands alone.
+    const document = JSON.stringify(raw, null, 2);
     const dialect = dialectOf(raw, file);
     const source = raw.components?.schemas ?? raw.definitions ?? {};
     const types = new Map<string, Schema>();
@@ -140,15 +164,17 @@ async function loadSpec(file: string): Promise<Loaded> {
 
     return {
         doc: {
-            source: file,
-            sha256: createHash('sha256').update(JSON.stringify(raw)).digest('hex'),
+            source: slug,
+            file: basename(file),
+            sha256: createHash('sha256').update(document).digest('hex'),
             dialect,
             title: raw.info?.title?.trim() || basename(file),
             version: raw.info?.version?.trim() || '',
         },
-        slug: slugOf(file),
-        operations: operationsOf(raw, dialect, file),
+        slug,
+        operations: operationsOf(raw, dialect, slug),
         types,
+        document,
     };
 }
 
@@ -174,7 +200,7 @@ function slugOf(file: string): string {
 // Operations
 // ---------------------------------------------------------------------------
 
-function operationsOf(raw: RawDoc, dialect: Dialect, file: string): Operation[] {
+function operationsOf(raw: RawDoc, dialect: Dialect, source: string): Operation[] {
     const prefix = dialect === 'swagger-2.0' ? (raw.basePath ?? '') : '';
     const out: Operation[] = [];
 
@@ -193,7 +219,7 @@ function operationsOf(raw: RawDoc, dialect: Dialect, file: string): Operation[] 
             const path = join(prefix, template);
             const own = paramsOf(op.parameters, dialect);
             out.push({
-                source: file,
+                source,
                 method,
                 path,
                 operationId: text(op.operationId) || synthesizeId(method, path),
@@ -387,7 +413,13 @@ function settle(loaded: Loaded[]): Corpus {
         }
     });
 
-    return { docs: loaded.map((one) => one.doc), operations, types, typeSource };
+    return {
+        docs: loaded.map((one) => one.doc),
+        operations,
+        types,
+        typeSource,
+        documents: Object.fromEntries(loaded.map((one) => [one.slug, one.document])),
+    };
 }
 
 function unique(id: string, slug: string, seen: Set<string>): string {

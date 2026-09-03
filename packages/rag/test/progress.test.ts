@@ -64,7 +64,13 @@ describe('the README a finished index carries', () => {
     it('names every file in the directory, so a reader knows where to start', () => {
         const readme = read(dir, README_FILE);
 
-        for (const file of ['manifest.json', 'graph.json', 'schemas.json', 'operations.json']) {
+        for (const file of [
+            'manifest.json',
+            'graph.json',
+            'schemas.json',
+            'operations.json',
+            'sources/',
+        ]) {
             expect(readme).toContain(file);
         }
         expect(readme).toContain('zen rag schema search');
@@ -80,16 +86,52 @@ describe('the README a finished index carries', () => {
     });
 });
 
-describe('the manifest paths', () => {
-    it('name the documents relative to the index, not to this machine', async () => {
-        const dir = await scratch();
-        await build(dir);
+describe('the documents the index carries', () => {
+    let dir = '';
 
+    beforeEach(async () => {
+        dir = await scratch();
+        await build(dir);
+    });
+
+    it('keeps a copy of each one, named the way the manifest points at it', () => {
         const manifest = JSON.parse(read(dir, 'manifest.json')) as {
-            sources: { path: string }[];
+            sources: { name: string; file: string; path: string }[];
         };
-        expect(manifest.sources.map((s) => s.path).every((p) => !isAbsolute(p))).toBe(true);
-        expect(manifest.sources.map((s) => s.path.endsWith('petstore.yaml'))).toContain(true);
+
+        expect(manifest.sources.map((s) => s.file)).toEqual(['petstore.yaml', 'billing.json']);
+        expect(manifest.sources.map((s) => s.path)).toEqual([
+            'sources/petstore.json',
+            'sources/billing.json',
+        ]);
+        for (const source of manifest.sources) {
+            expect(isAbsolute(source.path)).toBe(false);
+            const copy = JSON.parse(read(dir, source.path)) as { info?: { title?: string } };
+            expect(copy.info?.title).toBeTruthy();
+        }
+    });
+
+    it('leaves nothing pointing outside itself', () => {
+        for (const file of ['manifest.json', 'graph.json', 'operations.json']) {
+            expect(read(dir, file)).not.toContain(spec('petstore.yaml'));
+        }
+    });
+
+    it('can be told not to, for an index that will never be moved', async () => {
+        const bare = await scratch();
+        await buildIndex({
+            files: [spec('petstore.yaml')],
+            out: bare,
+            embedder: new StubEmbedder(),
+            indexer: 'test',
+            sources: false,
+        });
+
+        const manifest = JSON.parse(read(bare, 'manifest.json')) as {
+            sources: { path?: string }[];
+        };
+        expect(manifest.sources.every((s) => s.path === undefined)).toBe(true);
+        expect(existsSync(join(bare, 'sources'))).toBe(false);
     });
 });
 

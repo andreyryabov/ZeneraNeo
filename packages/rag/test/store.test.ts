@@ -46,7 +46,7 @@ describe('the manifest', () => {
         });
         expect(manifest.sources.map((s) => s.title)).toEqual(['Petstore', 'Billing']);
         expect(manifest.sources.map((s) => s.dialect)).toEqual(['openapi-3.1', 'swagger-2.0']);
-        expect(manifest.sources.every((s) => !isAbsolute(s.path))).toBe(true);
+        expect(manifest.sources.every((s) => s.path && !isAbsolute(s.path))).toBe(true);
         expect(manifest.counts.methods).toBe(6);
         expect(manifest.counts.entities).toBeGreaterThan(manifest.counts.properties);
     });

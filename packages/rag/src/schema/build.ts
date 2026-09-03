@@ -1,8 +1,8 @@
 import type { Embedder } from '@zenera/neo';
-import { relative } from 'node:path';
 import { toEntities, type EntityRecord } from './entities.ts';
 import {
     INDEX_VERSION,
+    SOURCES_DIR,
     writeIndex,
     type Counts,
     type Manifest,
@@ -32,6 +32,8 @@ export interface BuildOptions {
     indexer: string;
     /** texts sent to the embedder at once */
     batch?: number;
+    /** keep a bundled copy of each document in the index. On by default. */
+    sources?: boolean;
     signal?: AbortSignal;
     /** what the documents turned out to hold, before a vector has been paid for */
     onRead?: (summary: BuildSummary) => void;
@@ -64,8 +66,9 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
         const { graph, types } = buildGraph(corpus);
         const entities = toEntities(graph);
 
+        const keep = options.sources !== false;
         const summary: BuildSummary = {
-            sources: sourcesOf(corpus, entities, options.files, options.out),
+            sources: sourcesOf(corpus, entities, keep),
             counts: {
                 methods: entities.filter((e) => e.kind === 'method').length,
                 types: entities.filter((e) => e.kind === 'type').length,
@@ -95,7 +98,13 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
             indexes: { fts: written.fts, vector: written.vector },
         };
 
-        await writeIndex(options.out, { manifest, graph, types, operations: corpus.operations });
+        await writeIndex(options.out, {
+            manifest,
+            graph,
+            types,
+            operations: corpus.operations,
+            documents: keep ? corpus.documents : {},
+        });
         journal.finish(manifest);
         return { manifest, entities };
     } catch (err) {
@@ -139,15 +148,15 @@ async function embedAll(
 function sourcesOf(
     corpus: Corpus,
     entities: readonly EntityRecord[],
-    files: readonly string[],
-    out: string,
+    keep: boolean,
 ): SourceRecord[] {
-    return corpus.docs.map((doc, index) => {
+    return corpus.docs.map((doc) => {
         const mine = entities.filter((e) => e.source === doc.source);
         const operations = corpus.operations.filter((op) => op.source === doc.source);
-        const file = files[index];
         return {
-            path: file ? relative(out, file) : doc.source,
+            name: doc.source,
+            file: doc.file,
+            path: keep ? `${SOURCES_DIR}/${doc.source}.json` : undefined,
             sha256: doc.sha256,
             dialect: doc.dialect,
             title: doc.title,

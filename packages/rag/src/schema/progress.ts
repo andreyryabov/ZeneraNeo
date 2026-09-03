@@ -282,13 +282,18 @@ function complete(dir: string, manifest: Manifest, ms: number): string {
             ['graph.json', 'the nodes and edges: operations, types, fields'],
             ['schemas.json', 'the JSON Schema of every type'],
             ['operations.json', 'every operation, with its parameters and responses'],
+            ...(manifest.sources.some((s) => s.path)
+                ? [['sources/', 'the documents themselves, bundled, exactly as indexed']]
+                : []),
             ['lance/', 'the LanceDB table: the search text, the vectors, the filter columns'],
         ]),
         '',
         '## Asking it something',
         '',
+        'From this directory:',
+        '',
         '```',
-        `zen rag schema search --dir ./${basename(dir)} --all "how do I cancel a subscription"`,
+        'zen rag schema search --dir . --all "how do I cancel a subscription"',
         '```',
         '',
         `Built by ${manifest.indexer} on ${manifest.createdAt}.`,
@@ -338,7 +343,7 @@ const HEADERS = ['document', 'dialect', 'paths', 'operations', 'schemas', 'field
 
 function sourceTable(sources: readonly SourceRecord[]): string[] {
     const rows = sources.map((s) => [
-        s.path,
+        s.file,
         s.dialect,
         String(s.paths),
         String(s.methods),
