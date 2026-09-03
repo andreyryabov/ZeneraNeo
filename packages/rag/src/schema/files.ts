@@ -143,7 +143,7 @@ export async function readManifest(dir: string): Promise<Manifest> {
     const manifest = JSON.parse(text) as Manifest;
     if (manifest.version !== INDEX_VERSION) {
         throw new CliError(
-            `${dir} was written by another version of this indexer`,
+            `${dir} is a version ${manifest.version} index, and this indexer reads version ${INDEX_VERSION}`,
             EXIT.invalid,
             'rebuild it with `zen rag schema index`',
         );
