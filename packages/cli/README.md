@@ -150,17 +150,17 @@ you are not expected to hand-author `agents.yaml`.
 
 ## Commands
 
-| Command   | Does                                                                     |
-| --------- | ------------------------------------------------------------------------ |
-| `init`    | Creates a project here, or in `<dir>`, and registers it.                 |
-| `list`    | Every known project: sessions, last run, whether one is live.            |
-| `open`    | Opens a project in your editor.                                          |
-| `key`     | The credential keyring — add, check, switch, remove.                     |
-| `run`     | Runs the project — the TUI on a terminal, a single answer otherwise.     |
-| `inspect` | Opens or rebuilds a run's `report.html`.                                 |
-| `models`  | Resolves providers and models and validates the config, calling nothing. |
-| `sandbox` | Checks and prepares the container that command-line tools run in.        |
-| `version` | CLI, library and Node versions.                                          |
+| Command   | Does                                                                 |
+| --------- | -------------------------------------------------------------------- |
+| `init`    | Creates a project here, or in `<dir>`, and registers it.             |
+| `list`    | Every known project: sessions, last run, whether one is live.        |
+| `open`    | Opens a project in your editor.                                      |
+| `key`     | The credential keyring — add, check, switch, remove.                 |
+| `run`     | Runs the project — the TUI on a terminal, a single answer otherwise. |
+| `inspect` | Opens or rebuilds a run's `report.html`.                             |
+| `check`   | Validates the project and every file it names, and asks the models.  |
+| `sandbox` | Checks and prepares the container that command-line tools run in.    |
+| `version` | CLI, library and Node versions.                                      |
 
 Commands can also come from a package installed alongside this one, so a new
 capability is a subcommand rather than a new binary to remember — one thing on
@@ -234,10 +234,10 @@ A model reference is `[provider[/api]:]model`, and the first segment names a
 **provider, not a vendor**. So `vertex:gemini-3.5-flash` and
 `google:gemini-3.5-flash` are the same model reached through two different
 services, needing two different credentials — and a bare `gpt-5.4-mini` goes to
-the default provider, `openai`. `zen models` resolves every reference in a
-project against what is stored, and calls nothing; `zen models --check` spends a
-few tokens asking each of them to answer, which is the only way to catch a model
-id this account is not served.
+the default provider, `openai`. `zen check` resolves every reference in a
+project against what is stored, says which credential each one needs, and spends
+a few tokens asking each of them to answer — the only way to catch a model id
+this account is not served. `--no-models` stops before the asking.
 
 ### Vertex AI
 
@@ -287,7 +287,7 @@ working `gemini-3.5-flash`:
 
 ```sh
 zen key add google                # asks for the key without showing it
-zen models                        # google:gemini-3.5-flash now resolves
+zen check                         # google:gemini-3.5-flash now resolves
 ```
 
 **Vertex, service account** — what production usually runs on. Give the path

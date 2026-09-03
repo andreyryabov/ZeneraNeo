@@ -183,7 +183,7 @@ provider "openrouter" (openrouter) has one api, so "responses" means nothing her
 ```
 
 That is raised when the model is _built_, not when the ref is parsed — so it
-surfaces from `zen models` and `zen check` rather than at the first request.
+surfaces from `zen check` rather than at the first request.
 The same error covers the shorthand form, `openrouter/responses:…`.
 
 Reasoning arrives on the message as `reasoning`, which the adapter reads into
@@ -753,7 +753,7 @@ hand-written `env: [OPENAI_API_KEY]` would be a second, silent way in.
 ### `keys:`, and what it gives away
 
 The model credentials reach the container by default. The scaffolded image
-installs `zen` itself, and an agent that cannot run `zen models` inside its own
+installs `zen` itself, and an agent that cannot run `zen check` inside its own
 sandbox is a surprise rather than a safety feature.
 
 It is still a real trade, and worth stating plainly: **the container runs

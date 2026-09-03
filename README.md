@@ -215,14 +215,12 @@ session, recorded in full whether or not you were watching.
 ```sh
 zen check my-project                      # validate the project and every file it names
 zen check my-project --no-models          # …without spending a token asking each model
-zen models my-project                     # resolve providers, models and credentials, calling nothing
-zen models my-project --check             # …and ask each model whether it will actually serve you
 zen inspect --project my-project --open   # the last run's report.html
 zen list --sessions                       # every project, its sessions and last run
 ```
 
 Named for clarity again: drop the name and each of these reads the project you
-are standing in. `check` and `models` take a bare name or directory, so an
+are standing in. `check` takes a bare name or directory, so an
 unregistered checkout can be validated before it is ever run. `list` is the one
 command that is about all of them at once.
 
@@ -291,18 +289,17 @@ complete instruction: no configuration, no paths, nothing to remember. Add
 
 ## The CLI
 
-| Command   | Does                                                                     |
-| --------- | ------------------------------------------------------------------------ |
-| `init`    | Creates a project here, or in `<dir>`, and registers it.                 |
-| `list`    | Every known project: sessions, last run, whether one is live.            |
-| `run`     | Runs the project — the TUI on a terminal, a single answer otherwise.     |
-| `open`    | Opens a project in your editor.                                          |
-| `key`     | The credential keyring — add, check, switch, remove.                     |
-| `models`  | Resolves providers and models and validates the config, calling nothing. |
-| `check`   | Validates `agents.yaml` and every file it names, and reports in full.    |
-| `inspect` | Opens or rebuilds a run's `report.html`.                                 |
-| `sandbox` | Checks and prepares the container that command-line tools run in.        |
-| `version` | CLI, library and Node versions.                                          |
+| Command   | Does                                                                  |
+| --------- | --------------------------------------------------------------------- |
+| `init`    | Creates a project here, or in `<dir>`, and registers it.              |
+| `list`    | Every known project: sessions, last run, whether one is live.         |
+| `run`     | Runs the project — the TUI on a terminal, a single answer otherwise.  |
+| `open`    | Opens a project in your editor.                                       |
+| `key`     | The credential keyring — add, check, switch, remove.                  |
+| `check`   | Validates `agents.yaml` and every file it names, and asks the models. |
+| `inspect` | Opens or rebuilds a run's `report.html`.                              |
+| `sandbox` | Checks and prepares the container that command-line tools run in.     |
+| `version` | CLI, library and Node versions.                                       |
 
 Global flags: `-h/--help`, `-v/--version`, `--json`, `-C <dir>`. Exit codes: `0`
 ok, `1` the run failed, `2` bad invocation, `3` invalid project, `4` no usable

@@ -65,7 +65,7 @@ interface Flags {
 // ---------------------------------------------------------------------------
 
 export const check: Command = {
-    summary: 'Validate agents.yaml and every file it names, and report in full.',
+    summary: 'Validate agents.yaml and every file it names, and ask its models.',
     usage: USAGE,
     details: [
         'Checks the whole project: the configuration parses and satisfies the',
@@ -75,9 +75,8 @@ export const check: Command = {
         'on this machine.',
         '',
         'It also builds the sandbox image and runs one command in it, against a',
-        'temporary directory rather than your workspace. That is the only thing',
-        'it starts, and --no-sandbox skips it. No container engine is a warning,',
-        'not an error.',
+        'temporary directory rather than your workspace, and --no-sandbox skips',
+        'it. No container engine is a warning, not an error.',
         '',
         'It also asks every model it holds a credential for to answer once — a few',
         'tokens apiece, and the only way to learn that a model id is misspelt,',

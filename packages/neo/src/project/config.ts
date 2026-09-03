@@ -226,7 +226,7 @@ const sandbox = z
         /**
          * Whether the model credentials reach the sandbox. On by default,
          * because the scaffolded image installs `zen` itself and an agent that
-         * cannot run `zen models` inside its own sandbox is a surprise.
+         * cannot run `zen check` inside its own sandbox is a surprise.
          *
          * Turning it off is the honest answer for a project whose agents write
          * code they then execute: the container runs whatever the model wrote,

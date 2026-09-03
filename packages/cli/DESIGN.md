@@ -111,17 +111,17 @@ two.
 
 ## 4. Commands
 
-| Command   | Does                                                                         |
-| --------- | ---------------------------------------------------------------------------- |
-| `init`    | Creates a project here, or in `<dir>`, and registers it.                     |
-| `list`    | Every known project: sessions, last run, whether one is live.                |
-| `open`    | Opens a project in your editor.                                              |
-| `key`     | The credential store (§6).                                                   |
-| `run`     | Runs the project — the TUI on a terminal, one shot otherwise (§7).           |
-| `inspect` | Opens or rebuilds a run's `report.html`.                                     |
-| `models`  | Resolves providers and models and validates the config; `--check` asks them. |
-| `sandbox` | Checks and prepares the container command-line tools run in (§9).            |
-| `version` | CLI, library and Node versions.                                              |
+| Command   | Does                                                                       |
+| --------- | -------------------------------------------------------------------------- |
+| `init`    | Creates a project here, or in `<dir>`, and registers it.                   |
+| `list`    | Every known project: sessions, last run, whether one is live.              |
+| `open`    | Opens a project in your editor.                                            |
+| `key`     | The credential store (§6).                                                 |
+| `run`     | Runs the project — the TUI on a terminal, one shot otherwise (§7).         |
+| `inspect` | Opens or rebuilds a run's `report.html`.                                   |
+| `check`   | Reports on the project in full: files, wiring, credentials, models (§9.2). |
+| `sandbox` | Checks and prepares the container command-line tools run in (§9).          |
+| `version` | CLI, library and Node versions.                                            |
 
 And, when the package providing it is installed:
 
@@ -632,8 +632,7 @@ a single word — a few tokens apiece, and the only reading that catches a missp
 retired or ungranted model. It runs after everything the files alone can say, so
 an interrupted check is still a useful one; a refusal is an **error** because
 every run will meet the same answer, and silence is a **warning** because that is
-the network's fault and not the project's. `--no-models` skips it, and
-`zen models --check` is the same probe on its own.
+the network's fault and not the project's. `--no-models` skips it.
 
 ### 9.3 Where the disk goes
 

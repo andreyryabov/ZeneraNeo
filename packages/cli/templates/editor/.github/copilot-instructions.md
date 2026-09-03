@@ -382,8 +382,8 @@ Google's `embedContent` takes one document per request for every
 hide that. `maxBatch` therefore defaults to `1`; raise it only for a
 `text-embedding-*` model, which accepts more.
 
-`zen check` and `zen models` report every declared embedding beside the models,
-with the credential each one would need.
+`zen check` reports every declared embedding beside the models, with the
+credential each one would need.
 
 ### 3.2 `INSTRUCTIONS.md`
 
@@ -1541,7 +1541,7 @@ There is no compiler for prose. Substitutes, in order of value:
    gateway that gap is a request-time 404 (§7.5).
 
 CLI (`zen --help` for the authoritative list): `zen init`, `zen run`, `zen check`,
-`zen inspect`, `zen models`, `zen key`, `zen list`. **stdout is the answer, stderr
+`zen inspect`, `zen key`, `zen list`. **stdout is the answer, stderr
 is the narration**; every command takes `--json`. Exit codes: `0` ok, `1` failed,
 `2` usage, `3` invalid project, `4` no usable credential.
 

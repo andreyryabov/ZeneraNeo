@@ -21,7 +21,6 @@ zen list     [--sessions] [--prune]
 zen run      [project] [prompt] [options]
 zen open     [project] [--editor <cmd>] [--wait]
 zen key      <ls|add|use|check|rm|show|env> [ref] [options]
-zen models   [name|dir] [--project <name|dir>] [--check]
 zen check    [name|dir] [--project <name|dir>] [--no-sandbox] [--no-models] [--strict] [--quiet]
 zen inspect  [run] [--session <id>] [--open] [--rebuild] [--serve [port]]
 zen sandbox  [status|up|pull|clean|disk] [options]
@@ -42,7 +41,7 @@ guess a flag, and do not read them all.
 | Global flags, `--json`, exit codes, environment, where files live   | [frame.md](./references/frame.md)       |
 | Creating, finding or opening a project                              | [projects.md](./references/projects.md) |
 | Running: the TUI, one-shot answers, sessions, workspaces, overrides | [run.md](./references/run.md)           |
-| Validating: `zen check`, `zen models`, what they can and cannot see | [check.md](./references/check.md)       |
+| Validating: `zen check`, what it can and cannot see                 | [check.md](./references/check.md)       |
 | API keys, providers, the keyring, "no credential" errors            | [keys.md](./references/keys.md)         |
 | The container shell commands run in, images, `persist`              | [sandbox.md](./references/sandbox.md)   |
 | Run reports, trajectories, what a session directory holds           | [inspect.md](./references/inspect.md)   |

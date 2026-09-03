@@ -1,8 +1,7 @@
-# Validating — `zen check` and `zen models`
+# Validating — `zen check`
 
-Both read the project without running it. `zen check` spends a few tokens asking
-each model to answer once, and `zen models` does the same under `--check`; pass
-`--no-models` to `zen check` for an answer that costs nothing at all.
+It reads the project without running it, and spends a few tokens asking each
+model to answer once; `--no-models` gives an answer that costs nothing at all.
 
 ## `zen check`
 
@@ -87,24 +86,3 @@ model with `reasoningEffort` and tools on the default chat-completions API is a
 valid configuration that fails at runtime with _"Function tools with
 reasoning_effort are not supported … in /v1/chat/completions"_. Set
 `api: responses` alongside it.
-
-## `zen models`
-
-```
-zen models [name|dir] [--project <name|dir>] [--check]
-```
-
-The narrower question: what each agent would actually talk to. It resolves every
-provider, model and embedding the project declares, says which credential each
-one needs and whether it is present, and — by default — calls nothing.
-
-`--check` is the exception, and the one thing here that spends: it sends a
-handful of tokens to every distinct model and embedding the project would use.
-That is the only way to learn that a model id is misspelt, retired, or not
-granted to this account — a credential that authenticates says nothing about the
-id it is spent on. A model the provider refuses is an error (exit 3); one that
-never answered is a warning, because a dropped connection is not a broken
-project.
-
-Reach for `zen models` when a run says a model has no credential and for
-`zen check` when something structural is wrong.
