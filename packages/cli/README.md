@@ -41,7 +41,7 @@ Four commands, from nothing to an answer:
 
 ```sh
 npm i -g @zenera/cli         # every vendor SDK comes with it
-zen key add openai           # prompts with the echo off; stored in ~/.zenera
+zen key add openai           # asks for the key without showing it; stored in ~/.zenera
 zen init my-project          # scaffolds a project and registers it
 cd my-project && zen run "introduce yourself"
 ```
@@ -49,7 +49,7 @@ cd my-project && zen run "introduce yourself"
 Then the rest of the loop:
 
 ```sh
-zen run                         # nothing to say yet — a TUI on a terminal
+zen run                         # nothing to say yet — a full-screen terminal app (a TUI)
 zen check                       # validate the project and every file it names
 zen inspect                     # open the last run's report.html
 zen list --sessions             # every project, its sessions and last run
@@ -156,7 +156,7 @@ you are not expected to hand-author `agents.yaml`.
 | `list`    | Every known project: sessions, last run, whether one is live.            |
 | `open`    | Opens a project in your editor.                                          |
 | `key`     | The credential keyring — add, check, switch, remove.                     |
-| `run`     | Runs the project — the TUI on a terminal, one shot otherwise.            |
+| `run`     | Runs the project — the TUI on a terminal, a single answer otherwise.     |
 | `inspect` | Opens or rebuilds a run's `report.html`.                                 |
 | `models`  | Resolves providers and models and validates the config, calling nothing. |
 | `sandbox` | Checks and prepares the container that command-line tools run in.        |
@@ -204,16 +204,16 @@ One keyring serves every provider, and a key goes in the same way whatever it
 is for:
 
 ```sh
-zen key add <provider>              # prompts with the echo off
-zen key add <provider> < key.txt    # or pipe it
+zen key add <provider>              # asks for the key without showing it
+zen key add <provider> < key.txt    # or pipe it in
 ```
 
-The value never comes from argv — a command line lands in `ps`, in shell
-history and in CI logs — so piped stdin and the echo-off prompt are the only
-two ways in. Entries live in `~/.zenera/neo/keys.json` (mode `0600`) and are
-materialised into the environment just before a run, so a real environment
-variable always wins and a project checked out on a machine without `zen` still
-runs.
+The value is never given as an argument — a command line is visible to anyone
+listing running processes, is saved in your shell history and is captured in CI
+logs — so piping it in and the hidden prompt are the only two ways. Entries live
+in `~/.zenera/neo/keys.json`, in a file only you can read, and are copied into
+the environment just before a run, so an environment variable you set yourself
+always wins and a project checked out on a machine without `zen` still runs.
 
 | Provider     | The value is                          | Exported as                      |
 | ------------ | ------------------------------------- | -------------------------------- |
@@ -239,17 +239,29 @@ project against what is stored, and calls nothing.
 
 ### Vertex AI
 
-Vertex accepts either shape, and which one you gave is read off the value.
+Vertex takes two kinds of credential, and you never say which you are giving:
+if the value is a path to a file that exists it is a service-account key, and
+otherwise it is treated as an API key. The name you choose for the entry has no
+say in it — `vertex/express` is simply an entry called `express`, exactly as
+`vertex/prod` is one called `prod`, and either name can hold either kind.
 
 The usual one is a **service-account JSON file** — give its path, not its
-contents:
+contents. Run the command with nothing piped and it asks:
 
 ```sh
-printf '%s' ~/keys/vertex-sa.json | zen key add vertex --location us-central1
+zen key add vertex --location us-central1
+# Paste the key, or a path to the file: /Users/you/keys/vertex-sa.json
 ```
 
-The file is copied into `~/.zenera/neo/keys/` at mode `0600`, so moving or
-cleaning up the original later cannot break it.
+The prompt is read by `zen`, not by your shell, so give a full path there — `~`
+is not expanded. In a script, pipe the path in instead:
+
+```sh
+echo ~/keys/vertex-sa.json | zen key add vertex --location us-central1
+```
+
+The file is copied into `~/.zenera/neo/keys/`, where only you can read it, so
+moving or cleaning up the original later cannot break it.
 
 - `--location <region>` is worth setting. It must be `global` or a **concrete
   region**; multi-region names like `us` are rejected with a 404. `global`
@@ -258,9 +270,72 @@ cleaning up the original later cannot break it.
 - `--project <id>` is only needed when the `project_id` inside the file is not
   the project you want.
 
-The alternative is an **express-mode API key**, an ordinary secret under
-`VERTEX_API_KEY`. Express mode addresses no project, so `--project` and
+The alternative is an **express-mode API key** — a single secret, stored under
+`VERTEX_API_KEY`. It is the Vertex console's way of handing out access without a
+service account, and it needs neither a project nor a region, so `--project` and
 `--location` mean nothing there and are not stored.
+
+### Gemini, three ways
+
+The same Gemini models are reachable through three different credentials, and
+which one you hold decides the prefix a model reference needs.
+
+**AI Studio** — one key and nothing else to configure, the shortest way to a
+working `gemini-3.5-flash`:
+
+```sh
+zen key add google                # asks for the key without showing it
+zen models                        # google:gemini-3.5-flash now resolves
+```
+
+**Vertex, service account** — what production usually runs on. Give the path
+and a region, because the file says which project it belongs to but never which
+region to call:
+
+```sh
+echo ~/keys/vertex-sa.json | zen key add vertex --location us-central1
+```
+
+Add `--project` only when the `project_id` inside the file is not the one you
+want to bill:
+
+```sh
+echo ~/keys/vertex-sa.json \
+  | zen key add vertex --project other-project --location europe-west4
+```
+
+**Vertex, express mode** — paste the key at the prompt; no flags apply:
+
+```sh
+zen key add vertex
+```
+
+Holding several at once is the ordinary case. Name them and switch:
+
+```sh
+echo ~/keys/prod-sa.json | zen key add vertex/prod --location us-central1
+echo ~/keys/dev-sa.json  | zen key add vertex/dev  --location global
+zen key add vertex/express       # the express key, same provider
+
+zen key use vertex/dev           # which one the next run uses
+zen key ls --check               # all three, and whether they still work
+zen key show vertex/prod         # masked; --reveal prints the path
+```
+
+`google` and `vertex` can both be configured — they are separate entries for
+separate services, and the reference picks:
+
+```sh
+zen run --model google:gemini-3.5-flash "summarise this repo"
+zen run --model vertex:gemini-3.5-flash "summarise this repo"
+```
+
+If you have already run `gcloud auth application-default login`, that login is
+itself a usable credential: `zen key ls` shows it as `adc`, marked `~` because
+it came from outside the keyring, and Vertex works with nothing stored at all.
+Anything already set in `GOOGLE_APPLICATION_CREDENTIALS`, `VERTEX_API_KEY` or
+`GEMINI_API_KEY` is listed the same way and wins over the keyring, so it is
+always visible which credential a run will actually use.
 
 ### More than one key per provider
 
@@ -275,32 +350,34 @@ zen key env openai              # shell exports, for other tools
 zen key rm openai/work
 ```
 
-`zen key ls` marks the active entry with `*`, and something it found in your
-real environment or in `gcloud`'s ADC with `~`, so it is always clear where a
-working provider actually comes from.
+`zen key ls` marks the active entry with `*`, and anything it found outside the
+keyring — in your environment, or in a `gcloud` login — with `~`, so it is always
+clear where a working provider actually comes from.
 
 ## Concepts
 
 - **Project** — a named directory holding a complete agent definition and the
   sessions that ran against it. Self-describing: `agents.yaml` is what makes it
   one, so moving or cloning the directory loses nothing.
-- **Session** — a context that persists: one workspace, one memory, one blob
-  store, one accumulating trajectory. Resumable.
+- **Session** — a context that persists: one workspace, one memory, one store
+  for large files, and a record of everything that happened, added to as it
+  goes. Resumable.
 - **Run** — one prompt in, one answer out, inside a session. Recorded in full,
   whether or not you were watching.
 - **Workspace** — the directory the agents may read and write. A prompt given on
   the command line uses the current directory; the TUI offers the session's own
   empty folder and confirms anything outside it.
-- **Keyring** — `~/.zenera/neo`, mode `0700`. Keys are materialised into the
-  environment just before a run, so a real env var always wins and a project
-  checked out on a machine without `zen` still runs.
+- **Keyring** — `~/.zenera/neo`, readable only by you. Keys are copied into the
+  environment just before a run, so an environment variable you set yourself
+  always wins and a project checked out on a machine without `zen` still runs.
 
 ## The library underneath
 
 This is a shell over
 [`@zenera/neo`](https://www.npmjs.com/package/@zenera/neo) — agents, models,
-tools, skills, memory and an append-only trajectory. Use it directly when you
-want the runtime inside your own application rather than on a terminal:
+tools, skills, memory and a running record of everything that happened. Use it
+directly when you want the runtime inside your own application rather than on a
+terminal:
 [its README](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md).
 
 ## Documentation

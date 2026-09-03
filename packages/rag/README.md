@@ -47,8 +47,8 @@ zen rag schema show Type:Invoice      # a named node, with no search in between
 ```
 
 Non-interactive search is a machine interface: every field is a flag, the whole
-query can arrive as one JSON object, `--json` is a stable shape, no terminal is
-required, and an empty result exits 0.
+query can arrive as one JSON object, the `--json` output keeps the same
+structure from run to run, no terminal is required, and an empty result exits 0.
 
 ```sh
 zen rag schema search --query - --format ts <<'JSON'
@@ -108,7 +108,7 @@ need the word explained again, it needs the list of types that have one.
 schema-db/
 ├── manifest.json     written last — its absence means "not indexed"
 ├── graph.json        topology and light attributes, read whole
-├── schemas.json      the raw schemas, read on first hydrate
+├── schemas.json      the raw schemas, read the first time one is needed in full
 ├── operations.json   likewise, for the OpenAPI subset
 └── lance/            one table: a row per node, one text column, one vector
 ```
@@ -125,8 +125,8 @@ different one is refused rather than answered with noise.
 - A **query parameter is a property**, like any field in a body. Nobody should
   have to know in advance which one `page_size` is.
 - Every type carries a **direction** — `input`, `output` or `both` — worked out
-  by propagating from the operations through composition, so a shared DTO is
-  honestly both rather than whichever side was read last.
+  by propagating from the operations through composition, so a type used on both
+  sides is honestly both rather than whichever side was read last.
 - Filters reaching the store are **closed enums only**. Exclusion lists are
   applied in JavaScript afterwards, so nothing a model wrote ever reaches a SQL
   predicate.

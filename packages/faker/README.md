@@ -52,12 +52,12 @@ zen faker cache clear                # throw it away
 
 The first time an operation is called, the faker asks a model to write a
 **Python generator** for it — one file, taking a JSON input path and a JSON
-output path. That file is then run against synthetic probes and judged twice:
-against the operation's response schema, and against the echo rule, which says
-that where a path or query parameter shares a name with a property in the
-response, the response has to carry the value that was asked for.
-`GET /users/12324` answering with somebody else's id validates perfectly and is
-still wrong.
+output path. That file is then run against sample requests it makes up, and
+judged twice: against the operation's response schema, and against the echo
+rule, which says that where a path or query parameter shares a name with a
+property in the response, the response has to carry the value that was asked
+for. `GET /users/12324` answering with somebody else's id validates perfectly
+and is still wrong.
 
 If it fails, the diagnostics go back to the model and it tries again, up to
 `--attempts`. If it passes, the file is cached under `~/.zenera/neo/faker` and
@@ -75,9 +75,10 @@ zen faker build <spec...>    Write every generator now and exit.
 zen faker cache ls | clear   What has been generated, or throw it away.
 ```
 
-Useful options: `--port`, `--host` (loopback by default), `--model`, `--seed`
-(same request, same answer), `--rebuild`, `--attempts`, `--concurrency`,
-`--timeout`, `--cache <dir>`, `--quiet`. `zen help faker` prints the full table.
+Useful options: `--port`, `--host` (reachable only from this machine by
+default), `--model`, `--seed` (same request, same answer), `--rebuild`,
+`--attempts`, `--concurrency`, `--timeout`, `--cache <dir>`, `--quiet`.
+`zen help faker` prints the full table.
 
 `GET /__faker/routes` lists what is being served; `GET /__faker/health` is a
 health check.

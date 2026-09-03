@@ -27,13 +27,14 @@ Four commands, from nothing to an answer:
 
 ```sh
 npm i -g @zenera/cli         # every vendor SDK comes with it
-zen key add openai           # prompts with the echo off; stored in ~/.zenera
+zen key add openai           # asks for the key without showing it; stored in ~/.zenera
 zen init my-project          # scaffolds a project and registers it
 cd my-project && zen run "introduce yourself"
 ```
 
-`zen run` with a prompt is one shot: stdout is the answer, so it pipes. `zen
-run` with nothing to say opens a TUI instead.
+`zen run` with a prompt answers once and exits, printing the answer to standard
+output so it can be piped into anything else. `zen run` with nothing to say
+opens a full-screen terminal interface — a TUI — instead.
 
 The rest of this page is the same thing, slowly.
 
@@ -72,20 +73,21 @@ rather than binaries of their own — see
 
 ## 2 · Add a credential
 
-Keys live in `~/.zenera/neo` (mode `0700`), never in the project. They are
-materialised into the environment just before a run, so a real environment
-variable always wins, and a project checked out on a machine without `zen` still
-runs.
+Keys live in `~/.zenera/neo`, in a folder only you can read, and never in the
+project. Just before a run they are copied into the environment the agents see,
+so an environment variable you set yourself always wins, and a project checked
+out on a machine without `zen` still runs.
 
 ```sh
 zen key add openai              # or: anthropic, google, vertex, openrouter
 zen key ls --check              # what is stored, and whether it still works
 ```
 
-It prompts for the key with the echo off. In a script, pipe it instead:
-`zen key add openai < key.txt`. The secret never comes from argv — a command
-line lands in `ps`, in shell history and in CI logs, so piped stdin and the
-prompt are the only ways in.
+It asks for the key without showing what you type. In a script, pipe it in
+instead: `zen key add openai < key.txt`. The secret is never given as an
+argument, because a command line is visible to anyone listing running processes,
+is saved in your shell history and is captured in CI logs — so piping it in and
+the hidden prompt are the only two ways.
 
 Vertex AI is the one that takes more than a secret — a service-account JSON
 file, and a `--location` worth setting. For that, for which key a given model
@@ -179,8 +181,8 @@ reviewable rather than opaque.
 ## 5 · Run them
 
 ```sh
-zen run my-project                        # a TUI on a terminal, with nothing to say yet
-zen run my-project "summarise this repo"  # one shot; stdout is the answer
+zen run my-project                        # a full-screen terminal app, with nothing to say yet
+zen run my-project "summarise this repo"  # answers once and exits; stdout is the answer
 zen run my-project --session <id>         # continue a particular session
 zen run my-project --read-only            # give the agent no way to write
 echo "triage this" | zen run my-project --quiet | jq
@@ -201,7 +203,7 @@ zen run my-project "find the dead exports and delete them"
 ```
 
 is a complete instruction. `--session`, `--workspace` and `--read-only` override
-that; the TUI, where there is someone to ask, still asks.
+that; the full-screen interface, where there is someone to ask, still asks.
 
 A **session** is a context that persists: one workspace, one memory, one
 accumulating trajectory. It continues itself — there is no `resume`, because its
@@ -291,7 +293,7 @@ complete instruction: no configuration, no paths, nothing to remember. Add
 | --------- | ------------------------------------------------------------------------ |
 | `init`    | Creates a project here, or in `<dir>`, and registers it.                 |
 | `list`    | Every known project: sessions, last run, whether one is live.            |
-| `run`     | Runs the project — the TUI on a terminal, one shot otherwise.            |
+| `run`     | Runs the project — the TUI on a terminal, a single answer otherwise.     |
 | `open`    | Opens a project in your editor.                                          |
 | `key`     | The credential keyring — add, check, switch, remove.                     |
 | `models`  | Resolves providers and models and validates the config, calling nothing. |
@@ -352,8 +354,9 @@ Details: [packages/faker/README.md](packages/faker/README.md) ·
 - **Project** — a named directory holding a complete agent definition and the
   sessions that ran against it. Self-describing: `agents.yaml` is what makes it
   one, so moving or cloning the directory loses nothing.
-- **Session** — a context that persists: one workspace, one memory, one blob
-  store, one accumulating trajectory. Resumable.
+- **Session** — a context that persists: one workspace, one memory, one store
+  for large files, and a record of everything that happened, added to as it
+  goes. Resumable.
 - **Run** — one prompt in, one answer out, inside a session. Recorded in full,
   whether or not you were watching.
 - **Workspace** — the directory the agents may read and write. Defaults to the
@@ -361,9 +364,9 @@ Details: [packages/faker/README.md](packages/faker/README.md) ·
 - **Sandbox** — a Podman container per session, with the workspace mounted at
   `/workspace`. Prepared on the first command an agent runs; `zen sandbox up`
   does it ahead of time.
-- **Keyring** — `~/.zenera/neo`, mode `0700`. Keys are materialised into the
-  environment just before a run, so a real env var always wins and a project
-  checked out on a machine without `zen` still runs.
+- **Keyring** — `~/.zenera/neo`, readable only by you. Keys are copied into the
+  environment just before a run, so an environment variable you set yourself
+  always wins and a project checked out on a machine without `zen` still runs.
 
 ---
 
@@ -383,21 +386,23 @@ Details: [packages/faker/README.md](packages/faker/README.md) ·
 - **The project is the artefact.** Not a script that happens to call a model —
   a directory with sessions and recorded runs, safe to commit.
 - **Nothing is hidden.** No orchestration layer, no framework magic: an agent is
-  an instruction, a model, tools, skills, handoffs and fork. That is the list.
+  an instruction, a model, tools, skills, who it may hand the work to, and how
+  it splits into parallel branches. That is the list.
 - **Everything is recorded.** Every run writes its input, output, state and a
   self-contained `report.html` — the graph, every request, every token.
 - **Two runtime dependencies.** The library needs `yaml` and `zod`. The vendor
-  SDKs are optional peers, loaded only when you actually talk to that vendor —
-  the CLI ships all four so that `zen` works out of the box.
+  SDKs are optional peer dependencies, installed and loaded only when you
+  actually talk to that vendor — the CLI ships all four so that `zen` works out
+  of the box.
 
 ---
 
 ## The library underneath
 
 The CLI is a shell over `@zenera/neo` — agents, models, tools, skills, memory and
-an append-only trajectory, with OpenAI, Anthropic, Google/Vertex and OpenRouter
-behind one interface. Use it directly when you want the runtime inside your own
-application rather than on a terminal.
+a running record of everything that happened, with OpenAI, Anthropic,
+Google/Vertex and OpenRouter behind one interface. Use it directly when you want
+the runtime inside your own application rather than on a terminal.
 
 ```ts
 import { loadProject } from '@zenera/neo';

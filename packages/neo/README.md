@@ -124,8 +124,9 @@ of surfacing three turns into a run as a confused model.
 
 ## What it gives you
 
-- **Agents** — an instruction, a model, tools, skills, plus handoffs and fork.
-  There is no hidden orchestration layer.
+- **Agents** — an instruction, a model, tools, skills, who it may hand the work
+  to, and how it splits into parallel branches. There is no hidden orchestration
+  layer.
 - **Models** — OpenAI, Anthropic, Google/Vertex and OpenRouter behind one
   interface, each through its own SDK, plus any OpenAI-compatible endpoint.
   Named providers and model aliases resolve from config or from the host.
@@ -135,9 +136,10 @@ of surfacing three turns into a run as a confused model.
   permanently occupying the prompt, optionally owning their own tools.
 - **Memory** — pluggable `MemoryStore`s, with scopes deciding what is private to
   an agent and what is shared.
-- **Trajectory** — an append-only log of everything that happened. Provider
-  messages are a projection of it, and compaction _covers_ nodes rather than
-  deleting them, so the audit trail survives context pressure.
+- **Trajectory** — an append-only log of everything that happened. What is sent
+  to a provider is derived from it, and compaction _covers_ nodes rather than
+  deleting them, so the full record survives even when older turns have to be
+  pushed out of the context window.
 - **Inspection** — `renderReportHtml` turns any run into one self-contained HTML
   file: the graph, every request, every token.
 
