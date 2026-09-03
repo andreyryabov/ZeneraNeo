@@ -198,6 +198,87 @@ command — so `zen run … | jq` is a supported way to use it, not an accident.
 
 The binary is installed under three names: `zen`, `zn` and `zenera`.
 
+## Credentials
+
+One keyring serves every provider, and a key goes in the same way whatever it
+is for:
+
+```sh
+zen key add <provider>              # prompts with the echo off
+zen key add <provider> < key.txt    # or pipe it
+```
+
+The value never comes from argv — a command line lands in `ps`, in shell
+history and in CI logs — so piped stdin and the echo-off prompt are the only
+two ways in. Entries live in `~/.zenera/neo/keys.json` (mode `0600`) and are
+materialised into the environment just before a run, so a real environment
+variable always wins and a project checked out on a machine without `zen` still
+runs.
+
+| Provider     | The value is                          | Exported as                      |
+| ------------ | ------------------------------------- | -------------------------------- |
+| `openai`     | a secret                              | `OPENAI_API_KEY`                 |
+| `anthropic`  | a secret                              | `ANTHROPIC_API_KEY`              |
+| `google`     | a secret — AI Studio                  | `GEMINI_API_KEY`                 |
+| `vertex`     | a path to a service-account JSON file | `GOOGLE_APPLICATION_CREDENTIALS` |
+| `openrouter` | a secret                              | `OPENROUTER_API_KEY`             |
+| `exa`        | a secret — for the search tool        | `EXA_API_KEY`                    |
+
+`zen key add` verifies the credential against the provider before it finishes,
+but stores it either way: a key that cannot be checked right now — offline,
+behind a proxy — is not a key that is wrong. `--no-check` skips the call.
+
+### Which key a model uses
+
+A model reference is `[provider[/api]:]model`, and the first segment names a
+**provider, not a vendor**. So `vertex:gemini-3.5-flash` and
+`google:gemini-3.5-flash` are the same model reached through two different
+services, needing two different credentials — and a bare `gpt-5.4-mini` goes to
+the default provider, `openai`. `zen models` resolves every reference in a
+project against what is stored, and calls nothing.
+
+### Vertex AI
+
+Vertex accepts either shape, and which one you gave is read off the value.
+
+The usual one is a **service-account JSON file** — give its path, not its
+contents:
+
+```sh
+printf '%s' ~/keys/vertex-sa.json | zen key add vertex --location us-central1
+```
+
+The file is copied into `~/.zenera/neo/keys/` at mode `0600`, so moving or
+cleaning up the original later cannot break it.
+
+- `--location <region>` is worth setting. It must be `global` or a **concrete
+  region**; multi-region names like `us` are rejected with a 404. `global`
+  routes across regions and pays about ten seconds of cold start on the first
+  request each process makes — a region answers in about two.
+- `--project <id>` is only needed when the `project_id` inside the file is not
+  the project you want.
+
+The alternative is an **express-mode API key**, an ordinary secret under
+`VERTEX_API_KEY`. Express mode addresses no project, so `--project` and
+`--location` mean nothing there and are not stored.
+
+### More than one key per provider
+
+Entries are named, so a provider can hold several and one of them is active:
+
+```sh
+zen key add openai/work         # a second entry
+zen key use openai/work         # which one runs use
+zen key ls --check              # everything stored, and whether it still works
+zen key show vertex/default     # masked — --reveal prints the secret
+zen key env openai              # shell exports, for other tools
+zen key rm openai/work
+```
+
+`zen key ls` marks the active entry with `*`, and something it found in your
+real environment or in `gcloud`'s ADC with `~`, so it is always clear where a
+working provider actually comes from.
+
 ## Concepts
 
 - **Project** — a named directory holding a complete agent definition and the
