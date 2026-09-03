@@ -69,6 +69,17 @@ export interface SandboxSpec {
     persist?: boolean;
     /** environment inside the container — resolved values, never a passthrough */
     env?: Record<string, string>;
+    /**
+     * Variables forwarded from this process by *name*, for credentials.
+     *
+     * Separate from `env` for two reasons, both about the value never being
+     * written down. `--env NAME` without an `=` tells podman to read the value
+     * out of its own environment, so the secret never appears on a command
+     * line, in `ps`, or in `podman inspect`. And the container's identity is
+     * computed from the names alone, so rotating a key does not abandon a
+     * persisted container's filesystem.
+     */
+    secrets?: readonly string[];
 }
 
 export type SandboxNetwork = 'bridge' | 'none' | 'host';
@@ -377,6 +388,14 @@ export class Sandbox {
         for (const [k, v] of Object.entries(s.env)) {
             args.push('--env', `${k}=${v}`);
         }
+        // No `=`, and so no value: podman reads each one from its own
+        // environment. A key passed this way is not in the argv of a process
+        // any user on the machine can list.
+        for (const name of s.secrets) {
+            if (process.env[name]) {
+                args.push('--env', name);
+            }
+        }
         args.push(s.image, 'sleep', 'infinity');
         return args;
     }
@@ -634,6 +653,7 @@ function resolveSpec(opts: SandboxOptions): Resolved {
         user: opts.user,
         persist: opts.persist ?? false,
         env: opts.env ?? {},
+        secrets: opts.secrets ?? [],
         readOnly: opts.readOnly ?? false,
         mounts: opts.mounts ?? [],
         engine: opts.engine ?? 'podman',
@@ -644,6 +664,11 @@ function resolveSpec(opts: SandboxOptions): Resolved {
  * The container's name is a function of its configuration. Change the image
  * and a new container appears rather than an old one quietly persisting with
  * the wrong rootfs — which is the failure mode `persist` would otherwise have.
+ *
+ * Secrets contribute their names and not their values: what a container is
+ * depends on which credentials reach it, not on what they happen to say today,
+ * and hashing the values would throw away a persisted container's filesystem
+ * every time a key was rotated.
  */
 function containerName(spec: Resolved): string {
     const digest = createHash('sha256')
@@ -659,6 +684,7 @@ function containerName(spec: Resolved): string {
                 spec.readOnly,
                 spec.mounts,
                 Object.entries(spec.env).sort(),
+                [...spec.secrets].sort(),
             ]),
         )
         .digest('hex')

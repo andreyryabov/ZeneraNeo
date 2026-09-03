@@ -87,6 +87,11 @@ It prompts for the key with the echo off. In a script, pipe it instead:
 line lands in `ps`, in shell history and in CI logs, so piped stdin and the
 prompt are the only ways in.
 
+Vertex AI is the one that takes more than a secret — a service-account JSON
+file, and a `--location` worth setting. For that, for which key a given model
+reference uses, and for keeping several keys per provider, see
+[credentials](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md#credentials).
+
 ## 3 · Create a project
 
 ```sh
@@ -359,8 +364,6 @@ Details: [packages/faker/README.md](packages/faker/README.md) ·
 - **Keyring** — `~/.zenera/neo`, mode `0700`. Keys are materialised into the
   environment just before a run, so a real env var always wins and a project
   checked out on a machine without `zen` still runs.
-
-Full specification: [packages/cli/DESIGN.md](packages/cli/DESIGN.md).
 
 ---
 

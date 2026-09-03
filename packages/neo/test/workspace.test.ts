@@ -302,6 +302,30 @@ describe('the workspace tools', () => {
         expect(new Set(groups)).toEqual(new Set(['workspace']));
     });
 
+    /**
+     * Node names the host path when the filesystem says no. The model was never
+     * given that name, so a failure has to arrive in the words it wrote.
+     */
+    it('reports a filesystem failure under the workspace name, not the host one', async () => {
+        for (const [name, args] of [
+            ['list_dir', { path: 'ghost/dir' }],
+            ['read_file', { path: 'ghost.txt' }],
+            ['delete_file', { path: 'ghost.txt' }],
+            ['move_file', { from: 'ghost.txt', to: 'found.txt' }],
+        ] as const) {
+            const err = await call(name, args).catch((e: Error) => e);
+            expect(err).toBeInstanceOf(Error);
+            expect(err.message).not.toContain(root);
+            expect(err.message).not.toContain('ENOENT');
+        }
+        await expect(call('list_dir', { path: 'ghost/dir' })).rejects.toThrow(
+            'ghost/dir does not exist',
+        );
+        await expect(call('read_file', { path: 'poem.txt/nope' })).rejects.toThrow(
+            /poem\.txt\/nope (does not exist|is not a directory)/,
+        );
+    });
+
     it('accepts a tool named bare or qualified by its group', () => {
         const pick = (selectors: string[]): string[] =>
             selectTools(tools, selectors, { where: 'test' }).map((t) => t.name);

@@ -1,6 +1,3 @@
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import {
     projectRegistry,
     readProjectConfig,
@@ -9,7 +6,15 @@ import {
     type ModelRequirement,
     type ProjectConfig,
 } from '@zenera/neo';
-import { SHAPES, isProvider, type KeyStore, type Provider } from './keys.ts';
+import {
+    envNames,
+    form,
+    gcloudAdc,
+    isProvider,
+    SHAPES,
+    type KeyStore,
+    type Provider,
+} from './keys.ts';
 import { bold, dim } from './term.ts';
 
 // ---------------------------------------------------------------------------
@@ -84,32 +89,26 @@ function declared(config: ProjectConfig): Map<DeclaredRole, Map<string, ModelRef
 }
 
 /**
- * `gcloud auth application-default login` writes here, and the GenAI SDK finds
- * it with no variable set — so without this check every developer using ADC
- * would be told their working Vertex setup is broken.
- */
-function hasGcloudAdc(): boolean {
-    const dir = process.env.CLOUDSDK_CONFIG ?? join(homedir(), '.config', 'gcloud');
-    return existsSync(join(dir, 'application_default_credentials.json'));
-}
-
-/**
  * Whether a requirement is actually met, and under which variable.
  *
  * `satisfied` is the library's answer and it is about api keys, which is the
- * wrong question for Vertex: that kind is `keyOptional` because it
- * authenticates from a service-account file instead. So the file-shaped
- * credential is looked for where the keyring keeps it.
+ * wrong question for Vertex: that kind is `keyOptional` because it can
+ * authenticate from a service-account file instead. So both of its variables
+ * are looked for, along with the file `gcloud` leaves behind.
  *
- * Exported because a report that named `VERTEX_API_KEY` while the audit
- * silently checked `GOOGLE_APPLICATION_CREDENTIALS` would be two answers to
- * one question, and the wrong one is the one people would act on.
+ * The variable named back is the one that is actually set, because a report
+ * that named `VERTEX_API_KEY` while the audit silently checked
+ * `GOOGLE_APPLICATION_CREDENTIALS` would be two answers to one question, and
+ * the wrong one is the one people would act on. With nothing set there is no
+ * such answer, so it names the form the provider is usually reached by.
  */
 export function credentialFor(need: ModelRequirement): { env: string; present: boolean } {
     const provider = isProvider(need.kind) ? need.kind : undefined;
-    const shape = provider ? SHAPES[provider] : undefined;
-    if (shape?.holds === 'file') {
-        return { env: shape.env, present: Boolean(process.env[shape.env]) || hasGcloudAdc() };
+    // A provider with a file form can authenticate without an api key, which is
+    // the only thing `satisfied` knows how to look for.
+    if (provider && SHAPES[provider].forms.some((f) => f.holds === 'file')) {
+        const set = envNames(provider).find((name) => process.env[name]);
+        return { env: set ?? form(provider).env, present: Boolean(set) || Boolean(gcloudAdc()) };
     }
     return { env: need.apiKeyEnv, present: need.satisfied };
 }

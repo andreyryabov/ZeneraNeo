@@ -1,7 +1,7 @@
 import { loadProject, readProjectConfig, type AgentProject } from '@zenera/neo';
 import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
-import { KeyStore, PROVIDERS, SHAPES } from '../keys.ts';
+import { envNames, form, KeyStore, PROVIDERS } from '../keys.ts';
 import { project as resolveProject } from '../resolve.ts';
 import {
     bold,
@@ -44,7 +44,9 @@ export const models: Command = {
         // Asked before materialising, because materialising is exactly what
         // erases the difference between "the environment had it" and "the
         // keyring supplied it".
-        const fromEnv = new Set(PROVIDERS.filter((p) => process.env[SHAPES[p].env]));
+        const fromEnv = new Set(
+            PROVIDERS.filter((p) => envNames(p).some((name) => process.env[name])),
+        );
         store.materialize();
 
         let project: AgentProject;
@@ -91,7 +93,7 @@ export const models: Command = {
 
         const credentials = PROVIDERS.map((p) => ({
             provider: p,
-            env: SHAPES[p].env,
+            env: envNames(p).find((name) => process.env[name]) ?? form(p).env,
             source: fromEnv.has(p)
                 ? ('environment' as const)
                 : store.active(p)

@@ -1,18 +1,18 @@
-import { relative, resolve } from 'node:path';
 import {
     bold,
     CliError,
     cyan,
     dim,
     ensureHome,
+    envNames,
     EXIT,
+    form,
     isInteractive,
     json,
     KeyStore,
     note,
     parse,
     PROVIDERS,
-    SHAPES,
     table,
     usageError,
     write,
@@ -21,6 +21,7 @@ import {
     type Provider,
 } from '@zenera/cli/lib';
 import { createEmbedder, type Embedder, type EmbeddingRef } from '@zenera/neo';
+import { relative, resolve } from 'node:path';
 import { isFormat, present, type Format } from './present.ts';
 import { isEmpty, parseQuery, QueryError } from './query.ts';
 import { repl } from './repl.ts';
@@ -508,7 +509,7 @@ async function embedder(ref: string | undefined): Promise<Embedder> {
     const keys = await KeyStore.open();
     // Asked before materialising, because materialising is what erases the
     // difference between "the environment had it" and "the keyring supplied it".
-    const fromEnv = new Set(PROVIDERS.filter((p) => process.env[SHAPES[p].env]));
+    const fromEnv = new Set(PROVIDERS.filter((p) => envNames(p).some((n) => process.env[n])));
     keys.materialize();
 
     if (!ref) {
@@ -541,7 +542,7 @@ function choices(keys: KeyStore, fromEnv: ReadonlySet<Provider>): CliError {
                 : keys.active(provider)
                   ? 'keyring'
                   : '';
-            const row = [`  ${cyan(`${provider}:${model}`)}`, dim(source || SHAPES[provider].env)];
+            const row = [`  ${cyan(`${provider}:${model}`)}`, dim(source || form(provider).env)];
             (source ? rows : rest).push(row);
         }
     }

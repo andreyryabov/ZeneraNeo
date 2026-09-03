@@ -19,7 +19,11 @@ providers: {} # named connections
 provider: openai # which provider a bare model id belongs to
 models: {} # named model configurations
 model: fast # fallback for agents that do not pin their own
+embeddings: {} # named vectorisers
+embedding: main # the one `embedder()` hands back when asked for none
 skills: agents/skills # one directory, or a list
+assets: assets # reference material, read-only at /assets
+sandbox: {} # the container shell commands run in
 
 agents:
     - name: intake
@@ -43,18 +47,20 @@ they should be unambiguous in both.
 
 ## Top-level keys
 
-| Key         | Type                   | Meaning                                                    |
-| ----------- | ---------------------- | ---------------------------------------------------------- |
-| `version`   | `1`                    | Schema version. Defaults to `1`                            |
-| `default`   | name                   | Entry agent. Wins over any `default: true`                 |
-| `providers` | map of name → provider | Named connections                                          |
-| `provider`  | name                   | The provider a bare model id belongs to (otherwise openai) |
-| `models`    | map of name → model    | Named model configurations                                 |
-| `model`     | model ref              | Fallback for agents that do not pin their own              |
-| `skills`    | string or string[]     | Skill directories, merged into one catalog                 |
-| `assets`    | string                 | Reference material, mounted read-only at `/assets`         |
-| `sandbox`   | sandbox                | The container `run_command` and friends execute in         |
-| `agents`    | agent[]                | At least one                                               |
+| Key          | Type                    | Meaning                                                    |
+| ------------ | ----------------------- | ---------------------------------------------------------- |
+| `version`    | `1`                     | Schema version. Defaults to `1`                            |
+| `default`    | name                    | Entry agent. Wins over any `default: true`                 |
+| `providers`  | map of name → provider  | Named connections                                          |
+| `provider`   | name                    | The provider a bare model id belongs to (otherwise openai) |
+| `models`     | map of name → model     | Named model configurations                                 |
+| `model`      | model ref               | Fallback for agents that do not pin their own              |
+| `embeddings` | map of name → embedding | Named vectorisers                                          |
+| `embedding`  | embedding ref           | The one `embedder()` returns when asked for none           |
+| `skills`     | string or string[]      | Skill directories, merged into one catalog                 |
+| `assets`     | string                  | Reference material, mounted read-only at `/assets`         |
+| `sandbox`    | sandbox                 | The container `run_command` and friends execute in         |
+| `agents`     | agent[]                 | At least one                                               |
 
 ---
 
@@ -331,6 +337,25 @@ Application Default Credentials itself. It needs a project id, taken from
 `project:`, then `GOOGLE_CLOUD_PROJECT`, then the `project_id` inside the
 service-account key file named by `GOOGLE_APPLICATION_CREDENTIALS`.
 
+It also accepts an **express-mode** api key, in `apiKey:` or `VERTEX_API_KEY`,
+and that is an alternative rather than an addition. Express mode addresses no
+project, so a key and a project cannot both be sent: naming both would build a
+project-scoped url and then authenticate it with the key header, which the
+service refuses with a `403` that mentions neither. A key given here therefore
+wins outright, and `project:` and `location:` are ignored alongside it.
+
+```yaml
+providers:
+    vertex-express:
+        kind: vertex
+        apiKey: ${VERTEX_API_KEY} # no project, no location
+
+    vertex-eu:
+        kind: vertex
+        project: acme-prod # a service account, and a region to call
+        location: europe-west4
+```
+
 ### Environment references
 
 `${VAR}` reads the environment; `${VAR:-fallback}` supplies a default. It
@@ -434,6 +459,48 @@ A `model:` value anywhere is resolved as:
 
 Results are memoized, so two agents naming `fast` share one model over one
 client, and a bad ref raises its error once, at the agent that wrote it.
+
+---
+
+## `embeddings:`
+
+Vectorisers, named the same way models are, and reached through the same
+`providers:` and the same memoized clients.
+
+```yaml
+embeddings:
+    main: vertex:gemini-embedding-001 # shorthand
+    wide:
+        provider: openai
+        model: text-embedding-3-large
+        dimensions: 1536
+
+embedding: main # what `embedder()` returns when asked for none
+```
+
+| Field        | Applies to | Meaning                                               |
+| ------------ | ---------- | ----------------------------------------------------- |
+| `provider`   | all        | A name from `providers:`, or a built-in kind          |
+| `model`      | all        | Required. Sent to the API verbatim                    |
+| `dimensions` | all        | Truncate to this width, where the model supports it   |
+| `title`      | gemini     | A document title the retrieval task type weighs       |
+| `maxBatch`   | gemini     | Texts per request; every `gemini-embedding-*` takes 1 |
+| `routing`    | openrouter | Who serves the request                                |
+
+Deliberately smaller than a model entry: an embedding call has no conversation,
+no tools and no reasoning, so a connection, an id and a width is all there is to
+say. There is **no `api:`** — `/v1/responses` has no embeddings endpoint, and
+naming one is an error. There is no `taskType` either: that describes the text
+rather than the model, so it belongs to the call.
+
+This is **not a per-agent key**. Nothing in the runtime consumes an embedder on
+an agent's behalf yet, and a key nothing honours is worse than a key that is not
+there. What reads it is a host, through `AgentProject.embedder(name?)` — with no
+argument, the project's `embedding:`, and `undefined` when it declares none.
+Only `embedding:` resolves at load; a named one resolves when it is asked for.
+
+Anthropic publishes no embeddings API, so a `provider` pointing at it is an
+error whatever the model says.
 
 ---
 
@@ -552,6 +619,7 @@ sandbox:
 | `user`    | string                 | the image's                                   | uid, name, or `uid:gid`                             |
 | `persist` | boolean                | `false` — **recommended `true`**              | Keep the container between runs of a session        |
 | `env`     | string[]               | none                                          | Host variables to forward, **by name**              |
+| `keys`    | boolean                | `true`                                        | Whether the model credentials reach the container   |
 
 `image` and `build` cannot both be set: a Dockerfile names its own base in its
 `FROM` line, so one of the two would be silently ignored.
@@ -677,9 +745,40 @@ rootfs.
 A value in this file would be a secret in the repository, so only names are
 accepted and the host's environment supplies the value. Names that read like a
 credential — anything containing `KEY`, `TOKEN`, `SECRET`, `PASSWORD` or
-`CREDENTIAL` — are refused at load. The CLI materialises its keyring into its
-own environment before loading a project, so forwarding one would hand every
-model key to whatever the agent decided to run.
+`CREDENTIAL` — are refused at load. Not because credentials never belong in the
+sandbox, but because `env:` is the wrong door for them: they go through `keys:`,
+which forwards a known set and can be turned off in one place, where a
+hand-written `env: [OPENAI_API_KEY]` would be a second, silent way in.
+
+### `keys:`, and what it gives away
+
+The model credentials reach the container by default. The scaffolded image
+installs `zen` itself, and an agent that cannot run `zen models` inside its own
+sandbox is a surprise rather than a safety feature.
+
+It is still a real trade, and worth stating plainly: **the container runs
+whatever the model wrote**, so a forwarded key is a key that generated code can
+read, and on a `bridge` network it is a key that code can send somewhere. Two
+ways to close that:
+
+```yaml
+sandbox:
+    keys: false # nothing credential-shaped is forwarded
+    network: none # or: nowhere to send it
+```
+
+`zen run --no-keys` does the same for one run, whatever the file says.
+
+What is forwarded, when it is on: the API key of every provider the run has a
+credential for, plus `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`. A
+Vertex service-account file is bind-mounted read-only — that one file, not the
+directory it sits in — under `/run/zenera/keys`, and
+`GOOGLE_APPLICATION_CREDENTIALS` points there instead.
+
+Secrets are handed to podman **by name**, never as `NAME=value`, so a key does
+not appear in the container's argv, in `ps`, or in `podman inspect`. For the
+same reason the container's identity is computed from the names alone: rotating
+a key does not abandon a `persist: true` container's filesystem.
 
 ### `agents[].sandbox`
 

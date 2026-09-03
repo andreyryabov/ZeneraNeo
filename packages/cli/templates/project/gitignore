@@ -4,3 +4,6 @@ sessions/
 
 # Scratch, inside the workspace so the sandbox can reach it.
 .tmp/
+
+# Credentials.
+.env
