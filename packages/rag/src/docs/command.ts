@@ -403,6 +403,7 @@ async function search(args: readonly string[], ctx: Context): Promise<void> {
                 files: excerpt.files,
                 scope: { files: result.files, sections: result.sections },
                 mode: result.mode,
+                considered: result.considered,
                 truncated: excerpt.truncated,
             });
             return;

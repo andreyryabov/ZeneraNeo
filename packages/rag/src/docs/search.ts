@@ -66,6 +66,13 @@ export interface Match {
     score: number;
     /** where it placed in each leg, when it placed at all */
     ranks: { vector?: number; text?: number };
+    /**
+     * And how well it did there. Fusion scores a rank, so its numbers say only
+     * that something placed first — a question the corpus cannot answer at all
+     * still returns a confident-looking `1 / (RRF_K + 0)`. These are what tell
+     * a caller whether first place was worth having.
+     */
+    relevance: { vector?: number; text?: number };
 }
 
 export interface DocsResult {
@@ -87,11 +94,31 @@ const RRF_K = 60;
 /** How much to ask each leg for, so fusion and the caps have room to work. */
 const OVERFETCH = 6;
 
-/** One section cannot own the whole answer, however well it scored. */
-const MAX_PER_SECTION = 3;
+/**
+ * And an absolute ceiling on it. The multiple exists to survive the JavaScript
+ * filter and the diversifier, which is a fixed cost, not one that grows with
+ * the limit — at `--limit 32` the multiple alone asked for 192 rows, which on
+ * a small corpus is most of it. Every row fetched votes in the fusion at full
+ * strength, so an over-deep leg does not add recall, it adds an electorate.
+ */
+const MAX_FETCH = 96;
 
-/** Nor can one document, when the question ranges over a corpus. */
+/**
+ * Floors for the per-section and per-document caps, and the share of the limit
+ * they grow by once it is large enough to matter.
+ *
+ * The caps were constants, which made them a diversity nudge at the default
+ * limit of eight and a straitjacket above it: `--limit 20` for a question whose
+ * answer is one section of one file returned five chunks of the answer and
+ * fifteen of whatever else scored, because the sixth chunk of the right file
+ * was evicted in favour of the first chunk of a worse one. Asking for more
+ * results is asking to go deeper, and depth on a documented topic means more
+ * of the document that covers it.
+ */
+const MAX_PER_SECTION = 3;
 const MAX_PER_FILE = 5;
+const SECTION_SHARE = 0.25;
+const FILE_SHARE = 0.5;
 
 export class DocsIndex {
     readonly manifest: Manifest;
@@ -191,7 +218,7 @@ export class DocsIndex {
 
         const filter = this.#filter(query, files, sections);
         const excluded = new Set(query.exclude_ids ?? []);
-        const fetch = limit * OVERFETCH + excluded.size;
+        const fetch = Math.min(limit * OVERFETCH, MAX_FETCH) + excluded.size;
 
         const vector = mode === 'text' ? [] : await this.#nearest(text, filter, fetch, signal);
         const lexical = mode === 'vector' ? [] : await this.#store.matching(text, filter, fetch);
@@ -286,6 +313,7 @@ function fuse(vector: readonly Hit[], lexical: readonly Hit[]): Match[] {
             const existing = merged.get(hit.record.id) ?? match(hit);
             existing.score += 1 / (RRF_K + hit.rank);
             existing.ranks[leg] = hit.rank;
+            existing.relevance[leg] = hit.relevance;
             merged.set(hit.record.id, existing);
         }
     };
@@ -310,6 +338,7 @@ function match(hit: Hit): Match {
         text: record.text,
         score: 0,
         ranks: {},
+        relevance: {},
     };
 }
 
@@ -319,6 +348,8 @@ function match(hit: Hit): Match {
  * near-identical neighbours from crowding out the second place a thing is said.
  */
 function diversify(matches: readonly Match[], limit: number): Match[] {
+    const sectionCap = Math.max(MAX_PER_SECTION, Math.ceil(limit * SECTION_SHARE));
+    const fileCap = Math.max(MAX_PER_FILE, Math.ceil(limit * FILE_SHARE));
     const perSection = new Map<string, number>();
     const perFile = new Map<string, number>();
     const kept: Match[] = [];
@@ -329,7 +360,7 @@ function diversify(matches: readonly Match[], limit: number): Match[] {
         const sections = perSection.get(section) ?? 0;
         const files = perFile.get(item.path) ?? 0;
 
-        if (sections >= MAX_PER_SECTION || files >= MAX_PER_FILE) {
+        if (sections >= sectionCap || files >= fileCap) {
             held.push(item);
             continue;
         }

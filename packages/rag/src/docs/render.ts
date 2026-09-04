@@ -69,7 +69,11 @@ export const matchRows = (matches: readonly Match[]): string[][] =>
         m.kind,
         `${m.bodyStart}-${m.bodyEnd}`,
         m.score.toFixed(4),
+        // Fusion ranks; these say whether the rank was worth anything.
+        [m.relevance.vector?.toFixed(2), m.relevance.text?.toFixed(1)]
+            .map((v) => v ?? '·')
+            .join(' / '),
         m.headings.split('\n')[0] ?? '',
     ]);
 
-export const MATCH_HEADERS = ['id', 'kind', 'lines', 'score', 'heading'] as const;
+export const MATCH_HEADERS = ['id', 'kind', 'lines', 'score', 'vec / txt', 'heading'] as const;

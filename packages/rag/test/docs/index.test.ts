@@ -71,6 +71,22 @@ const CORPUS: Record<string, string> = {
         'The staging cluster is rebuilt every Sunday.',
         '',
     ].join('\n'),
+
+    // One document that really is the whole answer to one question, in enough
+    // sections that the per-document cap has something to hold back.
+    'manual/telemetry.md': [
+        '# Telemetry',
+        '',
+        ...Array.from({ length: 9 }, (_, i) => [
+            `## Telemetry counter ${i}`,
+            '',
+            `Telemetry counter ${i} is exported by every telemetry collector on the`,
+            'telemetry bus, and telemetry operators read it whenever a telemetry',
+            'sample looks wrong. Telemetry counters reset when the telemetry daemon',
+            'restarts, which telemetry dashboards render as a telemetry gap.',
+            '',
+        ]).flat(),
+    ].join('\n'),
 };
 
 const source = await mkdtemp(join(tmpdir(), 'zenera-docs-src-'));
@@ -113,7 +129,7 @@ describe('building', () => {
 
     it('counts what it read', async () => {
         const manifest = await readManifest(out);
-        expect(manifest.counts.documents).toBe(3);
+        expect(manifest.counts.documents).toBe(4);
         expect(manifest.counts.chunks).toBeGreaterThan(3);
         expect(manifest.counts.tables).toBe(2);
     });
@@ -129,7 +145,7 @@ describe('searching', () => {
     it('answers a question with passages from the documents', async () => {
         const result = await index.search({ query: 'requests counted per tenant' });
         expect(result.matches.length).toBeGreaterThan(0);
-        expect(result.files).toHaveLength(3);
+        expect(result.files).toHaveLength(4);
     });
 
     it('narrows to one release by path pattern', async () => {
@@ -220,6 +236,19 @@ describe('assembling an answer', () => {
         expect(excerpt.truncated).toBe(true);
     });
 
+    it('lets one document own more of the answer when more is asked for', async () => {
+        // The cap is a nudge at the default limit and a straitjacket above it
+        // unless it scales: asking for sixteen results on a question one
+        // document answers should not spend eleven of them elsewhere.
+        const mine = async (limit: number) =>
+            (await index.search({ query: 'telemetry counter bus daemon', limit })).matches.filter(
+                (m) => m.path === 'manual/telemetry.md',
+            ).length;
+
+        expect(await mine(8)).toBeLessThanOrEqual(5);
+        expect(await mine(16)).toBeGreaterThan(5);
+    });
+
     it('renders with a line-number gutter a follow-up can quote', async () => {
         const result = await index.search({
             query: 'requests counted per tenant',
@@ -235,7 +264,7 @@ describe('assembling an answer', () => {
 describe('the exact half', () => {
     it('lists every document with what it holds', () => {
         const listed = listFiles(index);
-        expect(listed.found).toBe(3);
+        expect(listed.found).toBe(4);
         expect(listed.rows.map((r) => r.name)).toContain('notes/onboarding.txt');
     });
 
@@ -279,7 +308,7 @@ describe('the exact half', () => {
     it('works without an embedder at all', async () => {
         const plain = await DocsIndex.open(out);
         try {
-            expect(listFiles(plain).found).toBe(3);
+            expect(listFiles(plain).found).toBe(4);
         } finally {
             plain.close();
         }

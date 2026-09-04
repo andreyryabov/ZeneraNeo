@@ -42,6 +42,30 @@ export const CHUNK_TOKENS = 384;
 export const MAX_CHUNK_TOKENS = 512;
 export const TABLE_SLICE_TOKENS = 128;
 
+/** How much of a table its descriptor stands for when no row of it matched. */
+export const TABLE_PREVIEW_ROWS = 3;
+
+/**
+ * And how many rows may share one. The token budget alone would put a narrow
+ * sixteen-row table in a single chunk, so matching one row of it quotes all
+ * sixteen — the rows are independent facts, and a reader asking about one is
+ * not asking about the other fifteen.
+ */
+export const TABLE_ROWS_PER_CHUNK = 4;
+
+/**
+ * Below this a chunk is merged into its neighbour rather than retrieved alone.
+ *
+ * BM25 normalises by document length, so a nine-word chunk that happens to
+ * contain two query terms outscores a real answer that contains them among a
+ * hundred other words. Measured on this repository, a one-line aside about
+ * markdown link syntax took full-text rank 0 for "how to create docs index"
+ * while the vector leg — correctly — put it 185th. It is not that the chunk is
+ * wrong; it is that alone it is not a passage, and a passage is what the
+ * lexical index is scoring.
+ */
+export const MIN_CHUNK_TOKENS = 48;
+
 /**
  * Four characters to a token, which is within about 15% for English prose and
  * wrong for CJK, for dense numeric cells and for long identifiers. It cannot
@@ -66,6 +90,7 @@ export type ChunkKind = (typeof CHUNK_KINDS)[number];
 
 export interface ChunkOptions {
     chunkTokens?: number;
+    minChunkTokens?: number;
     maxChunkTokens?: number;
     tableSliceTokens?: number;
     tokenCount?: (text: string) => number;
@@ -109,6 +134,14 @@ interface Body {
 
 const PROSE = new Set<StructureKind>(['paragraph', 'blockquote']);
 
+/**
+ * What the floor may join. A paragraph and the snippet under it are one
+ * thought and read as one; a table or a list has an identity of its own, and a
+ * `--kind table` that quietly returned prose would be a worse bargain than a
+ * short chunk.
+ */
+const MERGEABLE = new Set<ChunkKind>(['paragraph', 'code']);
+
 export function chunkDocument(doc: ParsedDoc, options: ChunkOptions = {}): Chunk[] {
     const cut = new Cutter(doc, options);
     return cut.run();
@@ -117,6 +150,7 @@ export function chunkDocument(doc: ParsedDoc, options: ChunkOptions = {}): Chunk
 class Cutter {
     readonly #doc: ParsedDoc;
     readonly #soft: number;
+    readonly #floor: number;
     readonly #hard: number;
     readonly #slice: number;
     readonly #tok: (text: string) => number;
@@ -125,6 +159,7 @@ class Cutter {
     constructor(doc: ParsedDoc, options: ChunkOptions) {
         this.#doc = doc;
         this.#soft = options.chunkTokens ?? CHUNK_TOKENS;
+        this.#floor = options.minChunkTokens ?? MIN_CHUNK_TOKENS;
         this.#hard = options.maxChunkTokens ?? MAX_CHUNK_TOKENS;
         this.#slice = options.tableSliceTokens ?? TABLE_SLICE_TOKENS;
         this.#tok = options.tokenCount ?? tokenCount;
@@ -154,7 +189,53 @@ class Cutter {
         }
         flush();
 
-        return this.#bodies.map((body, index) => this.#finish(body, index));
+        return this.#compact().map((body, index) => this.#finish(body, index));
+    }
+
+    /**
+     * The floor, applied once at the end rather than inside each cutter: only
+     * here is a body's true neighbour known, since prose, code and lists are
+     * emitted by three different paths but land in document order.
+     */
+    #compact(): Body[] {
+        const kept: Body[] = [];
+        for (const body of this.#bodies) {
+            const last = kept[kept.length - 1];
+            if (last && this.#joinable(last, body)) {
+                kept[kept.length - 1] = this.#join(last, body);
+                continue;
+            }
+            kept.push(body);
+        }
+        return kept;
+    }
+
+    /** Neighbours under one heading, at least one of them too small to stand alone. */
+    #joinable(left: Body, right: Body): boolean {
+        return (
+            left.section === right.section &&
+            MERGEABLE.has(left.kind) &&
+            MERGEABLE.has(right.kind) &&
+            (this.#tok(left.text) < this.#floor || this.#tok(right.text) < this.#floor) &&
+            this.#tok(`${left.text}\n${right.text}`) <= this.#soft
+        );
+    }
+
+    #join(left: Body, right: Body): Body {
+        const same = left.kind === right.kind;
+        return {
+            // Prose wins a mixed pair: the words are what the lexical index reads.
+            kind: same ? left.kind : 'paragraph',
+            id: same && left.id === right.id ? left.id : left.section.id,
+            path: same && left.path === right.path ? left.path : left.section.path,
+            section: left.section,
+            start: Math.min(left.start, right.start),
+            end: Math.max(left.end, right.end),
+            prelude: [...new Set([...left.prelude, ...right.prelude])].sort((a, b) => a - b),
+            preludeText: [left.preludeText, right.preludeText].filter(Boolean).join('\n'),
+            text: `${left.text}\n${right.text}`,
+            carry: left.carry,
+        };
     }
 
     #other(block: Block): void {
@@ -303,7 +384,8 @@ class Cutter {
             return;
         }
         // Split inside the fence at blank lines: the closest thing a program
-        // has to a paragraph break.
+        // has to a paragraph break. Both fence lines ride along, or a slice
+        // taken from the middle quotes an opening delimiter that never closes.
         for (const span of this.#packLines(block.start + 1, Math.max(block.start, block.end - 1))) {
             this.#emit({
                 kind: 'code',
@@ -312,7 +394,7 @@ class Cutter {
                 section: block.section,
                 start: span.start,
                 end: span.end,
-                prelude: [block.start],
+                prelude: [block.start, block.end],
                 preludeText: opener,
                 text: this.#slabOf(span.start, span.end),
             });
@@ -330,17 +412,22 @@ class Cutter {
         const columns = table.columns.filter(Boolean).join(', ');
         const preludeText = columns ? `Columns: ${columns}.` : '';
 
-        // One descriptor per table, however wide. Its body is the header lines,
-        // and it absorbs the lead-in paragraph — which is the only sentence in
-        // the document that says what the table is about, and would otherwise
-        // be the caption of nothing.
+        // One descriptor per table, however wide. It absorbs the lead-in
+        // paragraph — the only sentence in the document that says what the
+        // table is about, and otherwise the caption of nothing.
+        //
+        // Its body is the header and the first few rows. Two rules around
+        // nothing say only that a table was here; the rows that answer a
+        // question arrive as their own chunks, and what neither reached is
+        // left to the omission marker to count.
+        const preview = table.rows[Math.min(TABLE_PREVIEW_ROWS, table.rows.length) - 1];
         this.#emit({
             kind: 'table',
             id: block.id,
             path: block.path,
             section: block.section,
             start: table.headerLine,
-            end: table.separatorLine ?? table.headerLine,
+            end: preview?.line ?? table.separatorLine ?? table.headerLine,
             prelude: [],
             preludeText,
             text: [table.caption, `A table of ${table.rows.length} rows.`]
@@ -379,7 +466,8 @@ class Cutter {
             }
             if (
                 acc.length > 0 &&
-                this.#tok(acc.map((r) => r.text).join(' ') + row.text) > this.#soft
+                (acc.length >= TABLE_ROWS_PER_CHUNK ||
+                    this.#tok(acc.map((r) => r.text).join(' ') + row.text) > this.#soft)
             ) {
                 emit();
             }

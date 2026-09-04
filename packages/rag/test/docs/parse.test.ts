@@ -117,12 +117,28 @@ describe('chunking', () => {
         const table = kind('table');
         expect(table).toHaveLength(1);
         expect(table[0]!.text).toContain('2 rows');
+        // A descriptor that quotes only the two rules at the top of the table
+        // renders as a table with no rows; it stands for a sample of it.
+        for (const line of [13, 14, 15, 16]) {
+            expect(table[0]!.lineNumbers).toContain(line);
+        }
     });
 
     it('keeps a fenced block whole', () => {
-        const code = kind('code');
-        expect(code).toHaveLength(1);
-        expect(code[0]!.text).toContain('curl -i');
+        const fenced = chunks.filter((c) => c.text.includes('curl -i'));
+        expect(fenced).toHaveLength(1);
+        for (const line of [22, 23, 24]) {
+            expect(fenced[0]!.lineNumbers).toContain(line);
+        }
+    });
+
+    it('joins a chunk too small to stand alone to its neighbour', () => {
+        // The sentence under `### Retries` and the snippet demonstrating it are
+        // one thought, and apart neither is long enough for BM25 to rank fairly.
+        const retries = chunks.filter((c) => c.headings.endsWith('Retries'));
+        expect(retries).toHaveLength(1);
+        expect(retries[0]!.text).toContain('Retry-After');
+        expect(retries[0]!.text).toContain('curl -i');
     });
 
     it('numbers chunks in document order', () => {
