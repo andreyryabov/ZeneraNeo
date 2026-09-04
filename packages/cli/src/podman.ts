@@ -256,15 +256,6 @@ function parseMachines(stdout: string): Machine[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Builds the project's Dockerfile under its tag.
- *
- * Run every time rather than skipped when the tag already exists, because the
- * tag is a hash of the Dockerfile and its context and the engine's layer cache
- * is a hash of the same thing plus the base image. Asking it is cheap, and it
- * is the only thing that notices when `FROM node:24` starts meaning a different
- * node:24.
- */
-/**
  * A build that ran and failed, rather than a host that could not be asked.
  *
  * The difference is invisible at the command line — both stop the run and
@@ -298,7 +289,9 @@ async function build(
         }
     }
 
-    note(dim(`building ${spec.tag} from ${spec.dockerfile}`));
+    note(dim(`${force ? 'rebuilding' : 'building'} the sandbox image from ${spec.dockerfile}`));
+    note(dim('  the agent runs its commands inside a container, so the image is needed first'));
+    note(dim('  this takes a few minutes; later runs reuse it until the Dockerfile changes'));
     const built = await stream(
         engine,
         ['build', '--tag', spec.tag, '--file', spec.dockerfile, spec.context],
