@@ -30,6 +30,17 @@ import { zeroUsage, type Message, type TokenUsage, type ToolCall } from '../type
 // ---------------------------------------------------------------------------
 
 /**
+ * Which failures the SDK's backoff applies to: rate limits, request timeouts,
+ * and the upstream's own errors. Families are written `5XX` in this matcher.
+ *
+ * It has to be passed per call. The generated client resolves `retryCodes` at
+ * the *operation*, defaulting it to `5XX` alone, and no client-wide option
+ * reaches it — so configuring a retry policy and leaving this out gives a
+ * client that backs off diligently on 500s and dies on the first 429.
+ */
+export const RETRY_STATUS_CODES = ['408', '429', '5XX'];
+
+/**
  * Effort levels, spelled out rather than imported: the SDK's is an *open* enum
  * (its literals plus any string), which would let a typo through, and naming
  * its type here would tie this interface to a generated alias. The set is the
@@ -230,7 +241,7 @@ export class OpenRouterModel implements Model {
     #send(req: ModelRequest, stream: boolean) {
         return this.#client.chat.send(
             { chatRequest: this.#request(req, stream) },
-            { fetchOptions: { signal: req.signal } },
+            { fetchOptions: { signal: req.signal }, retryCodes: RETRY_STATUS_CODES },
         );
     }
 

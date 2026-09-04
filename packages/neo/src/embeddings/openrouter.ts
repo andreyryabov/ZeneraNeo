@@ -6,6 +6,7 @@ import type {
 } from '@openrouter/sdk/models/operations';
 import type { Embedder, EmbeddingRequest, EmbeddingResponse } from '../embedding.ts';
 import { embeddingResponse } from '../embedding.ts';
+import { RETRY_STATUS_CODES } from '../models/openrouter.ts';
 import { zeroUsage } from '../types.ts';
 
 // ---------------------------------------------------------------------------
@@ -57,7 +58,7 @@ export class OpenRouterEmbedder implements Embedder {
         };
         const res = await this.#client.embeddings.generate(
             { requestBody },
-            { fetchOptions: { signal: req.signal } },
+            { fetchOptions: { signal: req.signal }, retryCodes: RETRY_STATUS_CODES },
         );
         // The response is declared as the body *or* a bare string, so the
         // parsed shape has to be established before anything is read off it.

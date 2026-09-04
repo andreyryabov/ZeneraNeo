@@ -44,6 +44,12 @@ interface Conn {
     vertexai?: boolean;
     project?: string;
     location?: string;
+    /** OpenAI and Anthropic count retries */
+    maxRetries?: number;
+    /** GenAI counts attempts, the first one included, and only when asked */
+    httpOptions?: { retryOptions?: { attempts?: number } };
+    /** OpenRouter takes a strategy rather than a count */
+    retryConfig?: { strategy: string };
 }
 
 const conn = (client: unknown): Conn => client as Conn;
@@ -55,8 +61,8 @@ const conn = (client: unknown): Conn => client as Conn;
  * because the OpenAI client also has an `_options`, holding something else.
  */
 const orConn = (client: unknown): Conn => {
-    const { _options } = client as { _options: { apiKey?: string; serverURL?: string } };
-    return { apiKey: _options.apiKey, baseURL: _options.serverURL };
+    const { _options } = client as { _options: Conn & { serverURL?: string } };
+    return { ..._options, baseURL: _options.serverURL };
 };
 
 function modelOf(project: AgentProject, agent: string): Model {
@@ -194,6 +200,34 @@ describe('configs/providers', () => {
         expect(modelOf(p, 'one').id).toBe('gpt-4o');
         expect(modelOf(p, 'three').id).toBe('gpt-4o-mini');
         expect(modelOf(p, 'one')).not.toBe(modelOf(p, 'three'));
+    });
+});
+
+// A rate limit is the provider asking to be called again shortly, so every
+// connection is built with a backoff budget whether or not one was declared.
+// Two of these SDKs retry nothing by default, which is what makes the
+// assertions worth having: they are about what was configured, not about what
+// the vendor happens to do.
+describe('retries', () => {
+    it('gives an undeclared connection the default budget', async () => {
+        const p = await load('providers');
+        expect(conn(p.models.client('primary')).maxRetries).toBe(4);
+    });
+
+    it('honours a declared count', async () => {
+        const p = await load('providers');
+        expect(conn(p.models.client('gateway')).maxRetries).toBe(5);
+    });
+
+    it('asks the genai client to retry, which it otherwise never does', async () => {
+        const p = await load('vendors');
+        // `attempts` counts the initial call.
+        expect(conn(p.models.client('gemini')).httpOptions?.retryOptions?.attempts).toBe(5);
+    });
+
+    it('gives openrouter a backoff strategy', async () => {
+        const p = await load('openrouter');
+        expect(orConn(p.models.client('openrouter')).retryConfig?.strategy).toBe('backoff');
     });
 });
 
