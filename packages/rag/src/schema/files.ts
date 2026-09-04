@@ -129,6 +129,28 @@ function once<T>(load: () => Promise<T>): () => Promise<T> {
     return () => (pending ??= load());
 }
 
+/**
+ * The bundled document as it was indexed. Kept only when the index was built
+ * with sources, which is why the manifest is asked first: the difference
+ * between "no such document" and "this index did not keep them" is the whole
+ * of what the caller can do next.
+ */
+export async function readSource(dir: string, name: string): Promise<string | undefined> {
+    const manifest = await readManifest(dir);
+    const record = manifest.sources.find((s) => s.name === name);
+    if (!record) {
+        throw new CliError(
+            `${dir} holds no document called ${name}`,
+            EXIT.failed,
+            `it has: ${manifest.sources.map((s) => s.name).join(', ')}`,
+        );
+    }
+    if (!record.path) {
+        return undefined;
+    }
+    return await readFile(join(dir, record.path), 'utf8');
+}
+
 export async function readManifest(dir: string): Promise<Manifest> {
     let text: string;
     try {

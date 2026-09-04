@@ -55,7 +55,8 @@ export function toEntities(graph: ApiGraph): EntityRecord[] {
     return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 
-function textOf(graph: ApiGraph, id: string): string {
+/** Exported so a literal search reads the same string the index was built from. */
+export function textOf(graph: ApiGraph, id: string): string {
     const a = graph.getNodeAttributes(id);
     const parts: string[] = [];
 

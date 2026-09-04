@@ -1,9 +1,9 @@
+import { CliError, EXIT } from '@zenera/cli/lib';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
-import { CliError, EXIT } from '@zenera/cli/lib';
 import { command } from '../src/command.ts';
 import { isEmpty, parseQuery, QueryError } from '../src/query.ts';
 import { buildIndex } from '../src/schema/build.ts';
@@ -205,6 +205,104 @@ describe('search arguments', () => {
     });
 });
 
+describe('list', () => {
+    it('needs to know what to list, and says what it can', async () => {
+        expect((await fails(['schema', 'list', '--dir', dir])).code).toBe(EXIT.usage);
+        const err = await fails(['schema', 'list', '--dir', dir, 'wat']);
+        expect(err.code).toBe(EXIT.usage);
+        expect(err.hint).toContain('methods');
+    });
+
+    it('prints every operation, without an embedder or a credential', async () => {
+        const { out } = await run(['schema', 'list', 'methods', '--dir', dir]);
+        expect(out).toContain('/pets');
+        expect(out.trim().split('\n')).toHaveLength(4);
+    });
+
+    it('filters on a glob over the route', async () => {
+        const { out } = await run(['schema', 'list', 'methods', '--dir', dir, '--path', '*/pets*']);
+        expect(out).toContain('/pets');
+        expect(out).not.toContain('/auth');
+    });
+
+    it('reads a bare --name as a substring, so a word finds something', async () => {
+        const { out } = await run(['schema', 'list', 'types', '--dir', dir, '--name', 'Password']);
+        expect(out).toContain('ResetPasswordPayload');
+    });
+
+    it('answers nothing without failing, because empty is an answer', async () => {
+        const { out, err } = await invoke(
+            ['schema', 'list', 'types', '--dir', dir, '--name', 'Nope'],
+            false,
+        );
+        expect(err).toContain('0');
+        expect(out.trim()).toBe('');
+    });
+
+    it('reports the true total even when it prints fewer', async () => {
+        const { out } = await run(
+            ['schema', 'list', 'properties', '--dir', dir, '--limit', '2'],
+            true,
+        );
+        const result = JSON.parse(out) as { found: number; truncated: boolean; rows: unknown[] };
+
+        expect(result.rows).toHaveLength(2);
+        expect(result.truncated).toBe(true);
+        // The count is of everything that matched, not of what survived the
+        // limit — otherwise a capped answer would lie about the API.
+        expect(result.found).toBeGreaterThan(2);
+    });
+});
+
+describe('grep', () => {
+    it('needs a pattern', async () => {
+        expect((await fails(['schema', 'grep', '--dir', dir])).code).toBe(EXIT.usage);
+    });
+
+    it('finds every literal occurrence, whatever a ranking would rate them', async () => {
+        const { out } = await run(['schema', 'grep', 'password', '--dir', dir], true);
+        const result = JSON.parse(out) as { found: number; matches: { id: string }[] };
+        const ids = result.matches.map((m) => m.id);
+
+        expect(result.found).toBe(ids.length);
+        expect(ids).toContain('Type:ResetPasswordPayload');
+        expect(ids).toContain('Property:ResetPasswordPayload.password');
+    });
+
+    it('takes a regex when told to, and refuses a broken one', async () => {
+        const { out } = await run(['schema', 'grep', 'pass(word|phrase)', '--dir', dir, '--regex']);
+        expect(out).toContain('password');
+
+        const err = await fails(['schema', 'grep', '(unclosed', '--dir', dir, '--regex']);
+        expect(err.code).toBe(EXIT.usage);
+        expect(err.message).toContain('invalid pattern');
+    });
+
+    it('narrows to a kind, and refuses one that is not a kind', async () => {
+        const { out } = await run(['schema', 'grep', 'password', '--dir', dir, '--kind', 'type']);
+        expect(out).toContain('Type:');
+        expect(out).not.toContain('Property:');
+
+        expect((await fails(['schema', 'grep', 'x', '--dir', dir, '--kind', 'wat'])).code).toBe(
+            EXIT.usage,
+        );
+    });
+
+    it('prints bare ids on demand, so the shell can pipe them into show', async () => {
+        const { out } = await run(['schema', 'grep', 'password', '--dir', dir, '--ids-only']);
+        const ids = out.trim().split('\n');
+
+        expect(ids.length).toBeGreaterThan(0);
+        expect(ids.every((id) => /^(Method|Type|Property):/.test(id))).toBe(true);
+    });
+
+    it('exits clean on no match, since absence is the answer it was asked for', async () => {
+        const { out, error } = await invoke(['schema', 'grep', 'passwrd', '--dir', dir], false);
+        expect(error).toBeUndefined();
+        expect(out.trim()).toBe('');
+    });
+});
+
 describe('show', () => {
     it('needs an id', async () => {
         expect((await fails(['schema', 'show', '--dir', dir])).code).toBe(EXIT.usage);
@@ -225,6 +323,44 @@ describe('show', () => {
     it('hydrates one to TypeScript on demand', async () => {
         const { out } = await run(['schema', 'show', '--dir', dir, 'Type:Cat', '--format', 'ts']);
         expect(out).toContain("petType: 'cat';");
+    });
+
+    it('takes a type by name, so the caller need not know the id scheme', async () => {
+        const { out } = await run([
+            'schema',
+            'show',
+            '--dir',
+            dir,
+            '--type',
+            'ResetPasswordPayload',
+            '--format',
+            'ts',
+        ]);
+        expect(out).toContain('export interface ResetPasswordPayload');
+    });
+
+    it('takes an operation by name', async () => {
+        const { out } = await run(['schema', 'show', '--dir', dir, '--method', 'resetPassword']);
+        expect(out).toContain('/auth/reset-password');
+    });
+
+    it('fails on a name it does not have, pointing at the way to find it', async () => {
+        const err = await fails(['schema', 'show', '--dir', dir, '--method', 'resetPasswrd']);
+        expect(err.code).toBe(EXIT.failed);
+        expect(err.hint).toContain('zen rag schema list methods');
+    });
+
+    it('keeps to exactly what was named when asked to be exact', async () => {
+        const { out } = await run(
+            ['schema', 'show', '--dir', dir, '--type', 'ResetPasswordPayload', '--exact'],
+            true,
+        );
+        const result = JSON.parse(out) as { ids: string[]; subgraphs: { nodes: unknown[] }[] };
+
+        expect(result.ids).toEqual(['Type:ResetPasswordPayload']);
+        // Without --exact the neighbours come too; with it, the answer is the
+        // one node that was asked for.
+        expect(result.subgraphs[0]!.nodes).toHaveLength(1);
     });
 });
 

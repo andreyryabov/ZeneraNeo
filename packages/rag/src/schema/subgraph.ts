@@ -255,6 +255,35 @@ function connect(graph: ApiGraph, seeds: readonly Seed[], maxHops: number): Set<
     return out;
 }
 
+/**
+ * Exactly the nodes named, and only the edges between them. The counterpart to
+ * `stitch`: no neighbours are gathered, because the caller is not asking what
+ * this is connected to — they already know what they want and want it whole.
+ */
+export function select(graph: ApiGraph, ids: readonly string[]): Subgraph {
+    const kept = new Set(ids.filter((id) => graph.hasNode(id)));
+    const nodes: SubgraphNode[] = [...kept].map((id) => ({
+        id,
+        kind: graph.getNodeAttribute(id, 'kind'),
+        attributes: graph.getNodeAttributes(id),
+        hit: true,
+        score: 1,
+    }));
+
+    const edges: SubgraphEdge[] = [];
+    for (const id of kept) {
+        for (const edge of graph.outEdges(id)) {
+            const target = graph.target(edge);
+            if (!kept.has(target)) {
+                continue;
+            }
+            const a = graph.getEdgeAttributes(edge);
+            edges.push({ source: id, target, relation: a.relation, status: a.status, in: a.in });
+        }
+    }
+    return { nodes, edges, hits: [...kept], score: kept.size, truncated: false };
+}
+
 /** Breadth-first, ignoring edge direction, giving up past `maxHops`. */
 export function path(
     graph: ApiGraph,

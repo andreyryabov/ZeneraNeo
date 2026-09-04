@@ -46,6 +46,24 @@ zen rag schema stats                  # what is in the index, and what built it
 zen rag schema show Type:Invoice      # a named node, with no search in between
 ```
 
+Search ranks, which means it returns the top of a list — useful when the
+question is vague, and no use at all when the question is whether something
+exists. For that there is exact matching, which needs no embedder, no
+credential and no network:
+
+```sh
+zen rag schema list methods --path "*/users*"   # every route under /users
+zen rag schema list types --name "*Password*"   # every schema so named
+zen rag schema grep password                    # every literal occurrence
+zen rag schema grep "pass(word|phrase)" --regex
+zen rag schema show --method GetCurrentUserInfo --format openapi --exact
+```
+
+`list` and `grep` report `found` as the true total even when `--limit` cuts the
+printed rows, so a shortened answer still tells you how much there is. Nothing
+matching exits 0 — an empty answer is an answer, and here it is a trustworthy
+one: if `grep` finds nothing, the word is not in the description.
+
 Non-interactive search is a machine interface: every field is a flag, the whole
 query can arrive as one JSON object, the `--json` output keeps the same
 structure from run to run, no terminal is required, and an empty result exits 0.
@@ -66,7 +84,9 @@ JSON
 ```
 zen rag schema index <spec...>   Read the documents and write a searchable index.
 zen rag schema search            Ask it something. --interactive for a prompt.
-zen rag schema show <id...>      Print named nodes, with no search in between.
+zen rag schema list <what>       Every method, type or property. No ranking.
+zen rag schema grep <pattern>    Every literal match across the whole index.
+zen rag schema show [id...]      Print named nodes, with no search in between.
 zen rag schema stats             What is in an index, and what built it.
 ```
 
@@ -75,6 +95,18 @@ Search terms are one flag each — `--all`, `--method`, `--type`, `--input-type`
 by `--direction`, `--method-type`, `--limit`, `--max-hops`, `--max-nodes` and
 the four `--exclude-*` filters, and rendered by `--format text | mermaid |
 mermaid-flowchart | ts | openapi`. `zen help rag` prints the full table.
+
+`list` takes `--name` and `--path`, `grep` takes `--regex`, `--case-sensitive`,
+`--kind` and `--ids-only`. A pattern with `*` or `?` in it is a glob matched
+against the whole name; a plain word is a substring, so `--name password` finds
+`ResetPasswordPayload` rather than nothing. `show` takes ids, or `--method` and
+`--type` by name, or `--source` for a whole document, and `--exact` to print
+only what was named instead of its neighbourhood.
+
+```sh
+# Everything that mentions a token, rendered as TypeScript.
+zen rag schema grep token --ids-only | xargs zen rag schema show --format ts
+```
 
 ## From an agent
 
@@ -89,18 +121,23 @@ const index = await SchemaIndex.open(
 const project = await loadProject('./my-project', { tools: schemaTools(index) });
 ```
 
-Four tools in the group `schema`, selectable as `schema:*`:
+Five tools in the group `schema`, selectable as `schema:*`:
 
 | Tool                       | For                                                     |
 | -------------------------- | ------------------------------------------------------- |
 | `search_api`               | the connected piece of the API that matches an intent   |
 | `describe_types`           | named schemas as declarations that compile on their own |
 | `find_types_with_property` | which types have a field of this name — no search       |
-| `list_methods`             | the shape of the API, by path                           |
+| `list_api`                 | the shape of the API: methods, types or fields          |
+| `grep_api`                 | every literal occurrence of a string — no search        |
 
-`find_types_with_property` is the one for the repair loop: when `tsc` says
+Only the first of those ranks anything. The rest are exact, because a model
+told "no results" by a vector search has learned nothing: a ranking returns the
+top of a list, so an empty answer and an absent thing look identical.
+`find_types_with_property` is the one for the repair loop — when `tsc` says
 `'password' does not exist in type 'PublicUserProfile'`, the model does not
 need the word explained again, it needs the list of types that have one.
+`grep_api` is the same instinct widened to the whole description.
 
 ## What an index is
 

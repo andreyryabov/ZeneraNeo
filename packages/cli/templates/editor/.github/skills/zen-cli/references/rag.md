@@ -1,7 +1,7 @@
 # API search — `zen rag`
 
 ```
-zen rag schema <index|search|show|stats> [spec...]
+zen rag schema <index|search|list|grep|show|stats> [spec...]
 ```
 
 Provided by `@zenera/rag` — `npm i -g @zenera/rag` if `zen rag` says it is not
@@ -57,6 +57,11 @@ zen rag schema search [terms…] [filters…]
 
 Every argument is validated before an embedder is constructed, so a typo is a
 usage error rather than a credential error.
+
+**Bare words are the query, not a subcommand.** `zen rag schema search list
+methods` searches for the phrase _"list methods"_ and returns ranked guesses;
+`zen rag schema list methods` is the listing. `search` is also the only read
+command that embeds, so it is the only slow one.
 
 ### Terms — repeatable, and the field is the point
 
@@ -126,14 +131,66 @@ reset                   forget it, exclusions included
 quit
 ```
 
+## `list` and `grep`
+
+```
+zen rag schema list <methods|types|properties> [-d <dir>] [--name <p>] [--path <p>]
+zen rag schema grep <pattern> [-d <dir>] [--regex] [--kind <k>] [--ids-only]
+```
+
+Exact, and therefore complete. `search` ranks, so it can only hand back the top
+of a list — it cannot tell you that something is _not_ there. These can: they
+read `graph.json` directly, with no embedder, no credential and no network.
+
+| Flag                | For    | Meaning                                      |
+| ------------------- | ------ | -------------------------------------------- |
+| `--name <p>`        | `list` | Match the name. Repeatable                   |
+| `--path <p>`        | `list` | Match the route. Repeatable                  |
+| `--source <name>`   | both   | Only nodes from one document                 |
+| `--method-type <t>` | `list` | `read_only`, `read_write` or `any`           |
+| `--direction <d>`   | `list` | `input`, `output` or `any`                   |
+| `--regex`           | `grep` | Read the pattern as a regular expression     |
+| `--case-sensitive`  | `grep` | Stop ignoring case                           |
+| `--kind <k>`        | `grep` | `method`, `type` or `property`. Repeatable   |
+| `--ids-only`        | `grep` | Just the ids, one per line, for piping       |
+| `--limit <n>`       | both   | Rows to print. `found` still counts them all |
+
+A pattern with `*` or `?` is a glob matched against the whole string; a plain
+word is a substring. So `--name password` finds `ResetPasswordPayload`, and
+`--name "Password*"` finds nothing, because nothing starts with it.
+
+```
+zen rag schema list methods --path "*/users*"
+zen rag schema list types --name "*Password*"
+zen rag schema grep password
+zen rag schema grep "pass(word|phrase)" --regex
+zen rag schema grep token --ids-only | xargs zen rag schema show --format ts
+```
+
+No match exits 0 with nothing on stdout — that is the answer, and unlike an
+empty search it is a reliable one. Under `--limit`, `found` is still the true
+total, so a shortened answer never misreports how much there is.
+
 ## `show`
 
 ```
-zen rag schema show <id...> [-d <dir>] [--format <f>]
+zen rag schema show [id...] [-d <dir>] [--format <f>]
+                    [--method <name>] [--type <name>] [--source <name>] [--exact]
 ```
 
 Prints named nodes with no search in between. Needs no embedder and no
 credential — it is a read of the graph.
+
+Ids are one way in; `--method` and `--type` name things directly, which is
+usually what you have. A bare name means exactly that name; add `*` to select
+more than one. `--source <name>` takes a whole document. `--exact` prints only
+what was named instead of the neighbourhood around it — with `--format openapi`
+that is a valid, self-contained slice of the specification.
+
+```
+zen rag schema show --method GetCurrentUserInfo --format openapi --exact
+zen rag schema show --type "*Invoice*" --format ts
+```
 
 ## `stats`
 
@@ -153,7 +210,12 @@ documents it came from. Also needs no embedder.
 | `search_api`               | The search above, with the same fields                              |
 | `describe_types`           | Named schemas as TypeScript, closed over what they refer to         |
 | `find_types_with_property` | Every schema with a field of this name — exact lookup, no searching |
-| `list_methods`             | Operations by path, to see the shape of the API before asking       |
+| `list_api`                 | Methods, types or fields by name — complete, and counted in full    |
+| `grep_api`                 | Every literal occurrence of a string — the way to prove absence     |
+
+Only `search_api` ranks. Reach for the others whenever the question is whether
+something exists, because a search that returns nothing and a thing that is not
+there look exactly the same.
 
 They share the group `schema`, so an agent takes them with `schema:*` in its
 `tools:`.

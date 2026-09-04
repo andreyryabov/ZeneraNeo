@@ -27,9 +27,18 @@ import { isFormat, present, type Format } from './present.ts';
 import { isEmpty, parseQuery, QueryError } from './query.ts';
 import { repl } from './repl.ts';
 import { buildIndex } from './schema/build.ts';
-import { assertSameEmbedding, openIndex, readManifest, type SourceRecord } from './schema/files.ts';
+import {
+    assertSameEmbedding,
+    openIndex,
+    readManifest,
+    readSource,
+    type SourceRecord,
+} from './schema/files.ts';
+import type { ApiGraph, NodeKind } from './schema/graph.ts';
+import { fields, grepNodes, listNodes, propertyCount, type Row } from './schema/lookup.ts';
+import { isGlob, loose, matcher, PatternError, wildcard, type Matcher } from './schema/match.ts';
 import { SchemaIndex, type SchemaQuery } from './schema/search.ts';
-import { stitch } from './schema/subgraph.ts';
+import { select, stitch } from './schema/subgraph.ts';
 
 // ---------------------------------------------------------------------------
 // zen rag — an api description, as something to search
@@ -41,12 +50,21 @@ import { stitch } from './schema/subgraph.ts';
 // required, and exit 0 when nothing matched — an empty answer is an answer, and
 // a caller that has to tell "no results" from "the index is missing" by parsing
 // stderr will get it wrong.
+//
+// `list`, `grep` and `show` are the other half, and they are deliberately not
+// searches. A ranking can only ever hand back the top of a list, so it cannot
+// answer "is there a field called `password` anywhere" — the honest answer to
+// that question is every match or none, and these three give it without asking
+// a model or a credential for permission.
 // ---------------------------------------------------------------------------
 
-const USAGE = 'zen rag schema <index|search|show|stats> [spec...]';
+const USAGE = 'zen rag schema <index|search|list|grep|show|stats> [spec...]';
 
 const INDEX_USAGE = 'zen rag schema index --embedding <ref> [--out <dir>] <spec...>';
 const SEARCH_USAGE = 'zen rag schema search [--dir <dir>] [query...]';
+const LIST_USAGE = 'zen rag schema list <methods|types|properties> [--dir <dir>]';
+const GREP_USAGE = 'zen rag schema grep <pattern> [--dir <dir>]';
+const SHOW_USAGE = 'zen rag schema show [id...] [--method <name>] [--type <name>]';
 
 const DEFAULT_DIR = './schema-db';
 
@@ -58,7 +76,9 @@ export const command: Command = {
         ...table([
             ['  index <spec...>', dim('Read the documents and write a searchable index.')],
             ['  search', dim('Ask it something. --interactive for a prompt.')],
-            ['  show <id...>', dim('Print named nodes, with no search in between.')],
+            ['  list <what>', dim('Every method, type or property matching a pattern.')],
+            ['  grep <pattern>', dim('Every literal match, ranked by nothing.')],
+            ['  show [id...]', dim('Print named nodes, with no search in between.')],
             ['  stats', dim('What is in an index, and what built it.')],
         ]),
         '',
@@ -109,6 +129,31 @@ export const command: Command = {
             ['  --quiet', dim('No narration.')],
         ]),
         '',
+        'Exact listing — no embedder, no credential',
+        ...table([
+            ['  list methods', dim('Operations. Filter with --path and --name.')],
+            ['  list types', dim('Schemas. Filter with --name.')],
+            ['  list properties', dim('Fields and parameters. Filter with --name.')],
+            ['  grep <pattern>', dim('Substring over every node; --regex for a regex.')],
+            ['  --case-sensitive', dim('grep: match the capitals too.')],
+            ['  --kind <k>', dim('grep: method | type | property. Repeatable.')],
+            ['  --ids-only', dim('grep: bare ids, to pipe into show.')],
+            ['  --source <name>', dim('Only this document, as `stats` names it.')],
+            ['  --limit <n>', dim('Keep at most n; the count still reports them all.')],
+        ]),
+        '',
+        dim('  A pattern with * or ? is a glob over the whole name; otherwise it is'),
+        dim('  a substring, so --name password finds ResetPasswordPayload.'),
+        '',
+        'Show',
+        ...table([
+            ['  <id...>', dim('Node ids, e.g. Type:User or Property:User.email.')],
+            ['  --method <name>', dim('An operation by name. * to take more. Repeatable.')],
+            ['  --type <name>', dim('A schema by name. * to take more. Repeatable.')],
+            ['  --source <name>', dim('A whole document, as it was indexed.')],
+            ['  --exact', dim('Only what was named, without the neighbours.')],
+        ]),
+        '',
         dim(`Credentials come from the ${cyan('zen')} keyring — try ${cyan('zen key ls')}.`),
     ],
 
@@ -123,6 +168,10 @@ export const command: Command = {
                 return await index(tail, ctx);
             case 'search':
                 return await search(tail, ctx);
+            case 'list':
+                return await list(tail, ctx);
+            case 'grep':
+                return await grep(tail, ctx);
             case 'show':
                 return await show(tail, ctx);
             case 'stats':
@@ -431,23 +480,309 @@ function check(value: unknown): SchemaQuery {
 }
 
 // ---------------------------------------------------------------------------
+// list, grep
+//
+// The deterministic half. Neither takes an embedder, because neither ranks
+// anything: `list` filters on the attributes a node already has and `grep`
+// reads the same materialized string the index was built from. What comes back
+// is every match, and where a limit cut the list the count still reports the
+// total — being shown three of three hundred is only useful if you are told
+// which of the two happened.
+// ---------------------------------------------------------------------------
+
+const SUBJECTS: Record<string, NodeKind> = {
+    methods: 'method',
+    types: 'type',
+    properties: 'property',
+};
+
+interface ListFlags {
+    dir?: string;
+    name?: string[];
+    path?: string[];
+    source?: string;
+    'method-type'?: string;
+    direction?: string;
+    limit?: string;
+    quiet?: boolean;
+}
+
+async function list(args: readonly string[], ctx: Context): Promise<void> {
+    const { values, positionals } = parse<ListFlags>(
+        args,
+        {
+            dir: { type: 'string', short: 'd' },
+            name: MANY,
+            path: MANY,
+            source: { type: 'string' },
+            'method-type': { type: 'string' },
+            direction: { type: 'string' },
+            limit: { type: 'string' },
+            quiet: { type: 'boolean' },
+        },
+        LIST_USAGE,
+    );
+
+    const subject = positionals[0];
+    const kind = subject ? SUBJECTS[subject] : undefined;
+    if (!kind) {
+        throw usageError(
+            subject ? `cannot list "${subject}"` : 'nothing named to list',
+            `expected one of ${Object.keys(SUBJECTS).join(', ')}`,
+        );
+    }
+    if (positionals.length > 1) {
+        throw usageError('one subject at a time', LIST_USAGE);
+    }
+
+    const index = await openIndex(resolve(ctx.cwd, values.dir ?? DEFAULT_DIR));
+    const found = listNodes(index.graph, {
+        kind,
+        name: globs(values.name, '--name'),
+        path: globs(values.path, '--path'),
+        source: values.source,
+        methodType: oneOf(values['method-type'], ['read_only', 'read_write'], '--method-type'),
+        direction: oneOf(values.direction, ['input', 'output'], '--direction'),
+        limit: values.limit ? count(values.limit, '--limit') : undefined,
+    });
+
+    if (ctx.json) {
+        json({ found: found.found, truncated: found.truncated, rows: found.rows });
+        return;
+    }
+    const lines = rowLines(index.graph, kind, found.rows);
+    if (lines.length > 0) {
+        write(lines.join('\n'));
+    }
+    if (!values.quiet) {
+        note(dim(`  ${found.found} ${subject}${shown(found.found, found.rows.length)}`));
+    }
+}
+
+function rowLines(graph: ApiGraph, kind: NodeKind, rows: readonly Row[]): string[] {
+    if (kind === 'method') {
+        return table(rows.map((r) => [`${r.httpMethod} ${r.path}`, r.name, doc(r.doc)]));
+    }
+    if (kind === 'type') {
+        return table(
+            rows.map((r) => [
+                r.name,
+                dim(fields(propertyCount(graph, r.id))),
+                dim(r.direction === 'none' ? '' : `(${r.direction})`),
+                doc(r.doc),
+            ]),
+        );
+    }
+    return table(
+        rows.map((r) => [
+            `${r.parent ? `${r.parent}.` : ''}${r.name}${r.required ? '' : '?'}`,
+            `: ${r.signature || 'unknown'}`,
+            doc(r.doc),
+        ]),
+    );
+}
+
+interface GrepFlags {
+    dir?: string;
+    regex?: boolean;
+    'case-sensitive'?: boolean;
+    kind?: string[];
+    source?: string;
+    limit?: string;
+    'ids-only'?: boolean;
+    quiet?: boolean;
+}
+
+async function grep(args: readonly string[], ctx: Context): Promise<void> {
+    const { values, positionals } = parse<GrepFlags>(
+        args,
+        {
+            dir: { type: 'string', short: 'd' },
+            regex: { type: 'boolean' },
+            'case-sensitive': { type: 'boolean' },
+            kind: MANY,
+            source: { type: 'string' },
+            limit: { type: 'string' },
+            'ids-only': { type: 'boolean' },
+            quiet: { type: 'boolean' },
+        },
+        GREP_USAGE,
+    );
+
+    if (positionals.length === 0) {
+        throw usageError('no pattern given', GREP_USAGE);
+    }
+    if (positionals.length > 1) {
+        throw usageError('one pattern at a time — quote it if it has spaces', GREP_USAGE);
+    }
+    const kinds = (values.kind ?? []).map((k) =>
+        oneOf(k, ['method', 'type', 'property'], '--kind'),
+    ) as string[];
+
+    const index = await openIndex(resolve(ctx.cwd, values.dir ?? DEFAULT_DIR));
+    const result = pattern(() =>
+        grepNodes(
+            index.graph,
+            matcher(positionals[0], {
+                regex: values.regex,
+                caseSensitive: values['case-sensitive'],
+            }),
+            {
+                kinds,
+                source: values.source,
+                limit: values.limit ? count(values.limit, '--limit') : undefined,
+            },
+        ),
+    );
+
+    if (ctx.json) {
+        json({
+            found: result.found,
+            truncated: result.truncated,
+            matches: result.matches.map((m) => ({ id: m.id, ...m.attributes, text: m.text })),
+        });
+        return;
+    }
+    if (result.matches.length > 0) {
+        const lines = values['ids-only']
+            ? result.matches.map((m) => m.id)
+            : table(result.matches.map((m) => [m.id, dim(clip(m.text, 140))]));
+        write(lines.join('\n'));
+    }
+    if (!values.quiet && !values['ids-only']) {
+        note(dim(`  ${result.found} match(es)${shown(result.found, result.matches.length)}`));
+    }
+}
+
+// ---------------------------------------------------------------------------
+
+const shown = (found: number, kept: number): string => (kept < found ? `, showing ${kept}` : '');
+
+function globs(patterns: string[] | undefined, flag: string): Matcher[] | undefined {
+    if (!patterns || patterns.length === 0) {
+        return undefined;
+    }
+    return patterns.map((p) => pattern(() => loose(p), flag));
+}
+
+/** A bad pattern is a bad invocation, not a failure of the index. */
+function pattern<T>(run: () => T, flag?: string): T {
+    try {
+        return run();
+    } catch (err) {
+        if (err instanceof PatternError) {
+            throw usageError(`${flag ? `${flag}: ` : ''}${err.message}`, USAGE);
+        }
+        throw err;
+    }
+}
+
+function oneOf<T extends string>(
+    value: string | undefined,
+    allowed: readonly T[],
+    flag: string,
+): T | undefined {
+    if (value === undefined || value === 'any') {
+        return undefined;
+    }
+    if (!(allowed as readonly string[]).includes(value)) {
+        throw usageError(`${flag} cannot be "${value}"`, `expected ${allowed.join(' or ')}`);
+    }
+    return value as T;
+}
+
+const doc = (text: string): string => (text ? dim(`— ${clip(text.replace(/\s+/g, ' '), 90)}`) : '');
+
+const clip = (text: string, max: number): string =>
+    text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+
+// ---------------------------------------------------------------------------
 // show, stats
 // ---------------------------------------------------------------------------
+
+interface ShowFlags {
+    dir?: string;
+    method?: string[];
+    type?: string[];
+    source?: string;
+    exact?: boolean;
+    format?: string;
+    'max-nodes'?: string;
+    'no-docs'?: boolean;
+    quiet?: boolean;
+}
 
 /**
  * No embedder and no store: naming a node is a graph lookup, and asking for a
  * credential to print something already on disk would be theatre.
+ *
+ * Ids are the precise way in, and `--method`/`--type` are the way in for
+ * someone who has a name rather than an id — which, with `--format openapi
+ * --exact`, is how a resolved slice of the document is got out.
  */
 async function show(args: readonly string[], ctx: Context): Promise<void> {
-    const usage = 'zen rag schema show <id...>';
-    const { values, positionals } = parse<SearchFlags>(args, SEARCH_OPTIONS, usage);
-    if (positionals.length === 0) {
-        throw usageError('no node named', usage);
-    }
-    const format = formatOf(values.format);
-    const index = await openIndex(resolve(ctx.cwd, values.dir ?? DEFAULT_DIR));
+    const { values, positionals } = parse<ShowFlags>(
+        args,
+        {
+            dir: { type: 'string', short: 'd' },
+            method: MANY,
+            type: MANY,
+            source: { type: 'string' },
+            exact: { type: 'boolean' },
+            format: { type: 'string' },
+            'max-nodes': { type: 'string' },
+            'no-docs': { type: 'boolean' },
+            quiet: { type: 'boolean' },
+        },
+        SHOW_USAGE,
+    );
 
-    const missing = positionals.filter((id) => !index.graph.hasNode(id));
+    const format = formatOf(values.format);
+    const dir = resolve(ctx.cwd, values.dir ?? DEFAULT_DIR);
+
+    // A whole document, verbatim: the copy kept at index time is the resolved
+    // original, and anything rebuilt from the graph would be a paraphrase.
+    if (values.source && format === 'openapi' && positionals.length === 0 && !named(values)) {
+        const document = await readSource(dir, values.source);
+        if (document) {
+            write(document);
+            return;
+        }
+        if (!values.quiet) {
+            note(dim('  this index kept no copy of the documents — rebuilding it from the graph'));
+        }
+    }
+
+    const index = await openIndex(dir);
+    const ids = resolveIds(index.graph, positionals, values);
+    const subgraphs = values.exact
+        ? [select(index.graph, ids)]
+        : stitch(
+              index.graph,
+              ids.map((id) => ({ id, term: id, field: 'show', score: 1 })),
+              {
+                  maxNodes: values['max-nodes']
+                      ? count(values['max-nodes'], '--max-nodes')
+                      : undefined,
+              },
+          );
+    const text = await present(index, subgraphs, format, { docs: !values['no-docs'] });
+
+    if (ctx.json) {
+        json({ ids, subgraphs, rendered: text });
+    } else if (text) {
+        write(text);
+    }
+}
+
+const named = (values: ShowFlags): boolean => Boolean(values.method?.length || values.type?.length);
+
+/** Ids as given, plus whatever the name selectors resolve to. */
+function resolveIds(graph: ApiGraph, ids: readonly string[], values: ShowFlags): string[] {
+    if (ids.length === 0 && !named(values) && !values.source) {
+        throw usageError('no node named', SHOW_USAGE);
+    }
+    const missing = ids.filter((id) => !graph.hasNode(id));
     if (missing.length > 0) {
         throw new CliError(
             `no such node: ${missing.join(', ')}`,
@@ -455,18 +790,43 @@ async function show(args: readonly string[], ctx: Context): Promise<void> {
             'ids look like `Type:User` or `Property:User.email`',
         );
     }
-    const subgraphs = stitch(
-        index.graph,
-        positionals.map((id) => ({ id, term: id, field: 'show', score: 1 })),
-        { maxNodes: values['max-nodes'] ? count(values['max-nodes'], '--max-nodes') : undefined },
-    );
-    const text = await present(index, subgraphs, format, { docs: !values['no-docs'] });
 
-    if (ctx.json) {
-        json({ subgraphs, rendered: text });
-    } else if (text) {
-        write(text);
+    const out = new Set(ids);
+    for (const kind of ['method', 'type'] as const) {
+        for (const wanted of values[kind] ?? []) {
+            // Selecting, not searching: a bare name means that name. A star is
+            // the way to ask for more than one.
+            const match = isGlob(wanted)
+                ? pattern(() => wildcard(wanted), `--${kind}`)
+                : (name: string) => name === wanted;
+            const rows = listNodes(graph, { kind, name: [match], source: values.source });
+            // A selector that matched nothing is a wrong answer, not an empty
+            // one: the caller named something they believe is there.
+            if (rows.found === 0) {
+                throw new CliError(
+                    `no ${kind} called ${wanted}`,
+                    EXIT.failed,
+                    `try: zen rag schema list ${kind}s --name "${wanted}"`,
+                );
+            }
+            for (const row of rows.rows) {
+                out.add(row.id);
+            }
+        }
     }
+
+    // `--source` on its own means the whole document.
+    if (out.size === 0 && values.source) {
+        for (const kind of ['method', 'type'] as const) {
+            for (const row of listNodes(graph, { kind, source: values.source }).rows) {
+                out.add(row.id);
+            }
+        }
+        if (out.size === 0) {
+            throw new CliError(`nothing in this index came from ${values.source}`, EXIT.failed);
+        }
+    }
+    return [...out];
 }
 
 async function stats(args: readonly string[], ctx: Context): Promise<void> {

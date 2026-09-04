@@ -1,9 +1,9 @@
+import type { AnyTool, ToolContext } from '@zenera/neo';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
-import type { AnyTool, ToolContext } from '@zenera/neo';
 import { buildIndex } from '../src/schema/build.ts';
 import { SchemaIndex } from '../src/schema/search.ts';
 import { schemaTools } from '../src/schema/tools.ts';
@@ -55,7 +55,8 @@ describe('the tool set', () => {
             'search_api',
             'describe_types',
             'find_types_with_property',
-            'list_methods',
+            'list_api',
+            'grep_api',
         ]);
         expect(tools.every((t) => t.group === 'schema')).toBe(true);
     });
@@ -151,15 +152,85 @@ describe('describe_types', () => {
     });
 });
 
-describe('list_methods', () => {
-    it('lists the operations, sorted, with no search in between', async () => {
-        const result = await call('list_methods', {});
+describe('list_api', () => {
+    it('lists the operations grouped by route, with no search in between', async () => {
+        const result = await call('list_api', {});
+        const paths = (result.methods as string[]).map((m) => m.split(' ')[1]!);
+
         expect(result.found).toBe(4);
-        expect((result.methods as string[])[0]).toMatch(/^GET \/pets/);
+        // Ordered by route, so the operations on one resource sit together
+        // rather than being scattered by their verb.
+        expect(paths).toEqual([...paths].sort());
+        expect(paths[0]).toBe('/auth/reset-password');
     });
 
     it('filters by path and by what the verb does', async () => {
-        expect((await call('list_methods', { contains: '/auth' })).found).toBe(1);
-        expect((await call('list_methods', { method_type: 'read_only' })).found).toBe(2);
+        expect((await call('list_api', { path: '/auth' })).found).toBe(1);
+        expect((await call('list_api', { method_type: 'read_only' })).found).toBe(2);
+    });
+
+    it('reads a bare word as a substring and a star as a glob', async () => {
+        const bare = await call('list_api', { kind: 'types', name: 'Password' });
+        const wrapped = await call('list_api', { kind: 'types', name: '*Password*' });
+
+        expect(bare.found).toBeGreaterThan(0);
+        expect(wrapped.found).toBe(bare.found);
+        // A glob matches the whole name, so this one anchors at the start and
+        // finds nothing — which is why a bare word cannot mean the same thing.
+        expect((await call('list_api', { kind: 'types', name: 'Password*' })).found).toBe(0);
+    });
+
+    it('lists schemas and fields too, not only routes', async () => {
+        const types = await call('list_api', { kind: 'types' });
+        const fields = await call('list_api', { kind: 'properties', name: 'password' });
+
+        expect(types.found).toBeGreaterThan(0);
+        expect(String((types.types as string[]).join('\n'))).toContain('fields');
+        expect(fields.found).toBeGreaterThan(0);
+    });
+
+    it('counts every match even when it returns only some', async () => {
+        const all = await call('list_api', { kind: 'properties' });
+        const one = await call('list_api', { kind: 'properties', limit: 1 });
+
+        expect(one.found).toBe(all.found);
+        expect(one.truncated).toBe(true);
+        expect((one.properties as string[]).length).toBe(1);
+    });
+});
+
+describe('grep_api', () => {
+    it('finds every literal occurrence, whatever a ranking would have thought', async () => {
+        const result = await call('grep_api', { pattern: 'password' });
+        const ids = (result.matches as { id: string }[]).map((m) => m.id);
+
+        expect(result.found).toBe(ids.length);
+        expect(ids).toContain('Property:ResetPasswordPayload.password');
+        expect(ids).toContain('Type:ResetPasswordPayload');
+    });
+
+    it('ignores case, because nobody knows how a field was capitalized', async () => {
+        expect((await call('grep_api', { pattern: 'PASSWORD' })).found).toBeGreaterThan(0);
+    });
+
+    it('takes a regex when asked, and says so when it is not one', async () => {
+        expect(
+            (await call('grep_api', { pattern: 'pass(word|phrase)', regex: true })).found,
+        ).toBeGreaterThan(0);
+        expect(
+            String((await call('grep_api', { pattern: '(unclosed', regex: true })).error),
+        ).toContain('invalid pattern');
+    });
+
+    it('answers that a thing is absent, which is the point of it', async () => {
+        const result = await call('grep_api', { pattern: 'passwrd' });
+        expect(result.found).toBe(0);
+        expect(String(result.hint)).toContain('not there');
+    });
+
+    it('narrows to one kind of node', async () => {
+        const types = await call('grep_api', { pattern: 'password', kind: 'type' });
+        const ids = (types.matches as { id: string }[]).map((m) => m.id);
+        expect(ids.every((id) => id.startsWith('Type:'))).toBe(true);
     });
 });

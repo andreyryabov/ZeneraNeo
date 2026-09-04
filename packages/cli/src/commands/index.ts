@@ -79,7 +79,7 @@ export const EXTERNAL: Record<string, External> = {
     rag: {
         package: '@zenera/rag',
         summary: 'Search an openapi/swagger document as a graph.',
-        usage: 'zen rag schema <index|search|show|stats> [spec...]',
+        usage: 'zen rag schema <index|search|list|grep|show|stats> [spec...]',
         install: 'npm i -g @zenera/rag',
         banner: { head: 'Zenera', accent: 'Rag', subtitle: 'Api Retrieval' },
     },
