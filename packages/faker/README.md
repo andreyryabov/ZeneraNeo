@@ -92,6 +92,13 @@ happen, all in the operation's own names:
 
 Only paginated operations are affected. Their cache keys changed once, so they
 are written again on first use; everything else keeps the key it had.
+`GET /__faker/routes` reports the shape that was recognised, per operation.
+
+Plenty of documents describe the envelope and never write down the parameter
+that reads it back. The first two steps cannot help there — nothing static can
+see a parameter that is not declared — but the cut still applies: it takes the
+paging parameter from the request itself, since a client only sends `?cursor=X`
+because a body handed it X.
 
 ## Commands
 

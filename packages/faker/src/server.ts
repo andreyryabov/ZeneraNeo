@@ -5,7 +5,7 @@ import type { Box } from './box.ts';
 import { BuildFailed, type Cache } from './cache.ts';
 import type { GeneratorInput } from './envelope.ts';
 import { reason } from './generate.ts';
-import { cutLoop } from './paging.ts';
+import { cutLoop, pagingSeen } from './paging.ts';
 import type { Router } from './router.ts';
 import type { Operation } from './spec.ts';
 import { describeIssues, issues, type Checks, type Issue } from './validate.ts';
@@ -193,7 +193,8 @@ async function handle(
  * that costs the client rather than the mock: it hangs.
  */
 function cut(operation: Operation, value: unknown, query: URLSearchParams): boolean {
-    const paging = operation.paging;
+    const paging =
+        operation.paging ?? pagingSeen(operation.params, operation.success.schema, query);
     if (!paging) {
         return false;
     }
@@ -321,6 +322,7 @@ function introspect(pathname: string, res: ServerResponse, opts: ServerOptions):
                 operationId: o.operationId,
                 status: o.success.status,
                 body: Boolean(o.success.schema),
+                paging: o.paging,
                 key: o.key,
                 source: o.source,
             })),

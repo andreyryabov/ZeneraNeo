@@ -90,6 +90,26 @@ paths:
                                         type: array
                                         items:
                                             type: string
+    /alarms:
+        get:
+            operationId: listAlarms
+            summary: The envelope pages; the parameter that reads it is not written down.
+            responses:
+                '200':
+                    description: one page
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [results]
+                                properties:
+                                    results:
+                                        type: array
+                                        items:
+                                            type: string
+                                    cursor:
+                                        type: string
+                                        nullable: true
 components:
     schemas:
         Machine:

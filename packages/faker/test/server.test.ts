@@ -271,6 +271,15 @@ describe('a looping page token', () => {
         expect(log.at(-1)).not.toContain('cut');
     });
 
+    // The document never declared `cursor`, so only the request itself says
+    // this is a page turn at all.
+    it('is cut even where the document never declared the parameter', async () => {
+        await boot(() => ({ results: [], cursor: 'eyJwIjoyfQ==' }));
+        const res = await fetch(`${base}/alarms?cursor=${encodeURIComponent('eyJwIjoyfQ==')}`);
+        expect(await res.json()).toEqual({ results: [], cursor: null });
+        expect(log.at(-1)).toContain('cut a looping page token');
+    });
+
     // Nothing revalidates a generator's output on the way out, so a required,
     // non-nullable token stays where it is: a hang is better than a lie.
     it('is left alone when the schema leaves no room', async () => {

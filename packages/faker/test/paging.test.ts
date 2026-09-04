@@ -1,7 +1,7 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { cutLoop, tokenOf, type Paging } from '../src/paging.ts';
+import { cutLoop, pagingSeen, tokenOf, type Paging } from '../src/paging.ts';
 import { loadSpec, type Operation } from '../src/spec.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -44,6 +44,12 @@ describe('recognising a paged operation', () => {
 
     it('leaves an operation with no query controls alone', async () => {
         const op = (await load('petstore')).get('getUserById')!;
+        expect(op.paging).toBeUndefined();
+    });
+
+    // The parameter is missing from the document, so nothing static can see it.
+    it('says nothing about an operation whose paging parameter is undeclared', async () => {
+        const op = (await load('paged')).get('listAlarms')!;
         expect(op.paging).toBeUndefined();
     });
 
@@ -101,5 +107,35 @@ describe('cutting a looping token', () => {
         const body = { data: [], next_offset: 40 };
         expect(cutLoop(body, op.paging!, '40')).toBe(false);
         expect(body.next_offset).toBe(40);
+    });
+});
+
+describe('paging the document never declared', () => {
+    const query = (search: string): URLSearchParams => new URLSearchParams(search);
+
+    it('takes the parameter from the request when the document has none', async () => {
+        const op = (await load('paged')).get('listAlarms')!;
+        expect(pagingSeen(op.params, op.success.schema, query('cursor=eyJwIjoyfQ=='))).toEqual({
+            style: 'cursor',
+            param: 'cursor',
+            size: undefined,
+            next: 'cursor',
+            nextNullable: true,
+            nextRequired: false,
+            more: undefined,
+            items: 'results',
+        });
+    });
+
+    it('asks nothing of a request that carries no extra parameter', async () => {
+        const op = (await load('paged')).get('listAlarms')!;
+        expect(pagingSeen(op.params, op.success.schema, query(''))).toBeUndefined();
+    });
+
+    // The word has to mean paging in the response too, or every stray query
+    // parameter with a familiar name becomes a page turn.
+    it('does not invent paging out of an unrelated parameter', async () => {
+        const op = (await load('paged')).get('listTags')!;
+        expect(pagingSeen(op.params, op.success.schema, query('cursor=abc'))).toBeUndefined();
     });
 });

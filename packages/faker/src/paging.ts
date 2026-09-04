@@ -157,6 +157,31 @@ export function pagingOf(
     };
 }
 
+/**
+ * The paging an actual request reveals, for a document that declared none.
+ *
+ * Plenty of specs describe the response envelope — `cursor`, `has_more` — and
+ * never write down the parameter that reads it back. A client only sends
+ * `?cursor=X` because a body handed it X, so the exchange is pagination on the
+ * evidence even when the document is silent, and silence is exactly the case
+ * nothing else here can catch.
+ */
+export function pagingSeen(
+    params: readonly ParamSpec[],
+    schema: Schema | undefined,
+    query: Iterable<[string, string]>,
+): Paging | undefined {
+    const declared = new Set(params.map((p) => p.name));
+    const extra: ParamSpec[] = [];
+    for (const [name, value] of query) {
+        if (value !== '' && !declared.has(name)) {
+            declared.add(name);
+            extra.push({ name, in: 'query', required: false, schema: guess(value) });
+        }
+    }
+    return extra.length === 0 ? undefined : pagingOf([...params, ...extra], schema);
+}
+
 /** The token a body offers for the next page, or nothing when it offers none. */
 export function tokenOf(value: unknown, paging: Paging): string | undefined {
     if (!paging.next) {
@@ -247,3 +272,8 @@ const listish = (schema: Schema): boolean =>
     types(schema).includes('array') || schema.items !== undefined;
 
 const nullable = (schema: Schema): boolean => types(schema).includes('null');
+
+/** An undeclared parameter has only its value to be typed by. */
+const guess = (value: string): Schema => ({
+    type: /^-?\d+$/.test(value) ? 'integer' : 'string',
+});
