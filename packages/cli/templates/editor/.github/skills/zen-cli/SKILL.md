@@ -29,6 +29,7 @@ zen version
 
 zen faker    <serve|build|cache> [spec...]
 zen rag      schema <index|search|list|grep|trace|show|stats> [spec...]
+zen rag      docs <index|search|list|grep|show|stats> [path...]
 ```
 
 ## Read the reference before answering
@@ -48,7 +49,7 @@ guess a flag, and do not read them all.
 | The container shell commands run in, images, `persist`              | [sandbox.md](./references/sandbox.md)   |
 | Run reports, trajectories, what a session directory holds           | [inspect.md](./references/inspect.md)   |
 | `zen faker` — a mock API from an OpenAPI/Swagger document           | [faker.md](./references/faker.md)       |
-| `zen rag` — searching an OpenAPI/Swagger document as a graph        | [rag.md](./references/rag.md)           |
+| `zen rag` — searching an API description, or a pile of markdown     | [rag.md](./references/rag.md)           |
 
 ## The short version
 

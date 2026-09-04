@@ -81,6 +81,6 @@ export const EXTERNAL: Record<string, External> = {
         summary: 'Retrieval over a corpus: index it, then ask it something.',
         usage: 'zen rag <subject> <command> [args...]',
         install: 'npm i -g @zenera/rag',
-        banner: { head: 'Zenera', accent: 'Rag', subtitle: 'Api Retrieval' },
+        banner: { head: 'Zenera', accent: 'Rag', subtitle: 'Corpus Retrieval' },
     },
 };
