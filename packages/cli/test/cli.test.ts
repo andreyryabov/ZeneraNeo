@@ -1,5 +1,13 @@
 import type { Embedder, EmbeddingRequest, Model, ProcResult, runProcess } from '@zenera/neo';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    rmSync,
+    writeFileSync,
+} from 'node:fs';
 import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -16,6 +24,7 @@ import {
 import { ALIASES, COMMANDS, EXTERNAL, type External } from '../src/commands/index.ts';
 import { cliManifest, versionOf } from '../src/commands/version.ts';
 import { hasExternal, loadExternal } from '../src/external.ts';
+import { History, historyPath, MAX_ENTRIES } from '../src/history.ts';
 import { paths, writeJson } from '../src/home.ts';
 import { isStamp, stamp, stampInstant } from '../src/ids.ts';
 import {
@@ -305,6 +314,76 @@ describe('the streaming window', () => {
 
     it('asks for no more rows than there are', () => {
         expect(windowOf('one\ntwo', 40, 6)).toEqual(['one', 'two']);
+    });
+});
+
+describe('the prompt history', () => {
+    const root = mkdtempSync(join(tmpdir(), 'zen-history-'));
+    let n = 0;
+
+    const project = (): string => {
+        const dir = join(root, `p${n++}`);
+        mkdirSync(dir, { recursive: true });
+        return dir;
+    };
+
+    afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+    it('survives the process that wrote it', () => {
+        const dir = project();
+        const first = History.open(dir);
+        first.add('what changed in the last release?');
+        first.add('summarise it');
+        expect(History.open(dir).entries).toEqual([
+            'what changed in the last release?',
+            'summarise it',
+        ]);
+    });
+
+    it('lives beside the sessions, not inside one', () => {
+        const dir = project();
+        expect(historyPath(dir)).toBe(join(dir, 'sessions', '.history'));
+        History.open(dir).add('hello');
+        expect(readFileSync(historyPath(dir), 'utf8')).toBe('hello\n');
+    });
+
+    it('keeps blanks and repeats out of it', () => {
+        const dir = project();
+        const history = History.open(dir);
+        history.add('  ');
+        history.add('again');
+        history.add('again');
+        history.add('  again  ');
+        history.add('once more');
+        expect(history.entries).toEqual(['again', 'once more']);
+    });
+
+    it('reads a file it did not write', () => {
+        const dir = project();
+        mkdirSync(join(dir, 'sessions'), { recursive: true });
+        writeFileSync(historyPath(dir), 'one\n\ntwo\n');
+        expect(History.open(dir).entries).toEqual(['one', 'two']);
+    });
+
+    it('keeps the newest entries and no more', () => {
+        const dir = project();
+        mkdirSync(join(dir, 'sessions'), { recursive: true });
+        const lines = Array.from({ length: MAX_ENTRIES * 3 }, (_, i) => `q${i}`);
+        writeFileSync(historyPath(dir), `${lines.join('\n')}\n`);
+        const history = History.open(dir);
+        expect(history.entries).toHaveLength(MAX_ENTRIES);
+        expect(history.entries.at(-1)).toBe(`q${MAX_ENTRIES * 3 - 1}`);
+        // Past twice the cap the file itself is rewritten, so it cannot grow
+        // without bound just because nobody ever deletes it.
+        expect(readFileSync(historyPath(dir), 'utf8').trimEnd().split('\n')).toHaveLength(
+            MAX_ENTRIES,
+        );
+    });
+
+    it('is absent until something is asked', () => {
+        const dir = project();
+        expect(History.open(dir).entries).toEqual([]);
+        expect(existsSync(historyPath(dir))).toBe(false);
     });
 });
 
