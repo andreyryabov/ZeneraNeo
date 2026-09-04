@@ -1,5 +1,5 @@
 import { textOf } from './entities.ts';
-import type { ApiGraph, NodeAttrs, NodeKind } from './graph.ts';
+import { methodId, type ApiGraph, type NodeAttrs, type NodeKind } from './graph.ts';
 import { PatternError, type Matcher } from './match.ts';
 
 // ---------------------------------------------------------------------------
@@ -48,6 +48,9 @@ export interface Match {
 export interface GrepFilter {
     kinds?: readonly string[];
     source?: string;
+    /** the same two constraints `list` takes, so one question has one spelling */
+    name?: readonly Matcher[];
+    path?: readonly Matcher[];
     limit?: number;
 }
 
@@ -71,7 +74,7 @@ export function listNodes(graph: ApiGraph, filter: ListFilter): Listing {
         if (filter.name && !filter.name.some((match) => match(a.name))) {
             return;
         }
-        if (filter.path && !filter.path.some((match) => match(a.path))) {
+        if (filter.path && !matchesRoute(graph, id, a, filter.path)) {
             return;
         }
         rows.push({ ...a, id });
@@ -100,6 +103,12 @@ export function grepNodes(graph: ApiGraph, match: Matcher, filter: GrepFilter = 
         if (filter.source && a.source !== filter.source) {
             continue;
         }
+        if (filter.name && !filter.name.some((match) => match(a.name))) {
+            continue;
+        }
+        if (filter.path && !matchesRoute(graph, id, a, filter.path)) {
+            continue;
+        }
         const text = textOf(graph, id);
         if (match(text)) {
             matches.push({ id, attributes: a, text });
@@ -121,7 +130,34 @@ export function propertyCount(graph: ApiGraph, id: string): number {
 /** That count, said properly, in the one phrasing the CLI and the tools share. */
 export const fields = (n: number): string => `${n} ${n === 1 ? 'field' : 'fields'}`;
 
+/**
+ * The route a node sits on. An operation carries its own; a parameter carries
+ * the operation's name instead, so it is looked up. A schema has no route at
+ * all and never will — the same DTO is returned by half the API — which is
+ * why a `--path` filter is a filter on the operations and what hangs off them.
+ */
+export function routeOf(graph: ApiGraph, id: string, a: NodeAttrs): string {
+    if (a.path) {
+        return a.path;
+    }
+    if (a.kind !== 'property' || !a.parent) {
+        return '';
+    }
+    const owner = methodId(a.parent);
+    return graph.hasNode(owner) ? graph.getNodeAttribute(owner, 'path') : '';
+}
+
 // ---------------------------------------------------------------------------
+
+function matchesRoute(
+    graph: ApiGraph,
+    id: string,
+    a: NodeAttrs,
+    patterns: readonly Matcher[],
+): boolean {
+    const route = routeOf(graph, id, a);
+    return route !== '' && patterns.some((match) => match(route));
+}
 
 function passes(a: NodeAttrs, filter: ListFilter): boolean {
     if (filter.source && a.source !== filter.source) {

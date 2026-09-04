@@ -59,6 +59,22 @@ zen rag schema grep "pass(word|phrase)" --regex
 zen rag schema show --method GetCurrentUserInfo --format openapi --exact
 ```
 
+Patterns are globs by default and regular expressions under `--regex`, on
+`list` as well as `grep`, which is the only way to say "one of these prefixes":
+
+```sh
+zen rag schema list methods --regex --path "^/(users|teams)/"
+zen rag schema grep status --path "/invoices/*" --kind property
+```
+
+`grep` takes the same `--name` and `--path` constraints `list` takes, so a
+common word can be narrowed to one corner of the API instead of being read out
+of every document at once.
+
+When an index holds more than one document, `--show-source` names the one each
+row came from — `[source: billing_api_v2]` — on `list`, `grep`, `search` and
+`show` alike, so the document does not have to be recovered from `--json`.
+
 `list` and `grep` report `found` as the true total even when `--limit` cuts the
 printed rows, so a shortened answer still tells you how much there is. Nothing
 matching exits 0 — an empty answer is an answer, and here it is a trustworthy
@@ -79,6 +95,22 @@ zen rag schema search --query - --format ts <<'JSON'
 JSON
 ```
 
+## Which index
+
+Every reading command takes `-d, --dir`. Without one, `$ZEN_SCHEMA_DB` is used
+if it is set; without that, the nearest index to the working directory is found
+and named on stderr as it is used.
+
+Nearest means what it says: this directory, then a short way down into it, then
+up a level and again, stopping at your home directory. What is looked for is a
+`manifest.json` — an index is self-describing, so nothing here searches for a
+directory called `schema-db`, and an index called anything else is found just
+the same. `schema-db` is only the name a new one is given.
+
+Two indexes the same distance away is a question, not a tie to break, and it is
+refused: the wrong index does not fail, it answers confidently about a
+different API. Name one with `--dir`, or set `ZEN_SCHEMA_DB`.
+
 ## Commands
 
 ```
@@ -96,10 +128,14 @@ by `--direction`, `--method-type`, `--limit`, `--max-hops`, `--max-nodes` and
 the four `--exclude-*` filters, and rendered by `--format text | mermaid |
 mermaid-flowchart | ts | openapi`. `zen help rag` prints the full table.
 
-`list` takes `--name` and `--path`, `grep` takes `--regex`, `--case-sensitive`,
-`--kind` and `--ids-only`. A pattern with `*` or `?` in it is a glob matched
-against the whole name; a plain word is a substring, so `--name password` finds
-`ResetPasswordPayload` rather than nothing. `show` takes ids, or `--method` and
+`list` and `grep` share `--name`, `--path`, `--regex`, `--case-sensitive`,
+`--source`, `--show-source` and `--limit`; `grep` adds `--kind` and
+`--ids-only`. A pattern with `*` or `?` in it is a glob matched against the
+whole name; a plain word is a substring, so `--name password` finds
+`ResetPasswordPayload` rather than nothing; under `--regex` it is a regular
+expression either way. `--path` selects on the route an operation sits on, and
+on the route a parameter's operation sits on — a schema belongs to no one
+route, so `--path` never selects one. `show` takes ids, or `--method` and
 `--type` by name, or `--source` for a whole document, and `--exact` to print
 only what was named instead of its neighbourhood.
 

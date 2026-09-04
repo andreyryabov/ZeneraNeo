@@ -230,6 +230,47 @@ describe('list', () => {
         expect(out).toContain('ResetPasswordPayload');
     });
 
+    it('reads the filters as regexes when told to, stars and all', async () => {
+        const pattern = '^/(pets|auth).*';
+        const { out } = await run(['schema', 'list', 'methods', '--dir', dir, '--path', pattern]);
+        // As a glob this matches nothing at all, which is the whole point of
+        // the flag: the punctuation belongs to the regex, not to the glob.
+        expect(out).not.toContain('/pets');
+        expect(out).not.toContain('/auth');
+
+        const { out: asRegex } = await run([
+            'schema',
+            'list',
+            'methods',
+            '--dir',
+            dir,
+            '--regex',
+            '--path',
+            pattern,
+        ]);
+        expect(asRegex).toContain('/pets');
+        expect(asRegex).toContain('/auth/reset-password');
+        // The alternation is a real one: what it leaves out stays out.
+        expect(asRegex).not.toContain('/users/');
+    });
+
+    it('reaches a parameter through the route its operation sits on', async () => {
+        const { out } = await run(
+            ['schema', 'list', 'properties', '--dir', dir, '--path', '/pets*'],
+            true,
+        );
+        const result = JSON.parse(out) as { rows: { id: string }[] };
+
+        expect(result.rows.length).toBeGreaterThan(0);
+        // A schema sits on no one route, so only parameters can come back.
+        expect(result.rows.every((r) => r.id.includes('#'))).toBe(true);
+    });
+
+    it('names the document each row came from when asked', async () => {
+        const { out } = await run(['schema', 'list', 'methods', '--dir', dir, '--show-source']);
+        expect(out).toContain('[source: petstore]');
+    });
+
     it('answers nothing without failing, because empty is an answer', async () => {
         const { out, err } = await invoke(
             ['schema', 'list', 'types', '--dir', dir, '--name', 'Nope'],
@@ -296,6 +337,33 @@ describe('grep', () => {
         expect(ids.every((id) => /^(Method|Type|Property):/.test(id))).toBe(true);
     });
 
+    it('takes the same --name and --path constraints `list` takes', async () => {
+        const { out } = await run([
+            'schema',
+            'grep',
+            'password',
+            '--dir',
+            dir,
+            '--name',
+            'ResetPasswordPayload',
+            '--ids-only',
+        ]);
+        expect(out.trim().split('\n')).toEqual(['Type:ResetPasswordPayload']);
+
+        const { out: byRoute } = await run(
+            ['schema', 'grep', 'pet', '--dir', dir, '--path', '/pets*', '--ids-only'],
+            false,
+        );
+        const ids = byRoute.trim().split('\n').filter(Boolean);
+        expect(ids.length).toBeGreaterThan(0);
+        expect(ids.some((id) => id.startsWith('Type:'))).toBe(false);
+    });
+
+    it('names the document a match came from when asked', async () => {
+        const { out } = await run(['schema', 'grep', 'password', '--dir', dir, '--show-source']);
+        expect(out).toContain('[source: petstore]');
+    });
+
     it('exits clean on no match, since absence is the answer it was asked for', async () => {
         const { out, error } = await invoke(['schema', 'grep', 'passwrd', '--dir', dir], false);
         expect(error).toBeUndefined();
@@ -306,6 +374,21 @@ describe('grep', () => {
 describe('show', () => {
     it('needs an id', async () => {
         expect((await fails(['schema', 'show', '--dir', dir])).code).toBe(EXIT.usage);
+    });
+
+    it('names the document a node came from without being asked for --json', async () => {
+        const plain = await run(['schema', 'show', '--dir', dir, 'Type:ResetPasswordPayload']);
+        expect(plain.out).not.toContain('[source:');
+
+        const { out } = await run([
+            'schema',
+            'show',
+            '--dir',
+            dir,
+            'Type:ResetPasswordPayload',
+            '--show-source',
+        ]);
+        expect(out).toContain('[source: petstore]');
     });
 
     it('says which ids it could not find, and what one looks like', async () => {

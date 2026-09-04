@@ -35,8 +35,10 @@ import {
     type SourceRecord,
 } from './schema/files.ts';
 import type { ApiGraph, NodeKind } from './schema/graph.ts';
+import { DEFAULT_DIR, DIR_ENV, locateIndex, outputDir } from './schema/locate.ts';
 import { fields, grepNodes, listNodes, propertyCount, type Row } from './schema/lookup.ts';
 import { isGlob, loose, matcher, PatternError, wildcard, type Matcher } from './schema/match.ts';
+import { sourceTag } from './schema/render.ts';
 import { SchemaIndex, type SchemaQuery } from './schema/search.ts';
 import { select, stitch } from './schema/subgraph.ts';
 
@@ -66,8 +68,6 @@ const LIST_USAGE = 'zen rag schema list <methods|types|properties> [--dir <dir>]
 const GREP_USAGE = 'zen rag schema grep <pattern> [--dir <dir>]';
 const SHOW_USAGE = 'zen rag schema show [id...] [--method <name>] [--type <name>]';
 
-const DEFAULT_DIR = './schema-db';
-
 export const command: Command = {
     summary: 'Search an openapi/swagger document as a graph.',
     usage: USAGE,
@@ -88,7 +88,10 @@ export const command: Command = {
                 '  --embedding <ref>',
                 dim('Which embedder makes the vectors. Omit it to be shown the choices.'),
             ],
-            ['  -o, --out <dir>', dim(`Where the index goes. Default ${DEFAULT_DIR}.`)],
+            [
+                '  -o, --out <dir>',
+                dim(`Where the index goes. Default ${DEFAULT_DIR}, or ${DIR_ENV}.`),
+            ],
             [
                 '  --batch <n>',
                 dim('Texts per embedding request, and how often progress prints. Default 96.'),
@@ -112,7 +115,7 @@ export const command: Command = {
         '',
         'Search filters and shape',
         ...table([
-            ['  -d, --dir <dir>', dim(`Which index. Default ${DEFAULT_DIR}.`)],
+            ['  -d, --dir <dir>', dim(`Which index. Found from here if unset; see ${DIR_ENV}.`)],
             ['  --embedding <ref>', dim('Must be the one the index was built with.')],
             ['  --direction <d>', dim('input | output | any. Default any.')],
             ['  --method-type <t>', dim('read_only | read_write | any. Default any.')],
@@ -124,6 +127,7 @@ export const command: Command = {
             ['  --max-hops <n>', dim('How far apart two hits may be. Default 3.')],
             ['  --max-nodes <n>', dim('Nodes per result. Default 200.')],
             ['  --format <f>', dim('text | mermaid | mermaid-flowchart | ts | openapi.')],
+            ['  --show-source', dim('Name the document each operation and schema came from.')],
             ['  --no-docs', dim('Leave the descriptions out.')],
             ['  --interactive', dim('Prompt, search, refine. Needs a terminal.')],
             ['  --quiet', dim('No narration.')],
@@ -133,17 +137,22 @@ export const command: Command = {
         ...table([
             ['  list methods', dim('Operations. Filter with --path and --name.')],
             ['  list types', dim('Schemas. Filter with --name.')],
-            ['  list properties', dim('Fields and parameters. Filter with --name.')],
+            ['  list properties', dim('Fields and parameters. Filter with --name and --path.')],
             ['  grep <pattern>', dim('Substring over every node; --regex for a regex.')],
-            ['  --case-sensitive', dim('grep: match the capitals too.')],
+            ['  --regex', dim('Read every pattern as a regex, list and grep alike.')],
+            ['  --case-sensitive', dim('Match the capitals too.')],
             ['  --kind <k>', dim('grep: method | type | property. Repeatable.')],
+            ['  --name <p>', dim('grep too: only nodes whose name matches. Repeatable.')],
+            ['  --path <p>', dim('grep too: only what sits on a matching route.')],
             ['  --ids-only', dim('grep: bare ids, to pipe into show.')],
             ['  --source <name>', dim('Only this document, as `stats` names it.')],
+            ['  --show-source', dim('Print which document each row came from.')],
             ['  --limit <n>', dim('Keep at most n; the count still reports them all.')],
         ]),
         '',
         dim('  A pattern with * or ? is a glob over the whole name; otherwise it is'),
-        dim('  a substring, so --name password finds ResetPasswordPayload.'),
+        dim('  a substring, so --name password finds ResetPasswordPayload. With'),
+        dim('  --regex it is a regex either way, so --path "^/(users|teams)/" works.'),
         '',
         'Show',
         ...table([
@@ -151,8 +160,12 @@ export const command: Command = {
             ['  --method <name>', dim('An operation by name. * to take more. Repeatable.')],
             ['  --type <name>', dim('A schema by name. * to take more. Repeatable.')],
             ['  --source <name>', dim('A whole document, as it was indexed.')],
+            ['  --show-source', dim('Name the document each node came from.')],
             ['  --exact', dim('Only what was named, without the neighbours.')],
         ]),
+        '',
+        dim(`Without --dir, the index is the nearest one at or above the working`),
+        dim(`directory; ${cyan(DIR_ENV)} names it outright.`),
         '',
         dim(`Credentials come from the ${cyan('zen')} keyring — try ${cyan('zen key ls')}.`),
     ],
@@ -210,7 +223,7 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
     if (positionals.length === 0) {
         throw usageError('no document given', INDEX_USAGE);
     }
-    const out = resolve(ctx.cwd, values.out ?? DEFAULT_DIR);
+    const out = outputDir(ctx.cwd, values.out);
     const loud = !values.quiet && !ctx.json;
     const chosen = await embedder(values.embedding);
     const started = Date.now();
@@ -326,6 +339,7 @@ interface SearchFlags {
     format?: string;
     'no-docs'?: boolean;
     'only-hits'?: boolean;
+    'show-source'?: boolean;
     interactive?: boolean;
     quiet?: boolean;
 }
@@ -356,15 +370,20 @@ const SEARCH_OPTIONS = {
     format: { type: 'string' },
     'no-docs': { type: 'boolean' },
     'only-hits': { type: 'boolean' },
+    'show-source': { type: 'boolean' },
     interactive: { type: 'boolean' },
     quiet: { type: 'boolean' },
 } as const;
 
 async function search(args: readonly string[], ctx: Context): Promise<void> {
     const { values, positionals } = parse<SearchFlags>(args, SEARCH_OPTIONS, SEARCH_USAGE);
-    const dir = resolve(ctx.cwd, values.dir ?? DEFAULT_DIR);
+    const dir = indexDir(ctx, values.dir);
     const format = formatOf(values.format);
-    const options = { docs: !values['no-docs'], onlyHits: values['only-hits'] };
+    const options = {
+        docs: !values['no-docs'],
+        onlyHits: values['only-hits'],
+        source: values['show-source'],
+    };
     const query = { ...(await fromStdin(values.query)), ...fromFlags(values, positionals) };
 
     // Everything that can be wrong about the invocation is settled before a
@@ -503,6 +522,9 @@ interface ListFlags {
     source?: string;
     'method-type'?: string;
     direction?: string;
+    regex?: boolean;
+    'case-sensitive'?: boolean;
+    'show-source'?: boolean;
     limit?: string;
     quiet?: boolean;
 }
@@ -517,6 +539,9 @@ async function list(args: readonly string[], ctx: Context): Promise<void> {
             source: { type: 'string' },
             'method-type': { type: 'string' },
             direction: { type: 'string' },
+            regex: { type: 'boolean' },
+            'case-sensitive': { type: 'boolean' },
+            'show-source': { type: 'boolean' },
             limit: { type: 'string' },
             quiet: { type: 'boolean' },
         },
@@ -535,11 +560,12 @@ async function list(args: readonly string[], ctx: Context): Promise<void> {
         throw usageError('one subject at a time', LIST_USAGE);
     }
 
-    const index = await openIndex(resolve(ctx.cwd, values.dir ?? DEFAULT_DIR));
+    const how = { regex: values.regex, caseSensitive: values['case-sensitive'] };
+    const index = await openIndex(indexDir(ctx, values.dir));
     const found = listNodes(index.graph, {
         kind,
-        name: globs(values.name, '--name'),
-        path: globs(values.path, '--path'),
+        name: patterns(values.name, '--name', how),
+        path: patterns(values.path, '--path', how),
         source: values.source,
         methodType: oneOf(values['method-type'], ['read_only', 'read_write'], '--method-type'),
         direction: oneOf(values.direction, ['input', 'output'], '--direction'),
@@ -550,7 +576,7 @@ async function list(args: readonly string[], ctx: Context): Promise<void> {
         json({ found: found.found, truncated: found.truncated, rows: found.rows });
         return;
     }
-    const lines = rowLines(index.graph, kind, found.rows);
+    const lines = rowLines(index.graph, kind, found.rows, values['show-source']);
     if (lines.length > 0) {
         write(lines.join('\n'));
     }
@@ -559,9 +585,17 @@ async function list(args: readonly string[], ctx: Context): Promise<void> {
     }
 }
 
-function rowLines(graph: ApiGraph, kind: NodeKind, rows: readonly Row[]): string[] {
+function rowLines(
+    graph: ApiGraph,
+    kind: NodeKind,
+    rows: readonly Row[],
+    showSource = false,
+): string[] {
+    const from = (r: Row): string[] => (showSource ? [dim(sourceTag(r.source))] : []);
     if (kind === 'method') {
-        return table(rows.map((r) => [`${r.httpMethod} ${r.path}`, r.name, doc(r.doc)]));
+        return table(
+            rows.map((r) => [`${r.httpMethod} ${r.path}`, r.name, ...from(r), doc(r.doc)]),
+        );
     }
     if (kind === 'type') {
         return table(
@@ -569,6 +603,7 @@ function rowLines(graph: ApiGraph, kind: NodeKind, rows: readonly Row[]): string
                 r.name,
                 dim(fields(propertyCount(graph, r.id))),
                 dim(r.direction === 'none' ? '' : `(${r.direction})`),
+                ...from(r),
                 doc(r.doc),
             ]),
         );
@@ -577,6 +612,7 @@ function rowLines(graph: ApiGraph, kind: NodeKind, rows: readonly Row[]): string
         rows.map((r) => [
             `${r.parent ? `${r.parent}.` : ''}${r.name}${r.required ? '' : '?'}`,
             `: ${r.signature || 'unknown'}`,
+            ...from(r),
             doc(r.doc),
         ]),
     );
@@ -587,7 +623,10 @@ interface GrepFlags {
     regex?: boolean;
     'case-sensitive'?: boolean;
     kind?: string[];
+    name?: string[];
+    path?: string[];
     source?: string;
+    'show-source'?: boolean;
     limit?: string;
     'ids-only'?: boolean;
     quiet?: boolean;
@@ -601,7 +640,10 @@ async function grep(args: readonly string[], ctx: Context): Promise<void> {
             regex: { type: 'boolean' },
             'case-sensitive': { type: 'boolean' },
             kind: MANY,
+            name: MANY,
+            path: MANY,
             source: { type: 'string' },
+            'show-source': { type: 'boolean' },
             limit: { type: 'string' },
             'ids-only': { type: 'boolean' },
             quiet: { type: 'boolean' },
@@ -619,7 +661,10 @@ async function grep(args: readonly string[], ctx: Context): Promise<void> {
         oneOf(k, ['method', 'type', 'property'], '--kind'),
     ) as string[];
 
-    const index = await openIndex(resolve(ctx.cwd, values.dir ?? DEFAULT_DIR));
+    // The pattern is read as the flags say; the constraints are always names,
+    // so they stay globs-or-substrings even under --regex on the pattern.
+    const how = { caseSensitive: values['case-sensitive'] };
+    const index = await openIndex(indexDir(ctx, values.dir));
     const result = pattern(() =>
         grepNodes(
             index.graph,
@@ -630,6 +675,8 @@ async function grep(args: readonly string[], ctx: Context): Promise<void> {
             {
                 kinds,
                 source: values.source,
+                name: patterns(values.name, '--name', how),
+                path: patterns(values.path, '--path', how),
                 limit: values.limit ? count(values.limit, '--limit') : undefined,
             },
         ),
@@ -646,7 +693,13 @@ async function grep(args: readonly string[], ctx: Context): Promise<void> {
     if (result.matches.length > 0) {
         const lines = values['ids-only']
             ? result.matches.map((m) => m.id)
-            : table(result.matches.map((m) => [m.id, dim(clip(m.text, 140))]));
+            : table(
+                  result.matches.map((m) => [
+                      m.id,
+                      ...(values['show-source'] ? [dim(sourceTag(m.attributes.source))] : []),
+                      dim(clip(m.text, 140)),
+                  ]),
+              );
         write(lines.join('\n'));
     }
     if (!values.quiet && !values['ids-only']) {
@@ -658,11 +711,27 @@ async function grep(args: readonly string[], ctx: Context): Promise<void> {
 
 const shown = (found: number, kept: number): string => (kept < found ? `, showing ${kept}` : '');
 
-function globs(patterns: string[] | undefined, flag: string): Matcher[] | undefined {
-    if (!patterns || patterns.length === 0) {
+/**
+ * Where the index is, said out loud when nobody named it. Finding one and not
+ * saying which would make every answer here unattributable.
+ */
+function indexDir(ctx: Context, flag: string | undefined): string {
+    const { dir, from } = locateIndex(ctx.cwd, flag);
+    if (from === 'found' && !ctx.json) {
+        note(dim(`  using ${relative(ctx.cwd, dir) || dir}`));
+    }
+    return dir;
+}
+
+function patterns(
+    values: string[] | undefined,
+    flag: string,
+    options: { regex?: boolean; caseSensitive?: boolean } = {},
+): Matcher[] | undefined {
+    if (!values || values.length === 0) {
         return undefined;
     }
-    return patterns.map((p) => pattern(() => loose(p), flag));
+    return values.map((p) => pattern(() => loose(p, options), flag));
 }
 
 /** A bad pattern is a bad invocation, not a failure of the index. */
@@ -709,6 +778,7 @@ interface ShowFlags {
     format?: string;
     'max-nodes'?: string;
     'no-docs'?: boolean;
+    'show-source'?: boolean;
     quiet?: boolean;
 }
 
@@ -732,13 +802,14 @@ async function show(args: readonly string[], ctx: Context): Promise<void> {
             format: { type: 'string' },
             'max-nodes': { type: 'string' },
             'no-docs': { type: 'boolean' },
+            'show-source': { type: 'boolean' },
             quiet: { type: 'boolean' },
         },
         SHOW_USAGE,
     );
 
     const format = formatOf(values.format);
-    const dir = resolve(ctx.cwd, values.dir ?? DEFAULT_DIR);
+    const dir = indexDir(ctx, values.dir);
 
     // A whole document, verbatim: the copy kept at index time is the resolved
     // original, and anything rebuilt from the graph would be a paraphrase.
@@ -766,7 +837,10 @@ async function show(args: readonly string[], ctx: Context): Promise<void> {
                       : undefined,
               },
           );
-    const text = await present(index, subgraphs, format, { docs: !values['no-docs'] });
+    const text = await present(index, subgraphs, format, {
+        docs: !values['no-docs'],
+        source: values['show-source'],
+    });
 
     if (ctx.json) {
         json({ ids, subgraphs, rendered: text });
@@ -835,7 +909,7 @@ async function stats(args: readonly string[], ctx: Context): Promise<void> {
         { dir: { type: 'string', short: 'd' } },
         'zen rag schema stats [--dir <dir>]',
     );
-    const dir = resolve(ctx.cwd, values.dir ?? DEFAULT_DIR);
+    const dir = indexDir(ctx, values.dir);
     const manifest = await readManifest(dir);
 
     if (ctx.json) {

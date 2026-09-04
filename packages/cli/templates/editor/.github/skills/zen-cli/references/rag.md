@@ -25,7 +25,7 @@ zen rag schema index <spec...> [--embedding <ref>] [-o <dir>] [--batch <n>]
 | Flag                | Default       | Meaning                                                      |
 | ------------------- | ------------- | ------------------------------------------------------------ |
 | `--embedding <ref>` | —             | Which embedder makes the vectors. Omit it to see the choices |
-| `-o`, `--out <dir>` | `./schema-db` | Where the index goes                                         |
+| `-o`, `--out <dir>` | `./schema-db` | Where the index goes; `$ZEN_SCHEMA_DB` if set                |
 | `--batch <n>`       | `96`          | Texts per embedding request, and how often progress prints   |
 
 ```
@@ -48,6 +48,21 @@ lance/            the vector and full-text indexes
 
 The manifest records the embedding ref **and** the embedder's own id, so a
 search with a different model is refused rather than quietly returning nonsense.
+
+## Which index gets read
+
+Every reading command takes `-d`, `--dir`. Without one:
+
+1. `$ZEN_SCHEMA_DB`, if it is set.
+2. Otherwise the **nearest index** to the working directory — here, then a
+   short way down, then up a level and again, stopping at your home directory.
+   The one used is named on stderr.
+3. Otherwise `./schema-db`, so the error names the directory you expected.
+
+What is looked for is a `manifest.json`, not a directory called `schema-db`, so
+an index called anything else is found the same way. Two the same distance away
+is refused rather than guessed at — name one with `-d`, or set `ZEN_SCHEMA_DB`
+once and stop typing it.
 
 ## `search`
 
@@ -84,23 +99,24 @@ search good. A request field belongs in `--input-property`, a response field in
 
 ### Filters and shape
 
-| Flag                        | Default       | Meaning                                                 |
-| --------------------------- | ------------- | ------------------------------------------------------- |
-| `-d`, `--dir <dir>`         | `./schema-db` | Which index                                             |
-| `--embedding <ref>`         | the index's   | Must be the one the index was built with                |
-| `--direction <d>`           | `any`         | `input`, `output` or `any`                              |
-| `--method-type <t>`         | `any`         | `read_only`, `read_write` or `any`                      |
-| `--exclude-id <id>`         | —             | Drop a node. Repeatable                                 |
-| `--exclude-method <name>`   | —             | Drop an operation by name. Repeatable                   |
-| `--exclude-type <name>`     | —             | Drop a schema by name. Repeatable                       |
-| `--exclude-property <name>` | —             | Drop a field by name. Repeatable                        |
-| `--limit <n>`               | `5`           | Seeds kept per term                                     |
-| `--max-hops <n>`            | `3`           | How far apart two hits may be                           |
-| `--max-nodes <n>`           | `200`         | Nodes per result                                        |
-| `--format <f>`              | `text`        | `text`, `mermaid`, `mermaid-flowchart`, `ts`, `openapi` |
-| `--no-docs`                 | —             | Leave the descriptions out                              |
-| `--interactive`             | —             | Prompt, search, refine. Needs a terminal                |
-| `--quiet`                   | —             | No narration                                            |
+| Flag                        | Default     | Meaning                                                 |
+| --------------------------- | ----------- | ------------------------------------------------------- |
+| `-d`, `--dir <dir>`         | found       | Which index — see "Which index gets read"               |
+| `--embedding <ref>`         | the index's | Must be the one the index was built with                |
+| `--direction <d>`           | `any`       | `input`, `output` or `any`                              |
+| `--method-type <t>`         | `any`       | `read_only`, `read_write` or `any`                      |
+| `--exclude-id <id>`         | —           | Drop a node. Repeatable                                 |
+| `--exclude-method <name>`   | —           | Drop an operation by name. Repeatable                   |
+| `--exclude-type <name>`     | —           | Drop a schema by name. Repeatable                       |
+| `--exclude-property <name>` | —           | Drop a field by name. Repeatable                        |
+| `--limit <n>`               | `5`         | Seeds kept per term                                     |
+| `--max-hops <n>`            | `3`         | How far apart two hits may be                           |
+| `--max-nodes <n>`           | `200`       | Nodes per result                                        |
+| `--format <f>`              | `text`      | `text`, `mermaid`, `mermaid-flowchart`, `ts`, `openapi` |
+| `--show-source`             | —           | Tag each operation and schema with its document         |
+| `--no-docs`                 | —           | Leave the descriptions out                              |
+| `--interactive`             | —           | Prompt, search, refine. Needs a terminal                |
+| `--quiet`                   | —           | No narration                                            |
 
 ```
 zen rag schema search --method "reset a user password" --format ts
@@ -135,7 +151,7 @@ quit
 
 ```
 zen rag schema list <methods|types|properties> [-d <dir>] [--name <p>] [--path <p>]
-zen rag schema grep <pattern> [-d <dir>] [--regex] [--kind <k>] [--ids-only]
+zen rag schema grep <pattern> [-d <dir>] [--name <p>] [--path <p>] [--kind <k>]
 ```
 
 Exact, and therefore complete. `search` ranks, so it can only hand back the top
@@ -144,26 +160,37 @@ read `graph.json` directly, with no embedder, no credential and no network.
 
 | Flag                | For    | Meaning                                      |
 | ------------------- | ------ | -------------------------------------------- |
-| `--name <p>`        | `list` | Match the name. Repeatable                   |
-| `--path <p>`        | `list` | Match the route. Repeatable                  |
+| `--name <p>`        | both   | Match the name. Repeatable                   |
+| `--path <p>`        | both   | Match the route it sits on. Repeatable       |
+| `--regex`           | both   | Read every pattern as a regular expression   |
+| `--case-sensitive`  | both   | Stop ignoring case                           |
 | `--source <name>`   | both   | Only nodes from one document                 |
+| `--show-source`     | both   | Print which document each row came from      |
 | `--method-type <t>` | `list` | `read_only`, `read_write` or `any`           |
 | `--direction <d>`   | `list` | `input`, `output` or `any`                   |
-| `--regex`           | `grep` | Read the pattern as a regular expression     |
-| `--case-sensitive`  | `grep` | Stop ignoring case                           |
 | `--kind <k>`        | `grep` | `method`, `type` or `property`. Repeatable   |
 | `--ids-only`        | `grep` | Just the ids, one per line, for piping       |
 | `--limit <n>`       | both   | Rows to print. `found` still counts them all |
 
 A pattern with `*` or `?` is a glob matched against the whole string; a plain
 word is a substring. So `--name password` finds `ResetPasswordPayload`, and
-`--name "Password*"` finds nothing, because nothing starts with it.
+`--name "Password*"` finds nothing, because nothing starts with it. `--regex`
+makes it a regular expression instead — the only way to say "one of these":
+
+```
+zen rag schema list methods --regex --path "^/(users|teams)/"
+```
+
+`--path` selects on the route an operation sits on, and on the route a
+parameter's operation sits on. A schema belongs to no one route, so `--path`
+never selects one.
 
 ```
 zen rag schema list methods --path "*/users*"
 zen rag schema list types --name "*Password*"
 zen rag schema grep password
 zen rag schema grep "pass(word|phrase)" --regex
+zen rag schema grep status --path "/invoices/*" --kind property
 zen rag schema grep token --ids-only | xargs zen rag schema show --format ts
 ```
 
@@ -175,7 +202,8 @@ total, so a shortened answer never misreports how much there is.
 
 ```
 zen rag schema show [id...] [-d <dir>] [--format <f>]
-                    [--method <name>] [--type <name>] [--source <name>] [--exact]
+                    [--method <name>] [--type <name>] [--source <name>]
+                    [--show-source] [--exact]
 ```
 
 Prints named nodes with no search in between. Needs no embedder and no
@@ -183,9 +211,10 @@ credential — it is a read of the graph.
 
 Ids are one way in; `--method` and `--type` name things directly, which is
 usually what you have. A bare name means exactly that name; add `*` to select
-more than one. `--source <name>` takes a whole document. `--exact` prints only
-what was named instead of the neighbourhood around it — with `--format openapi`
-that is a valid, self-contained slice of the specification.
+more than one. `--source <name>` takes a whole document, and `--show-source`
+tags each node with the document it came from. `--exact` prints only what was
+named instead of the neighbourhood around it — with `--format openapi` that is
+a valid, self-contained slice of the specification.
 
 ```
 zen rag schema show --method GetCurrentUserInfo --format openapi --exact

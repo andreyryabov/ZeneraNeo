@@ -16,9 +16,18 @@ export type RenderFormat = 'text' | 'mermaid' | 'mermaid-flowchart';
 export interface RenderOptions {
     docs?: boolean;
     maxDoc?: number;
+    /** name the document each operation and schema came from */
+    source?: boolean;
 }
 
 const HIT = '»';
+
+/**
+ * Which document something came from, spelled one way everywhere. An index
+ * over four revisions of one API has four `GET /infra/tier-0s`, and a listing
+ * that does not say which is which is a listing you have to go and check.
+ */
+export const sourceTag = (source: string): string => (source ? `[source: ${source}]` : '');
 
 export function render(sub: Subgraph, format: RenderFormat, options: RenderOptions = {}): string {
     switch (format) {
@@ -72,7 +81,7 @@ export function toText(sub: Subgraph, options: RenderOptions = {}): string {
 function methodLines(view: View, method: SubgraphNode, options: RenderOptions): string[] {
     const a = method.attributes;
     const out = [
-        `  ${mark(method)}${a.httpMethod} ${a.path}  ${a.name}${doc(method, options, ' —')}`,
+        `  ${mark(method)}${a.httpMethod} ${a.path}  ${a.name}${from(method, options)}${doc(method, options, ' —')}`,
     ];
 
     for (const edge of view.out(method.id, 'HAS_PARAM')) {
@@ -92,7 +101,7 @@ function methodLines(view: View, method: SubgraphNode, options: RenderOptions): 
 
 function typeLines(view: View, type: SubgraphNode, options: RenderOptions): string[] {
     const out = [
-        `  ${mark(type)}${type.attributes.name}${side(type.attributes)}${doc(type, options, ' —')}`,
+        `  ${mark(type)}${type.attributes.name}${side(type.attributes)}${from(type, options)}${doc(type, options, ' —')}`,
     ];
 
     const composes = view.out(type.id, 'COMPOSES').map((e) => view.name(e.target));
@@ -130,6 +139,11 @@ function doc(node: SubgraphNode, options: RenderOptions, lead: string): string {
         return '';
     }
     return `${lead} ${clip(node.attributes.doc, options.maxDoc ?? 120)}`;
+}
+
+function from(node: SubgraphNode, options: RenderOptions): string {
+    const tag = options.source ? sourceTag(node.attributes.source) : '';
+    return tag ? `  ${tag}` : '';
 }
 
 // ---------------------------------------------------------------------------

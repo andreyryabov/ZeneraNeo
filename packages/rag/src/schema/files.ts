@@ -159,7 +159,7 @@ export async function readManifest(dir: string): Promise<Manifest> {
         throw new CliError(
             `${dir} does not hold an index`,
             EXIT.invalid,
-            'build one first with `zen rag schema index`',
+            'build one with `zen rag schema index`, or name an existing one with --dir or $ZEN_SCHEMA_DB',
         );
     }
     const manifest = JSON.parse(text) as Manifest;

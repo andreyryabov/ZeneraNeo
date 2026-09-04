@@ -66,8 +66,15 @@ export const isGlob = (pattern: string): boolean => /[*?]/.test(pattern);
  * a glob; without one, a substring — because `password` typed into `--name` is
  * a search for the word, and a whole-string match would answer nothing and
  * look like the field does not exist.
+ *
+ * `regex` settles it outright, and has to: a star is punctuation in both
+ * languages, so `^/(users|teams)/.*` read as a glob would match nothing and
+ * never say why.
  */
 export function loose(pattern: string, options: MatchOptions = {}): Matcher {
+    if (options.regex) {
+        return matcher(pattern, options);
+    }
     return isGlob(pattern) ? wildcard(pattern, options) : matcher(pattern, options);
 }
 

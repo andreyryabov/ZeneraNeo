@@ -5,6 +5,7 @@ import type { NodeKind } from './graph.ts';
 import { toTypeScript } from './hydrate.ts';
 import { fields, grepNodes, listNodes, propertyCount, type Row } from './lookup.ts';
 import { loose, matcher, PatternError } from './match.ts';
+import { sourceTag } from './render.ts';
 import type { SchemaIndex, SchemaQuery } from './search.ts';
 import { stitch, type Subgraph } from './subgraph.ts';
 
@@ -39,6 +40,8 @@ export interface SchemaToolOptions {
     /** what `format` defaults to when the model does not say */
     format?: Format;
     docs?: boolean;
+    /** name the document each answer came from; on by default past one document */
+    source?: boolean;
 }
 
 export function schemaTools<TCtx = unknown>(
@@ -47,6 +50,10 @@ export function schemaTools<TCtx = unknown>(
 ): AnyTool<TCtx>[] {
     const fallback = options.format ?? 'text';
     const docs = options.docs ?? true;
+    // With one document there is nothing to disambiguate and naming it on every
+    // line is prompt spent saying the same word; with several it is the only
+    // way to tell two revisions of one API apart.
+    const source = options.source ?? index.manifest.sources.length > 1;
 
     const searchApi = tool<SchemaQuery & { format?: string }, TCtx>({
         name: 'search_api',
@@ -125,7 +132,10 @@ export function schemaTools<TCtx = unknown>(
                 found: result.subgraphs.length,
                 ids: result.subgraphs.flatMap((s) => s.hits),
                 truncated: result.subgraphs.some((s) => s.truncated),
-                api: await present(index, result.subgraphs, chosen(format, fallback), { docs }),
+                api: await present(index, result.subgraphs, chosen(format, fallback), {
+                    docs,
+                    source,
+                }),
             };
         },
     });
@@ -221,8 +231,10 @@ export function schemaTools<TCtx = unknown>(
             kind?: string;
             name?: string;
             path?: string;
+            regex?: boolean;
             method_type?: string;
             direction?: string;
+            source?: string;
             limit?: number;
         },
         TCtx
@@ -249,12 +261,25 @@ export function schemaTools<TCtx = unknown>(
                         'Match the name. A plain word matches anywhere in it; use * and ? ' +
                         'to match the whole name, e.g. "*Password*".',
                 },
-                path: { type: 'string', description: 'Match the route, e.g. "/users*".' },
+                path: {
+                    type: 'string',
+                    description:
+                        'Match the route, e.g. "/users*". Keeps operations and their ' +
+                        'parameters; a schema sits on no one route, so it is left out.',
+                },
+                regex: {
+                    type: 'boolean',
+                    description: 'Read `name` and `path` as regular expressions instead.',
+                },
                 method_type: {
                     type: 'string',
                     enum: ['read_only', 'read_write', 'any'],
                 },
                 direction: { type: 'string', enum: ['input', 'output', 'any'] },
+                source: {
+                    type: 'string',
+                    description: 'Only this document, when the index holds more than one.',
+                },
                 limit: {
                     type: 'integer',
                     description: `Rows to return. Default ${DEFAULT_ROWS}.`,
@@ -262,7 +287,16 @@ export function schemaTools<TCtx = unknown>(
             },
             additionalProperties: false,
         },
-        execute: async ({ kind, name, path, method_type, direction, limit }) => {
+        execute: async ({
+            kind,
+            name,
+            path,
+            regex,
+            method_type,
+            direction,
+            source: only,
+            limit,
+        }) => {
             const subject = SUBJECTS[kind ?? 'methods'];
             if (!subject) {
                 return { error: `cannot list "${kind}"`, hint: 'kind is methods, types or fields' };
@@ -271,8 +305,9 @@ export function schemaTools<TCtx = unknown>(
             try {
                 result = listNodes(index.graph, {
                     kind: subject,
-                    name: name ? [loose(name)] : undefined,
-                    path: path ? [loose(path)] : undefined,
+                    name: name ? [loose(name, { regex })] : undefined,
+                    path: path ? [loose(path, { regex })] : undefined,
+                    source: only,
                     methodType: enumerated(method_type),
                     direction: enumerated(direction),
                     limit: Math.min(limit ?? DEFAULT_ROWS, MAX_ROWS),
@@ -283,65 +318,94 @@ export function schemaTools<TCtx = unknown>(
             return {
                 found: result.found,
                 truncated: result.truncated,
-                [PLURALS[subject]]: result.rows.map((r) => line(index.graph, subject, r)),
+                [PLURALS[subject]]: result.rows.map((r) => line(index.graph, subject, r, source)),
             };
         },
     });
 
-    const grepApi = tool<{ pattern: string; regex?: boolean; kind?: string; limit?: number }, TCtx>(
+    const grepApi = tool<
         {
-            name: 'grep_api',
-            group: GROUP,
-            description:
-                'Finds every literal occurrence of a string across the whole API description — ' +
-                'operations, schemas and fields alike. No embeddings and no ranking, so ' +
-                'nothing is missed for being an unusual word or an odd spelling. This is the ' +
-                'tool for "does X exist anywhere", and for checking that a search which ' +
-                'returned nothing really means there is nothing.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    pattern: {
-                        type: 'string',
-                        description: 'The text to find. Matched anywhere, ignoring case.',
-                    },
-                    regex: {
-                        type: 'boolean',
-                        description: 'Read the pattern as a regular expression instead.',
-                    },
-                    kind: { type: 'string', enum: ['method', 'type', 'property'] },
-                    limit: {
-                        type: 'integer',
-                        description: `Matches to return. Default ${DEFAULT_ROWS}. \`found\` always counts them all.`,
-                    },
-                },
-                required: ['pattern'],
-                additionalProperties: false,
-            },
-            execute: async ({ pattern, regex, kind, limit }) => {
-                let result;
-                try {
-                    result = grepNodes(index.graph, matcher(pattern, { regex }), {
-                        kinds: kind ? [kind] : undefined,
-                        limit: Math.min(limit ?? DEFAULT_ROWS, MAX_ROWS),
-                    });
-                } catch (err) {
-                    return { error: err instanceof PatternError ? err.message : String(err) };
-                }
-                if (result.found === 0) {
-                    return {
-                        found: 0,
-                        hint: 'nothing in the description contains it — it is not there under this name',
-                    };
-                }
-                return {
-                    found: result.found,
-                    truncated: result.truncated,
-                    matches: result.matches.map((m) => ({ id: m.id, text: m.text })),
-                };
-            },
+            pattern: string;
+            regex?: boolean;
+            kind?: string;
+            name?: string;
+            path?: string;
+            source?: string;
+            limit?: number;
         },
-    );
+        TCtx
+    >({
+        name: 'grep_api',
+        group: GROUP,
+        description:
+            'Finds every literal occurrence of a string across the whole API description — ' +
+            'operations, schemas and fields alike. No embeddings and no ranking, so ' +
+            'nothing is missed for being an unusual word or an odd spelling. This is the ' +
+            'tool for "does X exist anywhere", and for checking that a search which ' +
+            'returned nothing really means there is nothing. Narrow it with `path` or ' +
+            '`name` when the word is common and only one corner of the API is meant.',
+        parameters: {
+            type: 'object',
+            properties: {
+                pattern: {
+                    type: 'string',
+                    description: 'The text to find. Matched anywhere, ignoring case.',
+                },
+                regex: {
+                    type: 'boolean',
+                    description: 'Read the pattern as a regular expression instead.',
+                },
+                kind: { type: 'string', enum: ['method', 'type', 'property'] },
+                name: {
+                    type: 'string',
+                    description: 'Only nodes whose own name matches this. * and ? allowed.',
+                },
+                path: {
+                    type: 'string',
+                    description: 'Only what sits on a matching route, e.g. "/users*".',
+                },
+                source: {
+                    type: 'string',
+                    description: 'Only this document, when the index holds more than one.',
+                },
+                limit: {
+                    type: 'integer',
+                    description: `Matches to return. Default ${DEFAULT_ROWS}. \`found\` always counts them all.`,
+                },
+            },
+            required: ['pattern'],
+            additionalProperties: false,
+        },
+        execute: async ({ pattern, regex, kind, name, path, source: only, limit }) => {
+            let result;
+            try {
+                result = grepNodes(index.graph, matcher(pattern, { regex }), {
+                    kinds: kind ? [kind] : undefined,
+                    name: name ? [loose(name)] : undefined,
+                    path: path ? [loose(path)] : undefined,
+                    source: only,
+                    limit: Math.min(limit ?? DEFAULT_ROWS, MAX_ROWS),
+                });
+            } catch (err) {
+                return { error: err instanceof PatternError ? err.message : String(err) };
+            }
+            if (result.found === 0) {
+                return {
+                    found: 0,
+                    hint: 'nothing in the description contains it — it is not there under this name',
+                };
+            }
+            return {
+                found: result.found,
+                truncated: result.truncated,
+                matches: result.matches.map((m) => ({
+                    id: m.id,
+                    ...(source ? { source: m.attributes.source } : {}),
+                    text: m.text,
+                })),
+            };
+        },
+    });
 
     return [searchApi, describeTypes, findTypesWithProperty, listApi, grepApi];
 }
@@ -362,16 +426,17 @@ const PLURALS: Record<NodeKind, string> = {
 };
 
 /** One row, as the line a model reads rather than an object it has to walk. */
-function line(graph: SchemaIndex['graph'], kind: NodeKind, row: Row): string {
+function line(graph: SchemaIndex['graph'], kind: NodeKind, row: Row, source = false): string {
+    const from = source ? `  ${sourceTag(row.source)}` : '';
     if (kind === 'method') {
-        return `${row.httpMethod} ${row.path}  ${row.name}${row.doc ? ` — ${row.doc}` : ''}`;
+        return `${row.httpMethod} ${row.path}  ${row.name}${from}${row.doc ? ` — ${row.doc}` : ''}`;
     }
     if (kind === 'type') {
         const side = row.direction === 'none' ? '' : ` (${row.direction})`;
-        return `${row.name}${side}  ${fields(propertyCount(graph, row.id))}${row.doc ? ` — ${row.doc}` : ''}`;
+        return `${row.name}${side}  ${fields(propertyCount(graph, row.id))}${from}${row.doc ? ` — ${row.doc}` : ''}`;
     }
     const owner = row.parent ? `${row.parent}.` : '';
-    return `${owner}${row.name}${row.required ? '' : '?'}: ${row.signature || 'unknown'}`;
+    return `${owner}${row.name}${row.required ? '' : '?'}: ${row.signature || 'unknown'}${from}`;
 }
 
 const enumerated = (value: string | undefined): string | undefined =>

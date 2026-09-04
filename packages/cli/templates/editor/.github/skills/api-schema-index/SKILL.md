@@ -1,6 +1,6 @@
 ---
 name: api-schema-index
-description: What a schema index is, how it finds the right call inside a large OpenAPI/Swagger document, and how to build and query one with `zen rag schema` (or `npx @zenera/cli`) — searching it by meaning, listing and grepping it exactly, and giving it to an agent as tools.
+description: What a schema index is, how it finds the right call inside a large OpenAPI/Swagger document, and how to build and query one with `zen rag schema` (or `npx @zenera/cli`) — searching it by meaning, listing and grepping it exactly instead of reaching for shell `grep`/`rg`, and giving it to an agent as tools.
 ---
 
 # The schema index
@@ -41,6 +41,18 @@ the tell.
 > `zen rag schema search list methods` does not list anything — it runs a
 > semantic search for the phrase _"list methods"_ and returns ten ranked
 > guesses. The listing command is `zen rag schema list methods`.
+
+> **Never reach for shell `grep`, `rg`, `find`, `cat` or `jq` here.**
+> Not on the specification, not on `graph.json`, not on anything under the
+> index directory. `zen rag schema grep` and `zen rag schema list` are the
+> exact-matching commands, they are local, they need no credential, and they
+> answer in milliseconds. Shell tools on the same files are strictly worse:
+> they match raw YAML/JSON lines rather than nodes, so they cannot tell a
+> field from a `$ref` from a description, cannot say which operation a hit
+> belongs to, cannot filter by kind or direction, and they miss every name
+> the index normalised. A `grep -r password openapi.yaml` returns forty lines
+> of text; `zen rag schema grep password` returns the nodes, with their ids,
+> ready to hand back to `show`.
 
 ## Why it is a graph and not a search box
 
@@ -124,7 +136,7 @@ zen rag schema index <spec...> [--embedding <ref>] [-o <dir>] [--batch <n>]
 | Flag                | Default       | Meaning                                                      |
 | ------------------- | ------------- | ------------------------------------------------------------ |
 | `--embedding <ref>` | —             | Which embedder makes the vectors. Omit it to see the choices |
-| `-o`, `--out <dir>` | `./schema-db` | Where the index goes                                         |
+| `-o`, `--out <dir>` | `./schema-db` | Where the index goes; `$ZEN_SCHEMA_DB` if that is set        |
 | `--batch <n>`       | `96`          | Texts per embedding request, and how often progress prints   |
 | `--quiet`           | —             | No narration                                                 |
 
@@ -148,6 +160,27 @@ a real environment variable always wins.
 
 Rebuild the index when the specification changes. Nothing watches it, and a
 stale index is a confident wrong answer.
+
+## Which index gets read
+
+Every reading command takes `-d`, `--dir`. Without one:
+
+1. `$ZEN_SCHEMA_DB`, if it is set. **Set this once** instead of typing `-d` on
+   every command — `export ZEN_SCHEMA_DB=/assets/schema-db`.
+2. Otherwise the **nearest index** to the working directory: here, then a short
+   way down into it, then up a level and again, stopping at your home
+   directory. The one chosen is named on stderr as it is used, so an answer is
+   never anonymous.
+3. Otherwise `./schema-db`, which is only so the error names the directory you
+   were expecting.
+
+What is looked for is a `manifest.json` — an index is self-describing, so
+nothing searches for a directory _called_ `schema-db` and one called anything
+else is found the same way. `schema-db` is just the name a new one is given.
+
+Two indexes the same distance away is refused rather than guessed at: the wrong
+index does not fail, it answers confidently about a different API. Name one
+with `-d`, or set `ZEN_SCHEMA_DB`.
 
 ## Searching it
 
@@ -181,23 +214,24 @@ response field in `--output-property`, an action in `--method`.
 
 ### Shaping the answer
 
-| Flag                        | Default       | Meaning                                                 |
-| --------------------------- | ------------- | ------------------------------------------------------- |
-| `-d`, `--dir <dir>`         | `./schema-db` | Which index                                             |
-| `--embedding <ref>`         | the index's   | Must be the one the index was built with                |
-| `--direction <d>`           | `any`         | `input`, `output` or `any`                              |
-| `--method-type <t>`         | `any`         | `read_only` (GET/HEAD/OPTIONS) or `read_write`          |
-| `--exclude-id <id>`         | —             | Drop a node. Repeatable                                 |
-| `--exclude-method <name>`   | —             | Drop an operation by name. Repeatable                   |
-| `--exclude-type <name>`     | —             | Drop a schema by name. Repeatable                       |
-| `--exclude-property <name>` | —             | Drop a field by name. Repeatable                        |
-| `--limit <n>`               | `5`           | Seeds kept per term                                     |
-| `--max-hops <n>`            | `3`           | How far apart two hits may be and still join            |
-| `--max-nodes <n>`           | `200`         | Nodes per result                                        |
-| `--format <f>`              | `text`        | `text`, `mermaid`, `mermaid-flowchart`, `ts`, `openapi` |
-| `--no-docs`                 | —             | Leave the descriptions out                              |
-| `--interactive`             | —             | Prompt, search, refine. Needs a terminal                |
-| `--quiet`                   | —             | No narration                                            |
+| Flag                        | Default     | Meaning                                                 |
+| --------------------------- | ----------- | ------------------------------------------------------- |
+| `-d`, `--dir <dir>`         | found       | Which index — see "Which index gets read"               |
+| `--embedding <ref>`         | the index's | Must be the one the index was built with                |
+| `--direction <d>`           | `any`       | `input`, `output` or `any`                              |
+| `--method-type <t>`         | `any`       | `read_only` (GET/HEAD/OPTIONS) or `read_write`          |
+| `--exclude-id <id>`         | —           | Drop a node. Repeatable                                 |
+| `--exclude-method <name>`   | —           | Drop an operation by name. Repeatable                   |
+| `--exclude-type <name>`     | —           | Drop a schema by name. Repeatable                       |
+| `--exclude-property <name>` | —           | Drop a field by name. Repeatable                        |
+| `--limit <n>`               | `5`         | Seeds kept per term                                     |
+| `--max-hops <n>`            | `3`         | How far apart two hits may be and still join            |
+| `--max-nodes <n>`           | `200`       | Nodes per result                                        |
+| `--format <f>`              | `text`      | `text`, `mermaid`, `mermaid-flowchart`, `ts`, `openapi` |
+| `--show-source`             | —           | Tag each operation and schema with its document         |
+| `--no-docs`                 | —           | Leave the descriptions out                              |
+| `--interactive`             | —           | Prompt, search, refine. Needs a terminal                |
+| `--quiet`                   | —           | No narration                                            |
 
 ```sh
 zen rag schema search --method "reset a user password" --format ts
@@ -281,6 +315,7 @@ think it is?".
 | The question                                     | The command                              |
 | ------------------------------------------------ | ---------------------------------------- |
 | "how do I reset a password with this API?"       | `search --method "reset a password"`     |
+| _anything you would have run `grep` for_         | `grep` / `list` — never the shell        |
 | "what does the create-user request look like?"   | `search --input-type "create user"`      |
 | "what operations exist under /users?"            | `list methods --path "*/users*"`         |
 | "how many operations are there at all?"          | `list methods` (or `--json` for `found`) |
@@ -307,15 +342,16 @@ zen rag schema grep <pattern> [-d <dir>] [filters…]
 
 | Flag                | For    | Meaning                                        |
 | ------------------- | ------ | ---------------------------------------------- |
-| `--name <p>`        | `list` | Match the name. Repeatable                     |
-| `--path <p>`        | `list` | Match the route (methods). Repeatable          |
+| `--name <p>`        | both   | Match the name. Repeatable                     |
+| `--path <p>`        | both   | Match the route it sits on. Repeatable         |
+| `--regex`           | both   | Read every pattern as a regular expression     |
+| `--case-sensitive`  | both   | Stop ignoring case                             |
+| `--source <name>`   | both   | Only one document, as `stats` names it         |
+| `--show-source`     | both   | Print which document each row came from        |
 | `--method-type <t>` | `list` | `read_only`, `read_write` or `any`             |
 | `--direction <d>`   | `list` | `input`, `output` or `any`                     |
-| `--regex`           | `grep` | Read the pattern as a regular expression       |
-| `--case-sensitive`  | `grep` | Stop ignoring case                             |
 | `--kind <k>`        | `grep` | `method`, `type` or `property`. Repeatable     |
 | `--ids-only`        | `grep` | Bare ids, one per line, for piping             |
-| `--source <name>`   | both   | Only one document, as `stats` names it         |
 | `--limit <n>`       | both   | Print at most n; `found` still counts them all |
 | `--json`            | both   | `{found, truncated, rows}` / `…, matches}`     |
 | `--quiet`           | both   | No narration                                   |
@@ -330,6 +366,7 @@ zen rag schema list properties --name password   # every field so named
 zen rag schema grep password                     # every literal occurrence
 zen rag schema grep "pass(word|phrase)" --regex
 zen rag schema grep password --kind type --ids-only
+zen rag schema grep status --path "/invoices/*"   # the word, in one corner
 ```
 
 `list` walks one kind of node and matches its structured fields; `grep` matches
@@ -337,6 +374,24 @@ the text of every node in the index — the same text the search was built from,
 so the two agree on what the API says. A pattern with `*` or `?` is a glob
 matched against the whole string; a plain word is a substring, so `--name
 password` finds `ResetPasswordPayload` and `--name "Password*"` finds nothing.
+
+**`--regex` applies to both commands and to every pattern**, which is the only
+way to say "one of these" — a glob has no alternation:
+
+```sh
+zen rag schema list methods --regex --path "^/(users|teams)/"
+zen rag schema list types --regex --name "(Request|Response)$"
+```
+
+`--name` and `--path` are constraints on `grep` as well, which is what makes a
+common word usable: `grep status` across a whole API is unreadable,
+`grep status --path "/invoices/*" --kind property` is an answer. On `list
+properties` and on `grep`, `--path` matches the route a parameter's operation
+sits on; a schema belongs to no one route, so `--path` never selects one.
+
+When an index holds several documents, `--show-source` puts
+`[source: billing_api_v2]` on every row, so which document answered does not
+have to be recovered from `--json`.
 
 Both report `found` as the true total even when `--limit` shortens what is
 printed, so a cut answer never misreports how much there is. Nothing matching
@@ -349,19 +404,55 @@ whole point of them.
 zen rag schema grep token --ids-only | xargs zen rag schema show --format ts
 ```
 
+### Instead of the shell
+
+Every reflex that reaches for a shell tool has a command here that answers the
+same question better. Add `-d <dir>` when the index is not the nearest one, or
+name it once with `ZEN_SCHEMA_DB`.
+
+| The reflex                              | The command                                           |
+| --------------------------------------- | ----------------------------------------------------- |
+| `grep -ri password spec.yaml`           | `zen rag schema grep password`                        |
+| `grep -r password` \| _only in schemas_ | `zen rag schema grep password --kind type`            |
+| `grep -E "pass(word\|phrase)"`          | `zen rag schema grep "pass(word\|phrase)" --regex`    |
+| `grep password` (case matters)          | `zen rag schema grep password --case-sensitive`       |
+| `grep -c` / `wc -l`                     | `--json`, and read `found` — it counts past `--limit` |
+| `grep -l` / `grep -o` for piping        | `zen rag schema grep password --ids-only`             |
+| `grep "/users" spec.yaml`               | `zen rag schema list methods --path "*/users*"`       |
+| `grep -i "updateuser"`                  | `zen rag schema list methods --name "*Update*"`       |
+| `grep "UserSettings"`                   | `zen rag schema list types --name "*UserSettings*"`   |
+| `grep -A5 password` for the field       | `zen rag schema list properties --name "*password*"`  |
+| `grep -rl password specs/` (which one?) | `zen rag schema grep password --show-source`          |
+| `cat`/`yq` a schema out of the document | `zen rag schema show --type UserSettings --format ts` |
+| `ls` the index directory                | `zen rag schema stats`                                |
+
+```sh
+export ZEN_SCHEMA_DB=/assets/schema-db   # once, then never again
+zen rag schema grep "password" --limit 10
+zen rag schema list methods --path "*user*"
+zen rag schema list types --name "*UserSettings*"
+zen rag schema list properties --name "*password*" --show-source
+```
+
+If none of these fits the question, the question is about meaning, and the
+answer is `search` — still not the shell.
+
 ### Naming what you want in `show`
 
 ```sh
 zen rag schema show --method GetCurrentUserInfo --format openapi --exact
 zen rag schema show --type "*Invoice*" --format ts
 zen rag schema show --source billing-api --format openapi
+zen rag schema show --type "*Invoice*" --show-source
 ```
 
 Ids are one way in, but `--method` and `--type` take the names you already
 have. A bare name means exactly that name; add `*` to take more than one.
-`--exact` prints only what was named instead of the neighbourhood around it,
-which with `--format openapi` gives a valid self-contained slice of the
-specification — enough to generate a client or a mock payload from.
+`--show-source` names the document each node came from, which is the quick way
+to tell two versions of the same API apart. `--exact` prints only what was
+named instead of the neighbourhood around it, which with `--format openapi`
+gives a valid self-contained slice of the specification — enough to generate a
+client or a mock payload from.
 
 ## Giving it to an agent
 
@@ -394,6 +485,12 @@ it needs the list of types that _do_ have one, and embedding the word will only
 rank the guess it already made near the top. `grep_api` is the same instinct
 widened: it is how a model checks that a search returning nothing really means
 there is nothing.
+
+`list_api` and `grep_api` take `name`, `path`, `regex` and `source`, so a
+common word can be narrowed to one route or one document rather than read out
+in full. When an index holds more than one document, both tools name the source
+of every row without being asked — with two versions of the same API indexed
+together, which one answered is part of the answer.
 
 Tell the agent in its prompt to search before it writes a call, and to put the
 intent in the narrow field. A model left to itself puts everything in `all`.

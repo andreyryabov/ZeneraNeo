@@ -5,6 +5,7 @@ export * from './schema/entities.ts';
 export * from './schema/files.ts';
 export * from './schema/graph.ts';
 export * from './schema/hydrate.ts';
+export * from './schema/locate.ts';
 export * from './schema/lookup.ts';
 export * from './schema/match.ts';
 export * from './schema/render.ts';
