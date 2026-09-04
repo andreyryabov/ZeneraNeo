@@ -1,6 +1,7 @@
 import SwaggerParser from '@apidevtools/swagger-parser';
-import { createHash } from 'node:crypto';
 import { CliError, EXIT } from '@zenera/cli/lib';
+import { createHash } from 'node:crypto';
+import { pagingOf, type Paging } from './paging.ts';
 import { normalize, type Dialect, type Schema } from './schema.ts';
 
 // ---------------------------------------------------------------------------
@@ -45,6 +46,8 @@ export interface Operation {
     requestBody?: { required: boolean; schema: Schema };
     /** the response a call is answered with; `schema` absent means no body */
     success: { status: number; schema?: Schema };
+    /** how the operation turns pages, when it turns pages at all */
+    paging?: Paging;
 }
 
 interface Doc {
@@ -168,6 +171,7 @@ function build(b: Built): Operation {
         params: b.params,
         requestBody: b.body,
         success,
+        paging: pagingOf(b.params, success.schema),
     };
     return { ...operation, key: keyOf(operation) };
 }
@@ -189,6 +193,12 @@ function keyOf(op: Operation): string {
             .map((p) => [p.in, p.name, p.required, canonical(p.schema)]),
         body: op.requestBody ? [op.requestBody.required, canonical(op.requestBody.schema)] : null,
         success: [op.success.status, op.success.schema ? canonical(op.success.schema) : null],
+        // Derived from the two above, so it adds nothing to the identity — it is
+        // here to *change* it, once, for the operations whose generator now has
+        // a pagination rule to obey. Absent rather than null when there is no
+        // paging, so that everything else hashes to exactly what it did before
+        // and no one else is asked to rebuild.
+        ...(op.paging ? { paging: canonical(op.paging) } : {}),
     };
     return createHash('sha256').update(JSON.stringify(shape)).digest('hex').slice(0, 16);
 }

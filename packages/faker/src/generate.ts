@@ -1,6 +1,7 @@
 import type { Message, Model, ModelRequest, ModelResponse } from '@zenera/neo';
 import type { Box } from './box.ts';
-import { echoIssues, probesFor } from './probe.ts';
+import { tokenOf, type Paging } from './paging.ts';
+import { echoIssues, nextPage, probesFor, walkStart } from './probe.ts';
 import { instruction, retry, SYSTEM } from './prompt.ts';
 import type { Operation } from './spec.ts';
 import { describeIssues, issues, type Checks } from './validate.ts';
@@ -163,7 +164,65 @@ async function judge(
             out.push(`- ${called}: ${describeIssues(echo)}.`);
         }
     }
+    // Only worth the container round trips once the file answers at all, and
+    // only for an operation that hands out a token somebody could follow.
+    if (out.length === 0 && operation.paging?.next) {
+        out.push(...(await walk(operation, operation.paging, response, box)));
+    }
     return out;
+}
+
+/** How many pages a mock may offer before it is simply not terminating. */
+const MAX_PAGES = 8;
+
+/**
+ * Follows the operation's own cursor and reports the ways that walk fails to
+ * end. A schema cannot express this and neither can any one response: the bug
+ * is a relation between two of them.
+ */
+async function walk(
+    operation: Operation,
+    paging: Paging,
+    response: ReturnType<Checks['for']>['response'],
+    box: Box,
+): Promise<string[]> {
+    let input = walkStart(operation, paging);
+    const seen = new Set<string>();
+    let sent: string | undefined;
+
+    for (let page = 1; page <= MAX_PAGES; page++) {
+        const outcome = await box.run(operation.key, input);
+        const called = `page ${page} of ${operation.method.toUpperCase()} ${operation.path}`;
+        if (!outcome.ok) {
+            return [`- ${called}: the file ${outcome.fault}.`];
+        }
+        if (response && !response(outcome.value)) {
+            return [
+                `- ${called}: the output does not match the response schema — ${describeIssues(issues('', response.errors))}.`,
+            ];
+        }
+
+        const token = tokenOf(outcome.value, paging);
+        if (token === undefined) {
+            return [];
+        }
+        if (token === sent) {
+            return [
+                `- ${called}: \`${paging.next}\` came back as ${JSON.stringify(token)}, the very token the request carried in \`${paging.param}\`. A client following it never advances. Build the token from \`${paging.param}\` so it counts up, and stop after three pages.`,
+            ];
+        }
+        if (seen.has(token)) {
+            return [
+                `- ${called}: the page tokens cycle — ${JSON.stringify(token)} was handed out earlier in this walk. Every page must offer a token no page has offered before, and the last one must offer none.`,
+            ];
+        }
+        seen.add(token);
+        sent = token;
+        input = nextPage(input, paging, token);
+    }
+    return [
+        `- ${operation.method.toUpperCase()} ${operation.path}: the pages never run out — after ${MAX_PAGES} of them \`${paging.next}\` is still set. Fabricate three pages in total and set it to null on the last.`,
+    ];
 }
 
 /**

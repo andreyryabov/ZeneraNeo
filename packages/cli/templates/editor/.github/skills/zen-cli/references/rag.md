@@ -327,3 +327,107 @@ found and the endpoint to call is what is actually wanted.
 
 They share the group `schema`, so an agent takes them with `schema:*` in its
 `tools:`.
+
+# Document search — `zen rag docs`
+
+```
+zen rag docs <index|search|list|grep|show|stats> [args...]
+```
+
+The second subject of the same command. Where `schema` reads an API description
+as a graph, `docs` reads a pile of **markdown and plain text** and answers with
+the documents themselves: the passages that matched, quoted verbatim with their
+line numbers, and a marker wherever something between two of them was skipped.
+
+## `index`
+
+```
+zen rag docs index <path...> [--embedding <ref>] [-o <dir>] [--chunk-tokens <n>]
+```
+
+| Flag                 | Default     | Meaning                                                      |
+| -------------------- | ----------- | ------------------------------------------------------------ |
+| `--embedding <ref>`  | —           | Which embedder makes the vectors. Omit it to see the choices |
+| `-o`, `--out <dir>`  | `./docs-db` | Where the index goes; `$ZEN_DOCS_DB` if set                  |
+| `--batch <n>`        | `96`        | Texts per embedding request                                  |
+| `--chunk-tokens <n>` | `384`       | Target chunk size                                            |
+| `--quiet`            | —           | No narration                                                 |
+
+Paths may be files, directories or globs. `.md`, `.markdown`, `.txt` and
+`.text` are read; hidden directories and `node_modules` are not.
+
+Every document is **copied into the index**, and every quoted line is read back
+out of that copy — so the index is one portable thing and what it quotes is the
+document rather than a reconstruction of it. Each document is named by its path
+relative to the common root of everything indexed, which is what keeps
+`nsx_4.1.0/api/routing.md` and `nsx_4.2.0/api/routing.md` apart.
+
+```
+docs-db/
+manifest.json     written last; its presence means the index is complete
+outline.json      every heading and table, with the lines they cover
+sources/          the documents, verbatim
+lance/            one row per chunk: two texts, one vector, the filter columns
+```
+
+## `search`
+
+```
+zen rag docs search [text...] [-f <pattern>] [-s <section>] [--kind <k>]
+```
+
+| Flag                     | Default  | Meaning                                              |
+| ------------------------ | -------- | ---------------------------------------------------- |
+| `-f`, `--file <pattern>` | —        | Only documents whose name matches. Repeatable        |
+| `--exclude-file <p>`     | —        | Drop documents whose name matches                    |
+| `-s`, `--section <name>` | —        | Only under this heading, and what nests in it        |
+| `--kind <k>`             | —        | `paragraph`, `list`, `table`, `table_row`, `code`, … |
+| `--mode <m>`             | `hybrid` | `hybrid`, `vector` or `text` for exact wording       |
+| `--limit <n>`            | `8`      | Passages kept                                        |
+| `-B`, `-A <n>`           | `0`      | Extra lines quoted before and after each passage     |
+| `--max-lines <n>`        | `400`    | A ceiling on the whole answer                        |
+| `--exclude-id <id>`      | —        | Drop a passage already seen. Repeatable              |
+| `--hits`                 | —        | One line per passage instead of the text             |
+| `--interactive`          | —        | Prompt, search, narrow, search again                 |
+
+**Narrowing is the interface.** Nobody finds the right paragraph on the first
+ask; the second call is the same question inside one part of the tree.
+
+```
+zen rag docs search "how are rate limits counted"
+zen rag docs search --file "nsx_4.2.*/api/**" "rate limit for the users route"
+zen rag docs search --section "Rate limits" --kind table "requests per minute"
+zen rag docs search --mode text "X-RateLimit-Remaining"
+```
+
+A `--file` pattern with `*` or `?` is a glob over the whole document name and
+a substring otherwise.
+
+## `list`, `grep`, `show` — no embedder, no credential
+
+```
+zen rag docs list <files|sections|tables> [-f <pattern>] [-s <section>]
+zen rag docs grep <pattern> [-f <pattern>] [--regex] [--case-sensitive]
+zen rag docs show <file> [--section <name>] [--lines <from-to>]
+```
+
+`list sections` gives every heading with the lines it spans, which is how a
+section is named before it is searched. `grep` reports `found` as the true
+total even when `--limit` cuts the rows, so unlike a search it can answer
+whether a string appears at all. `show` prints a document, a named section, or
+a line range, verbatim.
+
+## Giving it to an agent
+
+`@zenera/rag/docs/tools` exports four tools in the group `docs`:
+
+| Tool          | For                                                             |
+| ------------- | --------------------------------------------------------------- |
+| `search_docs` | The search above, with the same narrowing parameters            |
+| `list_docs`   | The documents, their headings, or their tables — no ranking     |
+| `grep_docs`   | Every matching line, counted in full — the way to prove absence |
+| `read_docs`   | A section or a line range, verbatim and complete                |
+
+Only `search_docs` ranks. Every answer carries line numbers and `read_docs`
+takes them, which is the loop the subject exists for: find the passage, read
+around it, then edit the file it came from.

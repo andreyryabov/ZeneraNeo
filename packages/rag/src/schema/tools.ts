@@ -1,10 +1,10 @@
 import { tool, type AnyTool } from '@zenera/neo';
 import { loose, matcher, PatternError } from '../common/match.ts';
-import { FORMATS, isFormat, present, type Format } from './present.ts';
-import { isEmpty, parseQuery, QueryError } from './query.ts';
 import type { NodeKind } from './graph.ts';
 import { toTypeScript } from './hydrate.ts';
 import { fields, grepNodes, listNodes, propertyCount, type Row } from './lookup.ts';
+import { FORMATS, isFormat, present, type Format } from './present.ts';
+import { isEmpty, parseQuery, QueryError } from './query.ts';
 import { sourceTag } from './render.ts';
 import type { SchemaIndex, SchemaQuery } from './search.ts';
 import { stitch, type Subgraph } from './subgraph.ts';
@@ -66,6 +66,7 @@ export function schemaTools<TCtx = unknown>(
     // line is prompt spent saying the same word; with several it is the only
     // way to tell two revisions of one API apart.
     const source = options.source ?? index.manifest.sources.length > 1;
+    const names = index.manifest.sources.map((s) => s.name);
 
     const searchApi = tool<SchemaQuery & { format?: string }, TCtx>({
         name: 'search_api',
@@ -102,6 +103,18 @@ export function schemaTools<TCtx = unknown>(
                 exclude_methods: list('Operation names to leave out.'),
                 exclude_types: list('Schema names to leave out.'),
                 exclude_properties: list('Field names to leave out.'),
+                // Naming the documents is only a choice when there is more than
+                // one, and an enum is what stops a model inventing a third.
+                ...(names.length > 1
+                    ? {
+                          sources: {
+                              type: 'array',
+                              items: { type: 'string', enum: names },
+                              description:
+                                  'Search only these documents. Omit it to search all of them.',
+                          },
+                      }
+                    : {}),
                 limit: {
                     type: 'integer',
                     description: `Results per phrase. Default ${DEFAULT_LIMIT}.`,
@@ -130,6 +143,13 @@ export function schemaTools<TCtx = unknown>(
             }
             if (isEmpty(query)) {
                 return { error: 'nothing was asked for', hint: 'fill at least one search field' };
+            }
+            const absent = (query.sources ?? []).filter((name) => !names.includes(name));
+            if (absent.length > 0) {
+                return {
+                    error: `no document called ${absent.join(', ')}`,
+                    hint: `it has: ${names.join(', ')}`,
+                };
             }
 
             const result = await index.search({

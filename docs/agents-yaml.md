@@ -102,7 +102,19 @@ providers:
 | `location`   | **vertex only** — a region, or `global`                                                                      |
 | `headers`    | Sent on every request: gateway routing, attribution, api versions                                            |
 | `timeoutMs`  | Per-request timeout                                                                                          |
-| `maxRetries` | Retry count                                                                                                  |
+| `maxRetries` | Retry count; defaults to `4`, `0` disables                                                                   |
+
+### Retries
+
+Every kind retries the same way, whichever SDK is behind it: up to `maxRetries`
+extra attempts on a rate limit (`429`), a request timeout (`408`) or a `5xx`,
+waiting 1s, then 2s, 4s, 8s — doubling up to a minute — and honouring a
+`Retry-After` header when the provider sends one. A 429 is the provider asking
+to be called again shortly, so it costs a few seconds rather than the run.
+
+Retrying happens at the transport, below the adapter, so a retried call is one
+that never started: no partial stream is replayed and nothing reaches the
+trajectory twice. Set `maxRetries: 0` to fail fast instead.
 
 ### Kinds and their defaults
 
@@ -276,10 +288,10 @@ Four fields of the SDK's `provider` object have no `routing` spelling either:
 Per-call **cost** is returned by this SDK and is not yet surfaced: `TokenUsage`
 counts tokens only.
 
-On the connection, `maxRetries` is honoured only as `0`. This SDK takes a retry
-_strategy_ rather than a count, so `0` disables retries and any other number
-leaves its default backoff in place. `timeoutMs` and `headers` behave as they do
-everywhere else.
+On the connection, `maxRetries` is honoured as a time budget rather than a
+count. This SDK takes a retry _strategy_, so the count is converted into the
+wall-clock window the same schedule would spend; `0` still disables retries.
+`timeoutMs` and `headers` behave as they do everywhere else.
 
 `reasoningEffort` **is** forwarded, as `reasoning.effort`. The gateway maps it
 onto whatever the destination model understands: for OpenAI models it passes

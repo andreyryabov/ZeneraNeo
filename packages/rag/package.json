@@ -1,11 +1,12 @@
 {
     "name": "@zenera/rag",
     "version": "1.1.9",
-    "description": "Retrieval over API descriptions: openapi/swagger documents as a searchable graph.",
+    "description": "Retrieval over a corpus: openapi/swagger documents as a searchable graph, markdown and text as searchable passages.",
     "keywords": [
         "agents",
         "ai-agents",
         "llm",
+        "markdown",
         "openapi",
         "rag",
         "vector-search"
@@ -35,6 +36,14 @@
         "./tools": {
             "types": "./dist/schema/tools.d.ts",
             "default": "./dist/schema/tools.js"
+        },
+        "./docs": {
+            "types": "./dist/docs/index.d.ts",
+            "default": "./dist/docs/index.js"
+        },
+        "./docs/tools": {
+            "types": "./dist/docs/tools.d.ts",
+            "default": "./dist/docs/tools.js"
         }
     },
     "files": [
@@ -52,8 +61,12 @@
     "dependencies": {
         "@apidevtools/swagger-parser": "^12.0.0",
         "@lancedb/lancedb": "^0.38.0",
-        "graphology": "^0.26.0",
         "@zenera/cli": "^1.1.9",
-        "@zenera/neo": "^1.1.9"
+        "@zenera/neo": "^1.1.9",
+        "graphology": "^0.26.0",
+        "remark-frontmatter": "^5.0.0",
+        "remark-gfm": "^4.0.1",
+        "remark-parse": "^11.0.0",
+        "unified": "^11.0.5"
     }
 }

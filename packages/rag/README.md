@@ -1,7 +1,8 @@
 # @zenera/rag
 
-**An OpenAPI description, indexed as a graph and searched by meaning — for
-agents that have to call an API they have not read.**
+**A corpus, indexed and searched by meaning — an OpenAPI description as a
+graph, a pile of markdown as quotable passages — for agents that have to work
+with something they have not read.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/andreyryabov/ZeneraNeo/blob/main/LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
@@ -11,7 +12,23 @@ agents that have to call an API they have not read.**
 > [`zen`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md),
 > which is also where the credentials already are.
 
-## Why
+## Two subjects
+
+A subject is a kind of corpus with its own index format, its own verbs and its
+own flags — not a variation on one command, because what `list` means to an API
+description is not what it means to a folder of notes.
+
+| Subject          | The corpus                | The answer                                     |
+| ---------------- | ------------------------- | ---------------------------------------------- |
+| `zen rag schema` | openapi/swagger documents | the connected piece of the API that matched    |
+| `zen rag docs`   | markdown and plain text   | the passages that matched, quoted with numbers |
+
+Both are built the same way — [LanceDB](https://lancedb.com) for hybrid vector
+
+- full-text retrieval, a manifest that records which embedder made the vectors,
+  and exact commands beside the ranking ones that need no credential at all.
+
+## Schema — an API description as a graph
 
 A large specification does not fit in a prompt, and the parts of it that answer
 a question are scattered: the field is on a schema, the schema is on a request
@@ -117,11 +134,75 @@ zen rag schema search --query - --format ts <<'JSON'
 JSON
 ```
 
+## Docs — markdown as quotable passages
+
+The other subject. Point it at files, directories or globs; `.md`, `.markdown`,
+`.txt` and `.text` are read, hidden directories and `node_modules` are not.
+
+```sh
+zen rag docs index --embedding openai:text-embedding-3-small ./docs
+zen rag docs search "how are rate limits counted"
+```
+
+The answer is the documents themselves — the passages that matched, quoted
+verbatim with their line numbers, and a marker wherever something between two
+of them was left out:
+
+```
+## nsx_4.2.0/api/routing.md — 9 of 148 lines
+
+  5 | ## Rate limits
+  7 | Requests are counted per tenant and rejected past the limit.
+... 12 lines omitted (Retries, Backoff) ...
+ 24 | | route | limit | window |
+ 25 | | --- | --- | --- |
+ 27 | | /api/users | 250 | 1m |
+```
+
+Nobody finds the paragraph they want on the first ask, so **narrowing is the
+interface**, not an afterthought. The second call is the same question inside
+one part of the tree:
+
+```sh
+zen rag docs search --file "nsx_4.2.*/api/**" "rate limit for the users route"
+zen rag docs search --section "Rate limits" --kind table "requests per minute"
+zen rag docs search --mode text "X-RateLimit-Remaining"   # exact wording only
+zen rag docs search --interactive                          # narrow by typing
+```
+
+`--file` is a glob when it has `*` or `?` and a substring otherwise, matched
+against the document's **name**, which is its path relative to the common root
+of everything indexed. That is what keeps
+two releases of the same file apart. `--section` takes a heading title, and
+covers whatever nests inside it. `--kind` takes `paragraph`, `list`, `table`,
+`table_row`, `code`, `frontmatter` or `html`, for when the answer is a table
+and not the prose around it. `-B/-A` widen each passage, `--max-lines` caps the
+whole answer, `--exclude-id` moves on from what was already seen.
+
+Tables are indexed twice over: once as a descriptor carrying the caption and
+the column names, and once per row, with the header row travelling alongside so
+the columns are still named wherever a row lands. A row too wide to be one
+chunk is cut into column groups, with the key column repeated in each.
+
+And beside all that, the exact half — no embedder, no credential, no network:
+
+```sh
+zen rag docs list files                      # every document, and what it holds
+zen rag docs list sections --file "api/**"   # every heading, with its line span
+zen rag docs list tables                     # every table, with its columns
+zen rag docs grep "Retry-After"              # every matching line, and its section
+zen rag docs show api/routing.md --section "Rate limits"
+zen rag docs show api/routing.md --lines 40-80
+```
+
+`grep` reports `found` as the true total even when `--limit` cuts the rows, so
+unlike a search it can answer whether a string appears at all.
+
 ## Which index
 
-Every reading command takes `-d, --dir`. Without one, `$ZEN_SCHEMA_DB` is used
-if it is set; without that, the nearest index to the working directory is found
-and named on stderr as it is used.
+Every reading command takes `-d, --dir`. Without one, `$ZEN_SCHEMA_DB` or
+`$ZEN_DOCS_DB` is used if it is set; without that, the nearest index to the
+working directory is found and named on stderr as it is used.
 
 Nearest means what it says: this directory, then a short way down into it, then
 up a level and again, stopping at your home directory. What is looked for is a
@@ -131,7 +212,10 @@ the same. `schema-db` is only the name a new one is given.
 
 Two indexes the same distance away is a question, not a tie to break, and it is
 refused: the wrong index does not fail, it answers confidently about a
-different API. Name one with `--dir`, or set `ZEN_SCHEMA_DB`.
+different API. Name one with `--dir`, or set the environment variable.
+
+The search is scoped by kind, so a `docs` index and a `schema` index can sit in
+the same tree without either shadowing the other.
 
 ## Commands
 
@@ -147,8 +231,8 @@ zen rag schema stats             What is in an index, and what built it.
 
 Search terms are one flag each — `--all`, `--method`, `--type`, `--input-type`,
 `--output-type`, `--property`, `--input-property`, `--output-property` — shaped
-by `--direction`, `--method-type`, `--limit`, `--max-hops`, `--max-nodes` and
-the four `--exclude-*` filters, and rendered by `--format text | mermaid |
+by `--direction`, `--method-type`, `--limit`, `--max-hops`, `--max-nodes`,
+`--source` and the four `--exclude-*` filters, and rendered by `--format text | mermaid |
 mermaid-flowchart | ts | openapi`. `zen help rag` prints the full table.
 
 `list` and `grep` share `--name`, `--path`, `--regex`, `--case-sensitive`,
@@ -166,6 +250,23 @@ only what was named instead of its neighbourhood.
 # Everything that mentions a token, rendered as TypeScript.
 zen rag schema grep token --ids-only | xargs zen rag schema show --format ts
 ```
+
+And for documents:
+
+```
+zen rag docs index <path...>     Read the documents and write a searchable index.
+zen rag docs search [text]       Ask it something. --interactive for a prompt.
+zen rag docs list <what>         Every document, section or table. No ranking.
+zen rag docs grep <pattern>      Every matching line, with the section it sits in.
+zen rag docs show <file>         A document, a section of one, or a line range.
+zen rag docs stats               What is in an index, and what built it.
+```
+
+Search takes the question as a bare phrase, narrowed by `--file`,
+`--exclude-file`, `--section`, `--kind` and `--mode`, shaped by `--limit`,
+`-B/--before`, `-A/--after` and `--max-lines`, and moved along by
+`--exclude-id`. `list` and `grep` share `--file`, `--section`, `--regex`,
+`--case-sensitive` and `--limit`.
 
 ## From an agent
 
@@ -201,6 +302,28 @@ need the word explained again, it needs the list of types that have one.
 `trace_api` is the step after both: a field is of no use until the call that
 carries it is known.
 
+Documents come with four, in the group `docs`, selectable as `docs:*`:
+
+```ts
+import { docs } from '@zenera/rag';
+
+const index = await docs.DocsIndex.open('./docs-db', embedder);
+const project = await loadProject('./my-project', { tools: docs.docsTools(index) });
+```
+
+| Tool          | For                                                          |
+| ------------- | ------------------------------------------------------------ |
+| `search_docs` | the passages that match, quoted with their line numbers      |
+| `list_docs`   | the documents, their headings, or their tables — no search   |
+| `grep_docs`   | every matching line, counted in full — no search             |
+| `read_docs`   | a section or a line range, verbatim and with nothing omitted |
+
+Same division, same reason. `search_docs` is the way in when the question is
+vague; `grep_docs` is how "it is not in here" can actually be concluded. Every
+answer carries line numbers and `read_docs` takes them, which is the loop the
+subject exists for: find the passage, read around it, then edit the file the
+passage came from.
+
 ## What an index is
 
 ```
@@ -216,6 +339,21 @@ schema-db/
 
 The manifest records which embedder made the vectors, and a search with a
 different one is refused rather than answered with noise.
+
+A document index is the same idea with a different middle:
+
+```
+docs-db/
+├── README.md         what this index holds — a live progress report while it builds
+├── manifest.json     written last — its absence means "not indexed"
+├── outline.json      every heading and table, with the lines they cover
+├── sources/          the documents themselves, verbatim — where the quotes come from
+└── lance/            one table: a row per chunk, two texts, one vector
+```
+
+There the copies are not a record but the answer: a search returns line ranges
+and the lines are read back out of `sources/`, so what is quoted is the document
+rather than a reconstruction of it.
 
 Indexing a large document is minutes of silence, so the directory says what is
 happening to it. `README.md` appears first as a progress report — the documents,
@@ -235,7 +373,8 @@ so an index built here is read under a name this machine never sees. `--no-sourc
 leaves the copies out, for an index that will never travel.
 
 The copies are a record, not an input: rebuilding reads the files you name, not
-the ones in `sources/`.
+the ones in `sources/`. A **document** index has no `--no-sources`, because
+there the copies are what every quoted line is read from.
 
 ## Notes
 
@@ -251,6 +390,11 @@ the ones in `sources/`.
 - Filters reaching the store are **closed enums only**. Exclusion lists are
   applied in JavaScript afterwards, so nothing a model wrote ever reaches a SQL
   predicate.
+- A document chunk knows **exactly which lines** of the original it stands for,
+  headings and table headers included. That is what makes an answer quotable,
+  and what lets the next question be phrased in line numbers.
+- Plain text is read as paragraphs and given **no invented headings**: a `.txt`
+  file has one section, which is the document.
 
 ## The rest of the family
 

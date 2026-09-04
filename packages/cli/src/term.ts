@@ -206,6 +206,8 @@ export interface Choice<T> {
     label: string;
     detail?: string;
     value: T;
+    /** Listed and picked by this instead of its position, e.g. `0` for an escape hatch. */
+    key?: string;
 }
 
 /** A numbered list. The pretty picker is the TUI's; this is the fallback. */
@@ -218,17 +220,25 @@ export async function choose<T>(title: string, choices: readonly Choice<T>[]): P
     }
     requireTty(title, 'the matching flag');
     note(bold(title));
-    const rows = choices.map((c, i) => [`  ${dim(`${i + 1}.`)}`, c.label, dim(c.detail ?? '')]);
+    // A keyed choice is out of the sequence, so it does not consume a number.
+    let seq = 0;
+    const keys = choices.map((c) => c.key ?? String(++seq));
+    const rows = choices.map((c, i) => [`  ${dim(`${keys[i]}.`)}`, c.label, dim(c.detail ?? '')]);
     for (const line of table(rows)) {
         note(line);
     }
+    const extra = keys.filter((_, i) => choices[i].key !== undefined);
+    const hint =
+        `Enter a number between 1 and ${seq}` +
+        (extra.length ? `, or ${extra.join(' / ')}` : '') +
+        '.';
     for (;;) {
         const answer = await ask('Choose', '1');
-        const n = Number(answer);
-        if (Number.isInteger(n) && n >= 1 && n <= choices.length) {
-            return choices[n - 1].value;
+        const at = keys.indexOf(answer);
+        if (at >= 0) {
+            return choices[at].value;
         }
-        note(dim(`Enter a number between 1 and ${choices.length}.`));
+        note(dim(hint));
     }
 }
 

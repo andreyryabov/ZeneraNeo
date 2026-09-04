@@ -52,6 +52,7 @@
         "@types/react": "^19.2.18",
         "@vitest/coverage-v8": "^4.1.11",
         "boxen": "^8.0.1",
+        "markdown-dataset": "0.1.0",
         "picocolors": "^1.1.1",
         "prettier": "^3.9.6",
         "typescript": "^5.9.3",

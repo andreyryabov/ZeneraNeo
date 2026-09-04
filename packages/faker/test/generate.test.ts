@@ -1,9 +1,9 @@
+import { SANDBOX_MOUNT, type Model, type ProcResult, type Runner } from '@zenera/neo';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SANDBOX_MOUNT, type Model, type ProcResult, type Runner } from '@zenera/neo';
 import { Box } from '../src/box.ts';
 import { Cache } from '../src/cache.ts';
 import { build, BuildFailed, reason, unfence } from '../src/generate.ts';
@@ -207,6 +207,119 @@ describe('the build loop', () => {
         await expect(build(operation, { model: plain, box, checks })).resolves.toMatchObject({
             attempts: 1,
         });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// The walk
+//
+// Termination is not a property of any one response, so none of the checks
+// above can see it. These generators all validate, all echo, and all hang a
+// client that follows the cursor.
+// ---------------------------------------------------------------------------
+
+describe('the pagination walk', () => {
+    let root: string;
+    let operation: Operation;
+    let checks: Checks;
+
+    beforeEach(async () => {
+        root = mkdtempSync(join(tmpdir(), 'faker-'));
+        const ops = await loadSpec(join(here, 'specs', 'paged.yaml'));
+        operation = ops.find((o) => o.operationId === 'listMachines')!;
+        checks = new Checks();
+    });
+
+    afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+    /** Reads the requested page out of the cursor, the way a good file would. */
+    const paging =
+        (answer: (page: number) => unknown): Behaviour =>
+        (input) => {
+            const asked = (input.query as Record<string, unknown>).cursor;
+            return answer(typeof asked === 'string' && /^\d+$/.test(asked) ? Number(asked) : 0);
+        };
+
+    const boxWith = (behave: Behaviour) =>
+        new Box({ root, image: 'stub', exec: fakeEngine(root, behave).exec });
+
+    it('accepts a cursor that counts up and runs out', async () => {
+        const box = boxWith(
+            paging((page) => ({
+                results: [{ id: `m${page}` }],
+                cursor: page >= 2 ? null : String(page + 1),
+                has_more: page < 2,
+            })),
+        );
+        await expect(
+            build(operation, { model: fakeModel(['# fine']), box, checks }),
+        ).resolves.toMatchObject({ attempts: 1 });
+    });
+
+    // The reported bug, exactly: it validates, it echoes nothing it should not,
+    // and every client that walks it goes round forever.
+    it('rejects a generator that answers with the cursor it was given', async () => {
+        const box = boxWith(() => ({
+            results: [{ id: 'm1' }],
+            cursor: '8fde793bf007fcf0',
+            has_more: true,
+        }));
+        const model = fakeModel(['# looping']);
+
+        await expect(build(operation, { model, box, checks, attempts: 2 })).rejects.toBeInstanceOf(
+            BuildFailed,
+        );
+        expect(model.seen[1]).toContain('never advances');
+        expect(model.seen[1]).toContain('8fde793bf007fcf0');
+    });
+
+    it('rejects cursors that go round in a circle', async () => {
+        const box = boxWith(
+            paging((page) => ({ results: [], cursor: page === 1 ? '2' : '1', has_more: true })),
+        );
+        const model = fakeModel(['# circling']);
+
+        await expect(build(operation, { model, box, checks, attempts: 2 })).rejects.toBeInstanceOf(
+            BuildFailed,
+        );
+        expect(model.seen[1]).toContain('cycle');
+    });
+
+    it('rejects pages that never run out', async () => {
+        const box = boxWith(paging((page) => ({ results: [], cursor: String(page + 1) })));
+        const model = fakeModel(['# endless']);
+
+        await expect(build(operation, { model, box, checks, attempts: 2 })).rejects.toBeInstanceOf(
+            BuildFailed,
+        );
+        expect(model.seen[1]).toContain('never run out');
+    });
+
+    // A generator that mints its token out of the seed looks fine for one
+    // request and is a fixed point under the server's own seeding.
+    it('holds the seed still, so a token built from it cannot pass', async () => {
+        const seeds: unknown[] = [];
+        const box = boxWith((input) => {
+            seeds.push(input.seed);
+            return { results: [], cursor: `s${String(input.seed)}`, has_more: true };
+        });
+        const model = fakeModel(['# seeded']);
+
+        await expect(build(operation, { model, box, checks, attempts: 1 })).rejects.toBeInstanceOf(
+            BuildFailed,
+        );
+        // The first two runs are the ordinary probes; the rest are the walk.
+        expect(new Set(seeds.slice(2)).size).toBe(1);
+    });
+
+    it('says nothing about pagination for an operation that does not page', async () => {
+        const ops = await loadSpec(join(here, 'specs', 'paged.yaml'));
+        const tags = ops.find((o) => o.operationId === 'listTags')!;
+        const engine = fakeEngine(root, () => ({ tags: ['a'] }));
+        const box = new Box({ root, image: 'stub', exec: engine.exec });
+
+        await build(tags, { model: fakeModel(['# fine']), box, checks });
+        expect(engine.runs).toBe(2);
     });
 });
 

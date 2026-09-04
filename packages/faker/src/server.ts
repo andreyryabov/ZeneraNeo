@@ -5,6 +5,7 @@ import type { Box } from './box.ts';
 import { BuildFailed, type Cache } from './cache.ts';
 import type { GeneratorInput } from './envelope.ts';
 import { reason } from './generate.ts';
+import { cutLoop } from './paging.ts';
 import type { Router } from './router.ts';
 import type { Operation } from './spec.ts';
 import { describeIssues, issues, type Checks, type Issue } from './validate.ts';
@@ -179,8 +180,25 @@ async function handle(
         return;
     }
 
+    const note = generator.cached ? 'hit' : 'miss';
+    const looped = cut(operation, outcome.value, url.searchParams);
     send(res, operation.success.status, outcome.value);
-    say(operation.success.status, generator.cached ? 'hit' : 'miss');
+    say(operation.success.status, looped ? `${note} · cut a looping page token` : note);
+}
+
+/**
+ * The generator on disk was written before the pagination rule existed, and a
+ * cache is not rebuilt just because the rule changed. A body offering back the
+ * token it was handed is therefore still possible, and it is the one bug here
+ * that costs the client rather than the mock: it hangs.
+ */
+function cut(operation: Operation, value: unknown, query: URLSearchParams): boolean {
+    const paging = operation.paging;
+    if (!paging) {
+        return false;
+    }
+    const sent = query.get(paging.param);
+    return sent !== null && cutLoop(value, paging, sent);
 }
 
 function check(

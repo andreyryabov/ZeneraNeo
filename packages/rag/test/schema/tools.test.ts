@@ -91,6 +91,14 @@ describe('search_api', () => {
         const result = await call('search_api', { direction: 'input' });
         expect(String(result.error)).toContain('nothing was asked for');
     });
+
+    // One document here, so the parameter is not even offered — the guard is
+    // what makes an invented name an answer the model can act on.
+    it('names the documents it has when asked for one it does not', async () => {
+        const result = await call('search_api', { all: ['pets'], sources: ['nope'] });
+        expect(String(result.error)).toContain('no document called nope');
+        expect(String(result.hint)).toContain('petstore');
+    });
 });
 
 describe('find_types_with_property', () => {

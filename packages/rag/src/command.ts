@@ -8,6 +8,7 @@ import {
     type Command,
     type Context,
 } from '@zenera/cli/lib';
+import { command as docs } from './docs/command.ts';
 import { command as schema } from './schema/command.ts';
 
 // ---------------------------------------------------------------------------
@@ -29,7 +30,7 @@ import { command as schema } from './schema/command.ts';
 // here: the frame lifts it out of the arguments and answers with this page.
 // ---------------------------------------------------------------------------
 
-const SUBJECTS: Record<string, Command> = { schema };
+const SUBJECTS: Record<string, Command> = { schema, docs };
 
 const USAGE = 'zen rag <subject> <command> [args...]';
 

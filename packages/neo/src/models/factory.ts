@@ -587,6 +587,53 @@ export class ModelRegistry {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Retries
+// ---------------------------------------------------------------------------
+
+/**
+ * One backoff policy for every vendor, because a 429 is not a failure of the
+ * run — it is the provider asking to be called again later, and an agent that
+ * gives up on the first one loses the whole trajectory to a wait of a few
+ * seconds. Every SDK here can retry, but none of them agree on what happens
+ * when nothing is configured: the OpenAI and Anthropic clients retry twice,
+ * `@google/genai` does not retry *at all* unless `retryOptions` is present, and
+ * OpenRouter's generated client retries `5XX` only — so a Vertex or OpenRouter
+ * 429 was fatal by default. These constants are what make the four behave the
+ * same; `ProviderSpec.maxRetries` (0 disables) is the per-provider override.
+ *
+ * Retries live at the transport, not around `Model.generate`, so a retried call
+ * is one that never started: no partial stream is replayed, and a `Retry-After`
+ * header is honoured by the SDK that read it.
+ */
+const DEFAULT_MAX_RETRIES = 4;
+
+/** wait after the first failure; doubles per attempt up to `RETRY_MAX_MS` */
+const RETRY_INITIAL_MS = 1_000;
+const RETRY_MAX_MS = 60_000;
+const RETRY_EXPONENT = 2;
+
+function retriesOf(opts: ProviderSpec): number {
+    return Math.max(0, opts.maxRetries ?? DEFAULT_MAX_RETRIES);
+}
+
+/**
+ * The same schedule expressed as a wall-clock budget, which is the only shape
+ * OpenRouter's client accepts. It is the sum of the waits a count of `retries`
+ * would spend, so the two agree on how long a hopeless call may take — not on
+ * exactly how many times it is made, since this budget also has to cover the
+ * requests themselves.
+ */
+function retryWindowMs(retries: number): number {
+    let wait = RETRY_INITIAL_MS;
+    let total = 0;
+    for (let i = 0; i < retries; i++) {
+        total += Math.min(wait, RETRY_MAX_MS);
+        wait *= RETRY_EXPONENT;
+    }
+    return total;
+}
+
 /**
  * Credential resolution, in one place so a `${VAR}` reference behaves the same
  * whether it came from yaml or from application code. `creds` may be a model
@@ -629,7 +676,7 @@ function buildClient(
         baseURL,
         defaultHeaders: headers,
         timeout: opts.timeoutMs,
-        maxRetries: opts.maxRetries,
+        maxRetries: retriesOf(opts),
         ...(opts.token ? { fetch: bearerFetch(opts.token) } : {}),
     };
     if (defaults.protocol === 'anthropic') {
@@ -669,13 +716,26 @@ function buildOpenRouter(
         });
     }
     const { token } = opts;
+    const retries = retriesOf(opts);
     return new OpenRouter({
         apiKey: token ? async () => token() : apiKey,
         serverURL: baseURL,
         timeoutMs: opts.timeoutMs,
         // A count of zero is the one value that has to change shape: this SDK
         // says "do not retry" with a strategy, not with a number.
-        retryConfig: opts.maxRetries === 0 ? { strategy: 'none' } : undefined,
+        retryConfig:
+            retries === 0
+                ? { strategy: 'none' }
+                : {
+                      strategy: 'backoff',
+                      backoff: {
+                          initialInterval: RETRY_INITIAL_MS,
+                          maxInterval: RETRY_MAX_MS,
+                          exponent: RETRY_EXPONENT,
+                          maxElapsedTime: retryWindowMs(retries),
+                      },
+                      retryConnectionErrors: true,
+                  },
         httpClient,
     });
 }
@@ -707,7 +767,15 @@ function buildGenAI(
     where: string,
 ): GoogleGenAI {
     const { GoogleGenAI } = sdk<GenAIModule>('@google/genai', kind);
-    const httpOptions = { baseUrl: baseURL, headers, timeout: opts.timeoutMs };
+    // `attempts` counts the initial call, so a retry budget of zero is one
+    // attempt. Delays are fractions of a second here, unlike everywhere else.
+    const retryOptions = {
+        attempts: retriesOf(opts) + 1,
+        initialDelay: RETRY_INITIAL_MS / 1000,
+        maxDelay: RETRY_MAX_MS / 1000,
+        expBase: RETRY_EXPONENT,
+    };
+    const httpOptions = { baseUrl: baseURL, headers, timeout: opts.timeoutMs, retryOptions };
     if (kind !== 'vertex') {
         return new GoogleGenAI({ apiKey, httpOptions });
     }

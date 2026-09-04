@@ -1,0 +1,102 @@
+openapi: 3.0.3
+info:
+    title: Fabric
+    version: 1.0.0
+paths:
+    /machines:
+        get:
+            operationId: listMachines
+            summary: Every machine, a page at a time.
+            parameters:
+                - name: page_size
+                  in: query
+                  required: false
+                  schema:
+                      type: integer
+                - name: cursor
+                  in: query
+                  required: false
+                  schema:
+                      type: string
+            responses:
+                '200':
+                    description: one page
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [results]
+                                properties:
+                                    results:
+                                        type: array
+                                        items:
+                                            $ref: '#/components/schemas/Machine'
+                                    cursor:
+                                        type: string
+                                        nullable: true
+                                    has_more:
+                                        type: boolean
+    /events:
+        get:
+            operationId: listEvents
+            summary: Offset paging, and the token is required.
+            parameters:
+                - name: offset
+                  in: query
+                  required: false
+                  schema:
+                      type: integer
+                - name: limit
+                  in: query
+                  required: false
+                  schema:
+                      type: integer
+            responses:
+                '200':
+                    description: one page
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [data, next_offset]
+                                properties:
+                                    data:
+                                        type: array
+                                        items:
+                                            type: string
+                                    next_offset:
+                                        type: integer
+                                    hasMore:
+                                        type: boolean
+    /tags:
+        get:
+            operationId: listTags
+            summary: A cap on the answer is not pagination.
+            parameters:
+                - name: limit
+                  in: query
+                  required: false
+                  schema:
+                      type: integer
+            responses:
+                '200':
+                    description: all of them
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    tags:
+                                        type: array
+                                        items:
+                                            type: string
+components:
+    schemas:
+        Machine:
+            type: object
+            required: [id]
+            properties:
+                id:
+                    type: string
+                name:
+                    type: string

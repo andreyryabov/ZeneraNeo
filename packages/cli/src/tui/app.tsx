@@ -1,9 +1,10 @@
 import { TextInput } from '@inkjs/ui';
+import { isCheckpoint, turns, zeroUsage, type AgentEvent, type TokenUsage } from '@zenera/neo';
 import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
 import { pathToFileURL } from 'node:url';
 import React, { useCallback, useContext, useRef, useState } from 'react';
-import { isCheckpoint, turns, zeroUsage, type AgentEvent, type TokenUsage } from '@zenera/neo';
 import * as Engine from '../engine.ts';
+import { History } from '../history.ts';
 import { format } from '../narrate.ts';
 import { display } from '../session.ts';
 import { CliError } from '../term.ts';
@@ -119,6 +120,60 @@ function App({ engine, options, theme }: Props): React.ReactElement {
     const stopping = useRef<AbortController | undefined>(undefined);
     const seq = useRef(0);
 
+    // The prompt, and how to get back into it what was asked before.
+    //
+    // `TextInput` is uncontrolled: it takes a starting value and owns it from
+    // there. So recalling a line means handing it a new starting value and a
+    // new `key`, which mounts a fresh input — that is also what puts the cursor
+    // at the end of the recalled text, where it is wanted.
+    const [history] = useState(() => History.open(engine.project.root));
+    const [draft, setDraft] = useState('');
+    const [generation, setGeneration] = useState(0);
+    /** Where in the history the prompt is; `entries.length` is the live line. */
+    const at = useRef(history.entries.length);
+    /** What the input holds right now, which nothing else can see. */
+    const typed = useRef('');
+    /** The half-written line browsing started from, returned to by walking back down. */
+    const pending = useRef('');
+
+    const remember = useCallback((value: string): void => {
+        typed.current = value;
+    }, []);
+
+    const reset = useCallback((): void => {
+        at.current = history.entries.length;
+        pending.current = '';
+        typed.current = '';
+        setDraft('');
+        setGeneration((g) => g + 1);
+    }, [history]);
+
+    const recall = useCallback(
+        (delta: number): void => {
+            const items = history.entries;
+            const end = items.length;
+            if (end === 0) {
+                return;
+            }
+            if (at.current === end) {
+                if (delta > 0) {
+                    return;
+                }
+                pending.current = typed.current;
+            }
+            const next = Math.min(end, Math.max(0, at.current + delta));
+            if (next === at.current) {
+                return;
+            }
+            at.current = next;
+            const value = next === end ? pending.current : (items[next] ?? '');
+            typed.current = value;
+            setDraft(value);
+            setGeneration((g) => g + 1);
+        },
+        [history],
+    );
+
     // Read during render so a resize, which re-renders the root, resizes the
     // windows below with it. The two streaming blocks share one budget: what
     // is left of the terminal once the chrome has had its rows.
@@ -185,7 +240,14 @@ function App({ engine, options, theme }: Props): React.ReactElement {
     const submit = useCallback(
         (value: string): void => {
             const text = value.trim();
-            if (!text || busy) {
+            if (busy) {
+                return;
+            }
+            // Recorded before it is acted on, so a question that fails — or
+            // one that quits — is still one arrow key away next time.
+            history.add(text);
+            reset();
+            if (!text) {
                 return;
             }
             if (text === '/exit' || text === '/quit') {
@@ -237,19 +299,31 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                 }
             })();
         },
-        [busy, engine, exit, onEvent, push, stdout],
+        [busy, engine, exit, history, onEvent, push, reset, stdout],
     );
 
     // Escape stops the turn; ctrl-c leaves. They are different things, and a
     // run that is asked to stop still writes its state, so the session survives
     // either one.
-    useInput((_input, keys) => {
+    //
+    // The arrows are ours because `TextInput` explicitly ignores them; a turn
+    // in flight owns the keyboard, so they only walk the history while idle.
+    useInput((input, keys) => {
         if (keys.escape && stopping.current) {
             stopping.current.abort();
         }
-        if (keys.ctrl && _input === 'c') {
+        if (keys.ctrl && input === 'c') {
             stopping.current?.abort();
             exit();
+            return;
+        }
+        if (busy) {
+            return;
+        }
+        if (keys.upArrow) {
+            recall(-1);
+        } else if (keys.downArrow) {
+            recall(1);
         }
     });
 
@@ -289,7 +363,10 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                     <Box>
                         <Text color={theme.accent}>› </Text>
                         <TextInput
-                            placeholder="Ask something… (/exit to leave)"
+                            key={generation}
+                            defaultValue={draft}
+                            placeholder="Ask something… (↑ for history, /exit to leave)"
+                            onChange={remember}
                             onSubmit={submit}
                         />
                     </Box>

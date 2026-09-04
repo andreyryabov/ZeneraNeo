@@ -1,4 +1,5 @@
 import { AVAILABLE } from './image.ts';
+import type { Paging } from './paging.ts';
 import type { Operation } from './spec.ts';
 
 // ---------------------------------------------------------------------------
@@ -40,7 +41,9 @@ export const SYSTEM = [
     '   with `user_id=12324` answers with `user_id` 12324, not a random one. Do',
     '   this generically, by looking the names up at run time. Do the same for a',
     '   query parameter where it plainly describes the content rather than',
-    '   controlling the call.',
+    '   controlling the call. A paging control — a cursor, page, offset or',
+    '   page-size parameter — is never content and must not be copied into the',
+    '   body; see PAGINATION below where the operation has one.',
     '3. Every required property must be present. Optional ones may be omitted',
     '   sometimes; that is what makes a mock useful.',
     '4. Values must suit their names, not just their types. Use `faker` for anything',
@@ -84,9 +87,79 @@ export function brief(operation: Operation): string {
         );
     }
 
+    if (operation.paging) {
+        lines.push('', ...pagination(operation.paging));
+    }
+
     lines.push('', `RESPONSE SCHEMA (status ${operation.success.status})`);
     lines.push(operation.success.schema ? json(operation.success.schema) : '  (no body)');
     return lines.join('\n');
+}
+
+/**
+ * Said only to the operations that page, and said in terms of their own
+ * property names. The rule that earns the paragraph is the third one: a body
+ * offering the token it was just given passes the schema, passes the echo rule,
+ * and hangs every client that walks the list.
+ */
+function pagination(paging: Paging): string[] {
+    const advance =
+        paging.style === 'cursor'
+            ? 'the base64 of a small JSON object holding the next page index, such as {"p": 2}'
+            : "the offset of the next page — this page's offset plus its size";
+    const lines = [
+        'PAGINATION',
+        `  This operation is paged. \`${paging.param}\` asks for a page;`,
+        '  absent or empty means the first one.',
+        '  - Fabricate three pages in total and no more.',
+    ];
+    if (paging.next) {
+        lines.push(
+            `  - \`${paging.next}\` carries the token for the page after this one.`,
+            `    Build it out of \`${paging.param}\`:`,
+            `    ${advance}.`,
+            '  - Never build it out of `seed`. Unpinned, the seed changes on every',
+            '    request; pinned, it is a function of the query. A token made from it',
+            '    either wanders or never changes.',
+            '  - It must strictly advance. Answering with the token you were given is',
+            '    the one failure that matters: a client following it loops forever.',
+        );
+    }
+    if (paging.more && !stuck(paging)) {
+        lines.push(`  - \`${paging.more}\` is false on the last page and true before it.`);
+    }
+    if (paging.next) {
+        lines.push(...last(paging));
+    }
+    lines.push(
+        '  - A token you cannot read, or one past the end, is the last page,',
+        `    ended the same way and with ${paging.items ? `\`${paging.items}\` empty` : 'nothing listed'}.`,
+        '    Never an error, and never the first page again.',
+    );
+    return lines;
+}
+
+/**
+ * How the last page says so. A token that is required and cannot be null has
+ * nowhere to put the ending, so the ending has to be said some other way —
+ * telling the model to null it anyway would only ask for an invalid body.
+ */
+const stuck = (paging: Paging): boolean => !paging.nextNullable && paging.nextRequired === true;
+
+function last(paging: Paging): string[] {
+    if (paging.nextNullable) {
+        return [`  - On the last page set \`${paging.next}\` to null.`];
+    }
+    if (!stuck(paging)) {
+        return [`  - On the last page leave \`${paging.next}\` out.`];
+    }
+    const otherwise = [paging.more && `\`${paging.more}\` false`, paging.items && 'nothing listed']
+        .filter(Boolean)
+        .join(' and ');
+    return [
+        `  - The schema requires \`${paging.next}\` on every page, so the last page`,
+        `    ends the list the other way: ${otherwise || 'an empty page'}.`,
+    ];
 }
 
 /**

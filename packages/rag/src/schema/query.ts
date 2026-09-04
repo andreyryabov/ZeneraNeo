@@ -22,6 +22,7 @@ const LISTS = [
     'exclude_methods',
     'exclude_types',
     'exclude_properties',
+    'sources',
 ] as const;
 
 const NUMBERS = ['limit', 'max_hops', 'max_nodes'] as const;
