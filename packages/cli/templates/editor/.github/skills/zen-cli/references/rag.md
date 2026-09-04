@@ -27,6 +27,8 @@ zen rag schema index <spec...> [--embedding <ref>] [-o <dir>] [--batch <n>]
 | `--embedding <ref>` | —             | Which embedder makes the vectors. Omit it to see the choices |
 | `-o`, `--out <dir>` | `./schema-db` | Where the index goes; `$ZEN_SCHEMA_DB` if set                |
 | `--batch <n>`       | `96`          | Texts per embedding request, and how often progress prints   |
+| `--no-sources`      | —             | Keep no copy of the documents in the index                   |
+| `--quiet`           | —             | No narration                                                 |
 
 ```
 zen rag schema index openapi.yaml --embedding openai:text-embedding-3-small
@@ -162,7 +164,7 @@ read `graph.json` directly, with no embedder, no credential and no network.
 | ------------------- | ------ | -------------------------------------------- |
 | `--name <p>`        | both   | Match the name. Repeatable                   |
 | `--path <p>`        | both   | Match the route it sits on. Repeatable       |
-| `--regex`           | both   | Read every pattern as a regular expression   |
+| `--regex`           | both   | Read the patterns as regular expressions     |
 | `--case-sensitive`  | both   | Stop ignoring case                           |
 | `--source <name>`   | both   | Only nodes from one document                 |
 | `--show-source`     | both   | Print which document each row came from      |
@@ -171,11 +173,18 @@ read `graph.json` directly, with no embedder, no credential and no network.
 | `--kind <k>`        | `grep` | `method`, `type` or `property`. Repeatable   |
 | `--ids-only`        | `grep` | Just the ids, one per line, for piping       |
 | `--limit <n>`       | both   | Rows to print. `found` still counts them all |
+| `--quiet`           | both   | No narration                                 |
+
+Under `--json`: `{found, truncated, rows}` from `list`, `{found, truncated,
+matches}` from `grep`. `grep` takes **one** pattern — quote it if it has
+spaces — and `list` **one** subject.
 
 A pattern with `*` or `?` is a glob matched against the whole string; a plain
 word is a substring. So `--name password` finds `ResetPasswordPayload`, and
 `--name "Password*"` finds nothing, because nothing starts with it. `--regex`
-makes it a regular expression instead — the only way to say "one of these":
+makes it a regular expression instead — the only way to say "one of these". On
+`list` it applies to every pattern; on `grep` it applies to the pattern, while
+`--name` and `--path` stay globs-or-substrings:
 
 ```
 zen rag schema list methods --regex --path "^/(users|teams)/"
@@ -201,9 +210,9 @@ total, so a shortened answer never misreports how much there is.
 ## `show`
 
 ```
-zen rag schema show [id...] [-d <dir>] [--format <f>]
+zen rag schema show [id...] [-d <dir>] [--format <f>] [--exact]
                     [--method <name>] [--type <name>] [--source <name>]
-                    [--show-source] [--exact]
+                    [--show-source] [--max-nodes <n>] [--no-docs] [--quiet]
 ```
 
 Prints named nodes with no search in between. Needs no embedder and no
@@ -214,7 +223,16 @@ usually what you have. A bare name means exactly that name; add `*` to select
 more than one. `--source <name>` takes a whole document, and `--show-source`
 tags each node with the document it came from. `--exact` prints only what was
 named instead of the neighbourhood around it — with `--format openapi` that is
-a valid, self-contained slice of the specification.
+a valid, self-contained slice of the specification. Without it the neighbours
+are stitched in, up to `--max-nodes`.
+
+`--source <name> --format openapi` with nothing else named prints the
+**verbatim** document as it was indexed, unless the index was built
+`--no-sources`, in which case it is rebuilt from the graph and says so.
+
+A name that matches nothing is an **error**, not an empty answer: naming
+something is a claim that it is there, and `list --name` is the command for
+asking whether it is.
 
 ```
 zen rag schema show --method GetCurrentUserInfo --format openapi --exact

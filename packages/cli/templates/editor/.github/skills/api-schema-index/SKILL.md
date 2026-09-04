@@ -138,6 +138,7 @@ zen rag schema index <spec...> [--embedding <ref>] [-o <dir>] [--batch <n>]
 | `--embedding <ref>` | —             | Which embedder makes the vectors. Omit it to see the choices |
 | `-o`, `--out <dir>` | `./schema-db` | Where the index goes; `$ZEN_SCHEMA_DB` if that is set        |
 | `--batch <n>`       | `96`          | Texts per embedding request, and how often progress prints   |
+| `--no-sources`      | —             | Keep no copy of the documents; `show --source` rebuilds them |
 | `--quiet`           | —             | No narration                                                 |
 
 ```sh
@@ -344,7 +345,7 @@ zen rag schema grep <pattern> [-d <dir>] [filters…]
 | ------------------- | ------ | ---------------------------------------------- |
 | `--name <p>`        | both   | Match the name. Repeatable                     |
 | `--path <p>`        | both   | Match the route it sits on. Repeatable         |
-| `--regex`           | both   | Read every pattern as a regular expression     |
+| `--regex`           | both   | Read the patterns as regular expressions       |
 | `--case-sensitive`  | both   | Stop ignoring case                             |
 | `--source <name>`   | both   | Only one document, as `stats` names it         |
 | `--show-source`     | both   | Print which document each row came from        |
@@ -375,12 +376,15 @@ so the two agree on what the API says. A pattern with `*` or `?` is a glob
 matched against the whole string; a plain word is a substring, so `--name
 password` finds `ResetPasswordPayload` and `--name "Password*"` finds nothing.
 
-**`--regex` applies to both commands and to every pattern**, which is the only
-way to say "one of these" — a glob has no alternation:
+**`--regex` is the only way to say "one of these"** — a glob has no alternation.
+On `list` it turns every pattern into a regular expression. On `grep` it turns
+the **pattern** into one; `--name` and `--path` stay globs-or-substrings there,
+because they are always names:
 
 ```sh
 zen rag schema list methods --regex --path "^/(users|teams)/"
 zen rag schema list types --regex --name "(Request|Response)$"
+zen rag schema grep "pass(word|phrase)" --regex --path "*/users*"
 ```
 
 `--name` and `--path` are constraints on `grep` as well, which is what makes a
