@@ -1,13 +1,13 @@
 ---
 name: api-schema-index
-description: What a schema index is, how it finds the right call inside a large OpenAPI/Swagger document, and how to build and query one with `zen rag schema` (or `npx @zenera/cli`) — searching it by meaning, listing and grepping it exactly instead of reaching for shell `grep`/`rg`, and giving it to an agent as tools.
+description: What a schema index is, how it finds the right call inside a large OpenAPI/Swagger document, and how to build and query one with `zen rag schema` (or `npx @zenera/cli`) — searching it by meaning, listing and grepping it exactly instead of reaching for shell `grep`/`rg`, tracing a field up to the operations that carry it, giving it to an agent as tools, and writing the project skill that a wired-in index requires.
 ---
 
 # The schema index
 
 A schema index is an OpenAPI/Swagger description turned into something that can
 be **asked a question**. It is built once, on disk, and answered from without a
-model: `zen rag schema index` writes it, and five commands read it.
+model: `zen rag schema index` writes it, and six commands read it.
 
 It exists because a real specification does not fit in a context window, and
 grepping it does not help. The parts that answer "how do I reset a password?"
@@ -18,7 +18,7 @@ word "password" appears in forty places that are not the one you want.
 ## The commands
 
 ```
-zen rag schema <index|search|list|grep|show|stats> [spec...]
+zen rag schema <index|search|list|grep|trace|show|stats> [spec...]
 ```
 
 | Command  | Answers                                | Embedder? | Typical |
@@ -27,15 +27,16 @@ zen rag schema <index|search|list|grep|show|stats> [spec...]
 | `search` | _what is this API's way to do X?_      | **yes**   | seconds |
 | `list`   | _what methods/types/fields are there?_ | no        | instant |
 | `grep`   | _does the string X appear anywhere?_   | no        | instant |
+| `trace`  | _which call can reach this field?_     | no        | instant |
 | `show`   | _print exactly these things_           | no        | instant |
 | `stats`  | _what is in this index?_               | no        | instant |
 
 Only `search` ranks, and only `search` costs a network round trip — it embeds
-the query before it can compare anything. The other four read `graph.json` off
+the query before it can compare anything. The other five read `graph.json` off
 the disk and answer in milliseconds, so reach for `search` when the question is
-vague and for `list`/`grep` when it is precise. If a search feels slow, it is
-that one embedding call, not the index: near-zero CPU for several seconds is
-the tell.
+vague and for `list`/`grep`/`trace` when it is precise. If a search feels slow,
+it is that one embedding call, not the index: near-zero CPU for several seconds
+is the tell.
 
 > **`search` takes bare words as the query, not as a subcommand.**
 > `zen rag schema search list methods` does not list anything — it runs a
@@ -317,6 +318,7 @@ think it is?".
 | ------------------------------------------------ | ---------------------------------------- |
 | "how do I reset a password with this API?"       | `search --method "reset a password"`     |
 | _anything you would have run `grep` for_         | `grep` / `list` — never the shell        |
+| "which call can reach this field?"               | `trace <field>`                          |
 | "what does the create-user request look like?"   | `search --input-type "create user"`      |
 | "what operations exist under /users?"            | `list methods --path "*/users*"`         |
 | "how many operations are there at all?"          | `list methods` (or `--json` for `found`) |
@@ -326,9 +328,9 @@ think it is?".
 | "is this index the right one?"                   | `stats`                                  |
 
 The rule: **a question about meaning is a `search`; a question about presence,
-count or spelling is a `list` or a `grep`.** Search cannot answer the second
-kind, because a ranking always returns its best guesses whether or not any of
-them are right.
+count or spelling is a `list` or a `grep`; a question about reachability is a
+`trace`.** Search cannot answer the last two, because a ranking always returns
+its best guesses whether or not any of them are right.
 
 ### Exact matching, when the question is whether something exists
 
@@ -408,6 +410,63 @@ whole point of them.
 zen rag schema grep token --ids-only | xargs zen rag schema show --format ts
 ```
 
+### Upwards, from a field to the calls that carry it
+
+Finding the field is half the job. The other half — which operation can
+actually reach it — is a walk up the `$ref`s.
+
+`search` does part of it: it stitches its seeds into one connected piece and
+prints what each operation accepts and returns, so a lucky search does show the
+call. But it joins only what **ranked**, only within `--max-hops` (3 by
+default), and it never names the chain — and the call almost never repeats the
+word, so `GET /users/{userId}` and `city` have nothing in common except the
+edges between them. `trace` follows those edges instead of guessing at them:
+exhaustive, and certain.
+
+```
+zen rag schema trace <pattern|id...> [-d <dir>] [filters…]
+```
+
+```sh
+zen rag schema trace city
+```
+
+```
+Property:Address.city
+    GET /users/{userId}  getUser  output  PublicUserProfile.address → Address.city
+```
+
+One command instead of three lookups and a guess: find the field, find what
+holds `Address`, find what accepts _that_, and hope you followed every branch.
+The last column is the whole route, so the shape of the call can be read off
+the answer.
+
+| Flag              | Default            | Meaning                                              |
+| ----------------- | ------------------ | ---------------------------------------------------- |
+| `--kind <k>`      | types + properties | `method`, `type` or `property`. Repeatable           |
+| `--direction <d>` | `any`              | Only the calls that accept it, or that return it     |
+| `--max-hops <n>`  | `8`                | How far up to walk                                   |
+| `--limit <n>`     | —                  | Trace at most n matching nodes                       |
+| `--routes <n>`    | —                  | Operations printed per node; `found` counts them all |
+| `--ids-only`      | —                  | Bare operation ids, one per line, for piping         |
+| `--regex`         | —                  | Read the pattern as a regex; `--case-sensitive` too  |
+| `--source <name>` | —                  | Only nodes from one document                         |
+| `--show-source`   | —                  | Print which document each operation came from        |
+
+A bare word matches the way `list --name` does — a substring, or a glob when it
+has `*` or `?`. A node id (`Type:User`) is taken as that node rather than as a
+pattern. Operations are left out of a name match on purpose: they are where a
+trace ends, not where one starts.
+
+```sh
+zen rag schema trace password --direction input
+zen rag schema trace "*Settings" --kind type
+zen rag schema trace mfa_secret --ids-only | xargs zen rag schema show --format openapi
+```
+
+`no operation reaches it` is a real answer, and one worth having: the schema is
+unreachable in this document, so no request will ever carry it.
+
 ### Instead of the shell
 
 Every reflex that reaches for a shell tool has a command here that answers the
@@ -460,7 +519,7 @@ client or a mock payload from.
 
 ## Giving it to an agent
 
-The same engine, as five tools in the group `schema`. An agent takes them all
+The same engine, as six tools in the group `schema`. An agent takes them all
 with `schema:*` in its `tools:`.
 
 ```ts
@@ -481,14 +540,17 @@ const project = await loadProject('./my-project', { tools: schemaTools(index) })
 | `find_types_with_property` | every schema with a field of this name — exact lookup, no searching |
 | `list_api`                 | methods, types or fields by name — complete, and counted in full    |
 | `grep_api`                 | every literal occurrence of a string — the way to prove absence     |
+| `trace_api`                | up from a field or schema to the operations that carry it           |
 
-Only `search_api` ranks; the other four are exact. `find_types_with_property`
+Only `search_api` ranks; the other five are exact. `find_types_with_property`
 is the one for the repair loop. When `tsc` says `'password' does not exist in
 type 'PublicUserProfile'`, the model does not need the word explained again —
 it needs the list of types that _do_ have one, and embedding the word will only
 rank the guess it already made near the top. `grep_api` is the same instinct
 widened: it is how a model checks that a search returning nothing really means
-there is nothing.
+there is nothing. `trace_api` is the step after either of them: a field is of
+no use until the call that carries it is known, and no ranking will find that
+call — the operation and the field share no words, only edges.
 
 `list_api` and `grep_api` take `name`, `path`, `regex` and `source`, so a
 common word can be narrowed to one route or one document rather than read out
@@ -498,6 +560,82 @@ together, which one answered is part of the answer.
 
 Tell the agent in its prompt to search before it writes a call, and to put the
 intent in the narrow field. A model left to itself puts everything in `all`.
+
+## Wiring it into a project means writing the project a skill
+
+**Whenever an index is used by a Zenera project — as `schema:*` tools, or as
+`zen rag` reachable from the agent's sandbox — write a skill for it in that
+project.** Not optional, and not the same thing as passing the tools in.
+
+Wiring alone leaves the model to infer everything that matters. A tool
+description says what `grep_api` does; it cannot say that this index holds the
+NSX policy API, that names are `snake_case`, that every route is under
+`/policy/api/v1`, or that `list_api` is the right first move here because the
+API has three hundred operations and search will hand back five. That is
+project knowledge, and project knowledge belongs in a skill — where it is
+loaded only when the model is actually working on this API, instead of sitting
+in the system prompt of every run.
+
+```
+<project>/agents/skills/<api>-api/SKILL.md
+```
+
+Frontmatter is `name` and `description`; the description is what the model
+reads when choosing, so it must name the API and the questions it answers.
+Add `tools: [search_api, list_api, grep_api, trace_api, describe_types,
+find_types_with_property]` if the skill should be what unlocks them.
+
+### What the skill has to say
+
+| Section         | Because                                                                                                            |
+| --------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Which API       | The name, the version, and the document it was built from                                                          |
+| Where the index | `ZEN_SCHEMA_DB`, or the `-d` to pass — an agent cannot guess a path                                                |
+| Which command   | Meaning → `search`; presence, spelling or a count → `list`/`grep`; which endpoint carries a field → `trace`        |
+| Never the shell | State it outright. `grep`/`rg`/`jq` on the spec is the default reflex                                              |
+| The conventions | Auth, base path, pagination, casing, error envelope — none of it is in the graph                                   |
+| Worked examples | Two or three, with **real operation and schema names from this index**                                             |
+| The repair loop | Compiler said the field is not on the type → `find_types_with_property`, then `trace` for the call that carries it |
+
+Best practice, in order of how often it is got wrong:
+
+1. **Use real names.** `list_api types --name "*Policy*"` with output the model
+   will actually see beats a generic `<TypeName>` placeholder, because the
+   names are the anchors it steers by.
+2. **Say which command answers which question**, and say that a ranking cannot
+   prove absence. Left alone a model searches for everything, gets five ranked
+   guesses, and writes a call against the best of them.
+3. **Keep it short.** A skill is prompt. One screen of routing rules and
+   conventions beats a transcription of this document — link to `zen rag
+schema --help` for the flags.
+4. **Re-index, then re-read the skill.** Both go stale against the same
+   change, and a skill quoting operations that no longer exist is worse than
+   none.
+5. **One skill per API**, named after it. Two APIs in one skill and the model
+   mixes their conventions.
+
+```md
+---
+name: billing-api
+description: How to find the right call in the Acme Billing API (v2) — which schema
+    carries which field, and which endpoint accepts it. Use before writing any request.
+---
+
+# The Billing API
+
+Indexed at `/assets/schema-db` (already in `$ZEN_SCHEMA_DB`). 214 operations,
+all under `/v2`. Bearer token in `Authorization`; cursors, never page numbers.
+
+- Vague question ("how do I cancel a subscription?") → `search_api`, intent in
+  the narrowest field: `methods`, not `all`.
+- Does X exist, how is it spelled, how many are there → `list_api` / `grep_api`.
+  These are complete; a search is not, and cannot prove absence.
+- Which endpoint carries this field → `trace_api`. Never guess the owner.
+- Never `grep`/`rg`/`jq` the spec — the tools above are local and exact.
+
+Worked: the invoice total is `Invoice.amount_due` (minor units), returned by
+`GetInvoice` and `ListInvoices`; `trace_api of: amount_due` shows both.
+```
 
 ## When it goes wrong
 

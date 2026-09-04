@@ -57,6 +57,7 @@ describe('the tool set', () => {
             'find_types_with_property',
             'list_api',
             'grep_api',
+            'trace_api',
         ]);
         expect(tools.every((t) => t.group === 'schema')).toBe(true);
     });
@@ -232,5 +233,56 @@ describe('grep_api', () => {
         const types = await call('grep_api', { pattern: 'password', kind: 'type' });
         const ids = (types.matches as { id: string }[]).map((m) => m.id);
         expect(ids.every((id) => id.startsWith('Type:'))).toBe(true);
+    });
+});
+
+describe('trace_api', () => {
+    it('walks a nested field up to the call that returns it', async () => {
+        const result = await call('trace_api', { of: 'city' });
+        const traced = result.traced as { id: string; operations: string[] }[];
+        const address = traced.find((t) => t.id === 'Property:Address.city');
+
+        // Nothing in the document mentions `city` anywhere near `getUser`;
+        // the only thing joining them is PublicUserProfile.address.
+        expect(address).toBeDefined();
+        expect(address!.operations.join('\n')).toContain('GET /users/{userId}');
+        expect(address!.operations.join('\n')).toContain(
+            'PublicUserProfile.address → Address.city',
+        );
+    });
+
+    it('says which side of the call each answer is on', async () => {
+        const result = await call('trace_api', { of: 'password', direction: 'input' });
+        const traced = result.traced as { id: string; operations: string[] }[];
+
+        expect(traced.flatMap((t) => t.operations).join('\n')).toContain(
+            'POST /auth/reset-password',
+        );
+    });
+
+    it('keeps only the side that was asked for', async () => {
+        const on = (direction: string) =>
+            call('trace_api', { of: 'Property:Address.city', direction }).then((r) =>
+                (r.traced as { operations: string[] }[]).flatMap((t) => t.operations),
+            );
+
+        expect((await on('output')).join('\n')).toContain('GET /users/{userId}');
+        // Nothing accepts an address, and an empty answer is the correct one.
+        expect(await on('input')).toEqual([]);
+    });
+
+    it('takes a node id as the thing itself, not as a pattern', async () => {
+        const result = await call('trace_api', { of: 'Type:Cat' });
+        const traced = result.traced as { id: string; operations: string[] }[];
+
+        expect(traced).toHaveLength(1);
+        // Cat is reached only through the oneOf on Pet, which is two hops.
+        expect(traced[0]!.operations.join('\n')).toContain('Pet → Cat');
+    });
+
+    it('says nothing is called that, rather than answering emptily', async () => {
+        const result = await call('trace_api', { of: 'mfa_secret' });
+        expect(result.found).toBe(0);
+        expect(String(result.hint)).toContain('grep_api');
     });
 });

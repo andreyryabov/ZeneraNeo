@@ -1,7 +1,7 @@
 # API search — `zen rag`
 
 ```
-zen rag schema <index|search|list|grep|show|stats> [spec...]
+zen rag schema <index|search|list|grep|trace|show|stats> [spec...]
 ```
 
 Provided by `@zenera/rag` — `npm i -g @zenera/rag` if `zen rag` says it is not
@@ -207,6 +207,65 @@ No match exits 0 with nothing on stdout — that is the answer, and unlike an
 empty search it is a reliable one. Under `--limit`, `found` is still the true
 total, so a shortened answer never misreports how much there is.
 
+## `trace`
+
+```
+zen rag schema trace <pattern|id...> [-d <dir>] [--kind <k>] [--direction <d>]
+                     [--max-hops <n>] [--limit <n>] [--routes <n>]
+                     [--ids-only] [--regex] [--case-sensitive] [--source <name>]
+                     [--show-source]
+```
+
+The question `list` and `grep` leave you holding: you have found the field, so
+**which call can reach it?** `trace` walks up the `$ref`s from every node of
+that name to the operations that accept or return it, and prints the chain in
+between. Also a plain graph read — no embedder, no credential.
+
+```
+zen rag schema trace city
+```
+
+```
+Property:Address.city
+    GET /users/{userId}  getUser  output  PublicUserProfile.address → Address.city
+```
+
+By hand that is three lookups and a guess: find the field, find what holds
+`Address`, find what accepts _that_, and hope you followed every branch.
+
+`search` does some of this already — it stitches its seeds into one connected
+piece and prints what each operation accepts and returns. But it links only
+what **ranked**, only within `--max-hops`, and it never names the chain; and
+`getUser` and `city` share no word, so the field has to rank on its own and the
+call has to land near it. `trace` follows the edges instead, which are already
+there and are certain.
+
+| Flag              | Default            | Meaning                                              |
+| ----------------- | ------------------ | ---------------------------------------------------- |
+| `--kind <k>`      | types + properties | `method`, `type` or `property`. Repeatable           |
+| `--direction <d>` | `any`              | Keep only the calls that accept it, or return it     |
+| `--max-hops <n>`  | `8`                | How far up to walk                                   |
+| `--limit <n>`     | —                  | Trace at most n matching nodes                       |
+| `--routes <n>`    | —                  | Operations printed per node; `found` counts them all |
+| `--ids-only`      | —                  | Bare operation ids, one per line, for piping         |
+| `--regex`         | —                  | Read the pattern as a regex; `--case-sensitive` too  |
+| `--source <name>` | —                  | Only nodes from one document                         |
+| `--show-source`   | —                  | Print which document each operation came from        |
+
+A bare word is matched the way `list --name` matches it — substring, or a glob
+when it has `*` or `?`. A node id (`Type:User`) is taken as that node and not
+as a pattern. Operations are left out of a name match on purpose: they are
+where a trace ends.
+
+```
+zen rag schema trace password --direction input
+zen rag schema trace "*Settings" --kind type
+zen rag schema trace mfa_secret --ids-only | xargs zen rag schema show --format openapi
+```
+
+A node nothing carries prints `no operation reaches it` — a real answer, and
+one worth having: it means the schema is unreachable in this document.
+
 ## `show`
 
 ```
@@ -259,10 +318,12 @@ documents it came from. Also needs no embedder.
 | `find_types_with_property` | Every schema with a field of this name — exact lookup, no searching |
 | `list_api`                 | Methods, types or fields by name — complete, and counted in full    |
 | `grep_api`                 | Every literal occurrence of a string — the way to prove absence     |
+| `trace_api`                | Up from a field or schema to the operations that carry it           |
 
 Only `search_api` ranks. Reach for the others whenever the question is whether
 something exists, because a search that returns nothing and a thing that is not
-there look exactly the same.
+there look exactly the same. `trace_api` is the one for after a field has been
+found and the endpoint to call is what is actually wanted.
 
 They share the group `schema`, so an agent takes them with `schema:*` in its
 `tools:`.

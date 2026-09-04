@@ -41,6 +41,7 @@ import { isGlob, loose, matcher, PatternError, wildcard, type Matcher } from './
 import { sourceTag } from './schema/render.ts';
 import { SchemaIndex, type SchemaQuery } from './schema/search.ts';
 import { select, stitch } from './schema/subgraph.ts';
+import { chainOf, DEFAULT_TRACE_HOPS, traceNodes } from './schema/trace.ts';
 
 // ---------------------------------------------------------------------------
 // zen rag — an api description, as something to search
@@ -60,12 +61,13 @@ import { select, stitch } from './schema/subgraph.ts';
 // a model or a credential for permission.
 // ---------------------------------------------------------------------------
 
-const USAGE = 'zen rag schema <index|search|list|grep|show|stats> [spec...]';
+const USAGE = 'zen rag schema <index|search|list|grep|trace|show|stats> [spec...]';
 
 const INDEX_USAGE = 'zen rag schema index --embedding <ref> [--out <dir>] <spec...>';
 const SEARCH_USAGE = 'zen rag schema search [--dir <dir>] [query...]';
 const LIST_USAGE = 'zen rag schema list <methods|types|properties> [--dir <dir>]';
 const GREP_USAGE = 'zen rag schema grep <pattern> [--dir <dir>]';
+const TRACE_USAGE = 'zen rag schema trace <pattern|id...> [--dir <dir>]';
 const SHOW_USAGE = 'zen rag schema show [id...] [--method <name>] [--type <name>]';
 
 export const command: Command = {
@@ -78,6 +80,7 @@ export const command: Command = {
             ['  search', dim('Ask it something. --interactive for a prompt.')],
             ['  list <what>', dim('Every method, type or property matching a pattern.')],
             ['  grep <pattern>', dim('Every literal match, ranked by nothing.')],
+            ['  trace <pattern>', dim('Up from a field or schema to the calls that carry it.')],
             ['  show [id...]', dim('Print named nodes, with no search in between.')],
             ['  stats', dim('What is in an index, and what built it.')],
         ]),
@@ -154,6 +157,22 @@ export const command: Command = {
         dim('  a substring, so --name password finds ResetPasswordPayload. With'),
         dim('  --regex it is a regex either way, so --path "^/(users|teams)/" works.'),
         '',
+        'Trace — from a field to the operations that carry it',
+        ...table([
+            ['  <pattern|id...>', dim('What to trace up from. A name, a glob, or a node id.')],
+            [
+                '  --kind <k>',
+                dim('method | type | property. Repeatable. Schemas and fields by default.'),
+            ],
+            ['  --direction <d>', dim('Keep only the calls that accept it, or return it.')],
+            ['  --max-hops <n>', dim(`How far up to walk. Default ${DEFAULT_TRACE_HOPS}.`)],
+            ['  --limit <n>', dim('Trace at most n matching nodes.')],
+            ['  --routes <n>', dim('Operations printed per node; the count still has them all.')],
+            ['  --ids-only', dim('Bare operation ids, one per line, for piping into show.')],
+            ['  --regex', dim('Read the pattern as a regex. --case-sensitive too.')],
+            ['  --source <name>', dim('Only nodes from this document.')],
+        ]),
+        '',
         'Show',
         ...table([
             ['  <id...>', dim('Node ids, e.g. Type:User or Property:User.email.')],
@@ -185,6 +204,8 @@ export const command: Command = {
                 return await list(tail, ctx);
             case 'grep':
                 return await grep(tail, ctx);
+            case 'trace':
+                return await trace(tail, ctx);
             case 'show':
                 return await show(tail, ctx);
             case 'stats':
@@ -704,6 +725,154 @@ async function grep(args: readonly string[], ctx: Context): Promise<void> {
     }
     if (!values.quiet && !values['ids-only']) {
         note(dim(`  ${result.found} match(es)${shown(result.found, result.matches.length)}`));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// trace
+//
+// The one question the other commands answer only in pieces: given a field,
+// which calls can reach it? `grep` finds the field, `show` prints the type it
+// sits on, and then you are searching again for whatever holds that type, and
+// again — three lookups and a guess about the branch you did not follow.
+//
+// Search reaches part of the way: it stitches its seeds into one connected
+// piece and prints what each operation accepts and returns. But it only joins
+// what RANKED, only within --max-hops, and it never names the chain. And the
+// operation almost never says the word: `POST /transport-nodes` and
+// `audit_password` share no vocabulary at all, so the field has to rank on its
+// own and the call has to land near it. The $refs between them are certain;
+// the ranking is not.
+// ---------------------------------------------------------------------------
+
+interface TraceFlags {
+    dir?: string;
+    kind?: string[];
+    direction?: string;
+    'max-hops'?: string;
+    limit?: string;
+    routes?: string;
+    'ids-only'?: boolean;
+    regex?: boolean;
+    'case-sensitive'?: boolean;
+    source?: string;
+    'show-source'?: boolean;
+    quiet?: boolean;
+}
+
+async function trace(args: readonly string[], ctx: Context): Promise<void> {
+    const { values, positionals } = parse<TraceFlags>(
+        args,
+        {
+            dir: { type: 'string', short: 'd' },
+            kind: MANY,
+            direction: { type: 'string' },
+            'max-hops': { type: 'string' },
+            limit: { type: 'string' },
+            routes: { type: 'string' },
+            'ids-only': { type: 'boolean' },
+            regex: { type: 'boolean' },
+            'case-sensitive': { type: 'boolean' },
+            source: { type: 'string' },
+            'show-source': { type: 'boolean' },
+            quiet: { type: 'boolean' },
+        },
+        TRACE_USAGE,
+    );
+
+    if (positionals.length === 0) {
+        throw usageError('nothing named to trace', TRACE_USAGE);
+    }
+    const side = oneOf(values.direction, ['input', 'output'], '--direction');
+    const kinds = (values.kind ?? []).map((k) =>
+        oneOf(k, ['method', 'type', 'property'], '--kind'),
+    ) as NodeKind[];
+
+    // A node id is a thing, not a pattern: someone pasting `Type:User` back
+    // from an earlier answer means that node and no other.
+    const index = await openIndex(indexDir(ctx, values.dir));
+    const ids = positionals.filter((p) => index.graph.hasNode(p));
+    const words = positionals.filter((p) => !ids.includes(p));
+    const how = { regex: values.regex, caseSensitive: values['case-sensitive'] };
+
+    const result = traceNodes(index.graph, {
+        ids,
+        kinds: kinds.length > 0 ? kinds : undefined,
+        name: patterns(words, '<pattern>', how),
+        source: values.source,
+        limit: values.limit ? count(values.limit, '--limit') : undefined,
+        maxRoutes: values.routes ? count(values.routes, '--routes') : undefined,
+        maxHops: values['max-hops'] ? count(values['max-hops'], '--max-hops') : undefined,
+    });
+
+    const traces = result.traces.map((t) => ({
+        ...t,
+        routes: t.routes.filter((r) => !side || r.direction === side || r.direction === 'both'),
+    }));
+
+    if (ctx.json) {
+        json({
+            found: result.found,
+            truncated: result.truncated,
+            traces: traces.map((t) => ({
+                id: t.id,
+                name: t.attributes.name,
+                found: t.found,
+                truncated: t.truncated,
+                routes: t.routes.map((r) => ({
+                    id: r.id,
+                    name: r.attributes.name,
+                    method: r.attributes.httpMethod,
+                    path: r.attributes.path,
+                    direction: r.direction,
+                    hops: r.hops,
+                    via: r.via,
+                    chain: chainOf(index.graph, t.id, r),
+                })),
+            })),
+        });
+        return;
+    }
+
+    if (values['ids-only']) {
+        const operations = [...new Set(traces.flatMap((t) => t.routes.map((r) => r.id)))];
+        if (operations.length > 0) {
+            write(operations.join('\n'));
+        }
+        return;
+    }
+
+    const lines: string[] = [];
+    for (const t of traces) {
+        lines.push(t.id);
+        if (t.routes.length === 0) {
+            // Reachable by nothing is an answer, and a useful one: a schema no
+            // call carries is dead weight in the document, or a wrong guess.
+            lines.push(dim('    no operation reaches it'));
+            continue;
+        }
+        lines.push(
+            ...table(
+                t.routes.map((r) => [
+                    `    ${r.attributes.httpMethod} ${r.attributes.path}`,
+                    r.attributes.name,
+                    dim(r.direction),
+                    ...(values['show-source'] ? [dim(sourceTag(r.attributes.source))] : []),
+                    dim(chainOf(index.graph, t.id, r)),
+                ]),
+            ),
+        );
+    }
+    if (lines.length > 0) {
+        write(lines.join('\n'));
+    }
+    if (!values.quiet) {
+        const routes = traces.reduce((n, t) => n + t.routes.length, 0);
+        note(
+            dim(
+                `  ${result.found} node(s)${shown(result.found, traces.length)} · ${routes} operation(s)`,
+            ),
+        );
     }
 }
 

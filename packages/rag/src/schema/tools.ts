@@ -8,12 +8,13 @@ import { loose, matcher, PatternError } from './match.ts';
 import { sourceTag } from './render.ts';
 import type { SchemaIndex, SchemaQuery } from './search.ts';
 import { stitch, type Subgraph } from './subgraph.ts';
+import { chainOf, traceNodes } from './trace.ts';
 
 // ---------------------------------------------------------------------------
 // The same index, given to an agent
 //
-// Five tools over one engine, and only one of them ranks anything. `search_api`
-// is the way in when the question is vague; the other four are exact, because
+// Six tools over one engine, and only one of them ranks anything. `search_api`
+// is the way in when the question is vague; the other five are exact, because
 // a model that has been told "no results" by a vector search has learned
 // nothing — a ranking returns the top of a list, so an empty answer and an
 // absent thing look identical.
@@ -23,6 +24,12 @@ import { stitch, type Subgraph } from './subgraph.ts';
 // model does not need to be reminded what a password is — it needs the list of
 // types that have one. `grep_api` is the same instinct widened: every literal
 // occurrence, counted in full, so "it is not there" can actually be concluded.
+//
+// `trace_api` is the other direction entirely. Having found a field, the next
+// question is always which call carries it. `search_api` stitches part of the
+// way there, but only between the nodes that ranked — and the operation and
+// the field usually share no word at all, which is why the edge between them
+// was built. `trace_api` follows that edge instead of ranking anything.
 // ---------------------------------------------------------------------------
 
 const GROUP = 'schema';
@@ -35,6 +42,11 @@ const MAX_CANDIDATES = 25;
 /** A listing is lines rather than subgraphs, so it can afford more of them. */
 const DEFAULT_ROWS = 50;
 const MAX_ROWS = 200;
+
+/** A trace is a paragraph per node, so fewer of them, and fewer routes each. */
+const DEFAULT_TRACES = 5;
+const MAX_TRACES = 25;
+const DEFAULT_ROUTES = 10;
 
 export interface SchemaToolOptions {
     /** what `format` defaults to when the model does not say */
@@ -407,7 +419,105 @@ export function schemaTools<TCtx = unknown>(
         },
     });
 
-    return [searchApi, describeTypes, findTypesWithProperty, listApi, grepApi];
+    const traceApi = tool<
+        {
+            of: string;
+            kind?: string;
+            direction?: string;
+            source?: string;
+            limit?: number;
+            routes?: number;
+        },
+        TCtx
+    >({
+        name: 'trace_api',
+        group: GROUP,
+        description:
+            'Answers "which calls can reach this?" for a field or a schema: walks up the ' +
+            'graph from everything of that name to the operations that accept or return it, ' +
+            'and gives the chain in between. Use it whenever a field has been found and the ' +
+            'endpoint to call is what is actually wanted — searching for the operation will ' +
+            'not work, because a call almost never repeats the name of a field nested inside ' +
+            'its body. An empty answer means nothing in the API carries it.',
+        parameters: {
+            type: 'object',
+            properties: {
+                of: {
+                    type: 'string',
+                    description:
+                        'The field or schema name to trace up from, or a node id such as ' +
+                        '"Type:User". A plain word matches anywhere in the name; * and ? ' +
+                        'match the whole of it.',
+                },
+                kind: {
+                    type: 'string',
+                    enum: ['type', 'property'],
+                    description: 'Only trace from schemas, or only from fields.',
+                },
+                direction: {
+                    type: 'string',
+                    enum: ['input', 'output', 'any'],
+                    description: 'Keep only the calls that accept it, or that return it.',
+                },
+                source: {
+                    type: 'string',
+                    description: 'Only this document, when the index holds more than one.',
+                },
+                limit: {
+                    type: 'integer',
+                    description: `Nodes to trace from. Default ${DEFAULT_TRACES}.`,
+                },
+                routes: {
+                    type: 'integer',
+                    description: `Operations per node. Default ${DEFAULT_ROUTES}.`,
+                },
+            },
+            required: ['of'],
+            additionalProperties: false,
+        },
+        execute: async ({ of: wanted, kind, direction, source: only, limit, routes }) => {
+            let result;
+            try {
+                result = traceNodes(index.graph, {
+                    ids: index.graph.hasNode(wanted) ? [wanted] : undefined,
+                    kinds: kind ? [kind as NodeKind] : undefined,
+                    name: index.graph.hasNode(wanted) ? undefined : [loose(wanted)],
+                    source: only,
+                    limit: Math.min(limit ?? DEFAULT_TRACES, MAX_TRACES),
+                    maxRoutes: Math.min(routes ?? DEFAULT_ROUTES, MAX_ROWS),
+                });
+            } catch (err) {
+                return { error: err instanceof PatternError ? err.message : String(err) };
+            }
+            if (result.found === 0) {
+                return {
+                    found: 0,
+                    hint: `nothing in the API is called "${wanted}" — try grep_api for it`,
+                };
+            }
+
+            const side = enumerated(direction);
+            return {
+                found: result.found,
+                truncated: result.truncated,
+                traced: result.traces.map((t) => ({
+                    id: t.id,
+                    reached_by: t.found,
+                    operations: t.routes
+                        .filter((r) => !side || r.direction === side || r.direction === 'both')
+                        .map(
+                            (r) =>
+                                `${r.attributes.httpMethod} ${r.attributes.path}  ` +
+                                `${r.attributes.name}  (${r.direction})${
+                                    source ? `  ${sourceTag(r.attributes.source)}` : ''
+                                }  ${chainOf(index.graph, t.id, r)}`,
+                        ),
+                })),
+            };
+        },
+    });
+
+    return [searchApi, describeTypes, findTypesWithProperty, listApi, grepApi, traceApi];
 }
 
 // ---------------------------------------------------------------------------

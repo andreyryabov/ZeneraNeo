@@ -15,4 +15,5 @@ export * from './schema/spec.ts';
 export * from './schema/store.ts';
 export * from './schema/subgraph.ts';
 export * from './schema/tools.ts';
+export * from './schema/trace.ts';
 export * from './schema/typescript.ts';

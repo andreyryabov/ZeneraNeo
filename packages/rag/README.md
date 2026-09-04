@@ -56,6 +56,7 @@ zen rag schema list methods --path "*/users*"   # every route under /users
 zen rag schema list types --name "*Password*"   # every schema so named
 zen rag schema grep password                    # every literal occurrence
 zen rag schema grep "pass(word|phrase)" --regex
+zen rag schema trace city                       # which calls can reach the field
 zen rag schema show --method GetCurrentUserInfo --format openapi --exact
 ```
 
@@ -79,6 +80,27 @@ row came from — `[source: billing_api_v2]` — on `list`, `grep`, `search` and
 printed rows, so a shortened answer still tells you how much there is. Nothing
 matching exits 0 — an empty answer is an answer, and here it is a trustworthy
 one: if `grep` finds nothing, the word is not in the description.
+
+Finding a field is half the job; the other half is which call can reach it, and
+that is a walk up the `$ref`s rather than a match on anything. `trace` does it:
+
+```sh
+zen rag schema trace city
+```
+
+```
+Property:Address.city
+    GET /users/{userId}  getUser  output  PublicUserProfile.address → Address.city
+```
+
+No search can be relied on for that — `search` stitches its seeds into one
+connected piece, but only between the nodes that ranked and only within
+`--max-hops`, and `getUser` and `city` share no word for either of them to rank
+on. `--direction` keeps just the calls that accept it or return it,
+`--kind` narrows what a bare pattern may start from, `--routes` and `--limit`
+cut the printed rows without lying about `found`, and `--ids-only` pipes the
+operations onward. A node nothing carries says so, which is worth knowing: it
+means no request in this document will ever carry it.
 
 Non-interactive search is a machine interface: every field is a flag, the whole
 query can arrive as one JSON object, the `--json` output keeps the same
@@ -118,6 +140,7 @@ zen rag schema index <spec...>   Read the documents and write a searchable index
 zen rag schema search            Ask it something. --interactive for a prompt.
 zen rag schema list <what>       Every method, type or property. No ranking.
 zen rag schema grep <pattern>    Every literal match across the whole index.
+zen rag schema trace <what>      Up from a field to the calls that carry it.
 zen rag schema show [id...]      Print named nodes, with no search in between.
 zen rag schema stats             What is in an index, and what built it.
 ```
@@ -157,7 +180,7 @@ const index = await SchemaIndex.open(
 const project = await loadProject('./my-project', { tools: schemaTools(index) });
 ```
 
-Five tools in the group `schema`, selectable as `schema:*`:
+Six tools in the group `schema`, selectable as `schema:*`:
 
 | Tool                       | For                                                     |
 | -------------------------- | ------------------------------------------------------- |
@@ -166,6 +189,7 @@ Five tools in the group `schema`, selectable as `schema:*`:
 | `find_types_with_property` | which types have a field of this name — no search       |
 | `list_api`                 | the shape of the API: methods, types or fields          |
 | `grep_api`                 | every literal occurrence of a string — no search        |
+| `trace_api`                | the operations that carry a given field or schema       |
 
 Only the first of those ranks anything. The rest are exact, because a model
 told "no results" by a vector search has learned nothing: a ranking returns the
@@ -173,7 +197,9 @@ top of a list, so an empty answer and an absent thing look identical.
 `find_types_with_property` is the one for the repair loop — when `tsc` says
 `'password' does not exist in type 'PublicUserProfile'`, the model does not
 need the word explained again, it needs the list of types that have one.
-`grep_api` is the same instinct widened to the whole description.
+`grep_api` is the same instinct widened to the whole description, and
+`trace_api` is the step after both: a field is of no use until the call that
+carries it is known.
 
 ## What an index is
 

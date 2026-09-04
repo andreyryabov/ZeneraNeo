@@ -371,6 +371,69 @@ describe('grep', () => {
     });
 });
 
+describe('trace', () => {
+    it('needs something to trace', async () => {
+        expect((await fails(['schema', 'trace', '--dir', dir])).code).toBe(EXIT.usage);
+    });
+
+    it('walks a nested field up to the call that carries it', async () => {
+        const { out } = await run(['schema', 'trace', 'city', '--dir', dir]);
+
+        // Three lookups by hand: the field is on Address, Address is held by
+        // PublicUserProfile.address, and only PublicUserProfile is returned.
+        expect(out).toContain('Property:Address.city');
+        expect(out).toContain('GET /users/{userId}');
+        expect(out).toContain('PublicUserProfile.address → Address.city');
+    });
+
+    it('reads a node id as that node, and a word as a pattern', async () => {
+        const { out } = await run(['schema', 'trace', 'Type:Cat', '--dir', dir], true);
+        const result = JSON.parse(out) as { found: number; traces: { id: string }[] };
+
+        expect(result.found).toBe(1);
+        expect(result.traces[0]!.id).toBe('Type:Cat');
+    });
+
+    it('says which side of the call each operation is on', async () => {
+        const { out } = await run(
+            ['schema', 'trace', 'Property:ResetPasswordPayload.password', '--dir', dir],
+            true,
+        );
+        const result = JSON.parse(out) as {
+            traces: { routes: { path: string; direction: string }[] }[];
+        };
+
+        expect(result.traces[0]!.routes).toEqual([
+            expect.objectContaining({ path: '/auth/reset-password', direction: 'input' }),
+        ]);
+    });
+
+    it('keeps only the side that was asked for', async () => {
+        const { out } = await run([
+            'schema',
+            'trace',
+            'Property:Address.city',
+            '--dir',
+            dir,
+            '--direction',
+            'input',
+        ]);
+        // Nothing accepts an address. That is an answer, not a failure.
+        expect(out).toContain('no operation reaches it');
+    });
+
+    it('gives bare operation ids to pipe into show', async () => {
+        const { out } = await run(['schema', 'trace', 'meowVolume', '--dir', dir, '--ids-only']);
+        expect(out.trim().split('\n')).toContain('Method:createPet');
+    });
+
+    it('says nothing is called that, rather than answering emptily', async () => {
+        const { out, err } = await run(['schema', 'trace', 'mfa_secret', '--dir', dir]);
+        expect(out.trim()).toBe('');
+        expect(err).toContain('0 node(s)');
+    });
+});
+
 describe('show', () => {
     it('needs an id', async () => {
         expect((await fails(['schema', 'show', '--dir', dir])).code).toBe(EXIT.usage);
