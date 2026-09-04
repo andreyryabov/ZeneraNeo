@@ -142,6 +142,38 @@ describe('searching the store', () => {
         store.close();
     });
 
+    // The document names are a closed vocabulary too — the store is opened with
+    // the list the index itself wrote, which is what lets them reach the
+    // predicate rather than being filtered out afterwards.
+    it('filters on the document, and refuses a name the index never wrote', async () => {
+        const store = await EntityStore.open(
+            dir,
+            manifest.sources.map((s) => s.name),
+        );
+        const hits = await store.search(
+            'invoice total',
+            await vector('invoice total'),
+            { sources: ['billing'] },
+            10,
+        );
+
+        expect(hits.length).toBeGreaterThan(0);
+        expect(hits.every((h) => h.record.source === 'billing')).toBe(true);
+
+        await expect(
+            store.search('x', await vector('x'), { sources: ["billing' OR '1'='1"] }, 5),
+        ).rejects.toThrow(/source cannot be/);
+        store.close();
+    });
+
+    it('has no document vocabulary unless it was opened with one', async () => {
+        const store = await EntityStore.open(dir);
+        await expect(
+            store.search('x', await vector('x'), { sources: ['billing'] }, 5),
+        ).rejects.toThrow(/source cannot be/);
+        store.close();
+    });
+
     it('brings a whole record back, not just an id', async () => {
         const store = await EntityStore.open(dir);
         const [hit] = await store.search(

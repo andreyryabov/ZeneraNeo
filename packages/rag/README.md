@@ -231,8 +231,8 @@ zen rag schema stats             What is in an index, and what built it.
 
 Search terms are one flag each — `--all`, `--method`, `--type`, `--input-type`,
 `--output-type`, `--property`, `--input-property`, `--output-property` — shaped
-by `--direction`, `--method-type`, `--limit`, `--max-hops`, `--max-nodes` and
-the four `--exclude-*` filters, and rendered by `--format text | mermaid |
+by `--direction`, `--method-type`, `--limit`, `--max-hops`, `--max-nodes`,
+`--source` and the four `--exclude-*` filters, and rendered by `--format text | mermaid |
 mermaid-flowchart | ts | openapi`. `zen help rag` prints the full table.
 
 `list` and `grep` share `--name`, `--path`, `--regex`, `--case-sensitive`,

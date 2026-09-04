@@ -120,6 +120,7 @@ export const command: Command = {
             ['  --exclude-method <name>', dim('Drop an operation by name.')],
             ['  --exclude-type <name>', dim('Drop a schema by name.')],
             ['  --exclude-property <name>', dim('Drop a field by name.')],
+            ['  --source <name>', dim('Only this document, as `stats` names it. Repeatable.')],
             ['  --limit <n>', dim('Seeds kept per term. Default 5.')],
             ['  --max-hops <n>', dim('How far apart two hits may be. Default 3.')],
             ['  --max-nodes <n>', dim('Nodes per result. Default 200.')],
@@ -345,6 +346,7 @@ interface SearchFlags {
     'exclude-method'?: string[];
     'exclude-type'?: string[];
     'exclude-property'?: string[];
+    source?: string[];
     limit?: string;
     'max-hops'?: string;
     'max-nodes'?: string;
@@ -376,6 +378,7 @@ const SEARCH_OPTIONS = {
     'exclude-method': MANY,
     'exclude-type': MANY,
     'exclude-property': MANY,
+    source: MANY,
     limit: { type: 'string' },
     'max-hops': { type: 'string' },
     'max-nodes': { type: 'string' },
@@ -468,6 +471,7 @@ function fromFlags(values: SearchFlags, positionals: readonly string[] = []): Sc
     put('exclude_methods', values['exclude-method']);
     put('exclude_types', values['exclude-type']);
     put('exclude_properties', values['exclude-property']);
+    put('sources', values.source);
     put('direction', values.direction);
     put('method_type', values['method-type']);
     put('limit', values.limit && count(values.limit, '--limit'));

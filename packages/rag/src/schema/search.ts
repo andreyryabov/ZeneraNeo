@@ -1,4 +1,5 @@
 import type { Embedder } from '@zenera/neo';
+import { CliError, EXIT } from '@zenera/cli/lib';
 import { assertSameEmbedding } from '../common/manifest.ts';
 import type { EntityRecord } from './entities.ts';
 import { openIndex, type Manifest, type OpenIndex } from './files.ts';
@@ -53,6 +54,9 @@ export interface SchemaQuery {
     exclude_types?: readonly string[];
     exclude_properties?: readonly string[];
 
+    /** document names, as `stats` prints them; any one of them is enough */
+    sources?: readonly string[];
+
     /** seeds kept per query string */
     limit?: number;
     max_hops?: number;
@@ -95,7 +99,8 @@ export class SchemaIndex {
     static async open(dir: string, embedder: Embedder): Promise<SchemaIndex> {
         const index = await openIndex(dir);
         assertSameEmbedding(index.manifest, embedder.id);
-        return new SchemaIndex(index, await EntityStore.open(dir), embedder);
+        const names = index.manifest.sources.map((s) => s.name);
+        return new SchemaIndex(index, await EntityStore.open(dir, names), embedder);
     }
 
     schemas(): Promise<Record<string, Schema>> {
@@ -111,6 +116,7 @@ export class SchemaIndex {
     }
 
     async search(query: SchemaQuery, signal?: AbortSignal): Promise<SearchResult> {
+        this.#assertSources(query.sources);
         const terms = termsOf(query);
         if (terms.length === 0) {
             return { seeds: [], subgraphs: [], empty: [] };
@@ -157,6 +163,22 @@ export class SchemaIndex {
         });
         return { seeds, subgraphs, empty };
     }
+
+    /** Settled before the embedder is called, so a typo costs no credential. */
+    #assertSources(wanted: readonly string[] | undefined): void {
+        if (!wanted || wanted.length === 0) {
+            return;
+        }
+        const known = this.manifest.sources.map((s) => s.name);
+        const missing = wanted.filter((name) => !known.includes(name));
+        if (missing.length > 0) {
+            throw new CliError(
+                `this index holds no document called ${missing.join(', ')}`,
+                EXIT.failed,
+                `it has: ${known.join(', ')}`,
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -164,6 +186,8 @@ export class SchemaIndex {
 function termsOf(query: SchemaQuery): Term[] {
     const method = methodTypes(query.method_type);
     const loose = query.direction ?? 'any';
+    // A document is a constraint on the whole question, not on one field of it.
+    const sources = query.sources?.length ? query.sources : undefined;
 
     return [
         ...group(query.all, 'all', { methodTypes: method.mixed }),
@@ -186,7 +210,7 @@ function termsOf(query: SchemaQuery): Term[] {
             kinds: ['property'],
             directions: sides('output'),
         }),
-    ];
+    ].map((term) => (sources ? { ...term, filter: { ...term.filter, sources } } : term));
 }
 
 function group(texts: readonly string[] | undefined, field: string, filter: StoreFilter): Term[] {

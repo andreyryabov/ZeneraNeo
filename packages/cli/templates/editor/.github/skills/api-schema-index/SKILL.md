@@ -216,30 +216,38 @@ response field in `--output-property`, an action in `--method`.
 
 ### Shaping the answer
 
-| Flag                        | Default     | Meaning                                                 |
-| --------------------------- | ----------- | ------------------------------------------------------- |
-| `-d`, `--dir <dir>`         | found       | Which index — see "Which index gets read"               |
-| `--embedding <ref>`         | the index's | Must be the one the index was built with                |
-| `--direction <d>`           | `any`       | `input`, `output` or `any`                              |
-| `--method-type <t>`         | `any`       | `read_only` (GET/HEAD/OPTIONS) or `read_write`          |
-| `--exclude-id <id>`         | —           | Drop a node. Repeatable                                 |
-| `--exclude-method <name>`   | —           | Drop an operation by name. Repeatable                   |
-| `--exclude-type <name>`     | —           | Drop a schema by name. Repeatable                       |
-| `--exclude-property <name>` | —           | Drop a field by name. Repeatable                        |
-| `--limit <n>`               | `5`         | Seeds kept per term                                     |
-| `--max-hops <n>`            | `3`         | How far apart two hits may be and still join            |
-| `--max-nodes <n>`           | `200`       | Nodes per result                                        |
-| `--format <f>`              | `text`      | `text`, `mermaid`, `mermaid-flowchart`, `ts`, `openapi` |
-| `--show-source`             | —           | Tag each operation and schema with its document         |
-| `--no-docs`                 | —           | Leave the descriptions out                              |
-| `--interactive`             | —           | Prompt, search, refine. Needs a terminal                |
-| `--quiet`                   | —           | No narration                                            |
+| Flag                        | Default     | Meaning                                                    |
+| --------------------------- | ----------- | ---------------------------------------------------------- |
+| `-d`, `--dir <dir>`         | found       | Which index — see "Which index gets read"                  |
+| `--embedding <ref>`         | the index's | Must be the one the index was built with                   |
+| `--direction <d>`           | `any`       | `input`, `output` or `any`                                 |
+| `--method-type <t>`         | `any`       | `read_only` (GET/HEAD/OPTIONS) or `read_write`             |
+| `--exclude-id <id>`         | —           | Drop a node. Repeatable                                    |
+| `--exclude-method <name>`   | —           | Drop an operation by name. Repeatable                      |
+| `--exclude-type <name>`     | —           | Drop a schema by name. Repeatable                          |
+| `--exclude-property <name>` | —           | Drop a field by name. Repeatable                           |
+| `--source <name>`           | every one   | Search only this document, as `stats` names it. Repeatable |
+| `--limit <n>`               | `5`         | Seeds kept per term                                        |
+| `--max-hops <n>`            | `3`         | How far apart two hits may be and still join               |
+| `--max-nodes <n>`           | `200`       | Nodes per result                                           |
+| `--format <f>`              | `text`      | `text`, `mermaid`, `mermaid-flowchart`, `ts`, `openapi`    |
+| `--show-source`             | —           | Tag each operation and schema with its document            |
+| `--no-docs`                 | —           | Leave the descriptions out                                 |
+| `--interactive`             | —           | Prompt, search, refine. Needs a terminal                   |
+| `--quiet`                   | —           | No narration                                               |
 
 ```sh
 zen rag schema search --method "reset a user password" --format ts
 zen rag schema search --output-property "invoice total" --direction output
 zen rag schema search --input-property "page size" --method-type read_only
+zen rag schema search --method "apply a tag" --source policy_api --show-source
 ```
+
+When an index holds two revisions of one API, `--source` is what keeps the
+answer inside the one you mean — the same words rank in both, so without it the
+two have to be told apart by eye after the fact. It is repeatable, and the names
+it takes are the ones `stats` prints; anything else is refused, and the refusal
+lists what the index does hold.
 
 `--format ts` emits TypeScript closed over its own `$ref`s: everything named is
 also declared, so the output compiles on its own. `--format openapi` emits a

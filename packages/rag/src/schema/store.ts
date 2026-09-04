@@ -10,10 +10,13 @@ import { lancePath } from './files.ts';
 // carrying both the embedding and the full-text index, and the handful of
 // enum columns a query filters on.
 //
-// Those enums are the *only* thing that reaches the SQL predicate. Exclusion
-// lists — which arrive from a model, or from a shell — are applied afterwards
-// in JavaScript. Escaping them into `where()` would work right up until it did
-// not, and there is nothing here that a filter string buys.
+// Those closed vocabularies are the *only* thing that reaches the SQL
+// predicate. `source` is one of them: its values are the document names the
+// index itself wrote, so the store is opened with that list and checks against
+// it. Exclusion lists — which arrive from a model, or from a shell — are
+// applied afterwards in JavaScript. Escaping those into `where()` would work
+// right up until it did not, and there is nothing here that a filter string
+// buys.
 // ---------------------------------------------------------------------------
 
 const TABLE = 'entities';
@@ -29,6 +32,7 @@ export interface StoreFilter {
     kinds?: readonly string[];
     directions?: readonly string[];
     methodTypes?: readonly string[];
+    sources?: readonly string[];
 }
 
 export interface Hit {
@@ -81,16 +85,19 @@ export async function writeStore(
 export class EntityStore {
     readonly #db: Connection;
     readonly #table: Table;
+    readonly #sources: ReadonlySet<string>;
 
-    constructor(db: Connection, table: Table) {
+    constructor(db: Connection, table: Table, sources: readonly string[] = []) {
         this.#db = db;
         this.#table = table;
+        this.#sources = new Set(sources);
     }
 
-    static async open(dir: string): Promise<EntityStore> {
+    /** `sources` is the document vocabulary a `sources` filter is checked against. */
+    static async open(dir: string, sources: readonly string[] = []): Promise<EntityStore> {
         const db = await connect(lancePath(dir));
         try {
-            return new EntityStore(db, await db.openTable(TABLE));
+            return new EntityStore(db, await db.openTable(TABLE), sources);
         } catch {
             db.close();
             throw new CliError(
@@ -111,7 +118,7 @@ export class EntityStore {
         filter: StoreFilter,
         limit: number,
     ): Promise<Hit[]> {
-        const predicate = where(filter);
+        const predicate = where(filter, this.#sources);
         let query = this.#table.query().nearestToText(text).nearestTo(vector).limit(limit);
         if (predicate) {
             query = query.where(predicate);
@@ -132,11 +139,12 @@ export class EntityStore {
 // ---------------------------------------------------------------------------
 
 /** Closed vocabularies only. Anything else is a bug, and is treated as one. */
-function where(filter: StoreFilter): string {
+function where(filter: StoreFilter, sources: ReadonlySet<string>): string {
     const clauses = [
         clause('kind', filter.kinds, KINDS),
         clause('direction', filter.directions, DIRECTIONS),
         clause('methodType', filter.methodTypes, METHOD_TYPES),
+        clause('source', filter.sources, sources),
     ].filter(Boolean);
     return clauses.join(' AND ');
 }

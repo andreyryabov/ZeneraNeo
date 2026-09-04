@@ -531,6 +531,7 @@ describe('the query contract', () => {
             exclude_methods: ['j'],
             exclude_types: ['k'],
             exclude_properties: ['l'],
+            sources: ['m'],
             direction: 'input',
             method_type: 'read_write',
             limit: 3,
@@ -546,10 +547,14 @@ describe('the query contract', () => {
         expect(() => parseQuery({ all: 'a' })).toThrow(/array of strings/);
         expect(() => parseQuery({ limit: 0 })).toThrow(/at least 1/);
         expect(() => parseQuery({ direction: 'sideways' })).toThrow(/input, output, any/);
+        // The flag is `--source`; the field it fills is the plural one.
+        expect(() => parseQuery({ source: 'billing' })).toThrow(/unknown query field/);
     });
 
     it('tells a filter-only query from one that asks something', () => {
         expect(isEmpty(parseQuery({ direction: 'input', exclude_ids: ['x'] }))).toBe(true);
         expect(isEmpty(parseQuery({ output_properties: ['x'] }))).toBe(false);
+        // Naming a document is narrowing, not asking.
+        expect(isEmpty(parseQuery({ sources: ['billing'] }))).toBe(true);
     });
 });

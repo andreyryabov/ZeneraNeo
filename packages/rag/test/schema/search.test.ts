@@ -1,3 +1,4 @@
+import type { Embedder } from '@zenera/neo';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -102,6 +103,57 @@ describe('filters', () => {
         expect(seeds.some((s) => index.graph.getNodeAttribute(s.id, 'kind') !== 'method')).toBe(
             true,
         );
+    });
+});
+
+// An index holding two revisions of one API is the case this exists for: the
+// same words rank in both, so without a way to say which document is meant the
+// answer has to be told apart by eye.
+describe('one document out of several', () => {
+    const sourceOf = (id: string) => index.graph.getNodeAttribute(id, 'source');
+
+    it('names its documents the way --source spells them', () => {
+        expect(index.manifest.sources.map((s) => s.name)).toEqual(['petstore', 'billing']);
+    });
+
+    it('keeps a search inside the document it was pointed at', async () => {
+        const { seeds } = await search({ all: ['pets'], sources: ['billing'] });
+
+        expect(seeds.length).toBeGreaterThan(0);
+        expect(seeds.every((s) => sourceOf(s.id) === 'billing')).toBe(true);
+    });
+
+    // The other half of the pair: without it the one above would pass against a
+    // filter that did nothing, if billing happened to win on its own.
+    it('reaches the other document when it is pointed nowhere', async () => {
+        const { seeds } = await search({ all: ['pets'] });
+        expect(seeds.some((s) => sourceOf(s.id) === 'petstore')).toBe(true);
+    });
+
+    it('takes more than one, because two revisions is the usual question', async () => {
+        const { seeds } = await search({ all: ['pets'], sources: ['petstore', 'billing'] });
+        expect(new Set(seeds.map((s) => sourceOf(s.id))).size).toBeGreaterThan(0);
+        expect(seeds.every((s) => ['petstore', 'billing'].includes(sourceOf(s.id)))).toBe(true);
+    });
+
+    it('refuses a document it does not hold, before spending an embedding', async () => {
+        let calls = 0;
+        const counted: Embedder = {
+            id: embedder.id,
+            embed: async (request) => {
+                calls++;
+                return await embedder.embed(request);
+            },
+        };
+        const other = await SchemaIndex.open(dir, counted);
+        try {
+            await expect(other.search({ all: ['pets'], sources: ['nsx'] })).rejects.toThrow(
+                /holds no document called nsx/,
+            );
+            expect(calls).toBe(0);
+        } finally {
+            other.close();
+        }
     });
 });
 
