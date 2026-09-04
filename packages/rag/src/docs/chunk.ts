@@ -67,6 +67,14 @@ export const TABLE_ROWS_PER_CHUNK = 4;
 export const MIN_CHUNK_TOKENS = 48;
 
 /**
+ * How much of the block before a chunk may carry for continuity. It is one
+ * line, which is a whisper until the line is the whole of a README's challenge
+ * table on one row: 92kB of badge markup, none of it cited by a line number,
+ * outweighing the seven lines the chunk actually stands for by eighty to one.
+ */
+export const CARRY_TOKENS = 32;
+
+/**
  * Four characters to a token, which is within about 15% for English prose and
  * wrong for CJK, for dense numeric cells and for long identifiers. It cannot
  * cause a request to fail — 512 estimated tokens sits far below any embedding
@@ -249,8 +257,10 @@ class Cutter {
             case 'frontmatter':
                 this.#emit(this.#whole(block, 'frontmatter'));
                 return;
+            // A sponsors table in raw HTML runs to a thousand lines, which as
+            // one chunk is longer than an embedding request may be.
             case 'html':
-                this.#emit(this.#whole(block, 'html'));
+                this.#oversized(block, 'html');
                 return;
             // A heading is never a body of its own: alone it embeds to almost
             // nothing and would compete with the content under it. It reaches
@@ -319,7 +329,8 @@ class Cutter {
 
     /** Text-level overlap only: never a line number, never a body line. */
     #lastLine(body: Body): string | undefined {
-        return collapse(this.#doc.lines[body.end - 1] ?? '') || undefined;
+        const line = collapse(this.#doc.lines[body.end - 1] ?? '');
+        return line.slice(0, CARRY_TOKENS * 4) || undefined;
     }
 
     // -----------------------------------------------------------------------

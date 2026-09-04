@@ -114,7 +114,7 @@ async function pickExisting(projectDir: string): Promise<SessionPaths | undefine
                 `${s.runs} run${s.runs === 1 ? '' : 's'}${s.busy ? yellow('  running') : ''}`,
             value: s.id as string | undefined,
         })),
-        { label: dim('New session…'), value: undefined },
+        { key: '0', label: dim('New session…'), value: undefined },
     ]);
     return choice ? sessionPaths(projectDir, choice) : undefined;
 }
