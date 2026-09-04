@@ -4,10 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
-import { buildIndex } from '../src/schema/build.ts';
-import { SchemaIndex } from '../src/schema/search.ts';
-import { schemaTools } from '../src/schema/tools.ts';
-import { StubEmbedder } from './stub.ts';
+import { buildIndex } from '../../src/schema/build.ts';
+import { SchemaIndex } from '../../src/schema/search.ts';
+import { schemaTools } from '../../src/schema/tools.ts';
+import { StubEmbedder } from '../stub.ts';
 
 // ---------------------------------------------------------------------------
 // The tools an agent is handed
@@ -18,7 +18,7 @@ import { StubEmbedder } from './stub.ts';
 // that do have it — not another ranking of the same guess.
 // ---------------------------------------------------------------------------
 
-const spec = (name: string) => fileURLToPath(new URL(`./specs/${name}`, import.meta.url));
+const spec = (name: string) => fileURLToPath(new URL(`../specs/${name}`, import.meta.url));
 
 const dir = await mkdtemp(join(tmpdir(), 'zenera-rag-tools-'));
 const embedder = new StubEmbedder();

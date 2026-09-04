@@ -1,6 +1,6 @@
+import { PatternError, type Matcher } from '../common/match.ts';
 import { textOf } from './entities.ts';
 import { methodId, type ApiGraph, type NodeAttrs, type NodeKind } from './graph.ts';
-import { PatternError, type Matcher } from './match.ts';
 
 // ---------------------------------------------------------------------------
 // The graph, read exhaustively

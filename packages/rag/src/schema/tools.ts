@@ -1,10 +1,10 @@
 import { tool, type AnyTool } from '@zenera/neo';
-import { FORMATS, isFormat, present, type Format } from '../present.ts';
-import { isEmpty, parseQuery, QueryError } from '../query.ts';
+import { loose, matcher, PatternError } from '../common/match.ts';
+import { FORMATS, isFormat, present, type Format } from './present.ts';
+import { isEmpty, parseQuery, QueryError } from './query.ts';
 import type { NodeKind } from './graph.ts';
 import { toTypeScript } from './hydrate.ts';
 import { fields, grepNodes, listNodes, propertyCount, type Row } from './lookup.ts';
-import { loose, matcher, PatternError } from './match.ts';
 import { sourceTag } from './render.ts';
 import type { SchemaIndex, SchemaQuery } from './search.ts';
 import { stitch, type Subgraph } from './subgraph.ts';

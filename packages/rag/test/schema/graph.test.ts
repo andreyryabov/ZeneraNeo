@@ -1,9 +1,9 @@
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { buildGraph, methodId, paramId, propertyId, typeId } from '../src/schema/graph.ts';
-import { loadSpecs } from '../src/schema/spec.ts';
-import { stitch } from '../src/schema/subgraph.ts';
-import { Printer } from '../src/schema/typescript.ts';
+import { buildGraph, methodId, paramId, propertyId, typeId } from '../../src/schema/graph.ts';
+import { loadSpecs } from '../../src/schema/spec.ts';
+import { stitch } from '../../src/schema/subgraph.ts';
+import { Printer } from '../../src/schema/typescript.ts';
 
 // ---------------------------------------------------------------------------
 // Specs, and the graph they become
@@ -15,7 +15,7 @@ import { Printer } from '../src/schema/typescript.ts';
 // which refers to itself terminates.
 // ---------------------------------------------------------------------------
 
-const spec = (name: string) => fileURLToPath(new URL(`./specs/${name}`, import.meta.url));
+const spec = (name: string) => fileURLToPath(new URL(`../specs/${name}`, import.meta.url));
 
 const PETSTORE = spec('petstore.yaml');
 const BILLING = spec('billing.json');

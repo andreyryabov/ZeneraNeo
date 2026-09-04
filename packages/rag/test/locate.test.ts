@@ -3,7 +3,10 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { DEFAULT_DIR, DIR_ENV, isIndex, locateIndex, outputDir } from '../src/schema/locate.ts';
+import { isIndex, locateIndex, outputDir } from '../src/common/locate.ts';
+import { SCHEMA_INDEX } from '../src/schema/files.ts';
+
+const { defaultDir: DEFAULT_DIR, envName: DIR_ENV } = SCHEMA_INDEX;
 
 // ---------------------------------------------------------------------------
 // Finding the index nobody named
@@ -51,7 +54,7 @@ const within = (root: string) => ({ env: {}, ceiling: root });
 describe('locateIndex', () => {
     it('takes --dir as written, whether or not anything is there', async () => {
         const root = await world();
-        expect(locateIndex(root, 'nowhere', within(root))).toEqual({
+        expect(locateIndex(root, 'nowhere', SCHEMA_INDEX, within(root))).toEqual({
             dir: join(root, 'nowhere'),
             from: 'flag',
         });
@@ -59,13 +62,13 @@ describe('locateIndex', () => {
 
     it(`takes ${DIR_ENV} the same way, so it does not have to be typed twice`, async () => {
         const root = await world();
-        const located = locateIndex(root, undefined, { env: { [DIR_ENV]: 'named' } });
+        const located = locateIndex(root, undefined, SCHEMA_INDEX, { env: { [DIR_ENV]: 'named' } });
         expect(located).toEqual({ dir: join(root, 'named'), from: 'env' });
     });
 
     it('prefers the flag to the environment, since the flag is this invocation', async () => {
         const root = await world();
-        const located = locateIndex(root, 'flag', { env: { [DIR_ENV]: 'env' } });
+        const located = locateIndex(root, 'flag', SCHEMA_INDEX, { env: { [DIR_ENV]: 'env' } });
         expect(located.dir).toBe(join(root, 'flag'));
     });
 
@@ -74,7 +77,10 @@ describe('locateIndex', () => {
         const one = await index(root, 'anything-at-all');
         const cwd = await plain(root, 'work');
 
-        expect(locateIndex(cwd, undefined, within(root))).toEqual({ dir: one, from: 'found' });
+        expect(locateIndex(cwd, undefined, SCHEMA_INDEX, within(root))).toEqual({
+            dir: one,
+            from: 'found',
+        });
     });
 
     it('finds one several levels down a sibling, which is what --dir was for', async () => {
@@ -82,13 +88,13 @@ describe('locateIndex', () => {
         const one = await index(root, 'assets', 'integrations', 'schema-db');
         const cwd = await plain(root, 'workspace', 'deep');
 
-        expect(locateIndex(cwd, undefined, within(root)).dir).toBe(one);
+        expect(locateIndex(cwd, undefined, SCHEMA_INDEX, within(root)).dir).toBe(one);
     });
 
     it('answers with the working directory when it is itself an index', async () => {
         const root = await world();
         const one = await index(root, 'itself');
-        expect(locateIndex(one, undefined, within(root)).dir).toBe(one);
+        expect(locateIndex(one, undefined, SCHEMA_INDEX, within(root)).dir).toBe(one);
     });
 
     it('prefers the nearer of two rather than counting them as a tie', async () => {
@@ -97,7 +103,7 @@ describe('locateIndex', () => {
         await index(root, 'far', 'down', 'below');
         const cwd = await plain(root, 'work');
 
-        expect(locateIndex(cwd, undefined, within(root)).dir).toBe(near);
+        expect(locateIndex(cwd, undefined, SCHEMA_INDEX, within(root)).dir).toBe(near);
     });
 
     it('refuses to guess between two equally close, because the wrong one answers too', async () => {
@@ -106,8 +112,10 @@ describe('locateIndex', () => {
         await index(root, 'two', 'first');
         await index(root, 'two', 'second');
 
-        expect(() => locateIndex(cwd, undefined, within(root))).toThrow(CliError);
-        expect(() => locateIndex(cwd, undefined, within(root))).toThrow(/more than one index/);
+        expect(() => locateIndex(cwd, undefined, SCHEMA_INDEX, within(root))).toThrow(CliError);
+        expect(() => locateIndex(cwd, undefined, SCHEMA_INDEX, within(root))).toThrow(
+            /more than one index/,
+        );
     });
 
     it('will not climb above the ceiling, since another tree is not yours to read', async () => {
@@ -116,13 +124,13 @@ describe('locateIndex', () => {
         const cwd = await plain(root, 'fenced', 'work');
         const fenced = { env: {}, ceiling: join(root, 'fenced') };
 
-        expect(locateIndex(cwd, undefined, fenced).from).toBe('default');
+        expect(locateIndex(cwd, undefined, SCHEMA_INDEX, fenced).from).toBe('default');
     });
 
     it('falls back to the default, so the error names the expected directory', async () => {
         const root = await world();
         const cwd = await plain(root, 'empty');
-        const located = locateIndex(cwd, undefined, within(root));
+        const located = locateIndex(cwd, undefined, SCHEMA_INDEX, within(root));
 
         expect(located.from).toBe('default');
         expect(located.dir).toBe(join(cwd, 'schema-db'));
@@ -133,17 +141,19 @@ describe('locateIndex', () => {
 describe('outputDir', () => {
     it('writes where reads look, without searching for what is not there yet', async () => {
         const root = await world();
-        expect(outputDir(root, 'out', {})).toBe(join(root, 'out'));
-        expect(outputDir(root, undefined, { [DIR_ENV]: 'shared' })).toBe(join(root, 'shared'));
-        expect(outputDir(root, undefined, {})).toBe(join(root, 'schema-db'));
+        expect(outputDir(root, 'out', SCHEMA_INDEX, {})).toBe(join(root, 'out'));
+        expect(outputDir(root, undefined, SCHEMA_INDEX, { [DIR_ENV]: 'shared' })).toBe(
+            join(root, 'shared'),
+        );
+        expect(outputDir(root, undefined, SCHEMA_INDEX, {})).toBe(join(root, 'schema-db'));
     });
 });
 
 describe('isIndex', () => {
     it('asks the manifest and nothing else', async () => {
         const root = await world();
-        expect(isIndex(await index(root, 'probe'))).toBe(true);
-        expect(isIndex(await plain(root, 'probe-not'))).toBe(false);
-        expect(isIndex(join(root, 'absent'))).toBe(false);
+        expect(isIndex(await index(root, 'probe'), 'schema')).toBe(true);
+        expect(isIndex(await plain(root, 'probe-not'), 'schema')).toBe(false);
+        expect(isIndex(join(root, 'absent'), 'schema')).toBe(false);
     });
 });

@@ -7,7 +7,7 @@ import {
     MAX_PATTERN,
     PatternError,
     wildcard,
-} from '../src/schema/match.ts';
+} from '../src/common/match.ts';
 
 // ---------------------------------------------------------------------------
 // The rules a pattern is read by

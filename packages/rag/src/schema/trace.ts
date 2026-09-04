@@ -1,6 +1,6 @@
+import type { Matcher } from '../common/match.ts';
 import type { ApiGraph, NodeAttrs, NodeKind, Relation } from './graph.ts';
 import { listNodes } from './lookup.ts';
-import type { Matcher } from './match.ts';
 
 // ---------------------------------------------------------------------------
 // Upwards, to the calls

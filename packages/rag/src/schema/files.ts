@@ -2,6 +2,7 @@ import { CliError, EXIT } from '@zenera/cli/lib';
 import { MultiDirectedGraph } from 'graphology';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { MANIFEST_FILE, readHead, type IndexHead, type IndexSpec } from '../common/manifest.ts';
 import type { ApiGraph, EdgeAttrs, NodeAttrs } from './graph.ts';
 import type { Schema } from './schema.ts';
 import type { Operation } from './spec.ts';
@@ -26,7 +27,14 @@ import type { Operation } from './spec.ts';
 
 export const INDEX_VERSION = 3;
 
-export const MANIFEST_FILE = 'manifest.json';
+/** How a schema index is found, read, and refused. */
+export const SCHEMA_INDEX: IndexSpec = {
+    kind: 'schema',
+    version: INDEX_VERSION,
+    defaultDir: './schema-db',
+    envName: 'ZEN_SCHEMA_DB',
+};
+
 export const GRAPH_FILE = 'graph.json';
 export const SCHEMAS_FILE = 'schemas.json';
 export const OPERATIONS_FILE = 'operations.json';
@@ -57,16 +65,9 @@ export interface Counts {
     entities: number;
 }
 
-export interface Manifest {
-    version: number;
-    createdAt: string;
-    indexer: string;
-    /** `ref` as it was typed, `id` as the embedder answers to it */
-    embedding: { ref: string; id: string; dimensions: number };
+export interface Manifest extends IndexHead {
     sources: SourceRecord[];
     counts: Counts;
-    /** whether the table carries an fts index, and whether it carries a vector one */
-    indexes: { fts: boolean; vector: boolean };
 }
 
 export interface WrittenIndex {
@@ -151,43 +152,5 @@ export async function readSource(dir: string, name: string): Promise<string | un
     return await readFile(join(dir, record.path), 'utf8');
 }
 
-export async function readManifest(dir: string): Promise<Manifest> {
-    let text: string;
-    try {
-        text = await readFile(join(dir, MANIFEST_FILE), 'utf8');
-    } catch {
-        throw new CliError(
-            `${dir} does not hold an index`,
-            EXIT.invalid,
-            'build one with `zen rag schema index`, or name an existing one with --dir or $ZEN_SCHEMA_DB',
-        );
-    }
-    const manifest = JSON.parse(text) as Manifest;
-    if (manifest.version !== INDEX_VERSION) {
-        throw new CliError(
-            `${dir} is a version ${manifest.version} index, and this indexer reads version ${INDEX_VERSION}`,
-            EXIT.invalid,
-            'rebuild it with `zen rag schema index`',
-        );
-    }
-    return manifest;
-}
-
-/**
- * A store answers with the neighbours of a vector, and a vector means nothing
- * without the model that produced it. Asking one model's index a question
- * embedded by another returns rows, in an order that is noise.
- *
- * Either spelling is accepted, because `openai:text-embedding-3-small` and
- * `text-embedding-3-small` are one model and which of them was typed is not
- * something anyone should have to remember.
- */
-export function assertSameEmbedding(manifest: Manifest, ref: string): void {
-    if (ref !== manifest.embedding.ref && ref !== manifest.embedding.id) {
-        throw new CliError(
-            `this index was built with ${manifest.embedding.ref}, not ${ref}`,
-            EXIT.invalid,
-            `search it with --embedding ${manifest.embedding.ref}, or rebuild it`,
-        );
-    }
-}
+export const readManifest = (dir: string): Promise<Manifest> =>
+    readHead<Manifest>(dir, SCHEMA_INDEX);

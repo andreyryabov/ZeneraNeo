@@ -2,7 +2,7 @@ import { createInterface } from 'node:readline/promises';
 import { bold, cyan, dim, note, write } from '@zenera/cli/lib';
 import { isFormat, present, type Format, type OutputOptions } from './present.ts';
 import { isEmpty, parseQuery, QueryError } from './query.ts';
-import type { SchemaIndex, SchemaQuery } from './schema/search.ts';
+import type { SchemaIndex, SchemaQuery } from './search.ts';
 
 // ---------------------------------------------------------------------------
 // The prompt loop

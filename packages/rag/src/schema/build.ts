@@ -1,4 +1,5 @@
 import type { Embedder } from '@zenera/neo';
+import { beginBuild, type Journal } from '../common/progress.ts';
 import { toEntities, type EntityRecord } from './entities.ts';
 import {
     INDEX_VERSION,
@@ -9,7 +10,7 @@ import {
     type SourceRecord,
 } from './files.ts';
 import { buildGraph } from './graph.ts';
-import { beginBuild, type Journal } from './progress.ts';
+import { PHASES, SCHEMA_REPORT, type Phase } from './readme.ts';
 import { loadSpecs, type Corpus } from './spec.ts';
 import { writeStore } from './store.ts';
 
@@ -53,11 +54,13 @@ export interface BuildResult {
 const DEFAULT_BATCH = 96;
 
 export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
-    const journal = beginBuild({
+    const journal = beginBuild<Counts, Manifest, Phase>({
         dir: options.out,
         files: options.files,
         embedding: options.embeddingRef ?? options.embedder.id,
         indexer: options.indexer,
+        phases: PHASES,
+        report: SCHEMA_REPORT,
     });
 
     try {
@@ -76,7 +79,7 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
                 entities: entities.length,
             },
         };
-        journal.read(summary.counts);
+        journal.read(summary.counts, summary.counts.entities);
         options.onRead?.(summary);
 
         journal.phase('embedding');
@@ -86,6 +89,7 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
 
         const manifest: Manifest = {
             version: INDEX_VERSION,
+            kind: 'schema',
             createdAt: new Date().toISOString(),
             indexer: options.indexer,
             embedding: {
@@ -116,7 +120,7 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
 async function embedAll(
     entities: readonly EntityRecord[],
     options: BuildOptions,
-    journal: Journal,
+    journal: Journal<Counts, Manifest, Phase>,
 ): Promise<Float32Array[]> {
     const size = options.batch ?? DEFAULT_BATCH;
     const out: Float32Array[] = [];

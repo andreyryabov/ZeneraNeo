@@ -1,50 +1,44 @@
 import {
     bold,
     CliError,
-    CURATED,
     cyan,
     dim,
-    ensureHome,
-    envNames,
     EXIT,
-    form,
     isInteractive,
     json,
-    KeyStore,
     note,
     parse,
-    PROVIDERS,
     table,
     usageError,
     write,
     type Command,
     type Context,
-    type Provider,
 } from '@zenera/cli/lib';
-import { createEmbedder, type Embedder, type EmbeddingRef } from '@zenera/neo';
 import { relative, resolve } from 'node:path';
+import { resolveEmbedder } from '../common/embedder.ts';
+import { locateIndex, outputDir } from '../common/locate.ts';
+import { assertSameEmbedding } from '../common/manifest.ts';
+import { isGlob, loose, matcher, PatternError, wildcard, type Matcher } from '../common/match.ts';
+import { buildIndex } from './build.ts';
+import { openIndex, readManifest, readSource, SCHEMA_INDEX, type SourceRecord } from './files.ts';
+import type { ApiGraph, NodeKind } from './graph.ts';
+import { fields, grepNodes, listNodes, propertyCount, type Row } from './lookup.ts';
 import { isFormat, present, type Format } from './present.ts';
 import { isEmpty, parseQuery, QueryError } from './query.ts';
+import { sourceTag } from './render.ts';
 import { repl } from './repl.ts';
-import { buildIndex } from './schema/build.ts';
-import {
-    assertSameEmbedding,
-    openIndex,
-    readManifest,
-    readSource,
-    type SourceRecord,
-} from './schema/files.ts';
-import type { ApiGraph, NodeKind } from './schema/graph.ts';
-import { DEFAULT_DIR, DIR_ENV, locateIndex, outputDir } from './schema/locate.ts';
-import { fields, grepNodes, listNodes, propertyCount, type Row } from './schema/lookup.ts';
-import { isGlob, loose, matcher, PatternError, wildcard, type Matcher } from './schema/match.ts';
-import { sourceTag } from './schema/render.ts';
-import { SchemaIndex, type SchemaQuery } from './schema/search.ts';
-import { select, stitch } from './schema/subgraph.ts';
-import { chainOf, DEFAULT_TRACE_HOPS, traceNodes } from './schema/trace.ts';
+import { SchemaIndex, type SchemaQuery } from './search.ts';
+import { select, stitch } from './subgraph.ts';
+import { chainOf, DEFAULT_TRACE_HOPS, traceNodes } from './trace.ts';
+
+const { defaultDir: DEFAULT_DIR, envName: DIR_ENV } = SCHEMA_INDEX;
 
 // ---------------------------------------------------------------------------
-// zen rag — an api description, as something to search
+// zen rag schema — an api description, as something to search
+//
+// The subject word is gone by the time this runs: the frame in `../command.ts`
+// strips it and hands over the rest, so everything below is about openapi and
+// nothing below knows there is a second subject.
 //
 // `search` has two modes and neither is the afterthought. Interactively it is
 // a loop with prompts; non-interactively it is a tool, and that is the mode
@@ -190,10 +184,7 @@ export const command: Command = {
     ],
 
     async run(ctx: Context): Promise<void> {
-        const [group, ...rest] = ctx.args;
-        // `schema` is the only subject so far; leaving it out is a courtesy,
-        // not a second spelling to support forever.
-        const [name, ...tail] = group === 'schema' ? rest : ctx.args;
+        const [name, ...tail] = ctx.args;
 
         switch (name) {
             case 'index':
@@ -244,9 +235,9 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
     if (positionals.length === 0) {
         throw usageError('no document given', INDEX_USAGE);
     }
-    const out = outputDir(ctx.cwd, values.out);
+    const out = outputDir(ctx.cwd, values.out, SCHEMA_INDEX);
     const loud = !values.quiet && !ctx.json;
-    const chosen = await embedder(values.embedding);
+    const chosen = await resolveEmbedder(values.embedding);
     const started = Date.now();
 
     const { manifest } = await buildIndex({
@@ -420,7 +411,7 @@ async function search(args: readonly string[], ctx: Context): Promise<void> {
     const ref = values.embedding ?? manifest.embedding.ref;
     assertSameEmbedding(manifest, ref);
 
-    const index = await SchemaIndex.open(dir, await embedder(ref));
+    const index = await SchemaIndex.open(dir, await resolveEmbedder(ref));
     try {
         if (values.interactive) {
             await repl(index, query, { format, ...options });
@@ -885,7 +876,7 @@ const shown = (found: number, kept: number): string => (kept < found ? `, showin
  * saying which would make every answer here unattributable.
  */
 function indexDir(ctx: Context, flag: string | undefined): string {
-    const { dir, from } = locateIndex(ctx.cwd, flag);
+    const { dir, from } = locateIndex(ctx.cwd, flag, SCHEMA_INDEX);
     if (from === 'found' && !ctx.json) {
         note(dim(`  using ${relative(ctx.cwd, dir) || dir}`));
     }
@@ -1110,62 +1101,6 @@ function notes(lines: readonly string[]): void {
 const yes = (value: boolean): string => (value ? 'yes' : 'no');
 
 // ---------------------------------------------------------------------------
-
-/** The keyring is materialised here, and only here: `show` and `stats` read no vectors. */
-async function embedder(ref: string | undefined): Promise<Embedder> {
-    ensureHome();
-    const keys = await KeyStore.open();
-    // Asked before materialising, because materialising is what erases the
-    // difference between "the environment had it" and "the keyring supplied it".
-    const fromEnv = new Set(PROVIDERS.filter((p) => envNames(p).some((n) => process.env[n])));
-    keys.materialize();
-
-    if (!ref) {
-        throw choices(keys, fromEnv);
-    }
-    return createEmbedder(ref as EmbeddingRef);
-}
-
-/**
- * Well-known embedding models per provider, read off the CLI's catalog table so
- * there is one list rather than two that drift. Any ref the registry can parse
- * works; these are the ones worth typing. Anthropic has none because it
- * publishes no embeddings API at all.
- */
-const embeddingsOf = (provider: Provider): string[] =>
-    CURATED[provider].filter((m) => m.roles.includes('embedding')).map((m) => m.id);
-
-/** What could be passed, with the ones this machine can actually use first. */
-function choices(keys: KeyStore, fromEnv: ReadonlySet<Provider>): CliError {
-    const rows: string[][] = [];
-    const rest: string[][] = [];
-
-    for (const provider of PROVIDERS) {
-        for (const model of embeddingsOf(provider)) {
-            const source = fromEnv.has(provider)
-                ? 'environment'
-                : keys.active(provider)
-                  ? 'keyring'
-                  : '';
-            const row = [`  ${cyan(`${provider}:${model}`)}`, dim(source || form(provider).env)];
-            (source ? rows : rest).push(row);
-        }
-    }
-
-    note(bold('Embeddings'));
-    notes(table([...rows, ...rest]));
-    note('');
-    if (rows.length === 0) {
-        note(dim('  no provider on this machine has a credential — try: zen key add openai'));
-        note('');
-    }
-    // `pick` is the one that ends the question rather than restating it: it
-    // tries them and prints the first that answers.
-    return usageError(
-        'no embedder named',
-        'pass --embedding <ref>, or run: zen models pick --embedding',
-    );
-}
 
 function formatOf(value: string | undefined): Format {
     if (value === undefined) {

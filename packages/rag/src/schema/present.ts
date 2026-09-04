@@ -1,8 +1,8 @@
-import { toOpenApi, toTypeScript, type HydrateOptions } from './schema/hydrate.ts';
-import { render, type RenderFormat, type RenderOptions } from './schema/render.ts';
-import type { Schema } from './schema/schema.ts';
-import type { Operation } from './schema/spec.ts';
-import type { Subgraph } from './schema/subgraph.ts';
+import { toOpenApi, toTypeScript, type HydrateOptions } from './hydrate.ts';
+import { render, type RenderFormat, type RenderOptions } from './render.ts';
+import type { Schema } from './schema.ts';
+import type { Operation } from './spec.ts';
+import type { Subgraph } from './subgraph.ts';
 
 // ---------------------------------------------------------------------------
 // One subgraph, in whichever of the four shapes was asked for

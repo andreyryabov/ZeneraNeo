@@ -4,12 +4,12 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { afterAll, describe, expect, it } from 'vitest';
-import { buildIndex } from '../src/schema/build.ts';
-import { toOpenApi, toTypeScript } from '../src/schema/hydrate.ts';
-import { toMermaid, toText } from '../src/schema/render.ts';
-import { SchemaIndex, type SchemaQuery } from '../src/schema/search.ts';
-import type { Subgraph } from '../src/schema/subgraph.ts';
-import { StubEmbedder } from './stub.ts';
+import { buildIndex } from '../../src/schema/build.ts';
+import { toOpenApi, toTypeScript } from '../../src/schema/hydrate.ts';
+import { toMermaid, toText } from '../../src/schema/render.ts';
+import { SchemaIndex, type SchemaQuery } from '../../src/schema/search.ts';
+import type { Subgraph } from '../../src/schema/subgraph.ts';
+import { StubEmbedder } from '../stub.ts';
 
 // ---------------------------------------------------------------------------
 // Searching, and what comes back
@@ -20,7 +20,7 @@ import { StubEmbedder } from './stub.ts';
 // is that a compiler is going to read it.
 // ---------------------------------------------------------------------------
 
-const spec = (name: string) => fileURLToPath(new URL(`./specs/${name}`, import.meta.url));
+const spec = (name: string) => fileURLToPath(new URL(`../specs/${name}`, import.meta.url));
 
 const dir = await mkdtemp(join(tmpdir(), 'zenera-rag-'));
 const embedder = new StubEmbedder();

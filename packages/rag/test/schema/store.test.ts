@@ -3,10 +3,10 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
-import { buildIndex } from '../src/schema/build.ts';
-import { openIndex, readManifest } from '../src/schema/files.ts';
-import { EntityStore } from '../src/schema/store.ts';
-import { StubEmbedder } from './stub.ts';
+import { buildIndex } from '../../src/schema/build.ts';
+import { openIndex, readManifest } from '../../src/schema/files.ts';
+import { EntityStore } from '../../src/schema/store.ts';
+import { StubEmbedder } from '../stub.ts';
 
 // ---------------------------------------------------------------------------
 // The index, for real
@@ -16,7 +16,7 @@ import { StubEmbedder } from './stub.ts';
 // back with rows in an order rather than an error.
 // ---------------------------------------------------------------------------
 
-const spec = (name: string) => fileURLToPath(new URL(`./specs/${name}`, import.meta.url));
+const spec = (name: string) => fileURLToPath(new URL(`../specs/${name}`, import.meta.url));
 
 const dir = await mkdtemp(join(tmpdir(), 'zenera-rag-'));
 const embedder = new StubEmbedder();

@@ -1,4 +1,4 @@
-import type { SchemaQuery } from './schema/search.ts';
+import type { SchemaQuery } from './search.ts';
 
 // ---------------------------------------------------------------------------
 // A query, from somewhere untrusted

@@ -1,6 +1,7 @@
 import type { Embedder } from '@zenera/neo';
+import { assertSameEmbedding } from '../common/manifest.ts';
 import type { EntityRecord } from './entities.ts';
-import { assertSameEmbedding, openIndex, type Manifest, type OpenIndex } from './files.ts';
+import { openIndex, type Manifest, type OpenIndex } from './files.ts';
 import type { ApiGraph } from './graph.ts';
 import type { Schema } from './schema.ts';
 import type { Operation } from './spec.ts';

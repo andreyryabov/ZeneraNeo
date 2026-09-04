@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { command } from '../src/command.ts';
-import { isEmpty, parseQuery, QueryError } from '../src/query.ts';
 import { buildIndex } from '../src/schema/build.ts';
+import { isEmpty, parseQuery, QueryError } from '../src/schema/query.ts';
 import { StubEmbedder } from './stub.ts';
 
 // ---------------------------------------------------------------------------
@@ -87,10 +87,16 @@ describe('dispatch', () => {
         expect((await fails(['schema', 'wat'])).message).toContain('unknown command "wat"');
     });
 
-    it('takes `schema` as optional, since it is the only subject', async () => {
-        const withGroup = await run(['schema', 'stats', '--dir', dir]);
-        const without = await run(['stats', '--dir', dir]);
-        expect(without.err).toBe(withGroup.err);
+    it('requires the subject, since a bare verb would have to guess one', async () => {
+        const err = await fails(['stats', '--dir', dir]);
+        expect(err.code).toBe(EXIT.usage);
+        expect(err.message).toContain('unknown subject "stats"');
+    });
+
+    it('prints a subject’s own help, which --help never reaches', async () => {
+        const { out } = await run(['help', 'schema']);
+        expect(out).toContain('zen rag schema');
+        expect(out).toContain('trace <pattern>');
     });
 });
 

@@ -37,29 +37,29 @@ character paragraphs are the norm - revisit open decision C.
 Four granularities. Keeping these words distinct matters, because several
 design arguments turn on which one is meant.
 
-| Term | Definition | Role |
-| --- | --- | --- |
-| **line** | one physical line of the source file = one row in `lines` | verbatim storage, display, citation |
-| **chunk** | a SET of lines carrying one embedding and one full-text document | retrieval |
-| **segment** | a contiguous line range in the output, after merging | presentation |
-| **structure** | a Markdown block or section node | scoping, what `structure_id` addresses |
+| Term          | Definition                                                       | Role                                   |
+| ------------- | ---------------------------------------------------------------- | -------------------------------------- |
+| **line**      | one physical line of the source file = one row in `lines`        | verbatim storage, display, citation    |
+| **chunk**     | a SET of lines carrying one embedding and one full-text document | retrieval                              |
+| **segment**   | a contiguous line range in the output, after merging             | presentation                           |
+| **structure** | a Markdown block or section node                                 | scoping, what `structure_id` addresses |
 
 A chunk's line set is deliberately **not contiguous**. It holds a contiguous
-*body* span plus that body's ancestor heading lines and prelude lines (a table
+_body_ span plus that body's ancestor heading lines and prelude lines (a table
 header, a code fence opener).
 
 ## 3. Libraries
 
 ### Runtime dependencies
 
-| Package | Purpose |
-| --- | --- |
-| `@lancedb/lancedb` | storage, vector index, full-text index. **Also re-exports `apache-arrow`**, so Arrow types come from here rather than from a direct dependency - see below |
-| `unified` | processor pipeline |
-| `remark-parse` | Markdown to mdast |
-| `remark-gfm` | tables, strikethrough, task lists, autolinks, footnotes |
-| `remark-frontmatter` | YAML/TOML frontmatter as nodes |
-| `unist-util-visit` | tree walking |
+| Package              | Purpose                                                                                                                                                    |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@lancedb/lancedb`   | storage, vector index, full-text index. **Also re-exports `apache-arrow`**, so Arrow types come from here rather than from a direct dependency - see below |
+| `unified`            | processor pipeline                                                                                                                                         |
+| `remark-parse`       | Markdown to mdast                                                                                                                                          |
+| `remark-gfm`         | tables, strikethrough, task lists, autolinks, footnotes                                                                                                    |
+| `remark-frontmatter` | YAML/TOML frontmatter as nodes                                                                                                                             |
+| `unist-util-visit`   | tree walking                                                                                                                                               |
 
 ### Development dependencies
 
@@ -67,12 +67,12 @@ header, a code fence opener).
 
 ### Node built-ins - no dependency required
 
-| API | Use |
-| --- | --- |
-| `node:crypto` | `createHash('sha256')` for `file_hash` and the embedding cache key |
-| `node:fs/promises` | reading files |
-| `fetch` | global since Node 18; enough for the embeddings endpoint |
-| globbing | `fs.promises.glob` if stable in the target Node version, otherwise `tinyglobby` |
+| API                | Use                                                                             |
+| ------------------ | ------------------------------------------------------------------------------- |
+| `node:crypto`      | `createHash('sha256')` for `file_hash` and the embedding cache key              |
+| `node:fs/promises` | reading files                                                                   |
+| `fetch`            | global since Node 18; enough for the embeddings endpoint                        |
+| globbing           | `fs.promises.glob` if stable in the target Node version, otherwise `tinyglobby` |
 
 ### Constraints and traps
 
@@ -124,13 +124,13 @@ only the one case that already works and none of the four above.
 
 ### Deliberately not used
 
-| Rejected | Reason |
-| --- | --- |
-| `gray-matter` | It strips frontmatter *before* parsing, which shifts every subsequent line number. This design is line-indexed throughout, so that is disqualifying. `remark-frontmatter` keeps frontmatter in the tree with correct positions. |
-| `markdown-it` | Produces no mdast. Stage C would need a separate inline pass, which is the specific thing remark was chosen to provide. |
-| An OpenAI SDK | One endpoint, one request shape. `fetch` is enough. |
-| LangChain / LlamaIndex text splitters | Controlling chunking *is* this project. A generic splitter would replace exactly the part being designed. |
-| A schema-registered embedding function | Embedding is explicit in Stage G so the content-addressed cache can skip unchanged chunks. Schema-level embedding re-embeds on every write. |
+| Rejected                               | Reason                                                                                                                                                                                                                          |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gray-matter`                          | It strips frontmatter _before_ parsing, which shifts every subsequent line number. This design is line-indexed throughout, so that is disqualifying. `remark-frontmatter` keeps frontmatter in the tree with correct positions. |
+| `markdown-it`                          | Produces no mdast. Stage C would need a separate inline pass, which is the specific thing remark was chosen to provide.                                                                                                         |
+| An OpenAI SDK                          | One endpoint, one request shape. `fetch` is enough.                                                                                                                                                                             |
+| LangChain / LlamaIndex text splitters  | Controlling chunking _is_ this project. A generic splitter would replace exactly the part being designed.                                                                                                                       |
+| A schema-registered embedding function | Embedding is explicit in Stage G so the content-addressed cache can skip unchanged chunks. Schema-level embedding re-embeds on every write.                                                                                     |
 
 ### To verify before writing code
 
@@ -187,22 +187,22 @@ erDiagram
 
 Roughly 16 rows for a 61-line document.
 
-| Column | Type | Notes |
-| --- | --- | --- |
-| `chunk_id` | utf8 | `${file_id}#c${n}`. The fusion key. |
-| `source_file` | utf8 | |
-| `file_hash` | utf8 | sha256 of file bytes |
-| `chunk_index` | int32 | document order within the file |
-| `chunk_text` | utf8 | **Full-text source.** Heading path + prelude + carry-in + body + table caption. |
-| `embed_text` | utf8 | **Vector source.** The same, minus the table caption. |
-| `embedding` | FixedSizeList\<float32, D\> | NOT NULL on every row |
-| `line_numbers` | list\<int32\> | full render set, sorted and deduplicated |
-| `body_start_line` | int32 | start of the contiguous body span |
-| `body_end_line` | int32 | end of the contiguous body span |
-| `structure_id` | utf8 | innermost structure node containing the *whole* body |
-| `structure_path` | utf8 | materialized ancestry, prefix-scoped with LIKE |
-| `structure_kind` | utf8 | |
-| `token_count` | int32 | |
+| Column            | Type                        | Notes                                                                           |
+| ----------------- | --------------------------- | ------------------------------------------------------------------------------- |
+| `chunk_id`        | utf8                        | `${file_id}#c${n}`. The fusion key.                                             |
+| `source_file`     | utf8                        |                                                                                 |
+| `file_hash`       | utf8                        | sha256 of file bytes                                                            |
+| `chunk_index`     | int32                       | document order within the file                                                  |
+| `chunk_text`      | utf8                        | **Full-text source.** Heading path + prelude + carry-in + body + table caption. |
+| `embed_text`      | utf8                        | **Vector source.** The same, minus the table caption.                           |
+| `embedding`       | FixedSizeList\<float32, D\> | NOT NULL on every row                                                           |
+| `line_numbers`    | list\<int32\>               | full render set, sorted and deduplicated                                        |
+| `body_start_line` | int32                       | start of the contiguous body span                                               |
+| `body_end_line`   | int32                       | end of the contiguous body span                                                 |
+| `structure_id`    | utf8                        | innermost structure node containing the _whole_ body                            |
+| `structure_path`  | utf8                        | materialized ancestry, prefix-scoped with LIKE                                  |
+| `structure_kind`  | utf8                        |                                                                                 |
+| `token_count`     | int32                       |                                                                                 |
 
 `line_numbers` holds the full render set: every ancestor heading line, the
 prelude lines, and the body span. This makes prelude injection a property of the
@@ -222,20 +222,20 @@ Prefix filtering and the diversity cap both still work; the path is just shorter
 
 61 rows for a 61-line document. Blank lines included.
 
-| Column | Type | Notes |
-| --- | --- | --- |
-| `row_id` | utf8 | `${file_id}:${line_number}` |
-| `source_file` | utf8 | |
-| `file_hash` | utf8 | |
-| `line_number` | int32 | 1-based |
-| `line_text` | utf8 | **verbatim** original line, never normalized |
-| `structure_id` | utf8 | `kind:ordinal`, unique within a file |
-| `structure_path` | utf8 | for example `doc/sec:1/sec:5/table:1/row:4` |
-| `structure_kind` | utf8 | see kinds below |
-| `structure_title` | utf8 nullable | populated on **heading rows only** |
-| `char_start` | int32 | |
-| `char_end` | int32 | |
-| `page` | int32 nullable | reserved for future non-Markdown crawlers |
+| Column            | Type           | Notes                                        |
+| ----------------- | -------------- | -------------------------------------------- |
+| `row_id`          | utf8           | `${file_id}:${line_number}`                  |
+| `source_file`     | utf8           |                                              |
+| `file_hash`       | utf8           |                                              |
+| `line_number`     | int32          | 1-based                                      |
+| `line_text`       | utf8           | **verbatim** original line, never normalized |
+| `structure_id`    | utf8           | `kind:ordinal`, unique within a file         |
+| `structure_path`  | utf8           | for example `doc/sec:1/sec:5/table:1/row:4`  |
+| `structure_kind`  | utf8           | see kinds below                              |
+| `structure_title` | utf8 nullable  | populated on **heading rows only**           |
+| `char_start`      | int32          |                                              |
+| `char_end`        | int32          |                                              |
+| `page`            | int32 nullable | reserved for future non-Markdown crawlers    |
 
 Structure kinds: `heading`, `paragraph`, `table`, `table_header`, `table_row`,
 `list`, `list_item`, `code`, `blockquote`, `frontmatter`, `html`, `blank`, `hr`.
@@ -249,14 +249,14 @@ rows, so the duplication is cheap and bounded.
 
 ### Deliberately absent columns
 
-| Column | Why it does not exist |
-| --- | --- |
-| a lexical projection of each line | Full-text search operates on chunks, not lines, so a per-line lexical column has no consumer. |
-| `heading_path` | Resolved from heading rows at assembly time. At index time the structure tree is in memory and the path is baked into the chunk text strings. |
-| `heading_line_nums`, `prelude_line_nums` | Subsumed by `chunks.line_numbers`. |
-| `structure_level` | Equals `structure_path.split('/').length`. |
-| `slice_index` | A wide-table row slice is simply its own chunk row. |
-| `is_anchor`, `chunk_start_line`, `chunk_end_line`, `chunk_id` on `lines` | The chunk-to-line relation lives on the `chunks` table. |
+| Column                                                                   | Why it does not exist                                                                                                                         |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| a lexical projection of each line                                        | Full-text search operates on chunks, not lines, so a per-line lexical column has no consumer.                                                 |
+| `heading_path`                                                           | Resolved from heading rows at assembly time. At index time the structure tree is in memory and the path is baked into the chunk text strings. |
+| `heading_line_nums`, `prelude_line_nums`                                 | Subsumed by `chunks.line_numbers`.                                                                                                            |
+| `structure_level`                                                        | Equals `structure_path.split('/').length`.                                                                                                    |
+| `slice_index`                                                            | A wide-table row slice is simply its own chunk row.                                                                                           |
+| `is_anchor`, `chunk_start_line`, `chunk_end_line`, `chunk_id` on `lines` | The chunk-to-line relation lives on the `chunks` table.                                                                                       |
 
 ### Indices
 
@@ -296,8 +296,8 @@ state which column each reads and how they fuse.
 - The **full-text leg is blind to paraphrase**. "How do I stop the valve
   leaking" shares no terms with "seat leakage remediation".
 
-A representative query needs both at once: *"Cv of the 3 inch valve at half
-travel"*. `Cv` and `3 inch` are lexical anchors that only full-text search
+A representative query needs both at once: _"Cv of the 3 inch valve at half
+travel"_. `Cv` and `3 inch` are lexical anchors that only full-text search
 catches, while "half travel" must map to a column header reading `Cv @50%`,
 which only the vector leg can do. Neither leg retrieves that row alone.
 
@@ -321,11 +321,11 @@ predicate that also covers descendants.
 
 Three different things get called overlap. The answers differ.
 
-| Kind | Overlap? | Detail |
-| --- | --- | --- |
-| **body lines** between chunks | **No** | Bodies never overlap; their union is a subset of the file |
-| **`line_numbers`** between chunks | **Yes, heavily** | By design - ancestor headings and prelude lines are shared |
-| **text** inside `chunk_text` / `embed_text` | **Yes, small** | The carry-in line and the table caption |
+| Kind                                        | Overlap?         | Detail                                                     |
+| ------------------------------------------- | ---------------- | ---------------------------------------------------------- |
+| **body lines** between chunks               | **No**           | Bodies never overlap; their union is a subset of the file  |
+| **`line_numbers`** between chunks           | **Yes, heavily** | By design - ancestor headings and prelude lines are shared |
+| **text** inside `chunk_text` / `embed_text` | **Yes, small**   | The carry-in line and the table caption                    |
 
 The governing rule is: **overlap in text, never in structure.**
 
@@ -348,7 +348,7 @@ Because text overlaps slightly, a query whose answer straddles a chunk boundary
 can still match the later chunk on its own, rather than requiring both chunks to
 survive the top-k cut.
 
-Body overlap was also evaluated purely as a *simplification*, since it would
+Body overlap was also evaluated purely as a _simplification_, since it would
 delete the packer and the carry-in outright. It was rejected because it deletes
 only the prose-cutting logic, while the structure tree, the `lines` table,
 `line_numbers`, context attachment and all table handling are required
@@ -356,11 +356,11 @@ regardless. It buys little and costs roughly 2x embedding plus IDF compression.
 
 ### 5.5 Token budgets
 
-| Constant | Value | Meaning |
-| --- | --- | --- |
-| `chunkTokens` | 384 | soft target |
-| `maxChunkTokens` | 512 | hard ceiling |
-| `tableSliceTokens` | 128 | wide-row slicing threshold |
+| Constant           | Value | Meaning                    |
+| ------------------ | ----- | -------------------------- |
+| `chunkTokens`      | 384   | soft target                |
+| `maxChunkTokens`   | 512   | hard ceiling               |
+| `tableSliceTokens` | 128   | wide-row slicing threshold |
 
 All three are measured with the `chars/4` heuristic, so 384 means roughly 1536
 characters. `tokenCount` must be a single injectable function.
@@ -439,7 +439,7 @@ by hand:
 **What the parser does not provide, and must be implemented:**
 
 - **The section tree.** mdast is flat at the top level: a `heading` node is a
-  *sibling* of the paragraphs that follow it, never their parent. Building the
+  _sibling_ of the paragraphs that follow it, never their parent. Building the
   nesting that `structure_path` expresses means walking heading depths directly.
 - **Blank lines are not nodes.** Every line needs a row, so walk lines 1..N and
   assign each to the innermost node whose position range contains it, defaulting
@@ -473,14 +473,14 @@ is simply not a `link` node, and the failure cannot occur.
 
 Rules:
 
-| Node | Serializes to |
-| --- | --- |
-| `image` | `image: {alt}` |
-| `link` | its text |
-| `inlineCode` | its value |
-| `emphasis`, `strong` | their text |
-| `html` | dropped |
-| entities | decoded by the parser |
+| Node                 | Serializes to         |
+| -------------------- | --------------------- |
+| `image`              | `image: {alt}`        |
+| `link`               | its text              |
+| `inlineCode`         | its value             |
+| `emphasis`, `strong` | their text            |
+| `html`               | dropped               |
+| entities             | decoded by the parser |
 
 Then collapse whitespace and trim.
 
@@ -570,15 +570,15 @@ prose-kind blocks.
 
 #### Rules per structure kind
 
-| Kind | Rule and rationale |
-| --- | --- |
-| `heading` | Never a chunk body on its own. A heading alone embeds to near-nothing and would compete with real content. It reaches results two ways: inside `chunk_text` via the heading path, and inside `line_numbers` of every descendant chunk. An empty section - a heading immediately followed by a deeper heading - simply never becomes a body, and nothing is lost because it remains in its descendants' line numbers. |
-| `table` | See below. |
-| `code` | Whole fence if under budget, otherwise split at blank lines inside it. The fence opener is repeated in `chunk_text`, since it carries the language, and is present in `line_numbers`. |
-| `list` | One chunk per top-level item **including** its nested children, packing siblings up to budget. An item and its sub-items are one thought, and an item's continuation lines are never split from it. |
-| `blockquote` | Prose-kind. Joins the surrounding prose run rather than being packed alone. Stage C already strips the `> ` marker, so a blockquote body and a paragraph body serialize identically. |
-| `frontmatter` | One chunk, whole. Metadata, small, self-contained. |
-| `blank`, `hr` | Never start a body. |
+| Kind          | Rule and rationale                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `heading`     | Never a chunk body on its own. A heading alone embeds to near-nothing and would compete with real content. It reaches results two ways: inside `chunk_text` via the heading path, and inside `line_numbers` of every descendant chunk. An empty section - a heading immediately followed by a deeper heading - simply never becomes a body, and nothing is lost because it remains in its descendants' line numbers. |
+| `table`       | See below.                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `code`        | Whole fence if under budget, otherwise split at blank lines inside it. The fence opener is repeated in `chunk_text`, since it carries the language, and is present in `line_numbers`.                                                                                                                                                                                                                                |
+| `list`        | One chunk per top-level item **including** its nested children, packing siblings up to budget. An item and its sub-items are one thought, and an item's continuation lines are never split from it.                                                                                                                                                                                                                  |
+| `blockquote`  | Prose-kind. Joins the surrounding prose run rather than being packed alone. Stage C already strips the `> ` marker, so a blockquote body and a paragraph body serialize identically.                                                                                                                                                                                                                                 |
+| `frontmatter` | One chunk, whole. Metadata, small, self-contained.                                                                                                                                                                                                                                                                                                                                                                   |
+| `blank`, `hr` | Never start a body.                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 #### Tables
 
@@ -633,13 +633,13 @@ The two columns diverge in **content**, not in granularity. Same rows, same
 `chunk_id`, one vector and one full-text document per row - so there is no
 alignment problem and no cross-granularity fusion.
 
-| Component | `embed_text` | `chunk_text` |
-| --- | --- | --- |
-| heading path, joined with " > " | yes | yes |
-| kind prelude (header row, fence opener) | yes | yes |
-| carry-in line | yes | yes |
-| body | yes | yes |
-| **table caption** | **no** | **yes** |
+| Component                               | `embed_text` | `chunk_text` |
+| --------------------------------------- | ------------ | ------------ |
+| heading path, joined with " > "         | yes          | yes          |
+| kind prelude (header row, fence opener) | yes          | yes          |
+| carry-in line                           | yes          | yes          |
+| body                                    | yes          | yes          |
+| **table caption**                       | **no**       | **yes**      |
 
 **Why diverge:** the optimal document size for BM25 is genuinely larger than for
 dense retrieval, because BM25 scores a multi-term query well only when the terms
@@ -718,7 +718,7 @@ Asserted by tests.
 1. `body_start_line..body_end_line` is contiguous and is a subset of
    `line_numbers`.
 2. `line_numbers` is sorted, deduplicated, and within file bounds.
-3. No body crosses a **section** boundary. A body may cross a *block* boundary,
+3. No body crosses a **section** boundary. A body may cross a _block_ boundary,
    but only between sibling prose blocks of one prose run.
 4. Bodies within a file never overlap, and their union is a **subset** of the
    file's lines.
@@ -826,27 +826,29 @@ measuring first.
    to **body spans only**, not to injected context lines, clamped to file bounds.
 3. **Fetch in one query per file** - the needed lines and every heading:
 
-   ```
-   lines where source_file = ?
-     AND (line_number IN (...) OR structure_kind = 'heading')
-   ```
+    ```
+    lines where source_file = ?
+      AND (line_number IN (...) OR structure_kind = 'heading')
+    ```
 
-   The heading rows supply `structure_title` and `line_number`, serving both API
-   breadcrumbs and step 5, at no extra round trip.
+    The heading rows supply `structure_title` and `line_number`, serving both API
+    breadcrumbs and step 5, at no extra round trip.
+
 4. **Merge ranges**: sort by start line and merge when the gap is at most
    `mergeGap` (default 2). A one or two line gap is cheaper to include than to
    annotate.
 5. **Emit an ordered `Segment[]` per file.** Between non-contiguous segments
    insert:
 
-   ```
-   OmissionMarker { fromLine, toLine, lineCount, skippedStructures: string[] }
-   ```
+    ```
+    OmissionMarker { fromLine, toLine, lineCount, skippedStructures: string[] }
+    ```
 
-   `skippedStructures` needs no extra query - filter the heading rows already
-   returned by step 3 to those within the gap and take `structure_title`.
-   Rendered as `... 42 lines omitted (Configuration, Advanced Usage) ...`. Also
-   emitted when a token or line budget truncates output.
+    `skippedStructures` needs no extra query - filter the heading rows already
+    returned by step 3 to those within the gap and take `structure_title`.
+    Rendered as `... 42 lines omitted (Configuration, Advanced Usage) ...`. Also
+    emitted when a token or line budget truncates output.
+
 6. **Ordering**: files by best chunk score descending; segments within a file in
    document order, because readability beats intra-file score ordering.
 7. **Render**: `## {source_file}`, then per segment `L{start}-{end}` followed by
@@ -856,26 +858,26 @@ measuring first.
 8. **No column projection for wide tables.** A matched row is emitted verbatim,
    all 40 columns. Projecting down to the key column plus the matched slice's
    columns, with a "34 columns omitted" note, was rejected for two reasons:
-   - **Lossy retrieval with no way to expand.** The query matched slice 2, but
-     the qualifier the caller needs - units, temperature basis, revision - often
-     sits in slice 5. Line omission is safe because the marker says what to go
-     read; cell omission inside a row that was just displayed is not.
-   - The pipe-table re-renderer, handling escaped pipes, ragged rows, the
-     alignment row and re-padding, is the fiddliest code in the design and is
-     pure cosmetics. The primary consumer is an LLM, which reads a wide pipe row
-     without difficulty.
+    - **Lossy retrieval with no way to expand.** The query matched slice 2, but
+      the qualifier the caller needs - units, temperature basis, revision - often
+      sits in slice 5. Line omission is safe because the marker says what to go
+      read; cell omission inside a row that was just displayed is not.
+    - The pipe-table re-renderer, handling escaped pipes, ragged rows, the
+      alignment row and re-padding, is the fiddliest code in the design and is
+      pure cosmetics. The primary consumer is an LLM, which reads a wide pipe row
+      without difficulty.
 
-   Slicing still pays for itself where it was justified - at embedding time.
+    Slicing still pays for itself where it was justified - at embedding time.
 
 ## 10. Public API
 
-| Function | Behaviour |
-| --- | --- |
-| `createIndex(config)` | Full or incremental index of a glob set |
-| `search(query)` | Returns `{ results: FileResult[], stats }` |
-| `getStructure(structureId)` | Resolve id to path, then all lines matching `LIKE 'path%'` |
-| `listStructures(file)` | Fetch heading rows and rebuild the tree from path segments, where a parent is the path minus its last segment |
-| `getLines(file, from, to)` | Raw verbatim line fetch for follow-up expansion |
+| Function                    | Behaviour                                                                                                     |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `createIndex(config)`       | Full or incremental index of a glob set                                                                       |
+| `search(query)`             | Returns `{ results: FileResult[], stats }`                                                                    |
+| `getStructure(structureId)` | Resolve id to path, then all lines matching `LIKE 'path%'`                                                    |
+| `listStructures(file)`      | Fetch heading rows and rebuild the tree from path segments, where a parent is the path minus its last segment |
+| `getLines(file, from, to)`  | Raw verbatim line fetch for follow-up expansion                                                               |
 
 ## 11. Verification
 
@@ -998,15 +1000,15 @@ shows lexical recall is still short:
   only option that avoids IDF distortion, since each piece of text would live in
   exactly one full-text document. But it reintroduces cross-granularity fusion,
   which this design deliberately eliminated. Two ways to fuse:
-  - *Rank inheritance*: a full-text document at rank r confers rank r on every
-    chunk it contains, then RRF on `chunk_id`. Principled coarse-to-fine, where
-    full-text picks the region and the vector picks the chunk within it. Failure
-    mode: on a purely lexical query such as a part-number lookup, every chunk in
-    the winning region receives an identical lexical rank, so the tiebreak falls
-    to the vector leg - precisely the leg that is blind to part numbers. Partly
-    mitigated because assembly merges adjacent ranges.
-  - *Roll-up*: take the maximum chunk vector score up to the full-text document,
-    fuse at document level, then drill back down. Loses chunk-level output
-    precision.
+    - _Rank inheritance_: a full-text document at rank r confers rank r on every
+      chunk it contains, then RRF on `chunk_id`. Principled coarse-to-fine, where
+      full-text picks the region and the vector picks the chunk within it. Failure
+      mode: on a purely lexical query such as a part-number lookup, every chunk in
+      the winning region receives an identical lexical rank, so the tiebreak falls
+      to the vector leg - precisely the leg that is blind to part numbers. Partly
+      mitigated because assembly merges adjacent ranges.
+    - _Roll-up_: take the maximum chunk vector score up to the full-text document,
+      fuse at document level, then drill back down. Loses chunk-level output
+      precision.
 
 Recommendation: defer both until there is evaluation data.

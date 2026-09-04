@@ -6,7 +6,7 @@ import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildIndex } from '../src/schema/build.ts';
-import { LOCK_FILE, README_FILE } from '../src/schema/progress.ts';
+import { LOCK_FILE, README_FILE } from '../src/common/progress.ts';
 import { StubEmbedder } from './stub.ts';
 
 // ---------------------------------------------------------------------------
