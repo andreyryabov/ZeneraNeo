@@ -1,5 +1,6 @@
 import type { GeneratorInput } from './envelope.ts';
-import type { Schema } from './schema.ts';
+import type { Paging } from './paging.ts';
+import { propertyNames, type Schema } from './schema.ts';
 import type { Operation, ParamSpec } from './spec.ts';
 import type { Issue } from './validate.ts';
 
@@ -186,6 +187,33 @@ function text(schema: Schema, variant: number): string {
 }
 
 // ---------------------------------------------------------------------------
+// The walk
+//
+// The probes above are independent, which is the right shape for everything one
+// response can be wrong about and the wrong shape for pagination: a cursor only
+// means anything in the answer it arrived with, so the pages have to be asked
+// for in order.
+//
+// The seed is held still across the whole walk on purpose. A generator that
+// mints its token out of `seed` rather than out of the request is the exact
+// mistake being looked for, and a still seed makes it a fixed point — visible
+// on the second page here instead of on somebody's client.
+// ---------------------------------------------------------------------------
+
+/** The first page: an ordinary probe with the paging control taken back off. */
+export function walkStart(operation: Operation, paging: Paging): GeneratorInput {
+    const input = probesFor(operation)[0];
+    const query = { ...input.query };
+    delete query[paging.param];
+    return { ...input, query };
+}
+
+/** The same request again, asking for whatever the last answer pointed at. */
+export function nextPage(previous: GeneratorInput, paging: Paging, token: string): GeneratorInput {
+    return { ...previous, query: { ...previous.query, [paging.param]: token } };
+}
+
+// ---------------------------------------------------------------------------
 // The echo rule
 //
 // `get_user_by_id(12324)` answering `{ user_id: 999 }` validates perfectly and
@@ -222,49 +250,6 @@ export function echoIssues(
                 where: `/${name}`,
                 message: `must echo the path parameter ${JSON.stringify(expected)}, the response schema declares this property`,
             });
-        }
-    }
-    return out;
-}
-
-/** Every property name the schema mentions, at any depth. */
-function propertyNames(schema: Schema): Set<string> {
-    const out = new Set<string>();
-    const seen = new Set<object>();
-    const stack: unknown[] = [schema];
-
-    while (stack.length > 0) {
-        const node = stack.pop();
-        if (typeof node !== 'object' || node === null) {
-            continue;
-        }
-        if (Array.isArray(node)) {
-            stack.push(...node);
-            continue;
-        }
-        if (seen.has(node)) {
-            continue;
-        }
-        seen.add(node);
-        const record = node as Record<string, unknown>;
-        const properties = record.properties;
-        if (typeof properties === 'object' && properties !== null) {
-            for (const [name, sub] of Object.entries(properties)) {
-                out.add(name);
-                stack.push(sub);
-            }
-        }
-        // `$defs` holds schemas under arbitrary names, so its *values* are the
-        // subschemas — pushing the map itself would walk one level and stop,
-        // which is where every hoisted recursive schema lives.
-        for (const key of ['$defs', 'patternProperties']) {
-            const map = record[key];
-            if (typeof map === 'object' && map !== null) {
-                stack.push(...Object.values(map));
-            }
-        }
-        for (const key of ['items', 'allOf', 'anyOf', 'oneOf', 'prefixItems', 'not']) {
-            stack.push(record[key]);
         }
     }
     return out;

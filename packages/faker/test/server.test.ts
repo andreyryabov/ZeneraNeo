@@ -1,9 +1,9 @@
+import { SANDBOX_MOUNT, type Model, type ProcResult, type Runner } from '@zenera/neo';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SANDBOX_MOUNT, type Model, type ProcResult, type Runner } from '@zenera/neo';
 import { Box } from '../src/box.ts';
 import { Cache } from '../src/cache.ts';
 import { Router } from '../src/router.ts';
@@ -203,5 +203,80 @@ describe('the server', () => {
         await boot(echoing);
         const routes = (await (await fetch(`${base}/__faker/routes`)).json()) as unknown[];
         expect(routes).toHaveLength(4);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// The backstop
+//
+// A generator written before the pagination rule existed is still on somebody's
+// disk, and a cache is not rebuilt because a rule changed. This is the only
+// thing here that edits what a generator produced, so it is deliberately the
+// smallest edit that ends the loop.
+// ---------------------------------------------------------------------------
+
+describe('a looping page token', () => {
+    let root: string;
+    let live: Listening;
+    let base: string;
+    let log: string[];
+
+    /**
+     * The generator is put on disk rather than built, because that is the whole
+     * scenario: it was written before the pagination rule existed, and the walk
+     * in the build loop would refuse to write it today.
+     */
+    const boot = async (answer: (input: Record<string, unknown>) => unknown): Promise<void> => {
+        const box = new Box({ root, image: 'stub', exec: engineThat(answer, root) });
+        const checks = new Checks();
+        const operations = await loadSpec(join(here, 'specs', 'paged.yaml'));
+        for (const operation of operations) {
+            await box.write(operation.key, '# written before the rule existed');
+        }
+        live = await listen(
+            {
+                router: new Router(operations),
+                checks,
+                box,
+                cache: new Cache({ box, checks, model }),
+                onRequest: (line) => log.push(line),
+            },
+            '127.0.0.1',
+            0,
+        );
+        base = `http://127.0.0.1:${live.port}`;
+    };
+
+    beforeEach(() => {
+        root = mkdtempSync(join(tmpdir(), 'faker-'));
+        log = [];
+    });
+
+    afterEach(async () => {
+        await live?.close();
+        rmSync(root, { recursive: true, force: true });
+    });
+
+    it('is cut back to the last page, and narrated', async () => {
+        await boot(() => ({ results: [], cursor: '8fde793b', has_more: true }));
+        const res = await fetch(`${base}/machines?cursor=8fde793b`);
+        expect(await res.json()).toEqual({ results: [], cursor: null, has_more: false });
+        expect(log.at(-1)).toContain('cut a looping page token');
+    });
+
+    it('is left alone when it advanced', async () => {
+        await boot(() => ({ results: [], cursor: 'page-2', has_more: true }));
+        const res = await fetch(`${base}/machines?cursor=page-1`);
+        expect(await res.json()).toMatchObject({ cursor: 'page-2' });
+        expect(log.at(-1)).not.toContain('cut');
+    });
+
+    // Nothing revalidates a generator's output on the way out, so a required,
+    // non-nullable token stays where it is: a hang is better than a lie.
+    it('is left alone when the schema leaves no room', async () => {
+        await boot(() => ({ data: [], next_offset: 40 }));
+        const res = await fetch(`${base}/events?offset=40`);
+        expect(await res.json()).toMatchObject({ next_offset: 40 });
+        expect(log.at(-1)).not.toContain('cut');
     });
 });

@@ -231,3 +231,105 @@ function repeated(root: Schema): Set<Schema> {
     }
     return twice;
 }
+
+// ---------------------------------------------------------------------------
+// What a schema declares
+//
+// One walker, because two that disagree is a bug that hides: anything reading a
+// normalized schema has to descend into the *values* of `$defs`, which is where
+// everything shared or recursive was just moved to, and code that pushes the
+// `$defs` map itself stops one level short and finds nothing.
+// ---------------------------------------------------------------------------
+
+export interface Declared {
+    name: string;
+    /** the property's own schema, with a `$defs` pointer already followed */
+    schema: Schema;
+    /** whether the object declaring it lists it in `required` */
+    required: boolean;
+    /** how many objects deep it sits; 0 is the top level */
+    depth: number;
+}
+
+/** Every property a schema declares, at any depth, nearest first. */
+export function properties(root: Schema): Declared[] {
+    const out: Declared[] = [];
+    const seen = new Set<Schema>();
+    let level: unknown[] = [root];
+
+    for (let depth = 0; level.length > 0; depth++) {
+        const next: unknown[] = [];
+        for (const raw of level) {
+            const node = resolve(raw, root);
+            if (node === undefined || seen.has(node)) {
+                continue;
+            }
+            seen.add(node);
+            const required = new Set(
+                Array.isArray(node.required)
+                    ? node.required.filter((n): n is string => typeof n === 'string')
+                    : [],
+            );
+            const props = node.properties;
+            if (isObject(props)) {
+                for (const [name, sub] of Object.entries(props)) {
+                    const target = resolve(sub, root);
+                    if (target === undefined) {
+                        continue;
+                    }
+                    out.push({ name, schema: target, required: required.has(name), depth });
+                    next.push(sub);
+                }
+            }
+            for (const key of ONE) {
+                next.push(node[key]);
+            }
+            for (const key of LIST) {
+                const value = node[key];
+                if (Array.isArray(value)) {
+                    next.push(...value);
+                }
+            }
+            for (const key of MAP) {
+                if (key === 'properties') {
+                    continue;
+                }
+                const value = node[key];
+                if (isObject(value)) {
+                    next.push(...Object.values(value));
+                }
+            }
+            const items = node.items;
+            next.push(...(Array.isArray(items) ? items : [items]));
+        }
+        level = next;
+    }
+    return out;
+}
+
+/** Every property name a schema mentions, at any depth. */
+export const propertyNames = (root: Schema): Set<string> =>
+    new Set(properties(root).map((p) => p.name));
+
+/** A schema, with a local `#/$defs/...` pointer followed as far as it goes. */
+function resolve(value: unknown, root: Schema): Schema | undefined {
+    let at = value;
+    for (let hop = 0; hop < MAX_HOPS; hop++) {
+        if (!isObject(at)) {
+            return undefined;
+        }
+        const ref = at.$ref;
+        if (typeof ref !== 'string' || !ref.startsWith(DEFS)) {
+            return at;
+        }
+        const defs = root.$defs;
+        if (!isObject(defs)) {
+            return at;
+        }
+        at = defs[ref.slice(DEFS.length)];
+    }
+    return undefined;
+}
+
+const DEFS = '#/$defs/';
+const MAX_HOPS = 8;
