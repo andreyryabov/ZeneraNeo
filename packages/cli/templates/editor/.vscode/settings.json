@@ -4,6 +4,7 @@
         "zen": true,
         "mkdir": true,
         "podman run": true,
-        "/^([A-Za-z_][A-Za-z0-9_]*=\\S* )*(bash |sh )?(\\.\\/)?scripts\\/[\\w.-]+$/": true
+        "/^([A-Za-z_][A-Za-z0-9_]*=\\S* )*(bash |sh )?(\\.\\/)?scripts\\/[\\w.-]+$/": true,
+        "echo": true,
     }
 }
