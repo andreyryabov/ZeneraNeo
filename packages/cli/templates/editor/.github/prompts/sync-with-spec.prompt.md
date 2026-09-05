@@ -170,6 +170,10 @@ It is slow — an embedding index is minutes, not seconds — so start it in the
 background and follow the logs instead of waiting blind:
 
 - Tail `.tmp/logs/setup-*.log` and check the output artefact is still growing.
+- **Wait in a loop, never in one long sleep.** Sleep at most 30 seconds at a
+  time, then check the log and say what it shows, and repeat until the step
+  finishes. A single long block makes the run unwatchable and hides a failure
+  that happened in the first ten seconds.
 - Report progress as you go: which step is running, how long it has been going,
   what the last log line said.
 - Do not kill a quiet step. Confirm the process is dead or the log and the
