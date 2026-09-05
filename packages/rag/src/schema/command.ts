@@ -15,10 +15,12 @@ import {
     type Context,
 } from '@zenera/cli/lib';
 import { relative, resolve } from 'node:path';
+import { CACHE_DIR } from '../common/cache.ts';
 import { resolveEmbedder } from '../common/embedder.ts';
 import { locateIndex, outputDir } from '../common/locate.ts';
 import { assertSameEmbedding } from '../common/manifest.ts';
 import { isGlob, loose, matcher, PatternError, wildcard, type Matcher } from '../common/match.ts';
+import { breakdown } from '../common/prose.ts';
 import { buildIndex } from './build.ts';
 import { openIndex, readManifest, readSource, SCHEMA_INDEX, type SourceRecord } from './files.ts';
 import type { ApiGraph, NodeKind } from './graph.ts';
@@ -91,6 +93,10 @@ export const command: Command = {
             ],
             ['  --batch <n>', dim("Texts per embedding request. Default: the model's own cap.")],
             ['  --no-sources', dim('Do not keep a copy of each document in the index.')],
+            [
+                '  --no-cache',
+                dim('Embed everything again, ignoring vectors kept from earlier builds.'),
+            ],
         ]),
         '',
         'Search terms (repeatable)',
@@ -214,6 +220,7 @@ interface IndexFlags {
     embedding?: string;
     batch?: string;
     'no-sources'?: boolean;
+    'no-cache'?: boolean;
     quiet?: boolean;
 }
 
@@ -225,6 +232,7 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
             embedding: { type: 'string' },
             batch: { type: 'string' },
             'no-sources': { type: 'boolean' },
+            'no-cache': { type: 'boolean' },
             quiet: { type: 'boolean' },
         },
         INDEX_USAGE,
@@ -240,13 +248,14 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
     });
     const started = Date.now();
 
-    const { manifest } = await buildIndex({
+    const { manifest, timings, reused } = await buildIndex({
         files: positionals.map((file) => resolve(ctx.cwd, file)),
         out,
         embedder: chosen,
         embeddingRef: values.embedding,
         indexer: 'zenera-rag',
         sources: !values['no-sources'],
+        cache: !values['no-cache'],
         onRead: loud
             ? (summary) => {
                   printSources(summary.sources);
@@ -260,7 +269,7 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
             ? (done, total) =>
                   note(
                       dim(
-                          `  embedded ${done}/${total} · ${Math.round((done / total) * 100)}% · ${elapsed(started)}`,
+                          `  embedded ${done}/${total} · ${Math.floor((done / total) * 100)}% · ${elapsed(started)}`,
                       ),
                   )
             : undefined,
@@ -277,6 +286,13 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
     note(
         `  wrote ${bold(String(manifest.counts.entities))} entities to ${bold(out)}, ` +
             `embedded with ${manifest.embedding.ref} (${manifest.embedding.dimensions}d)`,
+    );
+    note(dim(`  ${breakdown(timings)}`));
+    note(
+        dim(
+            `  ${CACHE_DIR}/: reused ${reused}/${manifest.counts.entities} vectors` +
+                `${values['no-cache'] ? ' (--no-cache)' : ''}`,
+        ),
     );
     const where =
         out === resolve(ctx.cwd, DEFAULT_DIR) ? '' : ` --dir ${relative(ctx.cwd, out) || out}`;

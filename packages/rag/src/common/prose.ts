@@ -45,6 +45,22 @@ export function duration(ms: number): string {
         : `${Math.floor(minutes / 60)}h${minutes % 60}m`;
 }
 
+/** Sub-second, because a phase breakdown is read to compare phases against each other. */
+export function span(ms: number): string {
+    if (ms < 1000) {
+        return `${Math.round(ms)}ms`;
+    }
+    if (ms < 60_000) {
+        return `${(ms / 1000).toFixed(1)}s`;
+    }
+    const seconds = Math.round(ms / 1000);
+    return `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, '0')}s`;
+}
+
+/** Where the time went, which is the only way to know what is worth making faster. */
+export const breakdown = (timings: readonly { name: string; ms: number }[]): string =>
+    timings.map((t) => `${t.name} ${span(t.ms)}`).join(' · ');
+
 /** The first line only: a stack trace in a README helps nobody. */
 export function message(reason: unknown): string {
     const text = reason instanceof Error ? reason.message : String(reason);

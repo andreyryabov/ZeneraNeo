@@ -6,7 +6,7 @@ import {
     type Failed,
     type Report,
 } from '../common/progress.ts';
-import { duration, fields, grid, message, plural, searched } from '../common/prose.ts';
+import { breakdown, duration, fields, grid, message, plural, searched } from '../common/prose.ts';
 import type { Counts, DocRecord, Manifest } from './files.ts';
 
 // ---------------------------------------------------------------------------
@@ -25,6 +25,12 @@ export const PHASES: Record<Phase, string> = {
     writing: 'writing the store',
 };
 
+/** What the running count is counting, which is not the same in every phase. */
+const COUNTING: Record<string, string> = {
+    reading: 'parsed',
+    embedding: 'embedded',
+};
+
 export const DOCS_REPORT: Report<Counts, Manifest> = { building, complete, failed };
 
 function building(state: Building<Counts>): string {
@@ -41,9 +47,18 @@ function building(state: Building<Counts>): string {
         rows.push(['found', counted(state.summary)]);
     }
     if (state.total > 0) {
-        const percent = Math.round((state.done / state.total) * 100);
-        rows.push(['embedded', `${state.done} of ${state.total} · ${percent}%`]);
+        // Rounded down: 13619 of 13621 is not 100%, and a report that says it is
+        // turns two slow documents into a build that looks hung.
+        const percent = Math.floor((state.done / state.total) * 100);
+        rows.push([
+            COUNTING[state.phase] ?? 'done',
+            `${state.done} of ${state.total} · ${percent}%`,
+        ]);
     }
+    if (state.pending.length > 0) {
+        rows.push(['still on', waiting(state.pending)]);
+    }
+    rows.push(['timing', breakdown(state.timings)]);
     rows.push(['updated', new Date(state.now).toISOString()]);
 
     return [
@@ -79,6 +94,8 @@ function complete(state: Completed<Manifest>): string {
         '',
         `${counted(manifest.counts)},`,
         `${searched(manifest.indexes)}.`,
+        '',
+        `Time: ${breakdown(state.timings)}.`,
         '',
         '## Files',
         '',
@@ -116,6 +133,7 @@ function failed(state: Failed): string {
             ['step', state.step],
             ['reason', message(state.reason)],
             ['started', new Date(state.started).toISOString()],
+            ['timing', breakdown(state.timings)],
             [
                 'failed',
                 `${new Date().toISOString()} (after ${duration(Date.now() - state.started)})`,
@@ -126,6 +144,12 @@ function failed(state: Failed): string {
 }
 
 // ---------------------------------------------------------------------------
+
+/** Names are only worth reading once there are few enough to act on. */
+const MOST_NAMES = 3;
+
+const waiting = (pending: readonly string[]): string =>
+    pending.length <= MOST_NAMES ? pending.join(', ') : `${pending.length} documents`;
 
 const HEADERS = ['document', 'format', 'lines', 'sections', 'tables', 'chunks'] as const;
 

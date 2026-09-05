@@ -376,6 +376,37 @@ The copies are a record, not an input: rebuilding reads the files you name, not
 the ones in `sources/`. A **document** index has no `--no-sources`, because
 there the copies are what every quoted line is read from.
 
+**Vectors are paid for once.** Embedding is the whole cost of a build — the
+reading and the writing are milliseconds, the round trips are minutes, and they
+are the only part anyone is billed for. Almost none of it is new work: editing
+one paragraph re-embeds every other one unchanged, and a build killed at 90%
+starts again from nothing. So the vectors are kept in `<dir>/.cache/`, keyed by
+a hash of the exact text that produced them, and written as each request comes
+back rather than at the end. Re-indexing an unchanged corpus embeds nothing;
+re-indexing after an edit pays for the chunks that changed.
+
+The key is the text, never the chunk's position — inserting a sentence at the
+top of a document shifts every later chunk's ordinal without changing a word of
+it. Two documents that share a paragraph share its vector. A cache another model
+wrote is discarded, a record a kill cut in half is dropped, and anything this
+build did not use is forgotten when it finishes, so a corpus that churns cannot
+grow it without bound. It is a cache, so every failure in it is a miss and
+nothing more. `--no-cache` ignores it.
+
+**Parsing is spread across cores, and also cached.** With the vectors cached,
+parsing is what is left: reading a document, cutting it into chunks, and
+recording its shape. It is CPU-bound and every document is independent of every
+other, so a **document** index does it on a pool of worker threads — one per
+core, less the one running the build. The pool is skipped for a handful of
+documents, where starting the threads costs more than it saves.
+
+The result is cached the same way the vectors are, in `<dir>/.cache/`. The key
+covers the file's bytes, the name stamped on its chunks, and every setting that
+decides where a chunk ends, so changing `--chunk-tokens` invalidates all of it
+and editing one file invalidates one file. Both caches are governed by the same
+`--no-cache`, and both fall back to doing the work when anything about them
+looks wrong.
+
 ## Notes
 
 - Documents are **bundled, not dereferenced**: `#/components/schemas/User` is

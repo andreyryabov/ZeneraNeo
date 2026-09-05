@@ -15,11 +15,13 @@ import {
     type Context,
 } from '@zenera/cli/lib';
 import { relative, resolve } from 'node:path';
+import { CACHE_DIR } from '../common/cache.ts';
 import { resolveEmbedder } from '../common/embedder.ts';
 import { locateIndex, outputDir } from '../common/locate.ts';
 import { assertSameEmbedding } from '../common/manifest.ts';
 import { PatternError } from '../common/match.ts';
-import { grid } from '../common/prose.ts';
+import { INTERVAL_MS } from '../common/progress.ts';
+import { breakdown, grid } from '../common/prose.ts';
 import { assemble, DEFAULT_MAX_LINES } from './assemble.ts';
 import { buildIndex } from './build.ts';
 import { CHUNK_KINDS } from './chunk.ts';
@@ -105,6 +107,10 @@ export const command: Command = {
             ],
             ['  --batch <n>', dim("Texts per embedding request. Default: the model's own cap.")],
             ['  --chunk-tokens <n>', dim('Target chunk size. Default 384.')],
+            [
+                '  --no-cache',
+                dim('Embed everything again, ignoring vectors kept from earlier builds.'),
+            ],
         ]),
         '',
         dim('  Every document is copied into the index, so it stays portable and'),
@@ -196,6 +202,7 @@ interface IndexFlags {
     embedding?: string;
     batch?: string;
     'chunk-tokens'?: string;
+    'no-cache'?: boolean;
     quiet?: boolean;
 }
 
@@ -207,6 +214,7 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
             embedding: { type: 'string' },
             batch: { type: 'string' },
             'chunk-tokens': { type: 'string' },
+            'no-cache': { type: 'boolean' },
             quiet: { type: 'boolean' },
         },
         INDEX_USAGE,
@@ -222,7 +230,7 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
     });
     const started = Date.now();
 
-    const { manifest } = await buildIndex({
+    const { manifest, timings, reused } = await buildIndex({
         files: positionals,
         cwd: ctx.cwd,
         out,
@@ -231,6 +239,17 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
         indexer: 'zenera-rag',
         chunk: values['chunk-tokens']
             ? { chunkTokens: count(values['chunk-tokens'], '--chunk-tokens') }
+            : undefined,
+        cache: !values['no-cache'],
+        onReading: loud
+            ? throttled((done, total, pending) =>
+                  note(
+                      dim(
+                          `  parsed ${done}/${total} · ${Math.floor((done / total) * 100)}% · ` +
+                              `${elapsed(started)}${still(pending)}`,
+                      ),
+                  ),
+              )
             : undefined,
         onRead: loud
             ? (summary) => {
@@ -248,7 +267,7 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
             ? (done, total) =>
                   note(
                       dim(
-                          `  embedded ${done}/${total} · ${Math.round((done / total) * 100)}% · ${elapsed(started)}`,
+                          `  embedded ${done}/${total} · ${Math.floor((done / total) * 100)}% · ${elapsed(started)}`,
                       ),
                   )
             : undefined,
@@ -266,6 +285,14 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
         `  wrote ${bold(String(manifest.counts.chunks))} chunks from ` +
             `${bold(String(manifest.counts.documents))} document(s) to ${bold(out)}, ` +
             `embedded with ${manifest.embedding.ref} (${manifest.embedding.dimensions}d)`,
+    );
+    note(dim(`  ${breakdown(timings)}`));
+    note(
+        dim(
+            `  ${CACHE_DIR}/: reused ${reused.parses}/${manifest.counts.documents} parses, ` +
+                `${reused.vectors}/${manifest.counts.chunks} vectors` +
+                `${values['no-cache'] ? ' (--no-cache)' : ''}`,
+        ),
     );
     const where =
         out === resolve(ctx.cwd, DEFAULT_DIR) ? '' : ` --dir ${relative(ctx.cwd, out) || out}`;
@@ -309,6 +336,21 @@ function elapsed(since: number): string {
     const seconds = Math.round((Date.now() - since) / 1000);
     return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60}s`;
 }
+
+/** Reading fires per document, and a line per document is not a narration. */
+function throttled<A extends unknown[]>(say: (...args: A) => void): (...args: A) => void {
+    let saidAt = 0;
+    return (...args: A) => {
+        if (Date.now() - saidAt >= INTERVAL_MS) {
+            saidAt = Date.now();
+            say(...args);
+        }
+    };
+}
+
+/** Only worth naming when there are few enough to go and look at. */
+const still = (pending: readonly string[]): string =>
+    pending.length > 0 && pending.length <= 2 ? ` · still on ${pending.join(', ')}` : '';
 
 // ---------------------------------------------------------------------------
 // search

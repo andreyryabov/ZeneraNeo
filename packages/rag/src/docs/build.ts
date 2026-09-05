@@ -1,5 +1,6 @@
 import type { Embedder } from '@zenera/neo';
-import { beginBuild, type Journal } from '../common/progress.ts';
+import { embedCached, NO_CACHE, openCache, type VectorCache } from '../common/cache.ts';
+import { beginBuild, type Journal, type PhaseTiming } from '../common/progress.ts';
 import { formatLines, type ChunkOptions } from './chunk.ts';
 import {
     INDEX_VERSION,
@@ -38,9 +39,13 @@ export interface BuildOptions {
     /** told the manifest, so a store can say what wrote it */
     indexer: string;
     chunk?: ChunkOptions;
+    /** reuse vectors from a previous build of this directory; on by default */
+    cache?: boolean;
     signal?: AbortSignal;
     /** what the documents turned out to hold, before a vector has been paid for */
     onRead?: (summary: BuildSummary) => void;
+    /** documents parsed so far, and what the pool is still on */
+    onReading?: (done: number, total: number, pending: readonly string[]) => void;
     onProgress?: (done: number, total: number) => void;
 }
 
@@ -53,6 +58,15 @@ export interface BuildSummary {
 export interface BuildResult {
     manifest: Manifest;
     chunks: ChunkRecord[];
+    /** what each phase cost, so a slow build can say which part was slow */
+    timings: readonly PhaseTiming[];
+    /** what came out of `.cache/` instead of being done again */
+    reused: Reused;
+}
+
+export interface Reused {
+    parses: number;
+    vectors: number;
 }
 
 export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
@@ -64,9 +78,19 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
         phases: PHASES,
         report: DOCS_REPORT,
     });
+    const ref = options.embeddingRef ?? options.embedder.id;
+    const cache =
+        options.cache === false ? NO_CACHE : openCache(options.out, options.embedder, ref);
 
     try {
-        const corpus = await loadDocuments(options.files, options.cwd, options.chunk);
+        const corpus = await loadDocuments(options.files, options.cwd, {
+            chunk: options.chunk,
+            cacheDir: options.cache === false ? undefined : options.out,
+            onProgress: (done, total, pending) => {
+                journal.progress(done, total, pending);
+                options.onReading?.(done, total, pending);
+            },
+        });
         const chunks = recordsOf(corpus);
         const sources = corpus.docs.map((doc): DocRecord => ({
             name: doc.name,
@@ -92,7 +116,7 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
         options.onRead?.({ sources, counts, skipped: corpus.skipped });
 
         journal.phase('embedding');
-        const vectors = await embedAll(chunks, options, journal);
+        const vectors = await embedAll(chunks, options, journal, cache);
         journal.phase('writing');
         const written = await writeChunks(options.out, chunks, vectors);
 
@@ -102,7 +126,7 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
             createdAt: new Date().toISOString(),
             indexer: options.indexer,
             embedding: {
-                ref: options.embeddingRef ?? options.embedder.id,
+                ref,
                 id: options.embedder.id,
                 dimensions: vectors[0]?.length ?? 0,
             },
@@ -114,9 +138,16 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
         const documents = Object.fromEntries(corpus.docs.map((doc) => [doc.name, doc.text]));
 
         await writeIndex(options.out, { manifest, outline, documents });
+        cache.commit();
         journal.finish(manifest);
-        return { manifest, chunks };
+        return {
+            manifest,
+            chunks,
+            timings: journal.timings,
+            reused: { parses: corpus.cached, vectors: cache.hits },
+        };
     } catch (err) {
+        cache.abandon();
         journal.fail(err);
         throw err;
     }
@@ -147,19 +178,20 @@ async function embedAll(
     chunks: readonly ChunkRecord[],
     options: BuildOptions,
     journal: Journal<Counts, Manifest, Phase>,
+    cache: VectorCache,
 ): Promise<Float32Array[]> {
     // The whole corpus in one call. How many texts fit in a request, and how
     // many requests may be in flight, are the embedder's to answer — it knows
     // the model's caps and it is the one that sees the 429s. What used to be
     // here was a fixed 96 sent strictly one batch at a time.
-    const response = await options.embedder.embed({
-        input: chunks.map((c) => c.embedText),
-        taskType: 'document',
+    return embedCached({
+        embedder: options.embedder,
+        cache,
+        texts: chunks.map((c) => c.embedText),
         signal: options.signal,
         onProgress: (done, total) => {
             journal.progress(done, total);
             options.onProgress?.(done, total);
         },
     });
-    return response.vectors.map((v) => Float32Array.from(v));
 }

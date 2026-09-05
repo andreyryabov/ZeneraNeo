@@ -1,4 +1,9 @@
-import { embeddingResponse, type EmbeddingRequest, type EmbeddingResponse } from '../embedding.ts';
+import {
+    embeddingResponse,
+    unitVector,
+    type EmbeddingRequest,
+    type EmbeddingResponse,
+} from '../embedding.ts';
 import { zeroUsage, type TokenUsage } from '../types.ts';
 import { RateLimiter } from './limiter.ts';
 
@@ -81,6 +86,11 @@ export async function fanout(req: EmbeddingRequest, plan: FanoutPlan): Promise<E
                     );
                 }
                 done += part.texts.length;
+                if (req.onSlice) {
+                    const settled =
+                        req.normalize === false ? slice.vectors : slice.vectors.map(unitVector);
+                    req.onSlice(part.at, settled);
+                }
                 req.onProgress?.(done, req.input.length);
                 return slice;
             }, req.signal),

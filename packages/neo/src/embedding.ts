@@ -42,6 +42,13 @@ export interface EmbeddingRequest {
      * indistinguishable from a hung one.
      */
     onProgress?: (done: number, total: number) => void;
+    /**
+     * Each slice of the input as it comes back, `at` being where it started in
+     * `input`. A large request is many round trips, and a caller that persists
+     * them can survive a crash without paying for the same vectors twice.
+     * Vectors arrive normalised, exactly as the response will carry them.
+     */
+    onSlice?: (at: number, vectors: number[][]) => void;
     signal?: AbortSignal;
 }
 
@@ -86,13 +93,14 @@ export function embeddingResponse(
     usage?: TokenUsage,
 ): EmbeddingResponse {
     return {
-        vectors: req.normalize === false ? vectors : vectors.map(unit),
+        vectors: req.normalize === false ? vectors : vectors.map(unitVector),
         dimensions: vectors[0]?.length ?? 0,
         usage,
     };
 }
 
-function unit(vector: number[]): number[] {
+/** Idempotent, so normalising a slice early and the whole response later agree. */
+export function unitVector(vector: number[]): number[] {
     let sum = 0;
     for (const x of vector) {
         sum += x * x;

@@ -1,5 +1,6 @@
 import type { Embedder } from '@zenera/neo';
-import { beginBuild, type Journal } from '../common/progress.ts';
+import { embedCached, NO_CACHE, openCache, type VectorCache } from '../common/cache.ts';
+import { beginBuild, type Journal, type PhaseTiming } from '../common/progress.ts';
 import { toEntities, type EntityRecord } from './entities.ts';
 import {
     INDEX_VERSION,
@@ -33,6 +34,8 @@ export interface BuildOptions {
     indexer: string;
     /** keep a bundled copy of each document in the index. On by default. */
     sources?: boolean;
+    /** reuse vectors from a previous build of this directory; on by default */
+    cache?: boolean;
     signal?: AbortSignal;
     /** what the documents turned out to hold, before a vector has been paid for */
     onRead?: (summary: BuildSummary) => void;
@@ -47,6 +50,10 @@ export interface BuildSummary {
 export interface BuildResult {
     manifest: Manifest;
     entities: EntityRecord[];
+    /** what each phase cost, so a slow build can say which part was slow */
+    timings: readonly PhaseTiming[];
+    /** vectors that came out of `.cache/` instead of being paid for again */
+    reused: number;
 }
 
 export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
@@ -58,6 +65,9 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
         phases: PHASES,
         report: SCHEMA_REPORT,
     });
+    const ref = options.embeddingRef ?? options.embedder.id;
+    const cache =
+        options.cache === false ? NO_CACHE : openCache(options.out, options.embedder, ref);
 
     try {
         const corpus = await loadSpecs(options.files);
@@ -79,7 +89,7 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
         options.onRead?.(summary);
 
         journal.phase('embedding');
-        const vectors = await embedAll(entities, options, journal);
+        const vectors = await embedAll(entities, options, journal, cache);
         journal.phase('writing');
         const written = await writeStore(options.out, entities, vectors);
 
@@ -89,7 +99,7 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
             createdAt: new Date().toISOString(),
             indexer: options.indexer,
             embedding: {
-                ref: options.embeddingRef ?? options.embedder.id,
+                ref,
                 id: options.embedder.id,
                 dimensions: vectors[0]?.length ?? 0,
             },
@@ -105,9 +115,11 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
             operations: corpus.operations,
             documents: keep ? corpus.documents : {},
         });
+        cache.commit();
         journal.finish(manifest);
-        return { manifest, entities };
+        return { manifest, entities, timings: journal.timings, reused: cache.hits };
     } catch (err) {
+        cache.abandon();
         journal.fail(err);
         throw err;
     }
@@ -117,20 +129,21 @@ async function embedAll(
     entities: readonly EntityRecord[],
     options: BuildOptions,
     journal: Journal<Counts, Manifest, Phase>,
+    cache: VectorCache,
 ): Promise<Float32Array[]> {
     // Everything in one call. How many texts fit in a request, and how many
     // requests may be in flight, are the embedder's to answer — it knows the
     // model's caps and it is the one that sees the 429s.
-    const response = await options.embedder.embed({
-        input: entities.map((e) => e.text),
-        taskType: 'document',
+    return embedCached({
+        embedder: options.embedder,
+        cache,
+        texts: entities.map((e) => e.text),
         signal: options.signal,
         onProgress: (done, total) => {
             journal.progress(done, total);
             options.onProgress?.(done, total);
         },
     });
-    return response.vectors.map((v) => Float32Array.from(v));
 }
 
 /**

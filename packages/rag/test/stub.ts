@@ -24,6 +24,18 @@ export class StubEmbedder implements Embedder {
     }
 }
 
+/** The same embedder, but it says how much it was asked to do. */
+export class CountingEmbedder extends StubEmbedder {
+    embedded = 0;
+    calls = 0;
+
+    override async embed(request: EmbeddingRequest): Promise<EmbeddingResponse> {
+        this.calls++;
+        this.embedded += request.input.length;
+        return super.embed(request);
+    }
+}
+
 function encode(text: string): number[] {
     const vector = new Array<number>(DIMENSIONS).fill(0);
     for (const word of text

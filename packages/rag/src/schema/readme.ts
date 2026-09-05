@@ -1,7 +1,7 @@
 import { basename } from 'node:path';
 import type { Building, Completed, Failed, Report } from '../common/progress.ts';
 import { INTERVAL_MS } from '../common/progress.ts';
-import { duration, fields, grid, message, plural, searched } from '../common/prose.ts';
+import { breakdown, duration, fields, grid, message, plural, searched } from '../common/prose.ts';
 import type { Counts, Manifest, SourceRecord } from './files.ts';
 
 // ---------------------------------------------------------------------------
@@ -37,9 +37,10 @@ function building(state: Building<Counts>): string {
         rows.push(['found', entities(state.summary)]);
     }
     if (state.total > 0) {
-        const percent = Math.round((state.done / state.total) * 100);
+        const percent = Math.floor((state.done / state.total) * 100);
         rows.push(['embedded', `${state.done} of ${state.total} · ${percent}%`]);
     }
+    rows.push(['timing', breakdown(state.timings)]);
     rows.push(['updated', new Date(state.now).toISOString()]);
 
     return [
@@ -77,6 +78,8 @@ function complete(state: Completed<Manifest>): string {
         '',
         `${entities(manifest.counts)},`,
         `${searched(manifest.indexes)}.`,
+        '',
+        `Time: ${breakdown(state.timings)}.`,
         '',
         '## Files',
         '',
@@ -116,6 +119,7 @@ function failed(state: Failed): string {
             ['step', state.step],
             ['reason', message(state.reason)],
             ['started', new Date(state.started).toISOString()],
+            ['timing', breakdown(state.timings)],
             [
                 'failed',
                 `${new Date().toISOString()} (after ${duration(Date.now() - state.started)})`,

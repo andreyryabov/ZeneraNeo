@@ -292,6 +292,46 @@ describe('fan-out', () => {
         expect([...seen].sort((a, b) => a - b)).toEqual(seen);
     });
 
+    it('hands back each slice as it lands, so a caller can persist partial work', async () => {
+        const { client } = stubOpenAI();
+        const embedder = new OpenAIEmbedder('text-embedding-3-small', client, { maxBatch: 3 });
+        const landed = new Map<number, number>();
+
+        const res = await embedder.embed({
+            input: texts,
+            normalize: false,
+            onSlice: (at, vectors) => {
+                for (const [i, v] of vectors.entries()) {
+                    landed.set(at + i, v[0]!);
+                }
+            },
+        });
+
+        expect(landed.size).toBe(20);
+        // Placed by the caller's index, not by arrival: a slice that came back
+        // third still belongs where its texts were.
+        expect([...landed].map(([at, v]) => res.vectors[at]![0] === v).every(Boolean)).toBe(true);
+    });
+
+    it('normalises a slice the same way the response is normalised', async () => {
+        const { client } = stubOpenAI();
+        const embedder = new OpenAIEmbedder('text-embedding-3-small', client, { maxBatch: 3 });
+        const placed = new Array<number[]>(20);
+
+        const res = await embedder.embed({
+            input: texts,
+            onSlice: (at, vectors) => {
+                for (const [i, v] of vectors.entries()) {
+                    placed[at + i] = v;
+                }
+            },
+        });
+
+        // A cached slice and a returned vector have to be the same number, or
+        // the cache would quietly serve a differently scaled one next time.
+        expect(placed).toEqual(res.vectors);
+    });
+
     it('adds up the usage the requests reported', async () => {
         const { client } = stubOpenAI();
         const embedder = new OpenAIEmbedder('text-embedding-3-small', client, { maxBatch: 3 });
