@@ -31,8 +31,6 @@ export interface BuildOptions {
     embeddingRef?: string;
     /** told the manifest, so a store can say what wrote it */
     indexer: string;
-    /** texts sent to the embedder at once */
-    batch?: number;
     /** keep a bundled copy of each document in the index. On by default. */
     sources?: boolean;
     signal?: AbortSignal;
@@ -50,8 +48,6 @@ export interface BuildResult {
     manifest: Manifest;
     entities: EntityRecord[];
 }
-
-const DEFAULT_BATCH = 96;
 
 export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
     const journal = beginBuild<Counts, Manifest, Phase>({
@@ -122,26 +118,19 @@ async function embedAll(
     options: BuildOptions,
     journal: Journal<Counts, Manifest, Phase>,
 ): Promise<Float32Array[]> {
-    const size = options.batch ?? DEFAULT_BATCH;
-    const out: Float32Array[] = [];
-
-    for (let at = 0; at < entities.length; at += size) {
-        const slice = entities.slice(at, at + size);
-        const response = await options.embedder.embed({
-            input: slice.map((e) => e.text),
-            taskType: 'document',
-            signal: options.signal,
-        });
-        if (response.vectors.length !== slice.length) {
-            throw new Error(
-                `${options.embedder.id} answered ${response.vectors.length} vectors for ${slice.length} texts`,
-            );
-        }
-        out.push(...response.vectors.map((v) => Float32Array.from(v)));
-        journal.progress(out.length, entities.length);
-        options.onProgress?.(out.length, entities.length);
-    }
-    return out;
+    // Everything in one call. How many texts fit in a request, and how many
+    // requests may be in flight, are the embedder's to answer — it knows the
+    // model's caps and it is the one that sees the 429s.
+    const response = await options.embedder.embed({
+        input: entities.map((e) => e.text),
+        taskType: 'document',
+        signal: options.signal,
+        onProgress: (done, total) => {
+            journal.progress(done, total);
+            options.onProgress?.(done, total);
+        },
+    });
+    return response.vectors.map((v) => Float32Array.from(v));
 }
 
 /**

@@ -52,6 +52,13 @@ const provider = z
         headers: z.record(z.string().min(1), z.string()).optional(),
         timeoutMs: z.number().positive().optional(),
         maxRetries: z.int().nonnegative().optional(),
+        /**
+         * Ceiling on embedding requests in flight against this connection. The
+         * working number is discovered from the provider's own refusals; this
+         * only caps how high that may climb, for a key shared with something
+         * else that also needs quota.
+         */
+        concurrency: z.int().positive().optional(),
     })
     .strict();
 
@@ -129,8 +136,13 @@ const embeddingSpec = z
         dimensions: z.int().positive().optional(),
         /** gemini only: a document title the retrieval task type takes into account */
         title: z.string().min(1).optional(),
-        /** gemini only: texts per request; every `gemini-embedding-*` model takes one */
+        /**
+         * Ceilings on how a batch is split into requests. Both default to what
+         * the model is known to accept, so setting them is for a gateway whose
+         * caps are not the vendor's.
+         */
         maxBatch: z.int().positive().optional(),
+        maxBatchTokens: z.int().positive().optional(),
         /** openrouter only: who serves the request */
         routing: routing.optional(),
     })

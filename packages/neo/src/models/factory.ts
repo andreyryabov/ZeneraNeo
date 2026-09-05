@@ -8,6 +8,7 @@ import type OpenAI from 'openai';
 import type { ClientOptions as OpenAIOptions } from 'openai';
 import type { Embedder } from '../embedding.ts';
 import { GeminiEmbedder, type GeminiEmbedderOptions } from '../embeddings/gemini.ts';
+import { DEFAULT_START, RateLimiter } from '../embeddings/limiter.ts';
 import { OpenAIEmbedder, type OpenAIEmbedderOptions } from '../embeddings/openai.ts';
 import { OpenRouterEmbedder, type OpenRouterEmbedderOptions } from '../embeddings/openrouter.ts';
 import type { Model } from '../model.ts';
@@ -140,6 +141,16 @@ export interface ProviderSpec extends Credentials {
     headers?: Record<string, string>;
     timeoutMs?: number;
     maxRetries?: number;
+    /**
+     * Ceiling on embedding requests in flight against this connection. The
+     * floor and the actual number are discovered from the provider's own
+     * refusals, so this only says how high the discovery may climb — set it
+     * when an account is shared with something else that also needs quota.
+     *
+     * On the provider rather than on a model because a rate limit belongs to
+     * the key: two embedders on one account are one budget, not two.
+     */
+    concurrency?: number;
     /**
      * Pre-built client — bypasses credential resolution entirely. The seam for
      * auth no configuration can express: Vertex service accounts, Bedrock
@@ -364,6 +375,7 @@ function expand(value: string | undefined, where: string): string | undefined {
 export class ModelRegistry {
     readonly #providers = new Map<string, ProviderSpec>();
     readonly #clients = new Map<string, ProviderClient>();
+    readonly #limiters = new Map<string, RateLimiter>();
     #default = 'openai';
 
     /** Declares (or replaces) a provider. Nothing is contacted until it is used. */
@@ -378,6 +390,7 @@ export class ModelRegistry {
         // Re-declaring after a client was handed out would otherwise leave the
         // old credentials in service for the rest of the process.
         this.#clients.delete(name);
+        this.#limiters.delete(name);
         return this;
     }
 
@@ -414,6 +427,29 @@ export class ModelRegistry {
         const spec = this.#spec(name);
         const built = spec.client ?? buildClient(name, this.kindOf(name), spec, spec);
         this.#clients.set(name, built);
+        return built;
+    }
+
+    /**
+     * The pacing shared by every embedder on a provider, so that what one of
+     * them learns from a 429 the others do not have to learn again — and so
+     * that two of them cannot each ramp up to the full limit against one key.
+     */
+    #limiter(name: string): RateLimiter {
+        const existing = this.#limiters.get(name);
+        if (existing) {
+            return existing;
+        }
+        const spec = this.#providers.get(name);
+        const built = new RateLimiter({
+            max: spec?.concurrency,
+            start:
+                spec?.concurrency === undefined
+                    ? undefined
+                    : Math.min(spec.concurrency, DEFAULT_START),
+            maxRetries: spec?.maxRetries,
+        });
+        this.#limiters.set(name, built);
         return built;
     }
 
@@ -468,7 +504,7 @@ export class ModelRegistry {
      * generates and embeds without being mentioned twice.
      */
     embedder(ref: EmbeddingRef): Embedder {
-        const spec = typeof ref === 'string' ? this.#parseEmbedding(ref) : ref;
+        const spec = typeof ref === 'string' ? this.parseEmbedding(ref) : ref;
         const name = spec.provider ?? this.#default;
         const provider = this.#spec(name);
         const kind = this.kindOf(name);
@@ -477,13 +513,20 @@ export class ModelRegistry {
             spec.client ??
             (hasCredentials(spec) ? buildClient(name, kind, spec, provider) : this.client(name));
 
+        // Inline credentials are a different connection, and so a different
+        // budget: they get pacing of their own rather than the provider's.
+        const options = {
+            ...spec,
+            limiter: spec.limiter ?? (hasCredentials(spec) ? undefined : this.#limiter(name)),
+        };
+
         switch (KINDS[kind].protocol) {
             case 'openai':
-                return new OpenAIEmbedder(spec.model, client as OpenAI, spec);
+                return new OpenAIEmbedder(spec.model, client as OpenAI, options);
             case 'gemini':
-                return new GeminiEmbedder(spec.model, client as GoogleGenAI, spec);
+                return new GeminiEmbedder(spec.model, client as GoogleGenAI, options);
             case 'openrouter':
-                return new OpenRouterEmbedder(spec.model, client as OpenRouter, spec);
+                return new OpenRouterEmbedder(spec.model, client as OpenRouter, options);
             case 'anthropic':
                 // Not an omission to be filled in later: Anthropic publishes no
                 // embeddings API at all, and points at third parties instead.
@@ -556,7 +599,11 @@ export class ModelRegistry {
         return { provider, api, model };
     }
 
-    #parseEmbedding(ref: string): EmbeddingSpec {
+    /**
+     * Splits `[provider:]model` into the spec it stands for, so a caller holding
+     * a shorthand can still set the knobs a shorthand has no room for.
+     */
+    parseEmbedding(ref: string): EmbeddingSpec {
         const { provider, api, model } = this.parse(ref);
         if (api) {
             throw new TypeError(

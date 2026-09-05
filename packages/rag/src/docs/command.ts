@@ -103,7 +103,7 @@ export const command: Command = {
                 '  -o, --out <dir>',
                 dim(`Where the index goes. Default ${DEFAULT_DIR}, or ${DIR_ENV}.`),
             ],
-            ['  --batch <n>', dim('Texts per embedding request. Default 96.')],
+            ['  --batch <n>', dim("Texts per embedding request. Default: the model's own cap.")],
             ['  --chunk-tokens <n>', dim('Target chunk size. Default 384.')],
         ]),
         '',
@@ -217,7 +217,9 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
     }
     const out = outputDir(ctx.cwd, values.out, DOCS_INDEX);
     const loud = !values.quiet && !ctx.json;
-    const chosen = await resolveEmbedder(values.embedding);
+    const chosen = await resolveEmbedder(values.embedding, {
+        maxBatch: values.batch ? count(values.batch, '--batch') : undefined,
+    });
     const started = Date.now();
 
     const { manifest } = await buildIndex({
@@ -227,7 +229,6 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
         embedder: chosen,
         embeddingRef: values.embedding,
         indexer: 'zenera-rag',
-        batch: values.batch ? count(values.batch, '--batch') : undefined,
         chunk: values['chunk-tokens']
             ? { chunkTokens: count(values['chunk-tokens'], '--chunk-tokens') }
             : undefined,
@@ -237,8 +238,9 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
                   for (const skip of summary.skipped) {
                       note(dim(`  skipped ${skip.name}: ${skip.reason}`));
                   }
-                  // The first batch takes a while and says nothing while it
-                  // does; this is the line that makes that a wait, not a hang.
+                  // Embedding is one call now, and a long one; this is the line
+                  // that makes the wait before the first progress report a wait
+                  // rather than a hang.
                   note(dim(`  embedding ${summary.counts.chunks} chunks with ${chosen.id} …`));
               }
             : undefined,

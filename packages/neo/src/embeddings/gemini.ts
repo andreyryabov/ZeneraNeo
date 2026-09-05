@@ -1,11 +1,12 @@
 import type { Content, EmbedContentConfig, GoogleGenAI } from '@google/genai';
-import {
-    embeddingResponse,
-    type Embedder,
-    type EmbeddingRequest,
-    type EmbeddingResponse,
-    type EmbeddingTaskType,
+import type {
+    Embedder,
+    EmbeddingRequest,
+    EmbeddingResponse,
+    EmbeddingTaskType,
 } from '../embedding.ts';
+import { fanout, type BatchOptions } from './fanout.ts';
+import { RateLimiter } from './limiter.ts';
 
 // ---------------------------------------------------------------------------
 // Google Gemini embeddings adapter
@@ -25,34 +26,45 @@ const TASK_TYPES: Record<EmbeddingTaskType, string> = {
     document: 'RETRIEVAL_DOCUMENT',
 };
 
-/** Requests in flight at once when a batch has to be split across several. */
-const CONCURRENCY = 8;
+/**
+ * One, because `embedContent` is a single-document endpoint for every
+ * `gemini-embedding-*` model — it answers more than one content with *"The
+ * embedContent API for this model only supports one content at a time"* — and
+ * the batch path is a separate, job-based API. The older `text-embedding-*`
+ * models take far more.
+ *
+ * This is why the fan-out matters most here: a corpus is one request per chunk,
+ * so how many may be in flight is the entire runtime of a build.
+ */
+const MAX_BATCH = 1;
+const LEGACY_MAX_BATCH = 250;
+const MAX_BATCH_TOKENS = 20_000;
+
+const LEGACY_MODEL = /^text-embedding-/;
 
 /** Provider-specific knobs. */
-export interface GeminiEmbedderOptions {
+export interface GeminiEmbedderOptions extends BatchOptions {
     /** default width; a request may override it */
     dimensions?: number;
     /** a document's title, which the retrieval task type takes into account */
     title?: string;
-    /**
-     * Texts this model accepts per request. One is the default because that is
-     * what every `gemini-embedding-*` model takes — `embedContent` is a
-     * single-document endpoint there, and the batch path is a separate,
-     * job-based API. The older `text-embedding-*` models accept far more and
-     * can say so.
-     */
-    maxBatch?: number;
 }
 
 export class GeminiEmbedder implements Embedder {
     readonly id: string;
     readonly #client: GoogleGenAI;
     readonly #options: GeminiEmbedderOptions;
+    readonly #limiter: RateLimiter;
+    readonly #maxBatch: number;
+    readonly #maxBatchTokens: number;
 
     constructor(id: string, client: GoogleGenAI, options: GeminiEmbedderOptions = {}) {
         this.id = id;
         this.#client = client;
         this.#options = options;
+        this.#limiter = options.limiter ?? new RateLimiter();
+        this.#maxBatch = options.maxBatch ?? (LEGACY_MODEL.test(id) ? LEGACY_MAX_BATCH : MAX_BATCH);
+        this.#maxBatchTokens = options.maxBatchTokens ?? MAX_BATCH_TOKENS;
     }
 
     async embed(req: EmbeddingRequest): Promise<EmbeddingResponse> {
@@ -63,43 +75,32 @@ export class GeminiEmbedder implements Embedder {
             title: this.#options.title,
             outputDimensionality: req.dimensions ?? this.#options.dimensions,
             abortSignal: req.signal,
+            // The SDK retries nothing unless `retryOptions` is present, and the
+            // client was built with some; one attempt hands a refusal back out
+            // to the limiter, which is the only thing that can slow the run down.
+            httpOptions: { retryOptions: { attempts: 1 } },
         };
-
-        // The contract is batch-first and this endpoint usually is not, so the
-        // splitting happens here rather than in every caller. Chunks are issued
-        // in waves and their results concatenated in order, so a caller cannot
-        // tell how many requests it took.
-        const size = Math.max(1, this.#options.maxBatch ?? 1);
-        const chunks: string[][] = [];
-        for (let i = 0; i < req.input.length; i += size) {
-            chunks.push(req.input.slice(i, i + size));
-        }
-
-        const vectors: number[][] = [];
-        for (let i = 0; i < chunks.length; i += CONCURRENCY) {
-            const wave = await Promise.all(
-                chunks.slice(i, i + CONCURRENCY).map((chunk) => this.#send(chunk, config)),
-            );
-            for (const part of wave) {
-                vectors.push(...part);
-            }
-        }
 
         // Usage stays undefined on purpose: this API reports billable
         // *characters*, on Vertex only, which is not a token count and would be
         // a lie in `TokenUsage`.
-        return embeddingResponse(vectors, req);
-    }
-
-    async #send(input: string[], config: EmbedContentConfig): Promise<number[][]> {
-        const res = await this.#client.models.embedContent({
-            model: this.id,
-            // Spelled out as one `Content` per text. `ContentListUnion` also
-            // accepts a `string[]`, and reads it as the *parts of a single
-            // document* — six sentences in, one vector back, and no error.
-            contents: input.map((text): Content => ({ parts: [{ text }] })),
-            config,
+        return await fanout(req, {
+            id: this.id,
+            limiter: this.#limiter,
+            maxBatch: this.#maxBatch,
+            maxBatchTokens: this.#maxBatchTokens,
+            send: async (input) => {
+                const res = await this.#client.models.embedContent({
+                    model: this.id,
+                    // Spelled out as one `Content` per text. `ContentListUnion`
+                    // also accepts a `string[]`, and reads it as the *parts of a
+                    // single document* — six sentences in, one vector back, and
+                    // no error.
+                    contents: input.map((text): Content => ({ parts: [{ text }] })),
+                    config,
+                });
+                return { vectors: (res.embeddings ?? []).map((e) => e.values ?? []) };
+            },
         });
-        return (res.embeddings ?? []).map((e) => e.values ?? []);
     }
 }

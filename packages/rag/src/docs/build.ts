@@ -37,8 +37,6 @@ export interface BuildOptions {
     embeddingRef?: string;
     /** told the manifest, so a store can say what wrote it */
     indexer: string;
-    /** texts sent to the embedder at once */
-    batch?: number;
     chunk?: ChunkOptions;
     signal?: AbortSignal;
     /** what the documents turned out to hold, before a vector has been paid for */
@@ -56,8 +54,6 @@ export interface BuildResult {
     manifest: Manifest;
     chunks: ChunkRecord[];
 }
-
-const DEFAULT_BATCH = 96;
 
 export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
     const journal = beginBuild<Counts, Manifest, Phase>({
@@ -152,24 +148,18 @@ async function embedAll(
     options: BuildOptions,
     journal: Journal<Counts, Manifest, Phase>,
 ): Promise<Float32Array[]> {
-    const size = options.batch ?? DEFAULT_BATCH;
-    const out: Float32Array[] = [];
-
-    for (let at = 0; at < chunks.length; at += size) {
-        const slice = chunks.slice(at, at + size);
-        const response = await options.embedder.embed({
-            input: slice.map((c) => c.embedText),
-            taskType: 'document',
-            signal: options.signal,
-        });
-        if (response.vectors.length !== slice.length) {
-            throw new Error(
-                `${options.embedder.id} answered ${response.vectors.length} vectors for ${slice.length} texts`,
-            );
-        }
-        out.push(...response.vectors.map((v) => Float32Array.from(v)));
-        journal.progress(out.length, chunks.length);
-        options.onProgress?.(out.length, chunks.length);
-    }
-    return out;
+    // The whole corpus in one call. How many texts fit in a request, and how
+    // many requests may be in flight, are the embedder's to answer — it knows
+    // the model's caps and it is the one that sees the 429s. What used to be
+    // here was a fixed 96 sent strictly one batch at a time.
+    const response = await options.embedder.embed({
+        input: chunks.map((c) => c.embedText),
+        taskType: 'document',
+        signal: options.signal,
+        onProgress: (done, total) => {
+            journal.progress(done, total);
+            options.onProgress?.(done, total);
+        },
+    });
+    return response.vectors.map((v) => Float32Array.from(v));
 }

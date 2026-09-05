@@ -14,7 +14,7 @@ import {
     usageError,
     type Provider,
 } from '@zenera/cli/lib';
-import { createEmbedder, type Embedder, type EmbeddingRef } from '@zenera/neo';
+import { createEmbedder, defaultModels, type Embedder, type EmbeddingRef } from '@zenera/neo';
 
 // ---------------------------------------------------------------------------
 // Getting an embedder, and saying what the choices are when there is none
@@ -31,7 +31,19 @@ import { createEmbedder, type Embedder, type EmbeddingRef } from '@zenera/neo';
 // choosing from.
 // ---------------------------------------------------------------------------
 
-export async function resolveEmbedder(ref: string | undefined): Promise<Embedder> {
+/**
+ * What a shorthand ref cannot say. Both are ceilings on what the embedder would
+ * otherwise work out for itself from the model and from what the provider
+ * refuses, so leaving them unset is the normal case.
+ */
+export interface EmbedderTuning {
+    maxBatch?: number;
+}
+
+export async function resolveEmbedder(
+    ref: string | undefined,
+    tuning?: EmbedderTuning,
+): Promise<Embedder> {
     ensureHome();
     const keys = await KeyStore.open();
     // Asked before materialising, because materialising is what erases the
@@ -42,7 +54,10 @@ export async function resolveEmbedder(ref: string | undefined): Promise<Embedder
     if (!ref) {
         throw choices(keys, fromEnv);
     }
-    return createEmbedder(ref as EmbeddingRef);
+    if (tuning?.maxBatch === undefined) {
+        return createEmbedder(ref as EmbeddingRef);
+    }
+    return createEmbedder({ ...defaultModels.parseEmbedding(ref), ...tuning });
 }
 
 /**

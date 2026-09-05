@@ -22,7 +22,11 @@ import type { TokenUsage } from './types.ts';
 export type EmbeddingTaskType = 'query' | 'document';
 
 export interface EmbeddingRequest {
-    /** the texts to encode, in the order the vectors come back */
+    /**
+     * The texts to encode, in the order the vectors come back. Any length: the
+     * adapter splits it to whatever the model accepts per request and issues
+     * those in parallel, so a caller never has to know the cap or invent one.
+     */
     input: string[];
     taskType?: EmbeddingTaskType;
     /** truncate to this width, where the model supports it */
@@ -32,6 +36,12 @@ export interface EmbeddingRequest {
      * Turn it off to see what the model actually returned.
      */
     normalize?: boolean;
+    /**
+     * Texts finished so far, out of the whole input. A large batch is minutes
+     * of one `await`, and a caller with nothing to say for that long is
+     * indistinguishable from a hung one.
+     */
+    onProgress?: (done: number, total: number) => void;
     signal?: AbortSignal;
 }
 

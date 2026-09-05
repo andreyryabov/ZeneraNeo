@@ -89,10 +89,7 @@ export const command: Command = {
                 '  -o, --out <dir>',
                 dim(`Where the index goes. Default ${DEFAULT_DIR}, or ${DIR_ENV}.`),
             ],
-            [
-                '  --batch <n>',
-                dim('Texts per embedding request, and how often progress prints. Default 96.'),
-            ],
+            ['  --batch <n>', dim("Texts per embedding request. Default: the model's own cap.")],
             ['  --no-sources', dim('Do not keep a copy of each document in the index.')],
         ]),
         '',
@@ -238,7 +235,9 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
     }
     const out = outputDir(ctx.cwd, values.out, SCHEMA_INDEX);
     const loud = !values.quiet && !ctx.json;
-    const chosen = await resolveEmbedder(values.embedding);
+    const chosen = await resolveEmbedder(values.embedding, {
+        maxBatch: values.batch ? count(values.batch, '--batch') : undefined,
+    });
     const started = Date.now();
 
     const { manifest } = await buildIndex({
@@ -247,13 +246,13 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
         embedder: chosen,
         embeddingRef: values.embedding,
         indexer: 'zenera-rag',
-        batch: values.batch ? count(values.batch, '--batch') : undefined,
         sources: !values['no-sources'],
         onRead: loud
             ? (summary) => {
                   printSources(summary.sources);
-                  // The first batch can take a while and says nothing while it
-                  // does; this is the line that makes that a wait, not a hang.
+                  // Embedding is one call now, and a long one; this is the line
+                  // that makes the wait before the first progress report a wait
+                  // rather than a hang.
                   note(dim(`  embedding ${summary.counts.entities} entities with ${chosen.id} …`));
               }
             : undefined,
