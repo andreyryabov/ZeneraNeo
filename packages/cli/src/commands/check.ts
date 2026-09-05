@@ -70,9 +70,9 @@ export const check: Command = {
     details: [
         'Checks the whole project: the configuration parses and satisfies the',
         'schema, every prompt, skill and catalog it names is on disk, hand-offs',
-        'and forks name agents that exist, tool selectors resolve, skills bind to',
-        'a catalog that holds them, and the models it declares have a credential',
-        'on this machine.',
+        'and forks name agents that exist, every hand-off has a way back, tool',
+        'selectors resolve, skills bind to a catalog that holds them, and the',
+        'models it declares have a credential on this machine.',
         '',
         'It also builds the sandbox image and runs one command in it, against a',
         'temporary directory rather than your workspace, and --no-sandbox skips',

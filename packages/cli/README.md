@@ -97,6 +97,7 @@ agents:
       description: Turns a summary into a file on disk.
       system: agents/prompts/writer.md
       tools: [workspace:*]
+      handoffs: [reader] # a hand-off does not return by itself; give it a way back
 ```
 
 `agents/prompts/reader.md`:

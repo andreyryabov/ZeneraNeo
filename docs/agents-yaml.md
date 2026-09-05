@@ -858,6 +858,32 @@ agents:
 configuration in this version, so there is nothing for an object form to hold,
 and accepting one would mean accepting keys nothing honours.
 
+**A hand-off must be returnable.** For every `A → B` there has to be a path from
+B back to A; indirect counts, so `B → C → A` is a way home, and the rule amounts
+to saying every edge lies on a cycle. The reason is that a hand-off is a one-way
+door: control moves to the other agent and stays there, and nothing hands it
+back. An agent reached by a dead-end edge therefore owns the conversation for the
+rest of the session — the next question, whatever it is about, is answered by
+whoever the router last transferred to.
+
+This is not a load error, because the project runs; it just cannot come back.
+`zen check` reports it as a warning, `handoff.one-way`, naming the edge and both
+ways out of it.
+
+`fork:` is the exception, and usually the fix. A branch runs, answers, and
+control returns to the agent that forked it, so a fork needs no return edge — the
+return is the mechanism. An agent that wants an _answer_ rather than to give up
+the conversation should fork; an agent that wants the other one to take over
+should hand off, and something on the far side has to lead back.
+
+**The return is condensed.** `A → fork → B` rejoins as a single tool result
+holding B's answer, so A never sees the steps B took to reach it — not the tool
+calls, not the files read, not the intermediate reasoning. That is what makes
+fanning out cheap (N branches cost A `N × answer`, not `N × transcript`), and it
+is also the thing to design around: whatever A will need has to be _in_ the
+answer, so say so in B's prompt. Work whose value is in the trace, rather than
+in its conclusion, does not survive a fork.
+
 ### `agents[].tools`
 
 An entry is a tool name, or a selector:
@@ -970,7 +996,8 @@ field), so a fan-out cannot recurse without bound.
 
 The loader stops at the first of these. `zen check` does not: it reports every
 one it can reach, each with the key it is about and the fix, and adds the checks
-that are not load errors — an agent with no prompt at all, a skill with no
-description, a folder in the catalog with no `SKILL.md`, a model with no
-credential on this machine. Nothing is called; `--json` for the same report
+that are not load errors — a hand-off with no path back, an agent with no prompt
+at all, a skill with no description, a folder in the catalog with no `SKILL.md`,
+a model with no credential on this machine. Nothing is called; `--json` for the
+same report
 without the rendering.

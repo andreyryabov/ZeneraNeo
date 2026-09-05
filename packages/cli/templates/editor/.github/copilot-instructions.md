@@ -307,6 +307,9 @@ wrong provider (§7.3), and any combination of knobs the vendor rejects at reque
 time, such as OpenAI reasoning on chat completions (§7.6). Both surface on the
 first call, so read §7 before writing a `models:` entry.
 
+**Caught by `zen check`, not by the loader** — a handoff with no path back
+(`handoff.one-way`, §6.3). The project runs; it just cannot return.
+
 **Comments in `agents.yaml`** — this file is the architecture diagram of the
 project, and its comments are read by whoever has to change it next. Write them
 at that level:
@@ -1086,18 +1089,20 @@ Do **not** split because:
 
 **Router + specialists.** A cheap, fast agent whose only job is classification
 and handoff. Its prompt is short, it holds few tools, and it must be forbidden
-from answering. Specialists never hand back to it.
+from answering. Every specialist hands back to it — a handoff does not return on
+its own, so without that edge the first routed question is the last one routed.
 
 ```yaml
 agents:
     - { name: intake, model: router, handoffs: [billing, technical, escalation] }
-    - { name: billing, model: balanced, skills: { allow: [refund_policy, invoicing] } }
-    - { name: technical, model: balanced, tools: [search_logs, restart_service] }
-    - { name: escalation, model: careful }
+    - { name: billing, model: balanced, handoffs: [intake], skills: { allow: [refund_policy] } }
+    - { name: technical, model: balanced, handoffs: [intake], tools: [search_logs] }
+    - { name: escalation, model: careful, handoffs: [intake] }
 ```
 
 **Pipeline.** Fixed stages, each handing to the next; only the last answers the
-user. Encode the order in `handoffs:` so a stage cannot skip ahead.
+user. Encode the order in `handoffs:` so a stage cannot skip ahead — and close
+the loop, by handing back from the last stage to the first.
 
 **Fan-out / join.** For independent parallel work — ten regions, four review
 lenses, six candidate suppliers — declare `fork:` on the agent that owns the
@@ -1113,11 +1118,38 @@ multi-agent instinct suggests.
   Write it as a routing condition: _"Applies the written peril policies to a
   claim and explains the outcome."_ — not _"The adjuster agent."_
 - Handoffs are bare name strings; there is no per-edge configuration.
-- Self-handoff is a load error. Cycles are legal but usually a bug — a router in
-  the `handoffs` of its own specialists produces ping-pong.
+- Self-handoff is a load error.
+- **Every handoff must be returnable.** For every `A → B` there must be a path
+  from `B` back to `A`. Indirect counts — `B → C → A` is a way home — so the
+  rule is that every handoff edge lies on a cycle. `zen check` warns
+  (`handoff.one-way`) on any edge that does not.
 - Handoff collapses history by policy: the receiving agent sees a selection, not
   the full transcript. Do not assume it saw a detail three turns back; if it
   matters, put it in the handoff.
+
+**Why the return edge is not optional.** A handoff is a one-way door: control
+moves and stays moved. Nothing hands it back, so an agent reached by a dead-end
+edge owns the conversation for the rest of the session — the next question,
+whatever it is about, is answered by the specialist the router sent the user to.
+The drawn architecture holds for one turn and then quietly stops being the
+architecture.
+
+**Forks are the exception, and the alternative.** A branch runs, answers, and
+control returns to the agent that forked it; the return is the mechanism, not an
+edge anyone has to declare. So there are two shapes and they are not
+interchangeable:
+
+- The other agent should **own the conversation from here** → `handoffs:`, and
+  something on the far side has to lead back.
+- This agent needs **an answer and then carries on** → `fork:`. Never a handoff:
+  a handoff spends the conversation to get the answer.
+
+But the return is **condensed**: `A → fork → B` rejoins as one tool result
+holding B's answer, so A never sees the steps B took — no tool calls, no files
+read, no intermediate reasoning. That is what makes fanning out cheap, and it is
+what to design around: whatever A will need must be _in_ the answer, so say so in
+B's prompt. Work whose value is the trace rather than the conclusion does not
+survive a fork.
 
 ### 6.4 Forking (fan-out / join)
 
@@ -1158,7 +1190,9 @@ Rules worth knowing before you write the key:
 - Nesting is capped by the run's `maxForkDepth` (2 by default), so a branch may
   fork again but not without bound.
 - Fork vs handoff: a handoff is _one_ conversation changing owner; a fork is the
-  _same_ question asked N times at once and merged.
+  _same_ question asked N times at once and merged. **A fork returns; a handoff
+  does not** — which is why a handoff needs a return path (§6.3) and a fork
+  needs nothing.
 
 Choose `context:` deliberately — the model sets it per call, so say in the
 agent's prompt which one this work wants:
@@ -1237,8 +1271,8 @@ model: balanced # fallback for agents that do not pin their own
 
 agents:
     - { name: intake, model: router, handoffs: [adjuster] }
-    - { name: adjuster, model: balanced, handoffs: [escalation] }
-    - { name: escalation, model: careful }
+    - { name: adjuster, model: balanced, handoffs: [escalation, intake] }
+    - { name: escalation, model: careful, handoffs: [intake] }
 ```
 
 ### 7.3 Shorthand
@@ -1582,7 +1616,7 @@ Before finishing any change here:
 - [ ] `agents.yaml` still loads; no unknown keys, no dangling names
 - [ ] Top-level `default:` names the entry agent explicitly
 - [ ] Every agent has a `description:` written as a routing condition
-- [ ] No self-handoff; no accidental cycle back to the router
+- [ ] No self-handoff; every handoff has a path back (`zen check` warns if not)
 - [ ] Names match `^[a-z0-9]+(?:[-_][a-z0-9]+)*$`
 - [ ] An agent expected to fan out has `fork:`, and its prompt says when to use it
 - [ ] Comments explain the design, not the runtime or the key they sit above
@@ -1660,6 +1694,7 @@ Before finishing any change here:
 | A model or embedder refuses every call     | `zen models test <ref>` — if `blocked`, `zen models pick` — §8      |
 | Answers instead of routing                 | Router prompt prohibition; check `handoffs:`                        |
 | Routes to the wrong specialist             | The target agents' `description:` fields                            |
+| Gets stuck in the agent it routed to       | The target needs a handoff back — §6.3                              |
 | Loses a detail after a handoff             | Say it in the handoff; check the collapse policy                    |
 | Works through N independent items serially | `fork:` on that agent, and a prompt line — §6.4                     |
 | Forks when the steps actually depend       | Prompt line: branches cannot see each other                         |
@@ -1689,8 +1724,10 @@ Before finishing any change here:
 - **Fixing prompts with models.** See §4.4.
 - **The chatty router.** A router that answers before handing off, because its
   prompt never forbade it.
-- **Ping-pong handoffs.** Specialists that hand back to the router, which hands
-  back to a specialist.
+- **The one-way handoff.** A specialist with no way back, so the router routes
+  once and then never sees the conversation again — §6.3.
+- **Handing off for an answer.** Wanting one lookup and spending the whole
+  conversation on it. That is a `fork:`, which returns by itself — §6.4.
 - **Forking a chain.** Branches never see each other, so a fork whose second
   branch needs the first branch's answer is a sequence wearing a fork's clothes.
 - **Installing the toolchain every run.** A prompt that begins with `apt-get

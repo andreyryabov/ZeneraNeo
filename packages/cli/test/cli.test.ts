@@ -589,6 +589,57 @@ describe('the project check', () => {
         expect(found).toContain('handoff.self');
     });
 
+    /**
+     * A hand-off is a one-way door, so an edge with no way home leaves the
+     * agent it points at owning the conversation for good. Indirect returns
+     * count, and a fork needs no edge at all.
+     */
+    it('warns about a hand-off that can never come back', async () => {
+        const dir = project({
+            'agents.yaml':
+                'version: 1\nmodel: gpt-4o\nagents:\n' +
+                '  - name: intake\n    description: Routes.\n' +
+                '    handoffs: [billing, technical]\n' +
+                '  - name: billing\n    description: Bills.\n    handoffs: [technical]\n' +
+                '  - name: technical\n    description: Fixes.\n    handoffs: [intake]\n',
+        });
+        const report = await validateProject({ dir });
+
+        // intake → billing → technical → intake closes; billing → technical
+        // does too, the long way round. Nothing is one-way here.
+        expect(codes(report)).not.toContain('handoff.one-way');
+        expect(errors(report)).toEqual([]);
+    });
+
+    it('names the edge that strands the conversation', async () => {
+        const dir = project({
+            'agents.yaml':
+                'version: 1\nmodel: gpt-4o\nagents:\n' +
+                '  - name: intake\n    description: Routes.\n    handoffs: [docs]\n' +
+                '  - name: docs\n    description: Searches documents.\n',
+        });
+        const report = await validateProject({ dir });
+
+        const one = report.findings.find((f) => f.code === 'handoff.one-way');
+        expect(one?.severity).toBe('warning');
+        expect(one?.where).toBe('agents.intake.handoffs');
+        expect(errors(report)).toEqual([]);
+    });
+
+    /** A branch returns on its own, so a fork is never a dead end. */
+    it('asks nothing of a fork', async () => {
+        const dir = project({
+            'agents.yaml':
+                'version: 1\nmodel: gpt-4o\nagents:\n' +
+                '  - name: intake\n    description: Routes.\n' +
+                '    fork:\n      agents: [docs]\n' +
+                '  - name: docs\n    description: Searches documents.\n',
+        });
+        const report = await validateProject({ dir });
+
+        expect(codes(report)).not.toContain('handoff.one-way');
+    });
+
     it('says which files it looked for when there is no config at all', async () => {
         const report = await validateProject({ dir: project({ 'INSTRUCTIONS.md': 'hello\n' }) });
 

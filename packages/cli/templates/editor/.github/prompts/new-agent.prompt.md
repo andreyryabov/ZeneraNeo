@@ -29,8 +29,11 @@ If it is warranted:
 3. Add the `agents.yaml` entry. `description:` is written **for the model** — it
    is the whole of what a sibling sees when deciding to hand off. Grant the
    narrowest `tools:` the job needs.
-4. Wire the handoffs in both directions only if both directions are real.
-   Specialists handing back to a router is ping-pong; prefer terminating.
+4. Wire the return edge. A handoff does not come back on its own, so every
+   `A → B` needs a path from B back to A — directly, or through another agent.
+   `zen check` warns on an edge that has none. If what this agent really wants
+   is an _answer_ rather than to give up the conversation, declare `fork:`
+   instead: a branch returns by itself.
 5. Add a one-line comment above the entry saying why this agent exists — its
    job or its tier, not what the keys mean.
 

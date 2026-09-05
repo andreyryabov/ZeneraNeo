@@ -437,6 +437,8 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
         agents.push(checkAgent(root, config, spec, entry, available, record, add));
     }
 
+    checkReturnPaths(config, add);
+
     // -----------------------------------------------------------------------
     // Skills
     // -----------------------------------------------------------------------
@@ -901,6 +903,82 @@ function checkAgent(
         ...(fork ? { fork: { ...fork } } : {}),
         ownSandbox: Boolean(spec.sandbox),
     };
+}
+
+/**
+ * Every hand-off must be returnable.
+ *
+ * A hand-off is a one-way door: control moves to the other agent and stays
+ * there. Nothing hands it back on its own, so an agent reached by an edge that
+ * has no way home owns the conversation for the rest of the session — the next
+ * question, whatever it is about, is answered by the specialist the router sent
+ * the user to. That is not a runtime error; it is a system that quietly stops
+ * being the system that was drawn.
+ *
+ * So for every `A → B` there must be a path from B back to A. Indirect counts:
+ * `B → C → A` is a way home, which is the same as saying every hand-off edge
+ * lies on a cycle.
+ *
+ * Forks are exempt, and always will be. A branch runs, answers, and control
+ * returns to the agent that forked it — the return is the mechanism, not an
+ * edge someone has to remember to declare. An agent that wants an answer rather
+ * than to give up the conversation should fork, not hand off.
+ *
+ * A warning rather than an error: the project loads, runs, and answers. What it
+ * cannot do is come back. `--strict` is for the repository that wants that to
+ * fail the build.
+ */
+function checkReturnPaths(config: ProjectConfig, add: Add): void {
+    const known = new Set(config.agents.map((a) => a.name));
+    // Unknown names and self-hand-offs are already errors of their own; walking
+    // them here would only report the same mistake in a second vocabulary.
+    const edges = new Map<string, string[]>(
+        config.agents.map((a) => [
+            a.name,
+            (a.handoffs ?? []).filter((to) => to !== a.name && known.has(to)),
+        ]),
+    );
+
+    const reaches = (from: string, to: string): boolean => {
+        const seen = new Set([from]);
+        const queue = [from];
+        while (queue.length) {
+            for (const next of edges.get(queue.shift()!) ?? []) {
+                if (next === to) {
+                    return true;
+                }
+                if (!seen.has(next)) {
+                    seen.add(next);
+                    queue.push(next);
+                }
+            }
+        }
+        return false;
+    };
+
+    for (const [from, targets] of edges) {
+        for (const to of targets) {
+            if (reaches(to, from)) {
+                continue;
+            }
+            add({
+                severity: 'warning',
+                code: 'handoff.one-way',
+                where: `agents.${from}.handoffs`,
+                message:
+                    `"${to}" has no way back to "${from}": nothing it can hand off to, ` +
+                    `directly or through another agent, reaches "${from}" again. A hand-off ` +
+                    `does not return by itself, so once control moves to "${to}" it stays ` +
+                    `there — every later question in the session is answered by "${to}", ` +
+                    'whether or not it is that agent’s job',
+                fix:
+                    `add "${from}" to agents.${to}.handoffs (or to the handoffs of an agent ` +
+                    `"${to}" can reach), or — if "${from}" wants an answer rather than to give ` +
+                    `up the conversation — drop the edge and declare fork: { agents: [${to}] } ` +
+                    `on "${from}", because a branch returns on its own`,
+            });
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
