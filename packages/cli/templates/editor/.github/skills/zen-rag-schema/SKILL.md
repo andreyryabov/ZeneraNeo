@@ -1,6 +1,6 @@
 ---
-name: api-schema-index
-description: What a schema index is, how it finds the right call inside a large OpenAPI/Swagger document, and how to build and query one with `zen rag schema` (or `npx @zenera/cli`) — searching it by meaning, listing and grepping it exactly instead of reaching for shell `grep`/`rg`, tracing a field up to the operations that carry it, giving it to an agent as tools, and writing the project skill that a wired-in index requires.
+name: zen-rag-schema
+description: What a schema index is, how it finds the right call inside a large OpenAPI/Swagger document, and how to build and query one with `zen rag schema` (or `npx @zenera/cli`) — searching it by meaning, listing and grepping it exactly instead of reaching for shell `grep`/`rg`, tracing a field up to the operations that carry it, giving it to an agent as tools, and writing the project skill that a wired-in index requires. For a pile of markdown instead of an API description, see `zen-rag-docs`.
 ---
 
 # The schema index

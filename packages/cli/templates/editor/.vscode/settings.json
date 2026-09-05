@@ -1,6 +1,13 @@
 {
     "chat.useNestedAgentsMdFiles": false,
     "chat.tools.terminal.autoApprove": {
-        "zen": true
+        "zen": true,
+        "podman run": true,
+        "scripts/_setup.sh": true,
+        "./scripts/_setup.sh": true,
+        "bash scripts/_setup.sh": true,
+        "sh scripts/_setup.sh": true,
+        "bash ./scripts/_setup.sh": true,
+        "sh ./scripts/_setup.sh": true
     }
 }
