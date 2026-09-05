@@ -708,7 +708,15 @@ the network's fault and not the project's. `--no-models` skips it.
 A container is per _session_, not per project, so a project worked on for a
 week has a container per session it ran and `persist: true` keeps every one of
 them stopped rather than removed. The count surprises people, so `zen sandbox
-status` lists them with an age and says where they came from.
+status` lists them with an age and says where they came from — the ones _this_
+project made, since a container carries the session id that made it and a
+session id is a directory name under a project. Outside every project it falls
+back to all of them, which is then the only honest answer.
+
+The project comes from `--project` or from the directory the command was run
+in, and is never asked for: a list of every project on the machine is not a
+question a reading has any business asking, and the engine half of the report
+does not depend on the answer.
 
 `zen sandbox disk` answers the question that follows. It has to keep two disks
 apart, because only one of them is reclaimed by removing a container:

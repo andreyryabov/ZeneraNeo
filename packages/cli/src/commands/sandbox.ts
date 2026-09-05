@@ -11,8 +11,14 @@ import {
     type EngineDisk,
     type OwnedContainer,
 } from '../podman.ts';
-import { dirSize, isProjectDir, Registry, sessionIds } from '../projects.ts';
-import { project as findProject } from '../resolve.ts';
+import {
+    current as currentProject,
+    dirSize,
+    isProjectDir,
+    open as openProject,
+    Registry,
+    sessionIds,
+} from '../projects.ts';
 import {
     ago,
     bold,
@@ -61,8 +67,12 @@ export const sandbox: Command = {
         '  clean                  Remove every container this CLI created.',
         '  disk                   What the engine and every known project occupy.',
         '',
-        '  --project <name|dir>   Which project the image comes from.',
+        '  --project <name|dir>   Which project the image and containers belong to.',
         '  --image <ref>          Use this image instead of the project\u2019s.',
+        '',
+        'Without --project this is the project you are standing in, and standing',
+        'nowhere is an answer: `status` then reports the engine and every container',
+        'on the machine, since that is all there is to say.',
         '',
         'None of this is required. A run does all of it on its own, the first',
         'time an agent that can reach a shell is about to start one.',
@@ -85,19 +95,25 @@ export const sandbox: Command = {
             throw usageError('one subcommand at a time', USAGE);
         }
 
-        // `clean` and `disk` are machine-wide questions, so asking which
-        // project they mean would be asking something they do not use.
+        // `clean` and `disk` are machine-wide questions, so looking for a
+        // project they do not use would be reading something for nothing.
         const scoped = what === 'status' || what === 'up' || what === 'pull';
-        const found = values.image || !scoped ? undefined : await projectSandbox(ctx.cwd, values);
+        const found = scoped ? await projectSandbox(ctx.cwd, values) : undefined;
         const image = values.image ?? found?.image;
-        const build = found?.build;
+        const build = values.image ? undefined : found?.build;
 
         switch (what) {
             case 'status':
-                return status(image, build, ctx.json);
+                return status(found, image, ctx.json);
             case 'up':
                 return up(image, build, ctx.json, ctx.json);
             case 'pull':
+                if (!image) {
+                    throw usageError(
+                        'no project here, so there is no image to pull',
+                        'name one with --project, or an image with --image',
+                    );
+                }
                 return up(image, build, true, ctx.json, true);
             case 'clean':
                 return clean(ctx.json);
@@ -107,36 +123,64 @@ export const sandbox: Command = {
     },
 };
 
+interface ProjectSandbox {
+    dir: string;
+    name: string;
+    image?: string;
+    build?: ResolvedBuild;
+}
+
 /**
- * The project's image, when there is a project to ask. `zen sandbox status`
- * run from anywhere at all is still a useful thing, so failing to find one is
- * not a failure — it just means there is no image to report on. Notably this
- * does *not* go through `target`: reading a setting must not create a session.
+ * Which project this is about: the flag, or the directory the command was run
+ * in. It deliberately never asks. `zen sandbox status` run from anywhere at
+ * all is a useful thing, so standing outside every project is an answer — the
+ * engine is still there to report on — and a question with a list of every
+ * project on the machine is not one a *reading* has any business asking.
+ *
+ * Notably it also does not go through `target`: reading a setting must not
+ * create a session.
  */
-async function projectSandbox(
-    cwd: string,
-    values: Flags,
-): Promise<{ image?: string; build?: ResolvedBuild } | undefined> {
+async function projectSandbox(cwd: string, values: Flags): Promise<ProjectSandbox | undefined> {
+    const found = values.project ? await openProject(values.project) : await currentProject(cwd);
+    if (!found) {
+        return undefined;
+    }
     try {
-        const found = await findProject({ cwd, project: values.project, yes: true });
         const { root, config } = readProjectConfig(found.dir);
         const build = resolveBuild(root, config.sandbox);
-        return { image: build?.tag ?? config.sandbox?.image, build };
+        return {
+            dir: found.dir,
+            name: found.name,
+            image: build?.tag ?? config.sandbox?.image,
+            build,
+        };
     } catch {
-        return undefined;
+        // A project whose configuration does not read is `zen check`'s to
+        // report; here it only means there is no image to name.
+        return { dir: found.dir, name: found.name };
     }
 }
 
 async function status(
+    project: ProjectSandbox | undefined,
     image: string | undefined,
-    build: ResolvedBuild | undefined,
     asJson: boolean,
 ): Promise<void> {
+    const build = project?.build;
     const found = await podmanStatus({ image });
-    const containers = found.ready ? await ownedContainers(found.engine) : [];
+    const all = found.ready ? await ownedContainers(found.engine) : [];
+    // A container belongs to a session, and a session belongs to a project, so
+    // a report about one project must not list another's — or the faker's,
+    // which wears the same label and belongs to no project at all.
+    const containers = project ? ofProject(project.dir, all) : all;
 
     if (asJson) {
-        json({ ...found, dockerfile: build?.dockerfile ?? null, containers });
+        json({
+            ...found,
+            project: project?.name ?? null,
+            dockerfile: build?.dockerfile ?? null,
+            containers,
+        });
         return;
     }
 
@@ -149,18 +193,32 @@ async function status(
         write(`${bold('machine')}    ${found.machine.name} ${state}`);
     }
     write(`${bold('responds')}   ${mark(found.ready)}`);
+    if (project) {
+        write(`${bold('project')}    ${project.name} ${dim(project.dir)}`);
+    }
     if (found.image) {
         write(`${bold('image')}      ${found.image} ${mark(Boolean(found.imagePresent))}`);
     }
     if (build) {
         write(`${bold('dockerfile')} ${dim(build.dockerfile)}`);
     }
-    writeAll(containerLines(containers));
+    writeAll(containerLines(containers, project?.name));
 
     if (!found.installed || !found.ready) {
         note('');
         note(dim('run `zen sandbox up` to fix what can be fixed.'));
     }
+}
+
+/**
+ * The containers this project's sessions made. A container carries the session
+ * id that made it in a label, and a session id is a directory name under the
+ * project — the same attribution `disk` does for every project at once, so the
+ * two cannot disagree.
+ */
+function ofProject(dir: string, containers: readonly OwnedContainer[]): OwnedContainer[] {
+    const sessions = new Set(sessionIds(dir));
+    return containers.filter((c) => c.key !== undefined && sessions.has(c.key));
 }
 
 /**
@@ -170,11 +228,15 @@ async function status(
  *
  * The trailing note is there because the count surprises people: a container
  * is per *session*, not per project, and `persist: true` is what leaves the
- * stopped ones behind.
+ * stopped ones behind. `scope` names the project these belong to, and saying
+ * so is half the answer — the other half is that there are more elsewhere.
  */
-function containerLines(containers: readonly OwnedContainer[]): string[] {
+function containerLines(containers: readonly OwnedContainer[], scope?: string): string[] {
+    const tail = scope
+        ? `one per session in ${scope}, kept by \`persist: true\` — all of them: zen sandbox disk`
+        : 'one per session, kept by `persist: true` — see: zen sandbox disk';
     if (containers.length === 0) {
-        return [`${bold('containers')} ${dim('none')}`];
+        return [`${bold('containers')} ${dim(scope ? `none in ${scope}` : 'none')}`];
     }
     const running = containers.filter((c) => c.state === 'running').length;
     const head = `${bold('containers')} ${containers.length} ${dim(
@@ -193,7 +255,7 @@ function containerLines(containers: readonly OwnedContainer[]): string[] {
         head,
         ...table(rows),
         ...(rest > 0 ? [`${INDENT}${dim(`+${rest} more`)}`] : []),
-        `${INDENT}${dim('one per session, kept by `persist: true` — see: zen sandbox disk')}`,
+        `${INDENT}${dim(tail)}`,
     ];
 }
 
