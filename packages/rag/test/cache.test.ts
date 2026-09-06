@@ -1,15 +1,9 @@
-import { statSync, truncateSync, writeFileSync } from 'node:fs';
+import { readdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import {
-    CACHE_DIR,
-    CACHE_META,
-    embedCached,
-    openCache,
-    VECTORS_FILE,
-} from '../src/common/cache.ts';
+import { embedCached, openCache, VECTOR_KIND } from '../src/common/cache.ts';
 import { buildIndex } from '../src/docs/build.ts';
 import { CountingEmbedder } from './stub.ts';
 
@@ -17,10 +11,13 @@ import { CountingEmbedder } from './stub.ts';
 // Not paying twice
 //
 // The cache is only worth having if it is never wrong, so most of what is here
-// is about the ways it could be: a vector served for the wrong model, a file
-// cut in half by a kill, a chunk that moved but did not change. A wrong vector
-// does not throw, it ranks badly — so these compare the floats, not just the
-// number of calls saved.
+// is about the ways it could be: a vector served for the wrong model, a chunk
+// that moved but did not change, an entry whose key does not match what was
+// asked for. A wrong vector does not throw, it ranks badly — so these compare
+// the floats, not just the number of calls saved.
+//
+// Every test names its own `dir`. The store is otherwise the machine's, and a
+// test suite must not read or write what a person has cached.
 // ---------------------------------------------------------------------------
 
 const dirs: string[] = [];
@@ -43,7 +40,7 @@ async function through(
     ref = REF,
 ): Promise<{ vectors: Float32Array[]; embedded: number }> {
     const embedder = new CountingEmbedder(ref);
-    const cache = openCache(dir, embedder, ref);
+    const cache = openCache(embedder, { ref, dir });
     const vectors = await embedCached({ embedder, cache, texts });
     cache.commit();
     return { vectors, embedded: embedder.embedded };
@@ -51,6 +48,17 @@ async function through(
 
 const lines = (n: number, seed: string): string[] =>
     Array.from({ length: n }, (_, i) => `a passage about ${seed} numbered ${i}`);
+
+/** How many entry files the store holds for a kind, shards and all. */
+function stored(dir: string, kind: string): number {
+    let n = 0;
+    for (const shard of readdirSync(join(dir, kind), { withFileTypes: true })) {
+        if (shard.isDirectory()) {
+            n += readdirSync(join(dir, kind, shard.name)).filter((f) => f.endsWith('.json')).length;
+        }
+    }
+    return n;
+}
 
 describe('the vector cache', () => {
     it('embeds nothing the second time', async () => {
@@ -114,44 +122,29 @@ describe('the vector cache', () => {
         expect((await through(dir, texts, 'stub:something-else')).embedded).toBe(6);
     });
 
-    it('recovers from a file a kill cut through the middle of a record', async () => {
+    it('keeps what a later build no longer refers to', async () => {
         const dir = await scratch();
-        const texts = lines(10, 'eta');
-        await through(dir, texts);
+        await through(dir, lines(30, 'iota'));
+        expect(stored(dir, VECTOR_KIND)).toBe(30);
 
-        const path = join(dir, CACHE_DIR, VECTORS_FILE);
-        truncateSync(path, statSync(path).size - 37);
-
-        // The partial record is gone; every whole one before it survived.
-        expect((await through(dir, texts)).embedded).toBe(1);
-        expect((await through(dir, texts)).embedded).toBe(0);
+        // The store is the machine's, not this build's. Forgetting is what
+        // `zen cache prune` is for, and a build has no business deciding that
+        // work another project paid for is now rubbish.
+        await through(dir, lines(3, 'iota'));
+        expect(stored(dir, VECTOR_KIND)).toBe(30);
     });
 
-    it('survives a meta file that is not even JSON', async () => {
+    it('survives an entry that is not JSON at all', async () => {
         const dir = await scratch();
         const texts = lines(4, 'theta');
         await through(dir, texts);
 
-        writeFileSync(join(dir, CACHE_DIR, CACHE_META), 'not json {{{');
+        for (const shard of readdirSync(join(dir, VECTOR_KIND))) {
+            for (const file of readdirSync(join(dir, VECTOR_KIND, shard))) {
+                writeFileSync(join(dir, VECTOR_KIND, shard, file), 'not json {{{');
+            }
+        }
         expect((await through(dir, texts)).embedded).toBe(4);
-    });
-
-    it('forgets what a build no longer refers to', async () => {
-        const dir = await scratch();
-        await through(dir, lines(30, 'iota'));
-        const full = statSync(join(dir, CACHE_DIR, VECTORS_FILE)).size;
-
-        await through(dir, lines(3, 'iota'));
-        expect(statSync(join(dir, CACHE_DIR, VECTORS_FILE)).size).toBeLessThan(full);
-    });
-
-    it('keeps what a build did refer to, and no more', async () => {
-        const dir = await scratch();
-        await through(dir, lines(5, 'kappa'));
-        const five = statSync(join(dir, CACHE_DIR, VECTORS_FILE)).size;
-
-        await through(dir, lines(5, 'kappa'));
-        expect(statSync(join(dir, CACHE_DIR, VECTORS_FILE)).size).toBe(five);
     });
 
     it('is a miss, never an error, when the directory cannot be written', async () => {
@@ -160,7 +153,7 @@ describe('the vector cache', () => {
         const wedged = join(await scratch(), 'a-file');
         writeFileSync(wedged, 'not a directory');
 
-        const cache = openCache(join(wedged, 'nope'), embedder, REF);
+        const cache = openCache(embedder, { ref: REF, dir: join(wedged, 'nope') });
         const vectors = await embedCached({ embedder, cache, texts: lines(3, 'lambda') });
 
         expect(vectors).toHaveLength(3);
@@ -171,7 +164,12 @@ describe('the vector cache', () => {
 describe('the cache under a real build', () => {
     const document = (seed: string) => `## Title\n\n${lines(12, seed).join('\n\n')}\n`;
 
-    async function counted(src: string, out: string, cache?: boolean): Promise<number> {
+    async function counted(
+        src: string,
+        out: string,
+        cacheDir: string,
+        cache?: boolean,
+    ): Promise<number> {
         const embedder = new CountingEmbedder(REF);
         await buildIndex({
             files: [src],
@@ -181,6 +179,7 @@ describe('the cache under a real build', () => {
             embeddingRef: REF,
             indexer: 'test',
             cache,
+            cacheDir,
         });
         return embedder.embedded;
     }
@@ -189,9 +188,21 @@ describe('the cache under a real build', () => {
         const src = await scratch('zenera-cache-src-');
         writeFileSync(join(src, 'a.md'), document('mu'));
         const out = await scratch('zenera-cache-out-');
+        const shared = await scratch('zenera-cache-store-');
 
-        expect(await counted(src, out)).toBeGreaterThan(0);
-        expect(await counted(src, out)).toBe(0);
+        expect(await counted(src, out, shared)).toBeGreaterThan(0);
+        expect(await counted(src, out, shared)).toBe(0);
+    });
+
+    it('costs nothing to index the same corpus into a second directory', async () => {
+        const src = await scratch('zenera-cache-src-');
+        writeFileSync(join(src, 'a.md'), document('omicron'));
+        const shared = await scratch('zenera-cache-store-');
+
+        // The point of a shared store: the work belongs to the machine, not to
+        // whichever directory happened to pay for it first.
+        expect(await counted(src, await scratch(), shared)).toBeGreaterThan(0);
+        expect(await counted(src, await scratch(), shared)).toBe(0);
     });
 
     it('says what it reused, so a build that is not saving anything shows it', async () => {
@@ -200,6 +211,7 @@ describe('the cache under a real build', () => {
             writeFileSync(join(src, name), document(name));
         }
         const out = await scratch('zenera-cache-out-');
+        const cacheDir = await scratch('zenera-cache-store-');
         const build = () =>
             buildIndex({
                 files: [src],
@@ -208,6 +220,7 @@ describe('the cache under a real build', () => {
                 embedder: new CountingEmbedder(REF),
                 embeddingRef: REF,
                 indexer: 'test',
+                cacheDir,
             });
 
         const cold = await build();
@@ -223,32 +236,13 @@ describe('the cache under a real build', () => {
         expect(edited.reused.vectors).toBeLessThan(edited.manifest.counts.chunks);
     });
 
-    it('hides the cache from the walker that finds documents', async () => {
-        const src = await scratch('zenera-cache-src-');
-        writeFileSync(join(src, 'a.md'), document('xi'));
-        await counted(src, src);
-
-        // `walk` skips dot-entries, so `.cache/` cannot come back as a document
-        // when the index is written into the tree it indexes.
-        const embedder = new CountingEmbedder(REF);
-        const { manifest } = await buildIndex({
-            files: [src],
-            cwd: src,
-            out: src,
-            embedder,
-            embeddingRef: REF,
-            indexer: 'test',
-        });
-        expect(manifest.sources.map((s) => s.name)).not.toContain(`${CACHE_DIR}/${VECTORS_FILE}`);
-        expect(manifest.sources.every((s) => !s.name.startsWith('.'))).toBe(true);
-    });
-
     it('embeds everything again when the build says not to cache', async () => {
         const src = await scratch('zenera-cache-src-');
         writeFileSync(join(src, 'a.md'), document('nu'));
         const out = await scratch('zenera-cache-out-');
+        const shared = await scratch('zenera-cache-store-');
 
-        const first = await counted(src, out);
-        expect(await counted(src, out, false)).toBe(first);
+        const first = await counted(src, out, shared);
+        expect(await counted(src, out, shared, false)).toBe(first);
     });
 });

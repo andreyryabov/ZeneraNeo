@@ -1,3 +1,4 @@
+import { cacheItems } from '@zenera/cli/lib';
 import { SANDBOX_MOUNT, type Model, type ProcResult, type Runner } from '@zenera/neo';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -5,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Box } from '../src/box.ts';
-import { Cache } from '../src/cache.ts';
+import { Cache, FAKER_KIND } from '../src/cache.ts';
 import { build, BuildFailed, reason, unfence } from '../src/generate.ts';
 import { loadSpec, type Operation } from '../src/spec.ts';
 import { Checks } from '../src/validate.ts';
@@ -335,6 +336,10 @@ describe('the cache', () => {
 
     afterEach(() => rmSync(root, { recursive: true, force: true }));
 
+    // Never the machine's own store: these tests must not read what a person
+    // has cached, and must not leave anything behind in it either.
+    const cacheDir = (): string => join(root, 'store');
+
     const good: Behaviour = (input) => ({
         user_id: Number((input.pathParams as Record<string, unknown>).user_id ?? 1),
         email: 'a@b.com',
@@ -345,19 +350,20 @@ describe('the cache', () => {
         const box = new Box({ root, image: 'stub', exec: engine.exec });
         const model = fakeModel(['# fine']);
         const generate = vi.spyOn(model, 'generate');
-        const cache = new Cache({ box, checks: new Checks(), model });
+        const cache = new Cache({ box, checks: new Checks(), model, cacheDir: cacheDir() });
 
         const all = await Promise.all(Array.from({ length: 10 }, () => cache.ensure(operation)));
         expect(generate).toHaveBeenCalledTimes(1);
         expect(new Set(all.map((g) => g.source)).size).toBe(1);
     });
 
-    it('reads the file back on a later start instead of asking again', async () => {
+    it('reads what is cached on a later start instead of asking again', async () => {
         const engine = fakeEngine(root, good);
         const first = new Cache({
             box: new Box({ root, image: 'stub', exec: engine.exec }),
             checks: new Checks(),
             model: fakeModel(['# fine']),
+            cacheDir: cacheDir(),
         });
         await first.ensure(operation);
 
@@ -367,23 +373,32 @@ describe('the cache', () => {
             box: new Box({ root, image: 'stub', exec: engine.exec }),
             checks: new Checks(),
             model,
+            cacheDir: cacheDir(),
         });
 
         const got = await second.ensure(operation);
         expect(got.cached).toBe(true);
         expect(generate).not.toHaveBeenCalled();
+        // A hit is copied back into the box, because the container can only
+        // run what is under its mount.
+        expect(readFileSync(join(root, 'generators', operation.key, 'gen.py'), 'utf8')).toContain(
+            '# fine',
+        );
     });
 
     it('records what wrote it', async () => {
         const engine = fakeEngine(root, good);
         const box = new Box({ root, image: 'stub', exec: engine.exec });
-        await new Cache({ box, checks: new Checks(), model: fakeModel(['# fine']) }).ensure(
-            operation,
-        );
+        await new Cache({
+            box,
+            checks: new Checks(),
+            model: fakeModel(['# fine']),
+            cacheDir: cacheDir(),
+        }).ensure(operation);
 
-        const meta = JSON.parse(
-            readFileSync(join(root, 'generators', operation.key, 'meta.json'), 'utf8'),
-        );
+        const { rows } = cacheItems(FAKER_KIND, { dir: cacheDir() });
+        const mine = rows.find((r) => r.key === operation.key)!;
+        const meta = (mine.value as { meta: Record<string, unknown> }).meta;
         expect(meta.model).toBe('stub');
         expect(meta.operationId).toBe('getUserById');
     });
@@ -393,7 +408,13 @@ describe('the cache', () => {
         const box = new Box({ root, image: 'stub', exec: engine.exec });
         const model = fakeModel(['# broken']);
         const generate = vi.spyOn(model, 'generate');
-        const cache = new Cache({ box, checks: new Checks(), model, attempts: 1 });
+        const cache = new Cache({
+            box,
+            checks: new Checks(),
+            model,
+            attempts: 1,
+            cacheDir: cacheDir(),
+        });
 
         await expect(cache.ensure(operation)).rejects.toBeInstanceOf(BuildFailed);
         await expect(cache.ensure(operation)).rejects.toBeInstanceOf(BuildFailed);
@@ -415,7 +436,7 @@ describe('the cache', () => {
                     : Promise.resolve({ text: '# fine', toolCalls: [] });
             },
         };
-        const cache = new Cache({ box, checks: new Checks(), model });
+        const cache = new Cache({ box, checks: new Checks(), model, cacheDir: cacheDir() });
 
         await expect(cache.ensure(operation)).rejects.toThrow(/rate limited/);
         await expect(cache.ensure(operation)).resolves.toMatchObject({ cached: false });
@@ -437,7 +458,13 @@ describe('the cache', () => {
                 return { text: '# fine', toolCalls: [] };
             },
         };
-        const cache = new Cache({ box, checks: new Checks(), model, concurrency: 2 });
+        const cache = new Cache({
+            box,
+            checks: new Checks(),
+            model,
+            concurrency: 2,
+            cacheDir: cacheDir(),
+        });
 
         const many = await loadSpec(join(here, 'specs', 'petstore.yaml'));
         await Promise.all(many.filter((o) => o.success.schema).map((o) => cache.ensure(o)));

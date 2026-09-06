@@ -60,9 +60,11 @@ for. `GET /users/12324` answering with somebody else's id validates perfectly
 and is still wrong.
 
 If it fails, the diagnostics go back to the model and it tries again, up to
-`--attempts`. If it passes, the file is cached under `~/.zenera/neo/faker` and
+`--attempts`. If it passes, the generator is kept in this machine's shared cache
+under `~/.zenera/neo/cache/faker-generator/`, keyed by the operation's shape, and
 every later request is just `podman exec python3 gen.py in.json out.json` — no
-model, no tokens.
+model, no tokens. The store is the machine's, so the same document served from
+another directory costs nothing the second time.
 
 Generators run in a container with **no network**, on an image baked once with
 `faker`, `exrex`, `jsonschema` and `python-dateutil`.
@@ -88,7 +90,7 @@ happen, all in the operation's own names:
 - at request time a token identical to the one just sent is **cut** — nulled or
   dropped, whichever the schema allows — and the request line says so. Nothing
   is invented in its place; a generator written before this rule existed is
-  still on disk, and a cache is not rebuilt because a rule changed.
+  still cached, and a cache is not rebuilt because a rule changed.
 
 Only paginated operations are affected. Their cache keys changed once, so they
 are written again on first use; everything else keeps the key it had.
@@ -110,8 +112,8 @@ zen faker cache ls | clear   What has been generated, or throw it away.
 
 Useful options: `--port`, `--host` (reachable only from this machine by
 default), `--model`, `--seed` (same request, same answer), `--rebuild`,
-`--attempts`, `--concurrency`, `--timeout`, `--cache <dir>`, `--quiet`.
-`zen help faker` prints the full table.
+`--attempts`, `--concurrency`, `--timeout`, `--cache <dir>` (the container's
+workspace), `--quiet`. `zen help faker` prints the full table.
 
 `GET /__faker/routes` lists what is being served; `GET /__faker/health` is a
 health check.

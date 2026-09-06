@@ -34,8 +34,10 @@ export interface BuildOptions {
     indexer: string;
     /** keep a bundled copy of each document in the index. On by default. */
     sources?: boolean;
-    /** reuse vectors from a previous build of this directory; on by default */
+    /** reuse vectors this machine already has; on by default */
     cache?: boolean;
+    /** keep them somewhere other than the shared store */
+    cacheDir?: string;
     signal?: AbortSignal;
     /** what the documents turned out to hold, before a vector has been paid for */
     onRead?: (summary: BuildSummary) => void;
@@ -52,7 +54,7 @@ export interface BuildResult {
     entities: EntityRecord[];
     /** what each phase cost, so a slow build can say which part was slow */
     timings: readonly PhaseTiming[];
-    /** vectors that came out of `.cache/` instead of being paid for again */
+    /** vectors that came out of the shared cache instead of being paid for again */
     reused: number;
 }
 
@@ -67,7 +69,9 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
     });
     const ref = options.embeddingRef ?? options.embedder.id;
     const cache =
-        options.cache === false ? NO_CACHE : openCache(options.out, options.embedder, ref);
+        options.cache === false
+            ? NO_CACHE
+            : openCache(options.embedder, { ref, dir: options.cacheDir });
 
     try {
         const corpus = await loadSpecs(options.files);

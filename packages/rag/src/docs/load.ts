@@ -58,7 +58,9 @@ export interface Corpus {
 
 export interface LoadOptions {
     chunk?: ChunkOptions;
-    /** where an index is being written, which is where parses are remembered */
+    /** remember what documents parse to; on by default */
+    cache?: boolean;
+    /** keep the parses somewhere other than the shared store */
     cacheDir?: string;
     onProgress?: (done: number, total: number, pending: readonly string[]) => void;
 }
@@ -84,7 +86,8 @@ export async function loadDocuments(
     const root = commonRoot(found);
     const taken = new Set<string>();
     const chunk = options.chunk ?? {};
-    const cache: ParseCache = options.cacheDir ? openParseCache(options.cacheDir) : NO_PARSE_CACHE;
+    const cache: ParseCache =
+        options.cache === false ? NO_PARSE_CACHE : openParseCache(options.cacheDir);
 
     const read: Read[] = [];
     const skipped: Corpus['skipped'] = [];

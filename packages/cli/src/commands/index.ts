@@ -1,5 +1,6 @@
 import type { BannerText } from '../banner.ts';
 import type { Command } from '../command.ts';
+import { cache } from './cache.ts';
 import { check } from './check.ts';
 import { init } from './init.ts';
 import { inspect } from './inspect.ts';
@@ -26,6 +27,7 @@ export const COMMANDS: Record<string, Command> = {
     check,
     inspect,
     sandbox,
+    cache,
     version,
 };
 

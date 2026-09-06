@@ -13,8 +13,11 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { extract, split } from '../src/args.ts';
 import { auditModels } from '../src/audit.ts';
+import { Cache, cacheKey } from '../src/cache.ts';
 import {
+    CATALOG_KIND,
     CATALOG_TTL_MS,
+    catalogKey,
     CURATED,
     fetchCatalog,
     loadCatalog,
@@ -25,7 +28,6 @@ import { ALIASES, COMMANDS, EXTERNAL, type External } from '../src/commands/inde
 import { cliManifest, versionOf } from '../src/commands/version.ts';
 import { hasExternal, loadExternal } from '../src/external.ts';
 import { History, historyPath, MAX_ENTRIES } from '../src/history.ts';
-import { paths, writeJson } from '../src/home.ts';
 import { isStamp, stamp, stampInstant } from '../src/ids.ts';
 import {
     ambient,
@@ -37,6 +39,7 @@ import {
     parseRef,
     type KeyEntry,
     type KeyStore,
+    type Provider,
 } from '../src/keys.ts';
 import { classify, probeModels } from '../src/liveness.ts';
 import { engineDisk, ensurePodmanReady, ownedContainers } from '../src/podman.ts';
@@ -1434,8 +1437,7 @@ describe('where a listing comes from', () => {
     });
 
     const cache = (provider: string, fetchedAt: string, ids: string[]): void =>
-        writeJson(join(paths.catalog(), `${provider}.json`), {
-            version: 1,
+        new Cache(CATALOG_KIND).put(catalogKey(provider as Provider), {
             provider,
             fetchedAt,
             entries: ids.map((id) => ({
@@ -1471,8 +1473,9 @@ describe('where a listing comes from', () => {
     });
 
     it('ignores a cache written by a version that is not this one', async () => {
-        writeJson(join(paths.catalog(), 'openrouter.json'), {
-            version: 99,
+        // The version is part of the key, so an entry from another one is not
+        // read and rejected — it is simply never looked for.
+        new Cache(CATALOG_KIND).put(cacheKey(99, 'openrouter'), {
             provider: 'openrouter',
             fetchedAt: new Date().toISOString(),
             entries: [{ ref: 'openrouter:x', id: 'x', provider: 'openrouter', roles: ['chat'] }],

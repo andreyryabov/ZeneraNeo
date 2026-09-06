@@ -162,6 +162,7 @@ you are not expected to hand-author `agents.yaml`.
 | `inspect` | Opens or rebuilds a run's `report.html`.                             |
 | `check`   | Validates the project and every file it names, and asks the models.  |
 | `sandbox` | Checks and prepares the container that command-line tools run in.    |
+| `cache`   | What work has been kept, and getting rid of it.                      |
 | `version` | CLI, library and Node versions.                                      |
 
 Commands can also come from a package installed alongside this one, so a new
@@ -255,7 +256,7 @@ zen models test vertex:gemini-embedding-001 # one real call, one verdict
 zen models pick --embedding                 # the first ref that answers, on stdout
 ```
 
-Listings are cached for a day in `~/.zenera/neo/catalog`. When a provider cannot
+Listings are cached for a day in `~/.zenera/neo/cache`. When a provider cannot
 be asked the last listing is used and said to be stale; only if there was never
 one does a short built-in list stand in.
 
@@ -414,6 +415,32 @@ clear where a working provider actually comes from.
 - **Keyring** — `~/.zenera/neo`, readable only by you. Keys are copied into the
   environment just before a run, so an environment variable you set yourself
   always wins and a project checked out on a machine without `zen` still runs.
+- **Cache** — `~/.zenera/neo/cache`, one place for work already done: vectors,
+  parses, model listings, generated mocks. Shared by every project on the
+  machine, and never evicted by anything but you.
+
+## What has already been paid for
+
+Embedding a paragraph, parsing a document, asking a provider what it serves —
+all expensive, all perfectly repeatable. They are kept in one store,
+`~/.zenera/neo/cache/<kind>/`, keyed by every input that produced them. Change
+an input and you are asking a different question, which is why nothing in there
+is ever invalidated: it is simply never asked for again.
+
+```
+zen cache ls                          # what is kept, by kind
+zen cache ls --kind vectors           # and what is in one of them
+zen cache prune --older-than 30d      # drop what has gone unread for a month
+zen cache prune --max-size 2GB        # or keep it under a ceiling
+zen cache clear --kind docs-parse     # throw one kind away
+```
+
+Age is when an entry was last _used_, not when it was written, so a vector a
+weekly rebuild reads is never old. Nothing evicts on its own — a store that
+quietly deletes things is only ever noticed when it has deleted the wrong one —
+so retention is a decision made out loud, here. Nothing in it is precious
+either: every entry is work that can be done again, and the only cost of
+removing one is paying for it a second time.
 
 ## The library underneath
 

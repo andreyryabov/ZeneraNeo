@@ -39,8 +39,10 @@ export interface BuildOptions {
     /** told the manifest, so a store can say what wrote it */
     indexer: string;
     chunk?: ChunkOptions;
-    /** reuse vectors from a previous build of this directory; on by default */
+    /** reuse vectors and parses this machine already has; on by default */
     cache?: boolean;
+    /** keep them somewhere other than the shared store */
+    cacheDir?: string;
     signal?: AbortSignal;
     /** what the documents turned out to hold, before a vector has been paid for */
     onRead?: (summary: BuildSummary) => void;
@@ -60,7 +62,7 @@ export interface BuildResult {
     chunks: ChunkRecord[];
     /** what each phase cost, so a slow build can say which part was slow */
     timings: readonly PhaseTiming[];
-    /** what came out of `.cache/` instead of being done again */
+    /** what came out of the shared cache instead of being done again */
     reused: Reused;
 }
 
@@ -80,12 +82,15 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
     });
     const ref = options.embeddingRef ?? options.embedder.id;
     const cache =
-        options.cache === false ? NO_CACHE : openCache(options.out, options.embedder, ref);
+        options.cache === false
+            ? NO_CACHE
+            : openCache(options.embedder, { ref, dir: options.cacheDir });
 
     try {
         const corpus = await loadDocuments(options.files, options.cwd, {
             chunk: options.chunk,
-            cacheDir: options.cache === false ? undefined : options.out,
+            cache: options.cache !== false,
+            cacheDir: options.cacheDir,
             onProgress: (done, total, pending) => {
                 journal.progress(done, total, pending);
                 options.onReading?.(done, total, pending);

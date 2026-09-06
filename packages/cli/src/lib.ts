@@ -25,6 +25,16 @@
 export { extract, invokedAs, one, parse, split, type Parsed, type Split } from './args.ts';
 export { printBanner, type BannerText } from './banner.ts';
 export {
+    Cache, items as cacheItems, cacheKey, kinds as cacheKinds, clear as clearCache, NO_CACHE,
+    sweep as sweepCache,
+    type CacheEntry,
+    type CacheItem,
+    type CacheKind,
+    type CacheOptions,
+    type CacheStore,
+    type Swept
+} from './cache.ts';
+export {
     CATALOG_TTL_MS,
     CURATED,
     fetchCatalog,
@@ -36,7 +46,7 @@ export {
     type CatalogEntry,
     type CatalogOptions,
     type Filters,
-    type Role,
+    type Role
 } from './catalog.ts';
 export type { Command, Context } from './command.ts';
 export { assertPrivate, ensureDir, ensureHome, home, paths, readJson, writeJson } from './home.ts';
@@ -64,7 +74,7 @@ export {
     type KeyOwner,
     type Liveness,
     type Provider,
-    type Service,
+    type Service
 } from './keys.ts';
 export { probe, probeAll } from './liveness.ts';
 export {
@@ -77,7 +87,7 @@ export {
     type EngineDisk,
     type OwnedContainer,
     type PodmanOptions,
-    type PodmanStatus,
+    type PodmanStatus
 } from './podman.ts';
 export {
     ago,
@@ -102,5 +112,6 @@ export {
     write,
     writeAll,
     yellow,
-    type ExitCode,
+    type ExitCode
 } from './term.ts';
+

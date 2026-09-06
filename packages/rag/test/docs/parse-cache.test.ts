@@ -1,11 +1,10 @@
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { CACHE_DIR } from '../../src/common/cache.ts';
 import { loadDocuments } from '../../src/docs/load.ts';
-import { openParseCache, PARSE_FILE, parseKey } from '../../src/docs/parse-cache.ts';
+import { openParseCache, PARSE_KIND, parseKey } from '../../src/docs/parse-cache.ts';
 
 // ---------------------------------------------------------------------------
 // Not parsing the same document twice
@@ -14,6 +13,9 @@ import { openParseCache, PARSE_FILE, parseKey } from '../../src/docs/parse-cache
 // is what takes it to nothing. The risk is the same as any cache's: serving an
 // answer for a question that has since changed. So most of what is below is
 // about what must count as a miss.
+//
+// Every test names its own `cacheDir`. The store is otherwise the machine's,
+// and a test suite must not read or write what a person has cached.
 // ---------------------------------------------------------------------------
 
 const dirs: string[] = [];
@@ -39,7 +41,22 @@ async function corpus(files: Record<string, string>): Promise<string> {
     return dir;
 }
 
-const cacheFile = (out: string) => join(out, CACHE_DIR, PARSE_FILE);
+/** Every entry file the store holds for the parse kind, shards and all. */
+function files(dir: string): string[] {
+    const kind = join(dir, PARSE_KIND);
+    if (!existsSync(kind)) {
+        return [];
+    }
+    return readdirSync(kind, { withFileTypes: true })
+        .filter((shard) => shard.isDirectory())
+        .flatMap((shard) =>
+            readdirSync(join(kind, shard.name))
+                .filter((f) => f.endsWith('.json'))
+                .map((f) => join(kind, shard.name, f)),
+        );
+}
+
+const keyOf = (src: string, name: string) => parseKey(readFileSync(join(src, name)), name, {})!;
 
 describe('the parse key', () => {
     const bytes = Buffer.from('# a document\n');
@@ -71,121 +88,99 @@ describe('the parse key', () => {
 describe('the parse cache', () => {
     it('is consulted, not merely written', async () => {
         const src = await corpus({ 'a.md': document('alpha') });
-        const out = await scratch('zenera-parse-out-');
+        const cacheDir = await scratch('zenera-parse-store-');
 
-        const first = await loadDocuments([src], src, { cacheDir: out });
-        const key = parseKey(readFileSync(join(src, 'a.md')), 'a.md', {})!;
+        const first = await loadDocuments([src], src, { cacheDir });
 
         // A planted entry under the right key. If the second load returns it,
         // nothing re-parsed the document.
-        writeFileSync(
-            cacheFile(out),
-            `${JSON.stringify({
-                key,
-                chunks: [{ ...first.docs[0]!.chunks[0]!, text: 'PLANTED' }],
-                outline: { ...first.docs[0]!.outline, title: 'PLANTED' },
-            })}\n`,
-        );
+        const planted = openParseCache(cacheDir);
+        planted.put(keyOf(src, 'a.md'), {
+            chunks: [{ ...first.docs[0]!.chunks[0]!, text: 'PLANTED' }],
+            outline: { ...first.docs[0]!.outline, title: 'PLANTED' },
+        });
 
-        const second = await loadDocuments([src], src, { cacheDir: out });
+        const second = await loadDocuments([src], src, { cacheDir });
         expect(second.docs[0]!.chunks[0]!.text).toBe('PLANTED');
         expect(second.docs[0]!.outline.title).toBe('PLANTED');
     });
 
     it('gives back exactly what a fresh parse gives back', async () => {
         const src = await corpus({ 'a.md': document('beta'), 'b.md': document('gamma') });
-        const out = await scratch('zenera-parse-out-');
+        const cacheDir = await scratch('zenera-parse-store-');
 
-        const cold = await loadDocuments([src], src, { cacheDir: out });
-        const warm = await loadDocuments([src], src, { cacheDir: out });
+        const cold = await loadDocuments([src], src, { cacheDir });
+        const warm = await loadDocuments([src], src, { cacheDir });
 
         expect(warm.docs).toEqual(cold.docs);
     });
 
     it('re-parses only the document that changed', async () => {
         const src = await corpus({ 'a.md': document('delta'), 'b.md': document('epsilon') });
-        const out = await scratch('zenera-parse-out-');
+        const cacheDir = await scratch('zenera-parse-store-');
 
-        await loadDocuments([src], src, { cacheDir: out });
+        await loadDocuments([src], src, { cacheDir });
         writeFileSync(join(src, 'b.md'), document('zeta'));
-        await loadDocuments([src], src, { cacheDir: out });
+        const second = await loadDocuments([src], src, { cacheDir });
 
-        const cache = openParseCache(out);
-        expect(cache.get(parseKey(readFileSync(join(src, 'a.md')), 'a.md', {})!)).toBeDefined();
-        expect(cache.get(parseKey(readFileSync(join(src, 'b.md')), 'b.md', {})!)).toBeDefined();
-        // The superseded entry was dropped when the build compacted.
-        expect(cache.get(parseKey(Buffer.from(document('epsilon')), 'b.md', {})!)).toBeUndefined();
+        expect(second.cached).toBe(1);
+    });
+
+    it('keeps what a build no longer refers to', async () => {
+        const src = await corpus({ 'a.md': document('lambda'), 'b.md': document('mu') });
+        const cacheDir = await scratch('zenera-parse-store-');
+        await loadDocuments([src], src, { cacheDir });
+        expect(files(cacheDir)).toHaveLength(2);
+
+        // The store is the machine's, not this build's. Getting rid of what is
+        // no longer wanted is `zen cache prune`'s job, and it is not a decision
+        // one corpus should be making on behalf of every other.
+        await rm(join(src, 'b.md'));
+        await loadDocuments([src], src, { cacheDir });
+        expect(files(cacheDir)).toHaveLength(2);
     });
 
     it('misses when the chunk settings change', async () => {
         const src = await corpus({ 'a.md': document('eta') });
-        const out = await scratch('zenera-parse-out-');
+        const cacheDir = await scratch('zenera-parse-store-');
 
-        const wide = await loadDocuments([src], src, { cacheDir: out });
-        writeFileSync(
-            cacheFile(out),
-            `${JSON.stringify({
-                key: parseKey(readFileSync(join(src, 'a.md')), 'a.md', {})!,
-                chunks: [{ ...wide.docs[0]!.chunks[0]!, text: 'STALE' }],
-                outline: wide.docs[0]!.outline,
-            })}\n`,
-        );
+        const wide = await loadDocuments([src], src, { cacheDir });
+        openParseCache(cacheDir).put(keyOf(src, 'a.md'), {
+            chunks: [{ ...wide.docs[0]!.chunks[0]!, text: 'STALE' }],
+            outline: wide.docs[0]!.outline,
+        });
 
         const narrow = await loadDocuments([src], src, {
-            cacheDir: out,
+            cacheDir,
             chunk: { chunkTokens: 16, maxChunkTokens: 32 },
         });
 
         expect(narrow.docs[0]!.chunks.some((c) => c.text === 'STALE')).toBe(false);
     });
 
-    it('drops a last line a kill left half written', async () => {
-        const src = await corpus({ 'a.md': document('theta'), 'b.md': document('iota') });
-        const out = await scratch('zenera-parse-out-');
-        await loadDocuments([src], src, { cacheDir: out });
-
-        const whole = readFileSync(cacheFile(out), 'utf8');
-        writeFileSync(cacheFile(out), whole.slice(0, whole.length - 40));
-
-        const cache = openParseCache(out);
-        expect(cache.get(parseKey(readFileSync(join(src, 'a.md')), 'a.md', {})!)).toBeDefined();
-        expect(cache.get(parseKey(readFileSync(join(src, 'b.md')), 'b.md', {})!)).toBeUndefined();
-    });
-
-    it('survives a line that is not JSON at all', async () => {
+    it('survives an entry that is not JSON at all', async () => {
         const src = await corpus({ 'a.md': document('kappa') });
-        const out = await scratch('zenera-parse-out-');
-        await loadDocuments([src], src, { cacheDir: out });
+        const cacheDir = await scratch('zenera-parse-store-');
+        await loadDocuments([src], src, { cacheDir });
 
-        appendFileSync(cacheFile(out), 'this is not json\n');
-        const again = await loadDocuments([src], src, { cacheDir: out });
+        for (const file of files(cacheDir)) {
+            writeFileSync(file, 'this is not json');
+        }
+        const again = await loadDocuments([src], src, { cacheDir });
 
         expect(again.docs).toHaveLength(1);
         expect(again.docs[0]!.chunks.length).toBeGreaterThan(0);
+        expect(again.cached).toBe(0);
     });
 
-    it('forgets what a build no longer refers to', async () => {
-        const src = await corpus({ 'a.md': document('lambda'), 'b.md': document('mu') });
-        const out = await scratch('zenera-parse-out-');
-        await loadDocuments([src], src, { cacheDir: out });
-        const both = readFileSync(cacheFile(out), 'utf8').split('\n').filter(Boolean).length;
-
-        await rm(join(src, 'b.md'));
-        await loadDocuments([src], src, { cacheDir: out });
-        const one = readFileSync(cacheFile(out), 'utf8').split('\n').filter(Boolean).length;
-
-        expect(both).toBe(2);
-        expect(one).toBe(1);
-    });
-
-    it('writes nothing when no cache directory was named', async () => {
+    it('writes nothing when the caller asked for no cache', async () => {
         const src = await corpus({ 'a.md': document('nu') });
-        const out = await scratch('zenera-parse-out-');
+        const cacheDir = await scratch('zenera-parse-store-');
 
-        const loaded = await loadDocuments([src], src);
+        const loaded = await loadDocuments([src], src, { cacheDir, cache: false });
 
         expect(loaded.docs).toHaveLength(1);
-        expect(() => readFileSync(cacheFile(out), 'utf8')).toThrow();
+        expect(files(cacheDir)).toHaveLength(0);
     });
 
     it('is a miss, never an error, when the directory cannot be written', async () => {
@@ -199,14 +194,14 @@ describe('the parse cache', () => {
 
     it('does not cache at all when the chunk settings cannot be hashed', async () => {
         const src = await corpus({ 'a.md': document('omicron') });
-        const out = await scratch('zenera-parse-out-');
+        const cacheDir = await scratch('zenera-parse-store-');
 
         const loaded = await loadDocuments([src], src, {
-            cacheDir: out,
+            cacheDir,
             chunk: { tokenCount: (text) => text.length },
         });
 
         expect(loaded.docs).toHaveLength(1);
-        expect(existsSync(cacheFile(out))).toBe(false);
+        expect(files(cacheDir)).toHaveLength(0);
     });
 });

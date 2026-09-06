@@ -91,16 +91,26 @@ Probes are synthetic on purpose — real request bodies never reach a prompt.
 
 ## The cache
 
-Under `~/.zenera/neo/faker/generators/<key>/`, one directory per operation. A
-generator that a model gave up on is remembered, so a hopeless operation is not
-re-asked on every request; a _transient_ failure — a 429, a dropped socket — is
-not, because it is about this minute rather than this operation.
+Generators live in the machine's shared cache, `~/.zenera/neo/cache/faker-generator/`,
+keyed by the operation's shape — so the same spec served from two directories is
+written once, and a spec edit produces a new key rather than a stale answer. A
+generator that a model gave up on is remembered for the life of the process, so
+a hopeless operation is not re-asked on every request; a _transient_ failure — a
+429, a dropped socket — is not, because it is about this minute rather than this
+operation.
 
-`zen faker cache clear` removes the generators and the container together. They
-have to go together: the container's name is a hash of its configuration, so
-deleting the directory alone would leave a stopped container bind-mounted onto a
+`~/.zenera/neo/faker/` is the container's workspace, and scratch: a cache hit is
+copied into it, because the container can only run what is under its mount.
+
+`zen faker cache ls` lists what has been generated. `zen faker cache clear`
+removes the generators, the workspace and the container together. They have to
+go together: the container's name is a hash of its configuration, so deleting
+the workspace alone would leave a stopped container bind-mounted onto a
 directory that no longer exists, and every generator would fail with
 `python3: can't open file '/workspace/generators/…/gen.py'`.
+
+`zen cache ls --kind faker-generator` reaches the same entries from the other
+side, along with everything else this machine has cached.
 
 ## Documents it accepts
 

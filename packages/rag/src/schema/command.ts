@@ -8,6 +8,7 @@ import {
     json,
     note,
     parse,
+    paths,
     table,
     usageError,
     write,
@@ -15,7 +16,6 @@ import {
     type Context,
 } from '@zenera/cli/lib';
 import { relative, resolve } from 'node:path';
-import { CACHE_DIR } from '../common/cache.ts';
 import { resolveEmbedder } from '../common/embedder.ts';
 import { locateIndex, outputDir } from '../common/locate.ts';
 import { assertSameEmbedding } from '../common/manifest.ts';
@@ -95,8 +95,9 @@ export const command: Command = {
             ['  --no-sources', dim('Do not keep a copy of each document in the index.')],
             [
                 '  --no-cache',
-                dim('Embed everything again, ignoring vectors kept from earlier builds.'),
+                dim('Embed everything again, ignoring vectors this machine already has.'),
             ],
+            ['  --cache-dir <dir>', dim('Keep the vectors somewhere other than the shared cache.')],
         ]),
         '',
         'Search terms (repeatable)',
@@ -221,6 +222,7 @@ interface IndexFlags {
     batch?: string;
     'no-sources'?: boolean;
     'no-cache'?: boolean;
+    'cache-dir'?: string;
     quiet?: boolean;
 }
 
@@ -233,6 +235,7 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
             batch: { type: 'string' },
             'no-sources': { type: 'boolean' },
             'no-cache': { type: 'boolean' },
+            'cache-dir': { type: 'string' },
             quiet: { type: 'boolean' },
         },
         INDEX_USAGE,
@@ -242,6 +245,7 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
         throw usageError('no document given', INDEX_USAGE);
     }
     const out = outputDir(ctx.cwd, values.out, SCHEMA_INDEX);
+    const cacheDir = values['cache-dir'] ? resolve(ctx.cwd, values['cache-dir']) : paths.cache();
     const loud = !values.quiet && !ctx.json;
     const chosen = await resolveEmbedder(values.embedding, {
         maxBatch: values.batch ? count(values.batch, '--batch') : undefined,
@@ -256,6 +260,7 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
         indexer: 'zenera-rag',
         sources: !values['no-sources'],
         cache: !values['no-cache'],
+        cacheDir: values['cache-dir'] ? cacheDir : undefined,
         onRead: loud
             ? (summary) => {
                   printSources(summary.sources);
@@ -290,8 +295,8 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
     note(dim(`  ${breakdown(timings)}`));
     note(
         dim(
-            `  ${CACHE_DIR}/: reused ${reused}/${manifest.counts.entities} vectors` +
-                `${values['no-cache'] ? ' (--no-cache)' : ''}`,
+            `  reused ${reused}/${manifest.counts.entities} vectors` +
+                `${values['no-cache'] ? ' (--no-cache)' : ` from ${cacheDir}`}`,
         ),
     );
     const where =
