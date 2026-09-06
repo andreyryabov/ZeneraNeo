@@ -199,17 +199,19 @@ const add: Sub = async (ctx, args) => {
     const { values, positionals } = parse<{
         name?: string;
         'no-check'?: boolean;
-        project?: string;
-        location?: string;
+        'gcp-project'?: string;
+        'gcp-location'?: string;
     }>(
         args,
         {
             name: { type: 'string' },
             'no-check': { type: 'boolean' },
-            project: { type: 'string' },
-            location: { type: 'string' },
+            // Prefixed because every other command's --project is a Zenera one.
+            'gcp-project': { type: 'string' },
+            'gcp-location': { type: 'string' },
         },
-        'zen key add <provider>[/name] [--name <name>] [--project <id>] [--location <region>] [--no-check]',
+        'zen key add <provider>[/name] [--name <name>] [--gcp-project <id>] ' +
+            '[--gcp-location <region>] [--no-check]',
     );
 
     const ref = positionals[0];
@@ -221,9 +223,9 @@ const add: Sub = async (ctx, args) => {
     const name = values.name ?? parsed.name ?? 'default';
     const shape = SHAPES[provider];
 
-    if ((values.project || values.location) && provider !== 'vertex') {
+    if ((values['gcp-project'] || values['gcp-location']) && provider !== 'vertex') {
         throw usageError(
-            `--project and --location mean nothing to ${shape.label}`,
+            `--gcp-project and --gcp-location mean nothing to ${shape.label}`,
             'they configure a Vertex service account',
         );
     }
@@ -250,8 +252,8 @@ const add: Sub = async (ctx, args) => {
     }
 
     const entry = store.add(provider, name, raw, {
-        project: values.project,
-        location: values.location,
+        project: values['gcp-project'],
+        location: values['gcp-location'],
     });
 
     // Verified before it is trusted, but stored either way: a key that cannot
@@ -291,7 +293,7 @@ const add: Sub = async (ctx, args) => {
         note(yellow(`$${envOf(entry)} is set and will win over this`));
     }
     if (provider === 'vertex' && entry.holds === 'file' && !entry.project) {
-        note(dim('no --project given; the project_id inside the file will be used'));
+        note(dim('no --gcp-project given; the project_id inside the file will be used'));
     }
 };
 
@@ -458,8 +460,8 @@ const show: Sub = async (ctx, args) => {
             [dim('key'), keyId(entry)],
             [dim('env'), envOf(entry)],
             [dim('value'), value],
-            ...(entry.project ? [[dim('project'), entry.project]] : []),
-            ...(entry.location ? [[dim('location'), entry.location]] : []),
+            ...(entry.project ? [[dim('gcp project'), entry.project]] : []),
+            ...(entry.location ? [[dim('gcp location'), entry.location]] : []),
             [dim('state'), state(entry)],
             ...(entry.check?.fix ? [[dim('fix'), entry.check.fix]] : []),
             [dim('added'), ago(entry.addedAt)],
@@ -532,8 +534,8 @@ export const key: Command = {
         'Services the tools call: exa.',
         '',
         'Vertex takes either shape: a service-account JSON file, which wants',
-        '--project and --location too, or an express-mode API key, which wants',
-        'neither. Which one you gave is read off the value.',
+        '--gcp-project and --gcp-location too, or an express-mode API key, which',
+        'wants neither. Which one you gave is read off the value.',
         '',
         '  zen key ls [--check]              Everything stored, and its state.',
         '  zen key add <provider>[/name]     Read a key from stdin, or ask for it.',

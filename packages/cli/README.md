@@ -294,7 +294,7 @@ The usual one is a **service-account JSON file** — give its path, not its
 contents. Run the command with nothing piped and it asks:
 
 ```sh
-zen key add vertex --location us-central1
+zen key add vertex --gcp-location us-central1
 # Paste the key, or a path to the file: /Users/you/keys/vertex-sa.json
 ```
 
@@ -302,23 +302,23 @@ The prompt is read by `zen`, not by your shell, so give a full path there — `~
 is not expanded. In a script, pipe the path in instead:
 
 ```sh
-echo ~/keys/vertex-sa.json | zen key add vertex --location us-central1
+echo ~/keys/vertex-sa.json | zen key add vertex --gcp-location us-central1
 ```
 
 The file is copied into `~/.zenera/neo/keys/`, where only you can read it, so
 moving or cleaning up the original later cannot break it.
 
-- `--location <region>` is worth setting. It must be `global` or a **concrete
+- `--gcp-location <region>` is worth setting. It must be `global` or a **concrete
   region**; multi-region names like `us` are rejected with a 404. `global`
   routes across regions and pays about ten seconds of cold start on the first
   request each process makes — a region answers in about two.
-- `--project <id>` is only needed when the `project_id` inside the file is not
+- `--gcp-project <id>` is only needed when the `project_id` inside the file is not
   the project you want.
 
 The alternative is an **express-mode API key** — a single secret, stored under
 `VERTEX_API_KEY`. It is the Vertex console's way of handing out access without a
-service account, and it needs neither a project nor a region, so `--project` and
-`--location` mean nothing there and are not stored.
+service account, and it needs neither a project nor a region, so `--gcp-project`
+and `--gcp-location` mean nothing there and are not stored.
 
 ### Gemini, three ways
 
@@ -338,15 +338,15 @@ and a region, because the file says which project it belongs to but never which
 region to call:
 
 ```sh
-echo ~/keys/vertex-sa.json | zen key add vertex --location us-central1
+echo ~/keys/vertex-sa.json | zen key add vertex --gcp-location us-central1
 ```
 
-Add `--project` only when the `project_id` inside the file is not the one you
+Add `--gcp-project` only when the `project_id` inside the file is not the one you
 want to bill:
 
 ```sh
 echo ~/keys/vertex-sa.json \
-  | zen key add vertex --project other-project --location europe-west4
+  | zen key add vertex --gcp-project other-project --gcp-location europe-west4
 ```
 
 **Vertex, express mode** — paste the key at the prompt; no flags apply:
@@ -358,8 +358,8 @@ zen key add vertex
 Holding several at once is the ordinary case. Name them and switch:
 
 ```sh
-echo ~/keys/prod-sa.json | zen key add vertex/prod --location us-central1
-echo ~/keys/dev-sa.json  | zen key add vertex/dev  --location global
+echo ~/keys/prod-sa.json | zen key add vertex/prod --gcp-location us-central1
+echo ~/keys/dev-sa.json  | zen key add vertex/dev  --gcp-location global
 zen key add vertex/express       # the express key, same provider
 
 zen key use vertex/dev           # which one the next run uses
