@@ -38,9 +38,10 @@ async function through(
     dir: string,
     texts: readonly string[],
     ref = REF,
+    dimensions?: number,
 ): Promise<{ vectors: Float32Array[]; embedded: number }> {
     const embedder = new CountingEmbedder(ref);
-    const cache = openCache(embedder, { ref, dir });
+    const cache = openCache(embedder, { ref, dir, dimensions });
     const vectors = await embedCached({ embedder, cache, texts });
     cache.commit();
     return { vectors, embedded: embedder.embedded };
@@ -127,6 +128,27 @@ describe('the vector cache', () => {
 
         await through(dir, texts);
         expect((await through(dir, texts, 'stub:something-else')).embedded).toBe(6);
+    });
+
+    it('throws away vectors made at another width', async () => {
+        const dir = await scratch();
+        const texts = lines(6, 'mu');
+
+        await through(dir, texts, REF, 1024);
+        expect((await through(dir, texts, REF, 512)).embedded).toBe(6);
+        expect((await through(dir, texts, REF, 1024)).embedded).toBe(0);
+    });
+
+    it('tells a width nobody asked for from one that was', async () => {
+        const dir = await scratch();
+        const texts = lines(6, 'nu');
+        const native = (await through(dir, texts)).vectors[0]!.length;
+
+        // The trap this guards: resolving an unset width to the model's own
+        // number would look harmless and would miss every vector on the machine,
+        // because an empty key segment is not the segment `96`.
+        expect((await through(dir, texts, REF, native)).embedded).toBe(6);
+        expect((await through(dir, texts)).embedded).toBe(0);
     });
 
     it('keeps what a later build no longer refers to', async () => {

@@ -33,8 +33,13 @@ export interface IndexHead {
     kind: IndexKind;
     createdAt: string;
     indexer: string;
-    /** `ref` as it was typed, `id` as the embedder answers to it */
-    embedding: { ref: string; id: string; dimensions: number };
+    /**
+     * `ref` as it was typed, `id` as the embedder answers to it, `dimensions`
+     * as the vectors actually came back. `requested` only when a width was
+     * asked for out loud: a search has to ask for the same one, and asking for
+     * the model's own default is not the same as not asking.
+     */
+    embedding: { ref: string; id: string; dimensions: number; requested?: number };
     /** whether the table carries an fts index, and whether it carries a vector one */
     indexes: { fts: boolean; vector: boolean };
 }

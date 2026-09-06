@@ -38,6 +38,8 @@ import { createEmbedder, defaultModels, type Embedder, type EmbeddingRef } from 
  */
 export interface EmbedderTuning {
     maxBatch?: number;
+    /** narrower vectors, where the model is trained to be truncated */
+    dimensions?: number;
 }
 
 export async function resolveEmbedder(
@@ -54,7 +56,7 @@ export async function resolveEmbedder(
     if (!ref) {
         throw choices(keys, fromEnv);
     }
-    if (tuning?.maxBatch === undefined) {
+    if (tuning?.maxBatch === undefined && tuning?.dimensions === undefined) {
         return createEmbedder(ref as EmbeddingRef);
     }
     return createEmbedder({ ...defaultModels.parseEmbedding(ref), ...tuning });

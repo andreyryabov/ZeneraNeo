@@ -34,6 +34,13 @@ export interface BuildOptions {
     indexer: string;
     /** keep a bundled copy of each document in the index. On by default. */
     sources?: boolean;
+    /**
+     * The width asked of the embedder, when one was asked for. Part of the cache
+     * key, because a truncated vector is a different vector; left undefined when
+     * nobody asked, because that is a different key again from asking for the
+     * number the model would have chosen anyway.
+     */
+    dimensions?: number;
     /** reuse vectors this machine already has; on by default */
     cache?: boolean;
     /** keep them somewhere other than the shared store */
@@ -71,7 +78,11 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
     const cache =
         options.cache === false
             ? NO_CACHE
-            : openCache(options.embedder, { ref, dir: options.cacheDir });
+            : openCache(options.embedder, {
+                  ref,
+                  dir: options.cacheDir,
+                  dimensions: options.dimensions,
+              });
     let writer: EntityWriter | undefined;
 
     try {
@@ -108,6 +119,7 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
                 ref,
                 id: options.embedder.id,
                 dimensions,
+                requested: options.dimensions,
             },
             sources: summary.sources,
             counts: summary.counts,

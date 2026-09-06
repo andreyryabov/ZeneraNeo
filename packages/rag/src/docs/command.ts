@@ -106,6 +106,10 @@ export const command: Command = {
                 dim(`Where the index goes. Default ${DEFAULT_DIR}, or ${DIR_ENV}.`),
             ],
             ['  --batch <n>', dim("Texts per embedding request. Default: the model's own cap.")],
+            [
+                '  --dimensions <n>',
+                dim("Narrower vectors, if the model allows it. Default: the model's own width."),
+            ],
             ['  --chunk-tokens <n>', dim('Target chunk size. Default 384.')],
             [
                 '  --no-cache',
@@ -202,6 +206,7 @@ interface IndexFlags {
     out?: string;
     embedding?: string;
     batch?: string;
+    dimensions?: string;
     'chunk-tokens'?: string;
     'no-cache'?: boolean;
     'cache-dir'?: string;
@@ -215,6 +220,7 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
             out: { type: 'string', short: 'o' },
             embedding: { type: 'string' },
             batch: { type: 'string' },
+            dimensions: { type: 'string' },
             'chunk-tokens': { type: 'string' },
             'no-cache': { type: 'boolean' },
             'cache-dir': { type: 'string' },
@@ -229,8 +235,13 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
     const out = outputDir(ctx.cwd, values.out, DOCS_INDEX);
     const cacheDir = values['cache-dir'] ? resolve(ctx.cwd, values['cache-dir']) : paths.cache();
     const loud = !values.quiet && !ctx.json;
+    // Undefined when unasked, all the way to the cache key: a width nobody
+    // named is not the same key as the width the model happens to default to,
+    // and resolving it here would miss every vector already paid for.
+    const dimensions = values.dimensions ? count(values.dimensions, '--dimensions') : undefined;
     const chosen = await resolveEmbedder(values.embedding, {
         maxBatch: values.batch ? count(values.batch, '--batch') : undefined,
+        dimensions,
     });
     const started = Date.now();
 
@@ -244,6 +255,7 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
         chunk: values['chunk-tokens']
             ? { chunkTokens: count(values['chunk-tokens'], '--chunk-tokens') }
             : undefined,
+        dimensions,
         cache: !values['no-cache'],
         cacheDir: values['cache-dir'] ? cacheDir : undefined,
         onReading: loud
@@ -437,7 +449,12 @@ async function search(args: readonly string[], ctx: Context): Promise<void> {
     const ref = values.embedding ?? manifest.embedding.ref;
     assertSameEmbedding(manifest, ref);
 
-    const found = await DocsIndex.open(dir, await resolveEmbedder(ref));
+    // A query has to be asked at the width the passages were written at, and
+    // the ref alone does not say what that was.
+    const found = await DocsIndex.open(
+        dir,
+        await resolveEmbedder(ref, { dimensions: manifest.embedding.requested }),
+    );
     try {
         if (values.interactive) {
             await repl(found, query, shape);
