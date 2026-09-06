@@ -99,7 +99,7 @@ export function embeddingResponse(
     };
 }
 
-/** Idempotent, so normalising a slice early and the whole response later agree. */
+/** Idempotent, so settling a vector that is already unit length changes nothing. */
 export function unitVector(vector: number[]): number[] {
     let sum = 0;
     for (const x of vector) {

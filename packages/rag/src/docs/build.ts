@@ -1,5 +1,5 @@
 import type { Embedder } from '@zenera/neo';
-import { embedCached, NO_CACHE, openCache, type VectorCache } from '../common/cache.ts';
+import { embedStream, NO_CACHE, openCache, type VectorCache } from '../common/cache.ts';
 import { beginBuild, type Journal, type PhaseTiming } from '../common/progress.ts';
 import { formatLines, type ChunkOptions } from './chunk.ts';
 import {
@@ -13,7 +13,7 @@ import {
 } from './files.ts';
 import { loadDocuments, type Corpus } from './load.ts';
 import { DOCS_REPORT, PHASES, type Phase } from './readme.ts';
-import { writeChunks, type ChunkRecord } from './store.ts';
+import { openChunks, type ChunkRecord, type ChunkWriter } from './store.ts';
 
 // ---------------------------------------------------------------------------
 // Building an index
@@ -85,6 +85,7 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
         options.cache === false
             ? NO_CACHE
             : openCache(options.embedder, { ref, dir: options.cacheDir });
+    let writer: ChunkWriter | undefined;
 
     try {
         const corpus = await loadDocuments(options.files, options.cwd, {
@@ -121,9 +122,10 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
         options.onRead?.({ sources, counts, skipped: corpus.skipped });
 
         journal.phase('embedding');
-        const vectors = await embedAll(chunks, options, journal, cache);
+        writer = await openChunks(options.out);
+        const dimensions = await embedAll(chunks, options, journal, cache, writer);
         journal.phase('writing');
-        const written = await writeChunks(options.out, chunks, vectors);
+        const written = await writer.finish();
 
         const manifest: Manifest = {
             version: INDEX_VERSION,
@@ -133,7 +135,7 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
             embedding: {
                 ref,
                 id: options.embedder.id,
-                dimensions: vectors[0]?.length ?? 0,
+                dimensions,
             },
             sources,
             counts,
@@ -152,6 +154,7 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
             reused: { parses: corpus.cached, vectors: cache.hits },
         };
     } catch (err) {
+        writer?.close();
         cache.abandon();
         journal.fail(err);
         throw err;
@@ -184,19 +187,22 @@ async function embedAll(
     options: BuildOptions,
     journal: Journal<Counts, Manifest, Phase>,
     cache: VectorCache,
-): Promise<Float32Array[]> {
-    // The whole corpus in one call. How many texts fit in a request, and how
-    // many requests may be in flight, are the embedder's to answer — it knows
-    // the model's caps and it is the one that sees the 429s. What used to be
-    // here was a fixed 96 sent strictly one batch at a time.
-    return embedCached({
+    writer: ChunkWriter,
+): Promise<number> {
+    // A window at a time, rather than the whole corpus in one call. How many
+    // texts fit in a request, and how many requests may be in flight, are still
+    // the embedder's to answer — it knows the model's caps and it is the one
+    // that sees the 429s. What the window decides is only how much is resident.
+    return embedStream({
         embedder: options.embedder,
         cache,
-        texts: chunks.map((c) => c.embedText),
+        records: chunks,
+        textOf: (chunk) => chunk.embedText,
         signal: options.signal,
         onProgress: (done, total) => {
             journal.progress(done, total);
             options.onProgress?.(done, total);
         },
+        onWindow: (window, vectors) => writer.add(window, vectors),
     });
 }

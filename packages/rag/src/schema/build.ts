@@ -1,5 +1,5 @@
 import type { Embedder } from '@zenera/neo';
-import { embedCached, NO_CACHE, openCache, type VectorCache } from '../common/cache.ts';
+import { embedStream, NO_CACHE, openCache, type VectorCache } from '../common/cache.ts';
 import { beginBuild, type Journal, type PhaseTiming } from '../common/progress.ts';
 import { toEntities, type EntityRecord } from './entities.ts';
 import {
@@ -13,7 +13,7 @@ import {
 import { buildGraph } from './graph.ts';
 import { PHASES, SCHEMA_REPORT, type Phase } from './readme.ts';
 import { loadSpecs, type Corpus } from './spec.ts';
-import { writeStore } from './store.ts';
+import { openStore, type EntityWriter } from './store.ts';
 
 // ---------------------------------------------------------------------------
 // Building an index
@@ -72,6 +72,7 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
         options.cache === false
             ? NO_CACHE
             : openCache(options.embedder, { ref, dir: options.cacheDir });
+    let writer: EntityWriter | undefined;
 
     try {
         const corpus = await loadSpecs(options.files);
@@ -93,9 +94,10 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
         options.onRead?.(summary);
 
         journal.phase('embedding');
-        const vectors = await embedAll(entities, options, journal, cache);
+        writer = await openStore(options.out);
+        const dimensions = await embedAll(entities, options, journal, cache, writer);
         journal.phase('writing');
-        const written = await writeStore(options.out, entities, vectors);
+        const written = await writer.finish();
 
         const manifest: Manifest = {
             version: INDEX_VERSION,
@@ -105,7 +107,7 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
             embedding: {
                 ref,
                 id: options.embedder.id,
-                dimensions: vectors[0]?.length ?? 0,
+                dimensions,
             },
             sources: summary.sources,
             counts: summary.counts,
@@ -123,6 +125,7 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
         journal.finish(manifest);
         return { manifest, entities, timings: journal.timings, reused: cache.hits };
     } catch (err) {
+        writer?.close();
         cache.abandon();
         journal.fail(err);
         throw err;
@@ -134,19 +137,22 @@ async function embedAll(
     options: BuildOptions,
     journal: Journal<Counts, Manifest, Phase>,
     cache: VectorCache,
-): Promise<Float32Array[]> {
-    // Everything in one call. How many texts fit in a request, and how many
-    // requests may be in flight, are the embedder's to answer — it knows the
-    // model's caps and it is the one that sees the 429s.
-    return embedCached({
+    writer: EntityWriter,
+): Promise<number> {
+    // A window at a time. How many texts fit in a request, and how many
+    // requests may be in flight, are still the embedder's to answer — it knows
+    // the model's caps and it is the one that sees the 429s.
+    return embedStream({
         embedder: options.embedder,
         cache,
-        texts: entities.map((e) => e.text),
+        records: entities,
+        textOf: (entity) => entity.text,
         signal: options.signal,
         onProgress: (done, total) => {
             journal.progress(done, total);
             options.onProgress?.(done, total);
         },
+        onWindow: (window, vectors) => writer.add(window, vectors),
     });
 }
 

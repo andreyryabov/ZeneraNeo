@@ -1,9 +1,9 @@
-import { readdirSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { embedCached, openCache, VECTOR_KIND } from '../src/common/cache.ts';
+import { embedCached, embedStream, openCache, VECTOR_KIND } from '../src/common/cache.ts';
 import { buildIndex } from '../src/docs/build.ts';
 import { CountingEmbedder } from './stub.ts';
 
@@ -49,16 +49,23 @@ async function through(
 const lines = (n: number, seed: string): string[] =>
     Array.from({ length: n }, (_, i) => `a passage about ${seed} numbered ${i}`);
 
-/** How many entry files the store holds for a kind, shards and all. */
-function stored(dir: string, kind: string): number {
-    let n = 0;
+/** Every entry file the store holds for a kind, shards and all. */
+function files(dir: string, kind: string): string[] {
+    const paths: string[] = [];
     for (const shard of readdirSync(join(dir, kind), { withFileTypes: true })) {
-        if (shard.isDirectory()) {
-            n += readdirSync(join(dir, kind, shard.name)).filter((f) => f.endsWith('.json')).length;
+        if (!shard.isDirectory()) {
+            continue;
+        }
+        for (const file of readdirSync(join(dir, kind, shard.name))) {
+            if (file.endsWith('.json')) {
+                paths.push(join(dir, kind, shard.name, file));
+            }
         }
     }
-    return n;
+    return paths;
 }
+
+const stored = (dir: string, kind: string): number => files(dir, kind).length;
 
 describe('the vector cache', () => {
     it('embeds nothing the second time', async () => {
@@ -147,6 +154,40 @@ describe('the vector cache', () => {
         expect((await through(dir, texts)).embedded).toBe(4);
     });
 
+    it('writes a vector as its bytes, not as a page of decimals', async () => {
+        const dir = await scratch();
+        const { vectors } = await through(dir, ['a single passage, to look at on disk']);
+        const [path] = files(dir, VECTOR_KIND);
+
+        const entry = JSON.parse(readFileSync(path!, 'utf8')) as { value: unknown };
+        expect(typeof entry.value).toBe('string');
+
+        // Base64 and nothing besides: four characters per three bytes, padded.
+        // A real model's 3072 floats are 16 KB this way against 83 KB spelled
+        // out one to a line, which is what the store used to hold.
+        expect(entry.value).toHaveLength(Math.ceil((vectors[0]!.length * 4) / 3) * 4);
+    });
+
+    it('is a miss on an entry left in the old shape, and mends it', async () => {
+        const dir = await scratch();
+        const texts = lines(4, 'kappa');
+        await through(dir, texts);
+
+        for (const path of files(dir, VECTOR_KIND)) {
+            const entry = JSON.parse(readFileSync(path, 'utf8')) as { value: string };
+            const bytes = Buffer.from(entry.value, 'base64');
+            const floats = new Float32Array(
+                bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+            );
+            writeFileSync(path, JSON.stringify({ ...entry, value: [...floats] }));
+        }
+
+        // Found, at the same key and the same path, and turned down on shape.
+        expect((await through(dir, texts)).embedded).toBe(4);
+        // And the put that followed left it readable, so it heals in one build.
+        expect((await through(dir, texts)).embedded).toBe(0);
+    });
+
     it('is a miss, never an error, when the directory cannot be written', async () => {
         const embedder = new CountingEmbedder(REF);
         // A path under a regular file: mkdir cannot succeed here.
@@ -158,6 +199,80 @@ describe('the vector cache', () => {
 
         expect(vectors).toHaveLength(3);
         expect(embedder.embedded).toBe(3);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Windows
+//
+// A corpus is embedded a window at a time so that peak memory is the window
+// rather than everything. That is only safe if windowing is invisible: the
+// same vectors, in the same order, for the same price.
+// ---------------------------------------------------------------------------
+
+describe('embedding in windows', () => {
+    async function streamed(
+        dir: string,
+        texts: readonly string[],
+        window: number,
+    ): Promise<{
+        seen: string[];
+        vectors: Float32Array[];
+        dimensions: number;
+        embedded: number;
+        progress: [number, number][];
+    }> {
+        const embedder = new CountingEmbedder(REF);
+        const cache = openCache(embedder, { ref: REF, dir });
+        const seen: string[] = [];
+        const vectors: Float32Array[] = [];
+        const progress: [number, number][] = [];
+
+        const dimensions = await embedStream({
+            embedder,
+            cache,
+            records: texts,
+            textOf: (text) => text,
+            window,
+            onProgress: (done, total) => progress.push([done, total]),
+            onWindow: async (records, made) => {
+                seen.push(...records);
+                vectors.push(...made);
+            },
+        });
+        return { seen, vectors, dimensions, embedded: embedder.embedded, progress };
+    }
+
+    it('hands over every record once, in order, and says how wide the model is', async () => {
+        const texts = lines(10, 'nu');
+        const run = await streamed(await scratch(), texts, 3);
+
+        expect(run.seen).toEqual(texts);
+        expect(run.dimensions).toBe(96);
+    });
+
+    it('makes the same vectors it would have made in one call', async () => {
+        const texts = lines(10, 'xi');
+        const whole = await through(await scratch(), texts);
+        const run = await streamed(await scratch(), texts, 3);
+
+        expect(run.vectors).toEqual(whole.vectors);
+    });
+
+    it('counts progress over the corpus rather than restarting each window', async () => {
+        const run = await streamed(await scratch(), lines(10, 'pi'), 4);
+        const done = run.progress.map(([n]) => n);
+
+        expect(run.progress.every(([, total]) => total === 10)).toBe(true);
+        expect(done.at(-1)).toBe(10);
+        expect(done).toEqual([...done].sort((a, b) => a - b));
+    });
+
+    it('embeds a text spanning two windows once, because the first cached it', async () => {
+        const same = 'a line that turns up in both halves';
+        const run = await streamed(await scratch(), [same, 'filler one', same, 'filler two'], 2);
+
+        expect(run.embedded).toBe(3);
     });
 });
 

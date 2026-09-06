@@ -31,11 +31,33 @@ export const VECTOR_KIND = 'vectors';
 /** Bumped only if what a key means changes; the model is already in the key. */
 const VECTOR_VERSION = 'v1';
 
+// ---------------------------------------------------------------------------
+// How a vector is written down
+//
+// As base64 of its own bytes, not as a JSON array. `JSON.stringify(v, null, 2)`
+// gives every component a line of its own — four spaces, seventeen digits, a
+// comma — which is about 27 bytes to say what four bytes already said. At 3072
+// dimensions that is 83 KB a vector, and a corpus of 200k of them is 16 GB of
+// cache for 2.4 GB of numbers.
+//
+// Base64 costs a third on top of the bytes and nothing in CPU, so the same
+// vector is 16 KB. Compression was the other candidate and is not worth it: the
+// mantissa of a float from a model is 23 bits of noise, so DEFLATE finds only
+// the sign and exponent and returns 5-10% for real time on every read.
+//
+// The encoding is not part of the key, because the key says what the vector
+// *is* and this only says how it was spelled. An entry left in the old shape is
+// therefore found, rejected for not being a string, and overwritten by the put
+// that follows — the cache heals itself one entry at a time, and
+// `scripts/vectors-base64.mjs` does the whole store at once for anyone who
+// would rather not re-embed.
+// ---------------------------------------------------------------------------
+
 export interface VectorCache {
     /** the vector this text already has, if it has one */
-    get(text: string): number[] | undefined;
+    get(text: string): Float32Array | undefined;
     /** keeps a vector for next time */
-    put(text: string, vector: number[]): void;
+    put(text: string, vector: Float32Array): void;
     /** says the entries this build read are still wanted, so age means unused */
     commit(): void;
     /** for a build that failed; entries land as they are paid for, so nothing unwinds */
@@ -83,15 +105,26 @@ class StoredVectors implements VectorCache {
         return cacheKey(...this.#prefix, text);
     }
 
-    get(text: string): number[] | undefined {
-        const found = this.#store.get<number[]>(this.#key(text));
-        return Array.isArray(found) && found.length > 0 ? found : undefined;
+    get(text: string): Float32Array | undefined {
+        const found = this.#store.get<unknown>(this.#key(text));
+        if (typeof found !== 'string' || found.length === 0) {
+            return undefined;
+        }
+        const bytes = Buffer.from(found, 'base64');
+        if (bytes.byteLength === 0 || bytes.byteLength % 4 !== 0) {
+            return undefined;
+        }
+        // Buffer.from can land at any offset in the shared pool, and a
+        // Float32Array needs a multiple of four. Slicing copies to its own.
+        return new Float32Array(
+            bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+        );
     }
 
-    put(text: string, vector: number[]): void {
+    put(text: string, vector: Float32Array): void {
         if (vector.length > 0) {
-            // A Float32Array would encode as `{"0":…}`; the store holds JSON.
-            this.#store.put(this.#key(text), Array.from(vector));
+            const bytes = new Uint8Array(vector.buffer, vector.byteOffset, vector.byteLength);
+            this.#store.put(this.#key(text), Buffer.from(bytes).toString('base64'));
         }
     }
 
@@ -127,7 +160,7 @@ export async function embedCached(options: CachedEmbedOptions): Promise<Float32A
     for (const [at, text] of texts.entries()) {
         const hit = cache.get(text);
         if (hit) {
-            vectors[at] = Float32Array.from(hit);
+            vectors[at] = hit;
             continue;
         }
         const waiting = wanted.get(text);
@@ -148,17 +181,17 @@ export async function embedCached(options: CachedEmbedOptions): Promise<Float32A
             signal: options.signal,
             onSlice: (at, slice) => {
                 for (const [i, vector] of slice.entries()) {
-                    cache.put(input[at + i]!, vector);
+                    cache.put(input[at + i]!, Float32Array.from(vector));
                 }
             },
             onProgress: (done) => options.onProgress?.(known + done, texts.length),
         });
         for (const [i, vector] of response.vectors.entries()) {
+            const shared = Float32Array.from(vector);
             // `put` rewrites the same bytes, so what a slice already saved costs
             // nothing here. Not every embedder reports slices, and the cache
             // cannot depend on it.
-            cache.put(input[i]!, vector);
-            const shared = Float32Array.from(vector);
+            cache.put(input[i]!, shared);
             for (const at of wanted.get(input[i]!)!) {
                 vectors[at] = shared;
             }
@@ -167,4 +200,58 @@ export async function embedCached(options: CachedEmbedOptions): Promise<Float32A
 
     options.onProgress?.(texts.length, texts.length);
     return vectors;
+}
+
+/**
+ * How many records are embedded, written and let go of before the next are
+ * looked at. At 3072 dimensions a window costs about 250 MB while it is in
+ * flight, and the embedder still sees enough texts at once to keep every
+ * request slot busy.
+ */
+const WINDOW = 4096;
+
+export interface EmbedStreamOptions<R> {
+    embedder: Embedder;
+    cache: VectorCache;
+    records: readonly R[];
+    textOf: (record: R) => string;
+    window?: number;
+    signal?: AbortSignal;
+    /** counted over every record, not over the window being worked on */
+    onProgress?: (done: number, total: number) => void;
+    onWindow: (records: readonly R[], vectors: readonly Float32Array[]) => Promise<void>;
+}
+
+/**
+ * Embeds in windows and hands each one straight to whatever stores it, so that
+ * peak memory is the window rather than the corpus. A corpus of 200k chunks at
+ * 3072 dimensions held about 12 GB of vectors this way round; it now holds
+ * whatever one window is, however large the corpus gets.
+ *
+ * Duplicate texts spanning two windows still cost one embedding, because the
+ * first window has already written them to the cache by the time the second
+ * asks. Under `--no-cache` they cost two, which is what `--no-cache` means.
+ *
+ * Returns the width the model answered with, for the manifest.
+ */
+export async function embedStream<R>(options: EmbedStreamOptions<R>): Promise<number> {
+    const size = options.window ?? WINDOW;
+    const total = options.records.length;
+    let dimensions = 0;
+
+    for (let at = 0; at < total; at += size) {
+        const window = options.records.slice(at, at + size);
+        const vectors = await embedCached({
+            embedder: options.embedder,
+            cache: options.cache,
+            texts: window.map(options.textOf),
+            signal: options.signal,
+            onProgress: (done) => options.onProgress?.(at + done, total),
+        });
+        if (dimensions === 0) {
+            dimensions = vectors[0]?.length ?? 0;
+        }
+        await options.onWindow(window, vectors);
+    }
+    return dimensions;
 }

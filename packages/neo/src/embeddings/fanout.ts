@@ -73,6 +73,7 @@ export async function fanout(req: EmbeddingRequest, plan: FanoutPlan): Promise<E
         return embeddingResponse([], req);
     }
     const parts = sliceBatch(req.input, plan.maxBatch, plan.maxBatchTokens);
+    const settle = req.normalize !== false;
     let done = 0;
 
     const slices = await Promise.all(
@@ -85,14 +86,11 @@ export async function fanout(req: EmbeddingRequest, plan: FanoutPlan): Promise<E
                             `for ${part.texts.length} texts`,
                     );
                 }
+                const unit = settle ? slice.vectors.map(unitVector) : slice.vectors;
                 done += part.texts.length;
-                if (req.onSlice) {
-                    const settled =
-                        req.normalize === false ? slice.vectors : slice.vectors.map(unitVector);
-                    req.onSlice(part.at, settled);
-                }
+                req.onSlice?.(part.at, unit);
                 req.onProgress?.(done, req.input.length);
-                return slice;
+                return { ...slice, vectors: unit };
             }, req.signal),
         ),
     );
@@ -103,7 +101,9 @@ export async function fanout(req: EmbeddingRequest, plan: FanoutPlan): Promise<E
             vectors[part.at + i] = vector;
         }
     }
-    return embeddingResponse(vectors, req, usageOf(slices));
+    // Settled slice by slice above. Doing it again over the join would hold a
+    // second copy of every vector at once, which for a large corpus is GBs.
+    return embeddingResponse(vectors, { ...req, normalize: false }, usageOf(slices));
 }
 
 interface Part {
