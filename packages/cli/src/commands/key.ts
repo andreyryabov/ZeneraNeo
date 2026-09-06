@@ -6,9 +6,11 @@ import {
     ambient,
     ambientId,
     assertNotEmpty,
+    checkRegion,
     describe,
     envNames,
     envOf,
+    formOf,
     keyId,
     KeyStore,
     mask,
@@ -63,6 +65,21 @@ function state(entry: KeyEntry): string {
 }
 
 /**
+ * Only a Vertex service account addresses a project and a region. An unset
+ * region is shown as the `global` it will actually be, not left blank: it is
+ * the slow endpoint, and a blank column is how it goes unnoticed. Yellow when
+ * the environment supplied it, because then the stored one is not in play.
+ */
+function placed(entry: KeyEntry): string {
+    if (entry.provider !== 'vertex' || entry.holds !== 'file') {
+        return '';
+    }
+    const fromEnv = process.env.GOOGLE_CLOUD_LOCATION;
+    const where = fromEnv ?? entry.location ?? 'global';
+    return [fromEnv ? yellow(where) : dim(where), dim(entry.project ?? '')].join(' ').trimEnd();
+}
+
+/**
  * An ambient credential borrowed into the shape the rest of this file works
  * in. It is not in the store and never will be: `store.find` misses it, so
  * `store.record` drops its check and nothing is written to disk. That is the
@@ -81,7 +98,7 @@ function asEntry(cred: Ambient): KeyEntry {
 
 function rows(store: KeyStore, borrowed: readonly [Ambient, KeyEntry][]): string[] {
     const out: string[][] = [
-        [bold(''), bold('KEY'), bold('VALUE'), bold('STATE'), bold('CHECKED')],
+        [bold(''), bold('KEY'), bold('VALUE'), bold('GCP'), bold('STATE'), bold('CHECKED')],
     ];
     for (const provider of OWNERS) {
         for (const entry of store.for(provider)) {
@@ -90,6 +107,7 @@ function rows(store: KeyStore, borrowed: readonly [Ambient, KeyEntry][]): string
                 store.isActive(entry) ? green('*') : ' ',
                 keyId(entry),
                 dim(describe(store, entry)),
+                placed(entry),
                 state(entry),
                 dim(entry.check ? ago(entry.check.at) : '—') +
                     (shadow && store.isActive(entry) ? yellow(`  shadowed by $${shadow}`) : ''),
@@ -100,6 +118,7 @@ function rows(store: KeyStore, borrowed: readonly [Ambient, KeyEntry][]): string
                 dim('~'),
                 dim(ambientId(cred)),
                 dim(describe(store, entry)),
+                placed(entry),
                 state(entry),
                 dim(cred.env ? 'from the environment' : 'from gcloud'),
             ]);
@@ -230,6 +249,13 @@ const add: Sub = async (ctx, args) => {
         );
     }
 
+    // Checked before the prompt, so a typo does not cost you pasting the key.
+    const region = values['gcp-location'];
+    if (region !== undefined && !checkRegion(region)) {
+        note(yellow(`${region} is not a region this build knows; storing it anyway`));
+        note(dim('  if it is new, this is fine; if it is a typo, Vertex answers 404'));
+    }
+
     ensureHome();
     const store = await KeyStore.open();
 
@@ -249,6 +275,15 @@ const add: Sub = async (ctx, args) => {
     // other kind of credential, and `add` decides which by looking.
     if (shape.forms.length === 1 && shape.forms[0].holds === 'file' && !existsSync(raw)) {
         throw usageError(`no such file: ${raw}`);
+    }
+
+    // Which shape was given is only knowable now, and `add` would drop these
+    // two on an express key rather than store a combination Vertex refuses.
+    if (formOf(provider, raw).holds !== 'file' && (values['gcp-project'] || region)) {
+        throw usageError(
+            '--gcp-project and --gcp-location need a service-account file',
+            'the value given is an express-mode key, which addresses no project or region',
+        );
     }
 
     const entry = store.add(provider, name, raw, {

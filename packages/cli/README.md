@@ -308,10 +308,16 @@ echo ~/keys/vertex-sa.json | zen key add vertex --gcp-location us-central1
 The file is copied into `~/.zenera/neo/keys/`, where only you can read it, so
 moving or cleaning up the original later cannot break it.
 
-- `--gcp-location <region>` is worth setting. It must be `global` or a **concrete
-  region**; multi-region names like `us` are rejected with a 404. `global`
-  routes across regions and pays about ten seconds of cold start on the first
-  request each process makes — a region answers in about two.
+- `--gcp-location <region>` is worth setting. It takes a concrete region, or one
+  of the endpoints that route across regions: `us` and `eu` pool capacity while
+  keeping processing inside that territory, `global` takes whatever is free and
+  promises no residency. `global` pays about ten seconds of cold start on the
+  first request each process makes — a region answers in about two.
+- Which models a location serves is per model, and not guessable. In one
+  project, `gemini-embedding-2` answered at `us` but 404'd at `us-central1`,
+  while `gemini-2.5-flash` did the opposite. New models often reach `global`,
+  `us` and `eu` first. `zen models test vertex:<model>` is what settles it —
+  `zen key add` only establishes that the credential itself works.
 - `--gcp-project <id>` is only needed when the `project_id` inside the file is not
   the project you want.
 

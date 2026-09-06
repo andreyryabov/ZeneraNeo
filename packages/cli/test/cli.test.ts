@@ -32,6 +32,7 @@ import { isStamp, stamp, stampInstant } from '../src/ids.ts';
 import {
     ambient,
     assertUsable,
+    checkRegion,
     credentials,
     envNames,
     envOf,
@@ -272,6 +273,38 @@ describe('keys', () => {
                     value: '/tmp/sa.json',
                 },
             ]);
+        });
+    });
+
+    // A region is not checked by anything until the first call is made with it,
+    // and that call is a 404 with no hint of which flag caused it.
+    describe('a vertex region', () => {
+        it('takes a concrete region, and the multi-region endpoints', () => {
+            expect(checkRegion('us-central1')).toBe(true);
+            expect(checkRegion('europe-west4')).toBe(true);
+            expect(checkRegion('me-west1')).toBe(true);
+            expect(checkRegion('northamerica-northeast1')).toBe(true);
+            expect(checkRegion('northamerica-south1')).toBe(true);
+            expect(checkRegion('global')).toBe(true);
+            // Which models a location serves is per model, not per name, so it
+            // is not a question this can answer and does not try.
+            expect(checkRegion('us')).toBe(true);
+            expect(checkRegion('eu')).toBe(true);
+        });
+
+        it('refuses a name no region could be', () => {
+            expect(() => checkRegion('usa')).toThrow(/not a region/);
+            expect(() => checkRegion('us-central')).toThrow(/not a region/);
+            expect(() => checkRegion('US-CENTRAL1')).toThrow(/not a region/);
+            expect(() => checkRegion('')).toThrow(/not a region/);
+        });
+
+        // Google adds regions between releases, so an unknown one is reported
+        // and kept. A typo that happens to be well-formed lands here too, which
+        // is the whole reason the caller says something rather than nothing.
+        it('allows a well-formed region it does not know, and says so', () => {
+            expect(checkRegion('us-cental1')).toBe(false);
+            expect(checkRegion('mars-west1')).toBe(false);
         });
     });
 });
