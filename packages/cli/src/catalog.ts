@@ -494,8 +494,27 @@ function enrich(provider: Provider, live: CatalogEntry[]): CatalogEntry[] {
  */
 const store = (): Cache => new Cache(CATALOG_KIND, { mode: 0o644 });
 
+/**
+ * What else decides a listing's contents. Vertex answers per project and per
+ * location — one account was offered eight models at `us` and forty at
+ * `us-central1` — so a key naming only the provider serves one of those lists
+ * to both. A project left to the service-account file is not seen here.
+ */
+function scope(provider: Provider): string | undefined {
+    if (provider !== 'vertex') {
+        return undefined;
+    }
+    return cacheKey(
+        process.env.GOOGLE_CLOUD_PROJECT,
+        process.env.GOOGLE_CLOUD_LOCATION ?? 'global',
+    );
+}
+
 /** The key one provider's listing is filed under, version and all. */
-export const catalogKey = (provider: Provider): string => cacheKey(CATALOG_VERSION, provider);
+export const catalogKey = (provider: Provider): string => {
+    const extra = scope(provider);
+    return extra ? cacheKey(CATALOG_VERSION, provider, extra) : cacheKey(CATALOG_VERSION, provider);
+};
 
 function readCache(provider: Provider): CacheFile | undefined {
     const file = store().get<CacheFile>(catalogKey(provider));

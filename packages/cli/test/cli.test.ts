@@ -1489,6 +1489,30 @@ describe('where a listing comes from', () => {
         expect(cat.entries.map((e) => e.id)).toEqual(CURATED.anthropic.map((e) => e.id));
     });
 
+    // Vertex offers a different set of models in each location, so a listing
+    // filed under the provider alone answers for a place it never asked.
+    it('files a vertex listing under the place it was asked', async () => {
+        const kept = process.env.GOOGLE_CLOUD_LOCATION;
+        try {
+            process.env.GOOGLE_CLOUD_LOCATION = 'us-central1';
+            cache('vertex', new Date().toISOString(), ['only-in-us-central1']);
+            process.env.GOOGLE_CLOUD_LOCATION = 'us';
+            expect((await loadCatalog('vertex', { offline: true })).origin).toBe('curated');
+
+            process.env.GOOGLE_CLOUD_LOCATION = 'us-central1';
+            const back = await loadCatalog('vertex', { offline: true });
+            expect(back.origin).toBe('cache');
+            expect(back.entries.map((e) => e.id)).toEqual(['only-in-us-central1']);
+        } finally {
+            process.env.GOOGLE_CLOUD_LOCATION = kept;
+        }
+    });
+
+    it('leaves a provider with one listing filed under its own name', () => {
+        expect(catalogKey('openai' as Provider)).toBe(catalogKey('openai' as Provider));
+        expect(catalogKey('openai' as Provider)).not.toContain('global');
+    });
+
     it('uses a cache written inside the day without asking anyone', async () => {
         cache('openai', new Date().toISOString(), ['cached-model']);
         const cat = await loadCatalog('openai', { offline: true });
@@ -1589,5 +1613,14 @@ describe('telling a blocked account from a bad key', () => {
 
     it('keeps an unreachable provider out of both', () => {
         expect(classify(fails('fetch failed')).state).toBe('unknown');
+    });
+
+    // A misspelt vertex location makes up a hostname, and the reply is a
+    // Google error page whose first line, `<!DOCTYPE html>`, names no cause.
+    it('reads a web page as a wrong endpoint', () => {
+        const check = classify(fails('<!DOCTYPE html>\n<html lang=en>\n  <title>Error 404'));
+        expect(check.state).toBe('unknown');
+        expect(check.detail).toMatch(/web page/);
+        expect(check.fix).toMatch(/location/);
     });
 });

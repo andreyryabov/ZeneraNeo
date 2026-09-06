@@ -307,6 +307,11 @@ const add: Sub = async (ctx, args) => {
             if (check.fix) {
                 note(dim(`  ${check.fix}`));
             }
+        } else if (check.state === 'unknown' && check.fix) {
+            // Most unknowns are a plane or a proxy and say nothing worth a
+            // line. One carrying a fix is different: we know what is wrong.
+            note(`${yellow('unverified')} ${check.detail}`);
+            note(dim(`  ${check.fix}`));
         }
     }
     store.save();

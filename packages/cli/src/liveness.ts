@@ -130,6 +130,17 @@ export function classify(err: unknown): KeyCheck {
     if (UNREACHED.some((needle) => haystack.includes(needle))) {
         return { state: 'unknown', at, detail: 'could not reach the provider' };
     }
+    // A json api that answers in html was never reached: the hostname was
+    // wrong. Vertex builds its hostname out of the location, so a misspelt
+    // region lands here — as `<!DOCTYPE html>`, which explains nothing.
+    if (haystack.includes('<!doctype html') || haystack.includes('<html')) {
+        return {
+            state: 'unknown',
+            at,
+            detail: 'a web page came back, not the api — the endpoint does not exist',
+            fix: 'check the location: vertex builds its hostname from it',
+        };
+    }
     // 429 means the credential authenticated and then got rate limited, which
     // is a live key having a bad day.
     if (status === 429) {
