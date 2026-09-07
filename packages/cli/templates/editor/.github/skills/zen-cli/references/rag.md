@@ -360,7 +360,7 @@ Every document is **copied into the index**, and every quoted line is read back
 out of that copy — so the index is one portable thing and what it quotes is the
 document rather than a reconstruction of it. Each document is named by its path
 relative to the common root of everything indexed, which is what keeps
-`nsx_4.1.0/api/routing.md` and `nsx_4.2.0/api/routing.md` apart.
+`acme_4.1.0/api/routing.md` and `acme_4.2.0/api/routing.md` apart.
 
 ```
 docs-db/
@@ -395,7 +395,7 @@ ask; the second call is the same question inside one part of the tree.
 
 ```
 zen rag docs search "how are rate limits counted"
-zen rag docs search --file "nsx_4.2.*/api/**" "rate limit for the users route"
+zen rag docs search --file "acme_4.2.*/api/**" "rate limit for the users route"
 zen rag docs search --section "Rate limits" --kind table "requests per minute"
 zen rag docs search --mode text "X-RateLimit-Remaining"
 ```

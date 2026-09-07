@@ -577,8 +577,8 @@ project.** Not optional, and not the same thing as passing the tools in.
 
 Wiring alone leaves the model to infer everything that matters. A tool
 description says what `grep_api` does; it cannot say that this index holds the
-NSX policy API, that names are `snake_case`, that every route is under
-`/policy/api/v1`, or that `list_api` is the right first move here because the
+ACME policy API, that names are `snake_case`, that every route is under
+`/api/v1/policy`, or that `list_api` is the right first move here because the
 API has three hundred operations and search will hand back five. That is
 project knowledge, and project knowledge belongs in a skill — where it is
 loaded only when the model is actually working on this API, instead of sitting

@@ -147,8 +147,8 @@ describe('one document out of several', () => {
         };
         const other = await SchemaIndex.open(dir, counted);
         try {
-            await expect(other.search({ all: ['pets'], sources: ['nsx'] })).rejects.toThrow(
-                /holds no document called nsx/,
+            await expect(other.search({ all: ['pets'], sources: ['acme'] })).rejects.toThrow(
+                /holds no document called acme/,
             );
             expect(calls).toBe(0);
         } finally {

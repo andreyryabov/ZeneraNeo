@@ -147,7 +147,7 @@ export const command: Command = {
         '',
         dim('  A --file pattern with * or ? is a glob over the whole document name,'),
         dim('  otherwise a substring. Names are relative to what was indexed, so'),
-        dim('  --file "nsx_4.2*/api/**" is one release and --file routing is a word.'),
+        dim('  --file "acme_4.2*/api/**" is one release and --file routing is a word.'),
         '',
         'Exact listing — no embedder, no credential',
         ...table([

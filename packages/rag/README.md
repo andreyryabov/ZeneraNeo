@@ -149,7 +149,7 @@ verbatim with their line numbers, and a marker wherever something between two
 of them was left out:
 
 ```
-## nsx_4.2.0/api/routing.md — 9 of 148 lines
+## acme_4.2.0/api/routing.md — 9 of 148 lines
 
   5 | ## Rate limits
   7 | Requests are counted per tenant and rejected past the limit.
@@ -164,7 +164,7 @@ interface**, not an afterthought. The second call is the same question inside
 one part of the tree:
 
 ```sh
-zen rag docs search --file "nsx_4.2.*/api/**" "rate limit for the users route"
+zen rag docs search --file "acme_4.2.*/api/**" "rate limit for the users route"
 zen rag docs search --section "Rate limits" --kind table "requests per minute"
 zen rag docs search --mode text "X-RateLimit-Remaining"   # exact wording only
 zen rag docs search --interactive                          # narrow by typing

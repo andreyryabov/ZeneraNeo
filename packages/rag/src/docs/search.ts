@@ -23,7 +23,7 @@ import { ChunkStore, type Hit, type StoreFilter } from './store.ts';
 // A query is a question plus the narrowings an agent arrives at by asking twice:
 // a file pattern, a section, a kind of block. That is the whole shape of how
 // these get used — search, read the answer, decide it was the wrong half of the
-// tree, search again inside `nsx_4.*` — so narrowing is a first-class argument
+// tree, search again inside `acme_4.*` — so narrowing is a first-class argument
 // and not a second tool.
 //
 // The narrowings are resolved against the manifest and the outline BEFORE the

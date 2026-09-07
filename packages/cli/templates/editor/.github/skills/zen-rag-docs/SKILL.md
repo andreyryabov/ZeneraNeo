@@ -147,7 +147,7 @@ documentation tree is what makes "which release says this?" answerable at all.
 
 ```sh
 zen rag docs index ./docs ./README.md ./packages/*/README.md --embedding openai:text-embedding-3-small
-zen rag docs index "releases/nsx_4.*/**/*.md" --embedding google:gemini-embedding-001 -o .index/nsx
+zen rag docs index "releases/acme_4.*/**/*.md" --embedding google:gemini-embedding-001 -o .index/acme
 ```
 
 ### The name is the identity
@@ -157,8 +157,8 @@ everything you named. Nothing anywhere records where the file was on the machine
 that built the index.
 
 That name is what `--file` patterns match, so it is worth arranging on purpose.
-Indexing two release trees at once keeps `nsx_4.1.0/api/routing.md` and
-`nsx_4.2.0/api/routing.md` apart, and a search can be pinned to one of them.
+Indexing two release trees at once keeps `acme_4.1.0/api/routing.md` and
+`acme_4.2.0/api/routing.md` apart, and a search can be pinned to one of them.
 Indexing one tree from inside it gives you `api/routing.md`. Two files that
 would land on the same name are deduped rather than merged.
 
@@ -229,7 +229,7 @@ zen rag docs search "how are rate limits counted"
 The answer is the corpus quoting itself:
 
 ```
-## nsx_4.2.0/api/routing.md — 9 of 148 lines
+## acme_4.2.0/api/routing.md — 9 of 148 lines
 
   5 | ## Rate limits
   7 | Requests are counted per tenant and rejected past the limit.
@@ -259,14 +259,14 @@ question with a narrowing on it — not a different command.
 | `--exclude-id <id>`      | a passage already seen. Repeatable                                                   |
 
 ```sh
-zen rag docs search --file "nsx_4.2.*/api/**" "rate limit for the users route"
+zen rag docs search --file "acme_4.2.*/api/**" "rate limit for the users route"
 zen rag docs search --section "Rate limits" --kind table "requests per minute"
 zen rag docs search --mode text "X-RateLimit-Remaining"
 ```
 
 A `--file` pattern with `*` or `?` is a glob matched against the whole document
 name; a plain word is a substring. So `--file routing` finds
-`nsx_4.2.0/api/routing.md` and `--file "routing*"` finds nothing.
+`acme_4.2.0/api/routing.md` and `--file "routing*"` finds nothing.
 
 `--section` takes a heading title, a structure id, or the structure path an
 earlier answer printed. A title that appears in four documents becomes four
@@ -397,7 +397,7 @@ think it is?".
 | "what is the shape of this manual?"               | `list sections --depth 2`                       |
 | "where is the table of per-route limits?"         | `list tables --file "api/**"`                   |
 | "the exact error string, not something like it"   | `search --mode text "connection reset by peer"` |
-| "same question, but only the 4.2 docs"            | `search --file "nsx_4.2*/**" "…"`               |
+| "same question, but only the 4.2 docs"            | `search --file "acme_4.2*/**" "…"`              |
 | "is this index the right one?"                    | `stats`                                         |
 
 The rule: **a question about meaning is a `search`; a question about presence,
@@ -461,7 +461,7 @@ list, so an empty answer and an absent thing look identical. `grep_docs` is how
 
 `search_docs` is shaped for the **second** call rather than the first. The first
 is always a sentence and always returns some of the wrong tree; the second is
-the same sentence with `files: ["nsx_4.2*/api/**"]`, or `section: "Rate limits"`,
+the same sentence with `files: ["acme_4.2*/api/**"]`, or `section: "Rate limits"`,
 or `kind: ["table"]`. Those are parameters and not separate tools, so narrowing
 costs one call instead of three. `exclude_ids` takes the ids from an earlier
 answer, so asking again moves on instead of repeating itself.
@@ -482,7 +482,7 @@ project.** Not optional, and not the same thing as passing the tools in.
 
 Wiring alone leaves the model to infer everything that matters. A tool
 description says what `grep_docs` does; it cannot say that this index holds the
-NSX 4.1 and 4.2 manuals side by side, that every answer must be pinned to a
+ACME 4.1 and 4.2 manuals side by side, that every answer must be pinned to a
 release with `files`, that the API reference lives under `*/api/**` and the
 task guides under `*/guides/**`, or that the numbers anybody actually wants are
 in tables and so `kind: ["table_row"]` is the right first move. That is project
@@ -530,19 +530,19 @@ Best practice, in order of how often it is got wrong:
 
 ```md
 ---
-name: nsx-docs
-description: How to find an answer in the NSX 4.1 and 4.2 manuals — which document says it,
+name: acme-docs
+description: How to find an answer in the ACME 4.1 and 4.2 manuals — which document says it,
     what it says verbatim, and which release it is true of. Use before answering anything
-    about NSX behaviour, limits or API routes.
+    about ACME behaviour, limits or API routes.
 ---
 
-# The NSX manuals
+# The ACME manuals
 
 Indexed at `/assets/docs-db` (already in `$ZEN_DOCS_DB`). Two releases side by
-side; document names begin `nsx_4.1.0/` or `nsx_4.2.0/`, then `api/` for the
+side; document names begin `acme_4.1.0/` or `acme_4.2.0/`, then `api/` for the
 reference and `guides/` for the task documentation.
 
-- Always pin the release: `files: ["nsx_4.2.0/**"]`. An unpinned search mixes them.
+- Always pin the release: `files: ["acme_4.2.0/**"]`. An unpinned search mixes them.
 - Vague question ("how does edge failover work?") → `search_docs`, then ask again
   with `section` or `files` once you can see which half of the tree it is in.
 - Does X exist, how is it spelled, how many are there → `grep_docs`. It is
@@ -553,7 +553,7 @@ reference and `guides/` for the task documentation.
 - Never `grep`/`rg`/`cat` the tree — the tools above are local and exact.
 
 Worked: per-route rate limits are the table under "Rate limits" in
-`nsx_4.2.0/api/routing.md` (lines 24-31); the retry envelope is described two
+`acme_4.2.0/api/routing.md` (lines 24-31); the retry envelope is described two
 sections down. Cite the document name and the line numbers.
 ```
 

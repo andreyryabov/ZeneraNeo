@@ -20,7 +20,7 @@ import { parseAll, type Parsed, type ParseInput } from './pool.ts';
 //
 // Every document is given a NAME, which is its path relative to the common root
 // of everything that was named — so indexing two release trees keeps
-// `nsx_4.1.0/api/routing.md` and `nsx_4.2.0/api/routing.md` apart, and a search
+// `acme_4.1.0/api/routing.md` and `acme_4.2.0/api/routing.md` apart, and a search
 // can be narrowed to one of them with a pattern over exactly that string. The
 // name is the identity: it is stamped on every chunk, it is what `sources/`
 // files are called, and nothing anywhere records where the file was on the

@@ -24,7 +24,7 @@ import { SEARCH_MODES, type DocsIndex, type DocsQuery } from './search.ts';
 //
 // `search_docs` is shaped for the second call rather than the first. The first
 // is always a sentence and always returns too much of the wrong tree; the
-// second is the same sentence with `files: ["nsx_4.2*/api/**"]`, or
+// second is the same sentence with `files: ["acme_4.2*/api/**"]`, or
 // `section: "Rate limits"`, or `kind: ["table"]` because the answer is a table
 // and not the prose around it. Those are parameters and not separate tools, so
 // narrowing costs one call and not three.
@@ -122,7 +122,7 @@ export function docsTools<TCtx = unknown>(
                 },
                 files: strings(
                     'Only documents whose name matches. A glob if it has * or ?, e.g. ' +
-                        '"guides/**" or "nsx_4.2*/api/**"; otherwise a substring.',
+                        '"guides/**" or "acme_4.2*/api/**"; otherwise a substring.',
                 ),
                 exclude_files: strings('Documents to leave out, matched the same way.'),
                 section: strings(

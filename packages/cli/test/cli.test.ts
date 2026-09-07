@@ -490,16 +490,16 @@ describe('reading a tool payload', () => {
     });
 
     it('unescapes the quotes a shell command is full of', () => {
-        expect(readable('{"command":"zen rag docs search -d /docs \\"What is NSX\\""}')).toBe(
-            'zen rag docs search -d /docs "What is NSX"',
+        expect(readable('{"command":"zen rag docs search -d /docs \\"What is a tenant\\""}')).toBe(
+            'zen rag docs search -d /docs "What is a tenant"',
         );
     });
 
     it('reads a preview that was cut off mid-string', () => {
         // The common case: the calls worth reading are the long ones, and a
         // preview is cut to a length, so the json does not close.
-        expect(readable('{"command":"zen rag docs search -d /assets/docs \\"VMware NS')).toBe(
-            'zen rag docs search -d /assets/docs "VMware NS',
+        expect(readable('{"command":"zen rag docs search -d /assets/docs \\"Rate limit he')).toBe(
+            'zen rag docs search -d /assets/docs "Rate limit he',
         );
     });
 

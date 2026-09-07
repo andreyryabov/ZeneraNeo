@@ -27,7 +27,7 @@ import { StubEmbedder } from '../stub.ts';
 // ---------------------------------------------------------------------------
 
 const CORPUS: Record<string, string> = {
-    'nsx_4.1.0/api/routing.md': [
+    'acme_4.1.0/api/routing.md': [
         '# Routing',
         '',
         'Traffic is matched against the table below.',
@@ -46,7 +46,7 @@ const CORPUS: Record<string, string> = {
         '',
     ].join('\n'),
 
-    'nsx_4.2.0/api/routing.md': [
+    'acme_4.2.0/api/routing.md': [
         '# Routing',
         '',
         'Traffic is matched against the table below.',
@@ -160,16 +160,16 @@ describe('searching', () => {
     it('narrows to one release by path pattern', async () => {
         const result = await index.search({
             query: 'rate limit for the users route',
-            files: ['nsx_4.2*/**'],
+            files: ['acme_4.2*/**'],
         });
-        expect(result.files).toEqual(['nsx_4.2.0/api/routing.md']);
-        expect(result.matches.every((m) => m.path === 'nsx_4.2.0/api/routing.md')).toBe(true);
+        expect(result.files).toEqual(['acme_4.2.0/api/routing.md']);
+        expect(result.matches.every((m) => m.path === 'acme_4.2.0/api/routing.md')).toBe(true);
     });
 
     it('narrows to a section by its heading', async () => {
         const result = await index.search({
             query: 'header',
-            files: ['nsx_4.1*/**'],
+            files: ['acme_4.1*/**'],
             section: ['Retries'],
         });
         expect(result.sections).toHaveLength(1);
@@ -188,7 +188,7 @@ describe('searching', () => {
     });
 
     it('says nothing rather than everything when no document matches', async () => {
-        const result = await index.search({ query: 'anything', files: ['nsx_9*'] });
+        const result = await index.search({ query: 'anything', files: ['acme_9*'] });
         expect(result.files).toEqual([]);
         expect(result.matches).toEqual([]);
     });
@@ -210,7 +210,7 @@ describe('assembling an answer', () => {
     it('quotes the lines it matched, verbatim and numbered', async () => {
         const result = await index.search({
             query: 'requests counted per tenant',
-            files: ['nsx_4.1*/**'],
+            files: ['acme_4.1*/**'],
         });
         const excerpt = await assemble(index, result.matches);
         const file = excerpt.files[0]!;
@@ -226,7 +226,7 @@ describe('assembling an answer', () => {
     it('marks what it skipped, and names the sections in the gap', async () => {
         const result = await index.search({
             query: 'retry after header',
-            files: ['nsx_4.1*/**'],
+            files: ['acme_4.1*/**'],
             limit: 1,
         });
         const excerpt = await assemble(index, result.matches, { mergeGap: 0 });
@@ -261,11 +261,11 @@ describe('assembling an answer', () => {
     it('renders with a line-number gutter a follow-up can quote', async () => {
         const result = await index.search({
             query: 'requests counted per tenant',
-            files: ['nsx_4.1*/**'],
+            files: ['acme_4.1*/**'],
             limit: 1,
         });
         const text = renderAssembly(await assemble(index, result.matches), { colour: false });
-        expect(text).toContain('nsx_4.1.0/api/routing.md');
+        expect(text).toContain('acme_4.1.0/api/routing.md');
         expect(text).toMatch(/\d+ \| /);
     });
 });
@@ -278,13 +278,13 @@ describe('the exact half', () => {
     });
 
     it('lists headings, scoped to a document', () => {
-        const listed = listSections(index, { files: ['nsx_4.2*/**'] });
+        const listed = listSections(index, { files: ['acme_4.2*/**'] });
         expect(listed.rows.map((r) => r.title)).toEqual(['Routing', 'Rate limits', 'Retries']);
     });
 
     it('gives a section the lines it actually ends on', () => {
         const [limits] = listSections(index, {
-            files: ['nsx_4.2*/**'],
+            files: ['acme_4.2*/**'],
             section: ['Rate limits'],
         }).rows;
         expect(limits!.line).toBe(5);
@@ -309,7 +309,7 @@ describe('the exact half', () => {
     });
 
     it('reads a named section verbatim', async () => {
-        const read = await readSection(index, 'nsx_4.2.0/api/routing.md', 'Rate limits');
+        const read = await readSection(index, 'acme_4.2.0/api/routing.md', 'Rate limits');
         expect(read.lines[0]).toBe('## Rate limits');
         expect(read.lines.join('\n')).toContain('| /api/users | 250 | 1m |');
     });
@@ -347,14 +347,14 @@ describe('the tools an agent is given', () => {
     });
 
     it('hints rather than throwing when a file pattern matches nothing', async () => {
-        const result = await call('search_docs', { query: 'anything', files: ['nsx_9*'] });
+        const result = await call('search_docs', { query: 'anything', files: ['acme_9*'] });
         expect(result.found).toBe(0);
         expect(String(result.hint)).toContain('list_docs');
     });
 
     it('reads a line range so a passage can be quoted in full', async () => {
         const result = await call('read_docs', {
-            file: 'nsx_4.1.0/api/routing.md',
+            file: 'acme_4.1.0/api/routing.md',
             from: 9,
             to: 11,
         });
