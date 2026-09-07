@@ -37,6 +37,12 @@ export interface Theme {
     readonly warn: string;
     /** Gutters and marks: structure, not content. Always drawn dim. */
     readonly rule?: string;
+    /**
+     * Branch colours, cycled in order of first sight. A fan-out is the one
+     * place where colour carries information rather than decoration: eight
+     * branches reporting at once are only separable if they are told apart.
+     */
+    readonly lanes: readonly string[];
 }
 
 const DARK: Theme = {
@@ -51,6 +57,7 @@ const DARK: Theme = {
     accent: 'cyan',
     warn: 'yellow',
     rule: 'gray',
+    lanes: ['magenta', 'cyan', 'green', 'yellow', 'blue', 'red'],
 };
 
 // On a light background `gray` is bright black — pale grey on white — and
@@ -67,6 +74,8 @@ const LIGHT: Theme = {
     },
     accent: 'blue',
     warn: 'magenta',
+    // No cyan or yellow: on paper they are barely darker than the paper.
+    lanes: ['magenta', 'blue', 'green', 'red'],
 };
 
 export const THEMES: Record<Appearance, Theme> = { dark: DARK, light: LIGHT };

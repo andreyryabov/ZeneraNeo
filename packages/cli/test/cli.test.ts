@@ -47,7 +47,7 @@ import { engineDisk, ensurePodmanReady, ownedContainers } from '../src/podman.ts
 import { dirSize } from '../src/projects.ts';
 import { scaffold } from '../src/scaffold.ts';
 import { bytes, CliError, EXIT, pad, table } from '../src/term.ts';
-import { windowOf, wrap } from '../src/tui/wrap.ts';
+import { budgetOf, CHROME_ROWS, clip, segmentsOf, windowOf, wrap } from '../src/tui/wrap.ts';
 import { validateProject, type Report } from '../src/validate.ts';
 
 // ---------------------------------------------------------------------------
@@ -350,6 +350,73 @@ describe('the streaming window', () => {
 
     it('asks for no more rows than there are', () => {
         expect(windowOf('one\ntwo', 40, 6)).toEqual(['one', 'two']);
+    });
+});
+
+describe('dividing the frame', () => {
+    // Same bug, one level up: three blocks now share the rows below the
+    // scrollback, and their total is the thing that must not exceed the
+    // viewport. Anything else on screen is `Static`, which never repaints.
+    const height = (b: { activity: number; thinking: number; live: number }): number =>
+        b.activity + b.thinking + b.live;
+
+    it('never hands out more rows than the terminal has', () => {
+        for (const rows of [1, 2, 6, 7, 8, 12, 24, 60]) {
+            for (const activity of [0, 1, 3, 6, 20]) {
+                for (const thinking of [false, true]) {
+                    const budget = budgetOf(rows, activity, thinking);
+                    expect(height(budget)).toBeLessThanOrEqual(Math.max(2, rows - CHROME_ROWS));
+                }
+            }
+        }
+    });
+
+    it('always leaves a row for the answer', () => {
+        for (const rows of [1, 2, 8, 24]) {
+            expect(budgetOf(rows, 20, true).live).toBeGreaterThanOrEqual(1);
+        }
+    });
+
+    it('caps what is in flight rather than the answer', () => {
+        expect(budgetOf(24, 20, false).activity).toBe(6);
+        expect(budgetOf(24, 2, false).activity).toBe(2);
+        expect(budgetOf(24, 0, false).activity).toBe(0);
+    });
+
+    it('gives the activity list nothing when there is no room for it', () => {
+        expect(budgetOf(8, 4, false).activity).toBe(0);
+    });
+});
+
+describe('clipping to one row', () => {
+    it('flattens the shape a preview happened to arrive in', () => {
+        expect(clip('a\n  b\t c ', 40)).toBe('a b c');
+    });
+
+    it('marks a value it had to cut', () => {
+        expect(clip('abcdefghij', 5)).toBe('abcd…');
+        expect(clip('abcde', 5)).toBe('abcde');
+    });
+});
+
+describe('fenced blocks in an answer', () => {
+    it('leaves an answer with no fence in one piece', () => {
+        expect(segmentsOf('one\ntwo')).toEqual([{ code: false, lines: ['one', 'two'] }]);
+    });
+
+    it('keeps the indentation a code block depends on', () => {
+        const [prose, block] = segmentsOf('look:\n```ts\nif (x) {\n    y();\n}\n```');
+        expect(prose).toEqual({ code: false, lines: ['look:'] });
+        expect(block?.code).toBe(true);
+        expect(block?.title).toBe('ts');
+        expect(block?.lines).toEqual(['if (x) {', '    y();', '}']);
+    });
+
+    it('takes an unlabelled fence, and an unclosed one', () => {
+        const [block] = segmentsOf('```\nx\n');
+        expect(block?.code).toBe(true);
+        expect(block?.title).toBeUndefined();
+        expect(block?.lines).toEqual(['x', '']);
     });
 });
 
