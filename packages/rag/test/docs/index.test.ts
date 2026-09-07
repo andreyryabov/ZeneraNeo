@@ -139,6 +139,15 @@ describe('building', () => {
             /built with stub:bag-of-words/,
         );
     });
+
+    it('records the width it got, and no width it was not asked for', async () => {
+        const manifest = await readManifest(out);
+
+        expect(manifest.embedding.dimensions).toBe(96);
+        // A build nobody gave --dimensions must leave this unset, or every later
+        // search asks for a width, and every later build misses the cache.
+        expect(manifest.embedding.requested).toBeUndefined();
+    });
 });
 
 describe('searching', () => {

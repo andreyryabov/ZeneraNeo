@@ -25,6 +25,21 @@
 export { extract, invokedAs, one, parse, split, type Parsed, type Split } from './args.ts';
 export { printBanner, type BannerText } from './banner.ts';
 export {
+    Cache,
+    items as cacheItems,
+    cacheKey,
+    kinds as cacheKinds,
+    clear as clearCache,
+    NO_CACHE,
+    sweep as sweepCache,
+    type CacheEntry,
+    type CacheItem,
+    type CacheKind,
+    type CacheOptions,
+    type CacheStore,
+    type Swept,
+} from './cache.ts';
+export {
     CATALOG_TTL_MS,
     CURATED,
     fetchCatalog,

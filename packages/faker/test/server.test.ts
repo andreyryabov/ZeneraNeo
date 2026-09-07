@@ -1,3 +1,4 @@
+import { Cache as Store } from '@zenera/cli/lib';
 import { SANDBOX_MOUNT, type Model, type ProcResult, type Runner } from '@zenera/neo';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -5,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Box } from '../src/box.ts';
-import { Cache } from '../src/cache.ts';
+import { Cache, FAKER_KIND } from '../src/cache.ts';
 import { Router } from '../src/router.ts';
 import { listen, type Listening } from '../src/server.ts';
 import { loadSpec } from '../src/spec.ts';
@@ -68,7 +69,7 @@ describe('the server', () => {
                 router: new Router(operations),
                 checks,
                 box,
-                cache: new Cache({ box, checks, model }),
+                cache: new Cache({ box, checks, model, cacheDir: join(root, 'store') }),
                 seed: 7,
             },
             '127.0.0.1',
@@ -222,23 +223,28 @@ describe('a looping page token', () => {
     let log: string[];
 
     /**
-     * The generator is put on disk rather than built, because that is the whole
-     * scenario: it was written before the pagination rule existed, and the walk
-     * in the build loop would refuse to write it today.
+     * The generator is put in the cache rather than built, because that is the
+     * whole scenario: it was written before the pagination rule existed, and
+     * the walk in the build loop would refuse to write it today.
      */
     const boot = async (answer: (input: Record<string, unknown>) => unknown): Promise<void> => {
         const box = new Box({ root, image: 'stub', exec: engineThat(answer, root) });
         const checks = new Checks();
+        const cacheDir = join(root, 'store');
         const operations = await loadSpec(join(here, 'specs', 'paged.yaml'));
+        const store = new Store(FAKER_KIND, { dir: cacheDir });
         for (const operation of operations) {
-            await box.write(operation.key, '# written before the rule existed');
+            store.put(operation.key, {
+                source: '# written before the rule existed',
+                meta: { model: 'stub' },
+            });
         }
         live = await listen(
             {
                 router: new Router(operations),
                 checks,
                 box,
-                cache: new Cache({ box, checks, model }),
+                cache: new Cache({ box, checks, model, cacheDir }),
                 onRequest: (line) => log.push(line),
             },
             '127.0.0.1',

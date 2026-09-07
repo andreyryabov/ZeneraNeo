@@ -29,6 +29,12 @@ export const README_FILE = 'README.md';
 /** The floor on how often README.md is rewritten. */
 export const INTERVAL_MS = 5000;
 
+/** How long one phase took, by its key rather than its sentence. */
+export interface PhaseTiming {
+    name: string;
+    ms: number;
+}
+
 export interface Building<S> {
     documents: readonly string[];
     embedding: string;
@@ -36,8 +42,14 @@ export interface Building<S> {
     now: number;
     /** the current phase, as it should be said out loud */
     step: string;
+    /** the current phase's key, for a report that counts different things per phase */
+    phase: string;
     done: number;
     total: number;
+    /** what the phase is still waiting on, when it is able to say */
+    pending: readonly string[];
+    /** every phase so far; the last is the one still running */
+    timings: readonly PhaseTiming[];
     /** what the documents turned out to hold, once they have been read */
     summary: S | undefined;
 }
@@ -46,6 +58,7 @@ export interface Completed<M> {
     dir: string;
     manifest: M;
     ms: number;
+    timings: readonly PhaseTiming[];
 }
 
 export interface Failed {
@@ -53,6 +66,7 @@ export interface Failed {
     step: string;
     reason: unknown;
     started: number;
+    timings: readonly PhaseTiming[];
 }
 
 /** The three states a README can be in, written by whoever knows the subject. */
@@ -77,9 +91,11 @@ export interface BuildPlan<S, M, P extends string> {
 export interface Journal<S, M, P extends string> {
     phase(name: P): void;
     read(summary: S, total: number): void;
-    progress(done: number, total: number): void;
+    progress(done: number, total: number, pending?: readonly string[]): void;
     finish(manifest: M): void;
     fail(reason: unknown): void;
+    /** what each phase cost, for a caller that wants to say so out loud */
+    readonly timings: readonly PhaseTiming[];
 }
 
 interface Lock {
@@ -114,8 +130,20 @@ export function beginBuild<S, M, P extends string>(plan: BuildPlan<S, M, P>): Jo
     let summary: S | undefined;
     let done = 0;
     let total = 0;
+    let pending: readonly string[] = [];
     let wroteAt = 0;
     let closed = false;
+    const timings: PhaseTiming[] = [];
+    let phaseAt = started;
+
+    /** Closes the running phase off. Called on every transition, and at the end. */
+    const mark = (): void => {
+        const at = Date.now();
+        timings.push({ name: phase, ms: at - phaseAt });
+        phaseAt = at;
+    };
+
+    const sofar = (): PhaseTiming[] => [...timings, { name: phase, ms: Date.now() - phaseAt }];
 
     const write = (body: string): void => {
         // Through a temp name, so a reader never catches half a file.
@@ -134,8 +162,11 @@ export function beginBuild<S, M, P extends string>(plan: BuildPlan<S, M, P>): Jo
                 started,
                 now: Date.now(),
                 step: plan.phases[phase],
+                phase,
                 done,
                 total,
+                pending,
+                timings: sofar(),
                 summary,
             }),
         );
@@ -165,7 +196,9 @@ export function beginBuild<S, M, P extends string>(plan: BuildPlan<S, M, P>): Jo
 
     return {
         phase(name) {
+            mark();
             phase = name;
+            pending = [];
             maybe();
         },
         read(seen, count) {
@@ -173,16 +206,37 @@ export function beginBuild<S, M, P extends string>(plan: BuildPlan<S, M, P>): Jo
             total = count;
             maybe();
         },
-        progress(at, of) {
+        progress(at, of, waiting) {
             done = at;
             total = of;
+            pending = waiting ?? [];
             maybe();
         },
         finish(manifest) {
-            close(plan.report.complete({ dir: plan.dir, manifest, ms: Date.now() - started }));
+            mark();
+            close(
+                plan.report.complete({
+                    dir: plan.dir,
+                    manifest,
+                    ms: Date.now() - started,
+                    timings,
+                }),
+            );
         },
         fail(reason) {
-            close(plan.report.failed({ documents, step: plan.phases[phase], reason, started }));
+            mark();
+            close(
+                plan.report.failed({
+                    documents,
+                    step: plan.phases[phase],
+                    reason,
+                    started,
+                    timings,
+                }),
+            );
+        },
+        get timings() {
+            return closed ? timings : sofar();
         },
     };
 }

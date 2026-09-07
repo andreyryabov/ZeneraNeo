@@ -1,7 +1,18 @@
 import type OpenAI from 'openai';
 import type { StreamDelta } from '../events.ts';
+import {
+    callSites,
+    called,
+    failed,
+    reading,
+    type CallSites,
+    type ProviderNamed,
+} from '../failure.ts';
 import type { Model, ModelRequest, ModelResponse, StopReason } from '../model.ts';
 import { zeroUsage, type Message, type TokenUsage, type ToolCall } from '../types.ts';
+
+/** The SDK call these methods make, named as it is named in a failure. */
+const API = 'responses.create';
 
 // ---------------------------------------------------------------------------
 // OpenAI responses adapter
@@ -14,7 +25,7 @@ type ResponseOutputItem = OpenAI.Responses.ResponseOutputItem;
  * Provider-specific knobs, mirroring `OpenAIModelOptions` but expressed the way
  * the responses API spells them.
  */
-export interface OpenAIResponsesModelOptions {
+export interface OpenAIResponsesModelOptions extends ProviderNamed {
     reasoningEffort?: OpenAI.ReasoningEffort;
     /** ask the model for a reasoning summary — the only reasoning text this API exposes */
     reasoningSummary?: 'auto' | 'concise' | 'detailed';
@@ -37,6 +48,7 @@ export class OpenAIResponsesModel implements Model {
     readonly #reasoningEffort: OpenAI.ReasoningEffort | undefined;
     readonly #reasoningSummary: 'auto' | 'concise' | 'detailed' | undefined;
     readonly #store: boolean;
+    readonly #site: CallSites;
 
     constructor(id: string, client: OpenAI, options: OpenAIResponsesModelOptions = {}) {
         this.id = id;
@@ -44,12 +56,13 @@ export class OpenAIResponsesModel implements Model {
         this.#reasoningEffort = options.reasoningEffort;
         this.#reasoningSummary = options.reasoningSummary;
         this.#store = options.store ?? false;
+        this.#site = callSites(id, options.provider);
     }
 
     async generate(req: ModelRequest): Promise<ModelResponse> {
-        const res = await this.#client.responses.create(this.#params(req), {
-            signal: req.signal,
-        });
+        const res = await called(this.#site('llm generation', API), () =>
+            this.#client.responses.create(this.#params(req), { signal: req.signal }),
+        );
         const toolCalls = readToolCalls(res.output);
         return {
             text: readText(res.output),
@@ -61,10 +74,15 @@ export class OpenAIResponsesModel implements Model {
     }
 
     async stream(req: ModelRequest, onDelta: (d: StreamDelta) => void): Promise<ModelResponse> {
-        const stream = await this.#client.responses.create(
-            { ...this.#params(req), stream: true },
-            { signal: req.signal },
-        );
+        const site = this.#site('llm streaming', API);
+        const open = () =>
+            this.#client.responses.create(
+                { ...this.#params(req), stream: true },
+                {
+                    signal: req.signal,
+                },
+            );
+        const stream = await called(site, open);
 
         let text = '';
         let thinking = '';
@@ -74,7 +92,7 @@ export class OpenAIResponsesModel implements Model {
         // items are still being assembled.
         const calls = new Map<number, ToolCall>();
 
-        for await (const event of stream) {
+        for await (const event of reading(site, stream, open)) {
             // Some models/gateways emit `response.reasoning.delta`, which the
             // SDK does not carry in its event union, so it is matched before
             // the typed switch.
@@ -137,9 +155,20 @@ export class OpenAIResponsesModel implements Model {
                     }
                     break;
                 }
-                case 'response.completed':
-                case 'response.incomplete':
                 case 'response.failed': {
+                    // The request was accepted, so the refusal arrives as an
+                    // event in a 200 rather than as a status. Returning it as a
+                    // response would make it an empty answer.
+                    const said = event.response.error;
+                    throw failed(
+                        site,
+                        Object.assign(new Error(said?.message ?? 'the response failed'), {
+                            code: said?.code,
+                        }),
+                    );
+                }
+                case 'response.completed':
+                case 'response.incomplete': {
                     final = event.response;
                     break;
                 }

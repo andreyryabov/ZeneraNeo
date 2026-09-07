@@ -91,18 +91,19 @@ providers:
 
 ### Fields
 
-| Field        | Meaning                                                                                                      |
-| ------------ | ------------------------------------------------------------------------------------------------------------ |
-| `kind`       | `openai` \| `google` \| `vertex` \| `anthropic` \| `openrouter` \| `openai-compatible`. Defaults to `openai` |
-| `apiKey`     | Literal key or `${VAR}`. Wins over any env lookup                                                            |
-| `apiKeyEnv`  | Env var holding the key; defaults to the kind's conventional name                                            |
-| `baseURL`    | Literal url or `${VAR}`, for gateways and compatible endpoints                                               |
-| `baseURLEnv` | Env var holding the base url                                                                                 |
-| `project`    | **vertex only** — GCP project id                                                                             |
-| `location`   | **vertex only** — a region, or `global`                                                                      |
-| `headers`    | Sent on every request: gateway routing, attribution, api versions                                            |
-| `timeoutMs`  | Per-request timeout                                                                                          |
-| `maxRetries` | Retry count; defaults to `4`, `0` disables                                                                   |
+| Field         | Meaning                                                                                                      |
+| ------------- | ------------------------------------------------------------------------------------------------------------ |
+| `kind`        | `openai` \| `google` \| `vertex` \| `anthropic` \| `openrouter` \| `openai-compatible`. Defaults to `openai` |
+| `apiKey`      | Literal key or `${VAR}`. Wins over any env lookup                                                            |
+| `apiKeyEnv`   | Env var holding the key; defaults to the kind's conventional name                                            |
+| `baseURL`     | Literal url or `${VAR}`, for gateways and compatible endpoints                                               |
+| `baseURLEnv`  | Env var holding the base url                                                                                 |
+| `project`     | **vertex only** — GCP project id                                                                             |
+| `location`    | **vertex only** — a region, or `global`                                                                      |
+| `headers`     | Sent on every request: gateway routing, attribution, api versions                                            |
+| `timeoutMs`   | Per-request timeout                                                                                          |
+| `maxRetries`  | Retry count; defaults to `4`, `0` disables                                                                   |
+| `concurrency` | Ceiling on **embedding** requests in flight on this connection                                               |
 
 ### Retries
 
@@ -115,6 +116,10 @@ to be called again shortly, so it costs a few seconds rather than the run.
 Retrying happens at the transport, below the adapter, so a retried call is one
 that never started: no partial stream is replayed and nothing reaches the
 trajectory twice. Set `maxRetries: 0` to fail fast instead.
+
+Embeddings are the exception, and deliberately: they retry one layer up, in the
+adapter, because a batch is thousands of requests and a 429 the transport
+swallows is one nothing can learn from. See [Embeddings](#embeddings).
 
 ### Kinds and their defaults
 
@@ -490,20 +495,46 @@ embeddings:
 embedding: main # what `embedder()` returns when asked for none
 ```
 
-| Field        | Applies to | Meaning                                               |
-| ------------ | ---------- | ----------------------------------------------------- |
-| `provider`   | all        | A name from `providers:`, or a built-in kind          |
-| `model`      | all        | Required. Sent to the API verbatim                    |
-| `dimensions` | all        | Truncate to this width, where the model supports it   |
-| `title`      | gemini     | A document title the retrieval task type weighs       |
-| `maxBatch`   | gemini     | Texts per request; every `gemini-embedding-*` takes 1 |
-| `routing`    | openrouter | Who serves the request                                |
+| Field            | Applies to | Meaning                                             |
+| ---------------- | ---------- | --------------------------------------------------- |
+| `provider`       | all        | A name from `providers:`, or a built-in kind        |
+| `model`          | all        | Required. Sent to the API verbatim                  |
+| `dimensions`     | all        | Truncate to this width, where the model supports it |
+| `title`          | gemini     | A document title the retrieval task type weighs     |
+| `maxBatch`       | all        | Texts per request; defaults to the model's own cap  |
+| `maxBatchTokens` | all        | Estimated tokens per request; likewise              |
+| `routing`        | openrouter | Who serves the request                              |
 
 Deliberately smaller than a model entry: an embedding call has no conversation,
 no tools and no reasoning, so a connection, an id and a width is all there is to
 say. There is **no `api:`** — `/v1/responses` has no embeddings endpoint, and
 naming one is an error. There is no `taskType` either: that describes the text
 rather than the model, so it belongs to the call.
+
+### Batching and back-pressure
+
+`embed()` takes as many texts as you have. It splits them to whatever the model
+accepts — 2048 per request for `text-embedding-3-*`, one for
+`gemini-embedding-*` — and issues those requests in parallel. There is no wave:
+a slot is granted the moment one frees, so a single slow request does not idle
+the others.
+
+How many run at once is not configured, because the honest number depends on the
+account, the model and whatever else is spending the same quota right now. It
+starts at 4, gains a slot every 8 consecutive successes, and halves the moment
+the provider answers `429` — once per overload, not once per refusal, so sixteen
+simultaneous rejections cost one halving rather than dropping to a single
+request in flight. A `Retry-After` pauses every request on that connection, not
+just the one that was refused.
+
+`concurrency:` on the _provider_ caps how high that may climb, which is what to
+reach for when a key is shared with something else. `maxBatch` and
+`maxBatchTokens` are for a gateway whose limits are not its vendor's. Both
+default to the model's, and both are ceilings — nothing here makes requests
+larger than the model allows.
+
+Progress is reported per text through `onProgress`, since a large corpus is
+minutes inside one `await`.
 
 This is **not a per-agent key**. Nothing in the runtime consumes an embedder on
 an agent's behalf yet, and a key nothing honours is worse than a key that is not

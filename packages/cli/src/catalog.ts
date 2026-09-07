@@ -17,11 +17,9 @@
 // the vendor's own word.
 // ---------------------------------------------------------------------------
 
-import { join } from 'node:path';
-
 import { ModelRegistry } from '@zenera/neo';
 
-import { paths, readJson, writeJson } from './home.ts';
+import { Cache, cacheKey } from './cache.ts';
 import { PROVIDERS, type KeyCheck, type Provider } from './keys.ts';
 import { classify } from './liveness.ts';
 
@@ -70,10 +68,12 @@ export interface Catalog {
 /** A day. Model lists change on the scale of weeks; a stale row costs a retry. */
 export const CATALOG_TTL_MS = 24 * 60 * 60 * 1000;
 
-const CACHE_VERSION = 1;
+export const CATALOG_KIND = 'catalog';
+
+/** Bumped when the stored shape changes, which makes every old entry a miss. */
+const CATALOG_VERSION = 1;
 
 interface CacheFile {
-    version: number;
     provider: Provider;
     fetchedAt: string;
     entries: CatalogEntry[];
@@ -486,11 +486,41 @@ function enrich(provider: Provider, live: CatalogEntry[]): CatalogEntry[] {
     });
 }
 
-const cachePath = (provider: Provider): string => join(paths.catalog(), `${provider}.json`);
+/**
+ * Listings are public data, so the file is left readable — someone wondering
+ * where a model row came from can go and look at it. Opened per call rather
+ * than once, because the home directory is an environment variable and a test
+ * is allowed to move it.
+ */
+const store = (): Cache => new Cache(CATALOG_KIND, { mode: 0o644 });
 
-async function readCache(provider: Provider): Promise<CacheFile | undefined> {
-    const file = await readJson<CacheFile | undefined>(cachePath(provider), undefined);
-    return file?.version === CACHE_VERSION && Array.isArray(file.entries) ? file : undefined;
+/**
+ * What else decides a listing's contents. Vertex answers per project and per
+ * location — one account was offered eight models at `us` and forty at
+ * `us-central1` — so a key naming only the provider serves one of those lists
+ * to both. A project left to the service-account file is not seen here.
+ */
+function scope(provider: Provider): string | undefined {
+    if (provider !== 'vertex') {
+        return undefined;
+    }
+    return cacheKey(
+        process.env.GOOGLE_CLOUD_PROJECT,
+        process.env.GOOGLE_CLOUD_LOCATION ?? 'global',
+    );
+}
+
+/** The key one provider's listing is filed under, version and all. */
+export const catalogKey = (provider: Provider): string => {
+    const extra = scope(provider);
+    return extra ? cacheKey(CATALOG_VERSION, provider, extra) : cacheKey(CATALOG_VERSION, provider);
+};
+
+function readCache(provider: Provider): CacheFile | undefined {
+    const file = store().get<CacheFile>(catalogKey(provider));
+    return file && Array.isArray(file.entries) && typeof file.fetchedAt === 'string'
+        ? file
+        : undefined;
 }
 
 export interface CatalogOptions {
@@ -510,7 +540,7 @@ export interface CatalogOptions {
  * model list to four rows.
  */
 export async function loadCatalog(provider: Provider, opts: CatalogOptions = {}): Promise<Catalog> {
-    const cached = await readCache(provider);
+    const cached = readCache(provider);
     const fresh =
         cached && Date.now() - new Date(cached.fetchedAt).getTime() < CATALOG_TTL_MS
             ? cached
@@ -523,12 +553,7 @@ export async function loadCatalog(provider: Provider, opts: CatalogOptions = {})
         try {
             const entries = await fetchCatalog(provider);
             const fetchedAt = new Date().toISOString();
-            writeJson(
-                cachePath(provider),
-                { version: CACHE_VERSION, provider, fetchedAt, entries } satisfies CacheFile,
-                // Public data, and readable so a human can look at what was cached.
-                0o644,
-            );
+            store().put(catalogKey(provider), { provider, fetchedAt, entries } satisfies CacheFile);
             return { provider, entries, origin: 'live', fetchedAt };
         } catch (err) {
             const problem = classify(err);

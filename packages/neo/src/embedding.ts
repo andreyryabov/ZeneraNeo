@@ -22,7 +22,11 @@ import type { TokenUsage } from './types.ts';
 export type EmbeddingTaskType = 'query' | 'document';
 
 export interface EmbeddingRequest {
-    /** the texts to encode, in the order the vectors come back */
+    /**
+     * The texts to encode, in the order the vectors come back. Any length: the
+     * adapter splits it to whatever the model accepts per request and issues
+     * those in parallel, so a caller never has to know the cap or invent one.
+     */
     input: string[];
     taskType?: EmbeddingTaskType;
     /** truncate to this width, where the model supports it */
@@ -32,6 +36,19 @@ export interface EmbeddingRequest {
      * Turn it off to see what the model actually returned.
      */
     normalize?: boolean;
+    /**
+     * Texts finished so far, out of the whole input. A large batch is minutes
+     * of one `await`, and a caller with nothing to say for that long is
+     * indistinguishable from a hung one.
+     */
+    onProgress?: (done: number, total: number) => void;
+    /**
+     * Each slice of the input as it comes back, `at` being where it started in
+     * `input`. A large request is many round trips, and a caller that persists
+     * them can survive a crash without paying for the same vectors twice.
+     * Vectors arrive normalised, exactly as the response will carry them.
+     */
+    onSlice?: (at: number, vectors: number[][]) => void;
     signal?: AbortSignal;
 }
 
@@ -76,13 +93,14 @@ export function embeddingResponse(
     usage?: TokenUsage,
 ): EmbeddingResponse {
     return {
-        vectors: req.normalize === false ? vectors : vectors.map(unit),
+        vectors: req.normalize === false ? vectors : vectors.map(unitVector),
         dimensions: vectors[0]?.length ?? 0,
         usage,
     };
 }
 
-function unit(vector: number[]): number[] {
+/** Idempotent, so settling a vector that is already unit length changes nothing. */
+export function unitVector(vector: number[]): number[] {
     let sum = 0;
     for (const x of vector) {
         sum += x * x;

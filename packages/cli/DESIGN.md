@@ -42,7 +42,8 @@ nothing but the convenience of being listed.
     projects.json      index of known projects — a cache, never the truth
     keys.json          credential index, mode 0600
     keys/              file-shaped credentials (Google ADC), mode 0700
-    catalog/           model listings per provider, mode 0644 — public, and a cache
+    faker/             the mock server's container workspace — scratch
+    cache/             work already done (§4.2), one file per object
 ```
 
 `ZENERA_HOME` overrides the root, which is what makes the whole thing testable
@@ -123,6 +124,7 @@ two.
 | `inspect` | Opens or rebuilds a run's `report.html`.                                   |
 | `check`   | Reports on the project in full: files, wiring, credentials, models (§9.2). |
 | `sandbox` | Checks and prepares the container command-line tools run in (§9).          |
+| `cache`   | What work has been kept, and getting rid of it (§4.2).                     |
 | `version` | CLI, library and Node versions.                                            |
 
 And, when the package providing it is installed:
@@ -174,6 +176,58 @@ there are strangers, that is the moment to build it — not before.
 
 A command that keeps running is not a special case. `run` returns a promise, and
 a server's simply does not settle until a signal arrives.
+
+### 4.2 One place for work already done — `zen cache`
+
+Embedding a paragraph, parsing a document, asking a provider what models it
+serves, having a model write a mock generator: all expensive, all perfectly
+repeatable, and all previously cached by a different hand-rolled file format in
+a different directory. There is now one store,
+`~/.zenera/neo/cache/<kind>/<ab>/<sha256>.json`, one JSON file per object,
+sharded two hex characters deep so no directory grows huge.
+
+The API is four methods — `get`, `put`, `delete`, `commit` — and
+`cacheKey(...parts)` to build a key out of everything that produced the value.
+Three rules hold it up.
+
+**Nothing throws.** A corrupt file, a full disk, an unreadable directory, a key
+that does not match: every one is a miss. A cache that cannot work costs time
+and must never cost correctness, so there is no error path for a caller to get
+wrong and `--no-cache` is the same code path with a store that remembers
+nothing.
+
+**The key carries every input.** Not the text alone but the model, the
+dimensions, the version of whatever produced the value. That is why there is no
+invalidation step anywhere in the codebase: change an input and you are asking a
+different question, which has no answer yet. Vectors from another model are not
+evicted, they are never found.
+
+**The key is written into the entry and checked on the way out.** The path is
+only a hash of it. Reading it back proves the file is the one that was asked for
+rather than trusting sha256 to be injective, and — far more likely to actually
+happen — catches a key derivation that changed shape without anyone bumping a
+version.
+
+One file per object rather than an append log, which is what three of the four
+caches this replaced were. A log needs a reader that tolerates a record a kill
+cut in half, a compaction pass, and a rule about what a build is allowed to
+forget; a file needs `rename`. Concurrency comes free with it: two builds
+writing the same entry write the same bytes, and `writeJson` puts them there
+atomically.
+
+**Nothing evicts on its own.** A store that quietly deletes things is only ever
+noticed when it has deleted the wrong one, so retention is a decision someone
+makes out loud: `zen cache prune --older-than 30d`, `--max-size 2GB`, or
+`zen cache clear`. `prune` with no filter is a usage error — deleting everything
+is what `clear` is for and it should have to be typed.
+
+Age is when an entry was last _used_. `commit` is what makes that true: entries
+read during a run have their mtime refreshed, but only if it is already more
+than a day stale, so a warm rebuild is not a write per read.
+
+The store being the _machine's_ rather than the index's is the point of the
+whole exercise. The same corpus indexed into two directories is embedded once,
+and two projects quoting the same handbook pay for it once between them.
 
 ## 5. Projects
 
@@ -357,7 +411,9 @@ Vertex is the one provider where that sniff decides something: anything that is
 _not_ a path is an express-mode key, stored as an ordinary secret under
 `VERTEX_API_KEY`. The two are alternatives — express mode addresses no project,
 and sending a key and a project together is a `403` — so the shape is recorded
-per entry, and `--project` / `--location` are accepted only alongside a file.
+per entry, and `--gcp-project` / `--gcp-location` are accepted only alongside a
+file. They carry the prefix because every other command's `--project` names a
+Zenera project, and one word cannot mean both.
 
 `add` verifies before it stores, unless `--no-check`. A key that fails
 verification is still stored — refusing would be wrong when the network is
@@ -428,7 +484,7 @@ Vertex additionally lists the whole Model Garden. Those rows carry no
 model ids, and asking one a question fails in a way no error message explains.
 They are dropped.
 
-**The cache is `~/.zenera/neo/catalog/<provider>.json`, one day old at most,**
+**The cache is the shared store's `catalog` kind (§4.2), one day old at most,**
 `0644` because it is public data and someone will want to look at it. The order
 when it is cold is: fresh cache, the provider, a _stale_ cache, then a short
 built-in table. Stale-before-built-in is the part worth defending — yesterday's
@@ -436,6 +492,11 @@ real answer from this account beats today's guess about accounts in general, and
 a listing that failed because the wifi dropped must not silently shrink the list
 to four rows. Every row carries its own `source`, so a guess is never mistaken
 for the vendor's word.
+
+The day is applied by `loadCatalog` rather than by the store, which has no notion
+of expiry — it hands back the entry and the time it was written, and freshness is
+the caller's question. It has to be: `stale` is a distinct answer here, and a
+store that had already discarded the entry could not give it.
 
 **`pick` is the recovery path**, and the reason the command exists. It walks a
 short ordered candidate list, cheapest and fastest first, probing one at a time

@@ -3,9 +3,11 @@ import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { isGlob, wildcard } from '../common/match.ts';
-import { chunkDocument, type Chunk, type ChunkOptions } from './chunk.ts';
-import type { FileOutline, HeadingRecord, TableRecord } from './files.ts';
-import { normalize, parseDocument, type DocFormat, type ParsedDoc } from './parse.ts';
+import type { Chunk, ChunkOptions } from './chunk.ts';
+import type { FileOutline } from './files.ts';
+import { NO_PARSE_CACHE, openParseCache, parseKey, type ParseCache } from './parse-cache.ts';
+import { normalize, type DocFormat } from './parse.ts';
+import { parseAll, type Parsed, type ParseInput } from './pool.ts';
 
 // ---------------------------------------------------------------------------
 // Finding the documents, and reading them
@@ -42,7 +44,6 @@ export interface LoadedDoc {
     format: DocFormat;
     /** the document verbatim, CRLF normalized: what goes into `sources/` */
     text: string;
-    parsed: ParsedDoc;
     chunks: Chunk[];
     outline: FileOutline;
 }
@@ -51,12 +52,28 @@ export interface Corpus {
     docs: LoadedDoc[];
     /** files that were found and not read, with the reason */
     skipped: { name: string; reason: string }[];
+    /** documents whose chunks came from a previous build rather than the parser */
+    cached: number;
 }
 
+export interface LoadOptions {
+    chunk?: ChunkOptions;
+    /** remember what documents parse to; on by default */
+    cache?: boolean;
+    /** keep the parses somewhere other than the shared store */
+    cacheDir?: string;
+    onProgress?: (done: number, total: number, pending: readonly string[]) => void;
+}
+
+/**
+ * Reading is cheap and parsing is not, so the two are split: every file is read
+ * and hashed here, and only the documents the cache has never seen are handed
+ * to the pool. On a rebuild of an unchanged corpus that is none of them.
+ */
 export async function loadDocuments(
     inputs: readonly string[],
     cwd: string,
-    options: ChunkOptions = {},
+    options: LoadOptions = {},
 ): Promise<Corpus> {
     const found = await discover(inputs, cwd);
     if (found.length === 0) {
@@ -68,7 +85,11 @@ export async function loadDocuments(
     }
     const root = commonRoot(found);
     const taken = new Set<string>();
-    const docs: LoadedDoc[] = [];
+    const chunk = options.chunk ?? {};
+    const cache: ParseCache =
+        options.cache === false ? NO_PARSE_CACHE : openParseCache(options.cacheDir);
+
+    const read: Read[] = [];
     const skipped: Corpus['skipped'] = [];
 
     for (const absolute of found) {
@@ -79,24 +100,69 @@ export async function loadDocuments(
             continue;
         }
         const raw = await readFile(absolute);
-        const text = normalize(raw.toString('utf8'));
-        const format = formatOf(absolute);
-        const parsed = parseDocument(text, name, format);
-        const chunks = chunkDocument(parsed, options);
-
-        docs.push({
+        read.push({
             name,
             file: basename(absolute),
             sha256: createHash('sha256').update(raw).digest('hex'),
             bytes: raw.byteLength,
-            format,
-            text,
-            parsed,
-            chunks,
-            outline: outlineOf(parsed, chunks.length),
+            format: formatOf(absolute),
+            text: normalize(raw.toString('utf8')),
+            key: parseKey(raw, name, chunk),
         });
     }
-    return { docs, skipped };
+
+    const parsed = new Array<Parsed>(read.length);
+    const misses: ParseInput[] = [];
+    const missAt: number[] = [];
+
+    for (const [at, doc] of read.entries()) {
+        const hit = doc.key === undefined ? undefined : cache.get(doc.key);
+        if (hit) {
+            parsed[at] = hit;
+        } else {
+            missAt.push(at);
+            misses.push({ name: doc.name, text: doc.text, format: doc.format });
+        }
+    }
+
+    const done = read.length - misses.length;
+    options.onProgress?.(done, read.length, []);
+    const fresh = await parseAll(misses, {
+        chunk,
+        onProgress: (at, _of, pending) => options.onProgress?.(done + at, read.length, pending),
+    });
+    for (const [i, result] of fresh.entries()) {
+        const at = missAt[i]!;
+        parsed[at] = result;
+        const key = read[at]!.key;
+        if (key !== undefined) {
+            cache.put(key, result);
+        }
+    }
+    cache.commit();
+
+    const docs = read.map((doc, at): LoadedDoc => ({
+        name: doc.name,
+        file: doc.file,
+        sha256: doc.sha256,
+        bytes: doc.bytes,
+        format: doc.format,
+        text: doc.text,
+        chunks: parsed[at]!.chunks,
+        outline: parsed[at]!.outline,
+    }));
+    return { docs, skipped, cached: cache.hits };
+}
+
+interface Read {
+    name: string;
+    file: string;
+    sha256: string;
+    bytes: number;
+    format: DocFormat;
+    text: string;
+    /** absent when the chunk settings cannot be hashed, which means no caching */
+    key: string | undefined;
 }
 
 export const formatOf = (path: string): DocFormat =>
@@ -205,57 +271,4 @@ function distinct(name: string, taken: Set<string>): string {
     }
     taken.add(candidate);
     return candidate;
-}
-
-// ---------------------------------------------------------------------------
-// the outline
-// ---------------------------------------------------------------------------
-
-/**
- * Headings and tables, with the line each ends on. That end is what makes the
- * outline enough on its own: a section runs from its heading to the line before
- * the next heading at the same depth or shallower, so scoping a search to a
- * section, listing what is in one, or naming the sections a skipped range
- * covered are all answerable without reading the document.
- */
-function outlineOf(doc: ParsedDoc, chunks: number): FileOutline {
-    const sections = doc.sections.filter((s) => s.line !== undefined);
-    const headings = sections.map((section, at): HeadingRecord => {
-        const next = sections.findIndex((other, i) => i > at && other.level <= section.level);
-        const end = next === -1 ? doc.lines.length : sections[next]!.line! - 1;
-        return {
-            line: section.line!,
-            end,
-            level: section.level,
-            title: section.title,
-            id: section.id,
-            path: section.path,
-        };
-    });
-
-    const tables = doc.blocks
-        .filter((block) => block.table)
-        .map((block): TableRecord => {
-            const table = block.table!;
-            return {
-                id: block.id,
-                path: block.path,
-                section: block.section.path,
-                line: block.start,
-                end: block.end,
-                columns: table.columns,
-                rows: table.rows.length,
-                caption: table.caption,
-            };
-        });
-
-    return {
-        name: doc.name,
-        title: doc.title,
-        format: doc.format,
-        lines: doc.lines.length,
-        chunks,
-        headings,
-        tables,
-    };
 }

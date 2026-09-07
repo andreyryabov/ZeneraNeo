@@ -280,6 +280,9 @@ function render(report: Report): string[] {
             ...table(
                 report.models.map((m) => [
                     `  ${m.name}`,
+                    // An alias names nothing the provider knows, so what it
+                    // stands for is printed next to it.
+                    dim(m.ref ?? ''),
                     dim(m.provider ? `${m.provider} (${m.kind})` : red('unresolved')),
                     dim(m.env ?? ''),
                     credential(m.credential),

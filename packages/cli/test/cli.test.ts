@@ -13,8 +13,11 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { extract, split } from '../src/args.ts';
 import { auditModels } from '../src/audit.ts';
+import { Cache, cacheKey } from '../src/cache.ts';
 import {
+    CATALOG_KIND,
     CATALOG_TTL_MS,
+    catalogKey,
     CURATED,
     fetchCatalog,
     loadCatalog,
@@ -25,11 +28,11 @@ import { ALIASES, COMMANDS, EXTERNAL, type External } from '../src/commands/inde
 import { cliManifest, versionOf } from '../src/commands/version.ts';
 import { hasExternal, loadExternal } from '../src/external.ts';
 import { History, historyPath, MAX_ENTRIES } from '../src/history.ts';
-import { paths, writeJson } from '../src/home.ts';
 import { isStamp, stamp, stampInstant } from '../src/ids.ts';
 import {
     ambient,
     assertUsable,
+    checkRegion,
     credentials,
     envNames,
     envOf,
@@ -37,13 +40,28 @@ import {
     parseRef,
     type KeyEntry,
     type KeyStore,
+    type Provider,
 } from '../src/keys.ts';
 import { classify, probeModels } from '../src/liveness.ts';
 import { engineDisk, ensurePodmanReady, ownedContainers } from '../src/podman.ts';
 import { dirSize } from '../src/projects.ts';
 import { scaffold } from '../src/scaffold.ts';
-import { bytes, CliError, EXIT, pad, table } from '../src/term.ts';
-import { windowOf, wrap } from '../src/tui/wrap.ts';
+import { bytes, CliError, cut, EXIT, keysIn, pad, table } from '../src/term.ts';
+import {
+    answerWidth,
+    BOX_CHROME,
+    BRANCH_ROWS,
+    branchRows,
+    budgetOf,
+    CHROME_ROWS,
+    clip,
+    readable,
+    segmentsOf,
+    THINKING_CHROME,
+    THINKING_ROWS,
+    windowOf,
+    wrap,
+} from '../src/tui/wrap.ts';
 import { validateProject, type Report } from '../src/validate.ts';
 
 // ---------------------------------------------------------------------------
@@ -271,6 +289,38 @@ describe('keys', () => {
             ]);
         });
     });
+
+    // A region is not checked by anything until the first call is made with it,
+    // and that call is a 404 with no hint of which flag caused it.
+    describe('a vertex region', () => {
+        it('takes a concrete region, and the multi-region endpoints', () => {
+            expect(checkRegion('us-central1')).toBe(true);
+            expect(checkRegion('europe-west4')).toBe(true);
+            expect(checkRegion('me-west1')).toBe(true);
+            expect(checkRegion('northamerica-northeast1')).toBe(true);
+            expect(checkRegion('northamerica-south1')).toBe(true);
+            expect(checkRegion('global')).toBe(true);
+            // Which models a location serves is per model, not per name, so it
+            // is not a question this can answer and does not try.
+            expect(checkRegion('us')).toBe(true);
+            expect(checkRegion('eu')).toBe(true);
+        });
+
+        it('refuses a name no region could be', () => {
+            expect(() => checkRegion('usa')).toThrow(/not a region/);
+            expect(() => checkRegion('us-central')).toThrow(/not a region/);
+            expect(() => checkRegion('US-CENTRAL1')).toThrow(/not a region/);
+            expect(() => checkRegion('')).toThrow(/not a region/);
+        });
+
+        // Google adds regions between releases, so an unknown one is reported
+        // and kept. A typo that happens to be well-formed lands here too, which
+        // is the whole reason the caller says something rather than nothing.
+        it('allows a well-formed region it does not know, and says so', () => {
+            expect(checkRegion('us-cental1')).toBe(false);
+            expect(checkRegion('mars-west1')).toBe(false);
+        });
+    });
 });
 
 describe('columns', () => {
@@ -283,6 +333,37 @@ describe('columns', () => {
                 ['bbbb', 'two'],
             ]),
         ).toEqual(['a     one', 'bbbb  two']);
+    });
+});
+
+describe('reading the keyboard', () => {
+    // The bug this exists for: one read carries several keystrokes when keys
+    // are held or a line is pasted, so a picker that treats the chunk as one
+    // key acts on the first and silently drops the Enter behind it.
+    it('splits a chunk into one string per key', () => {
+        expect([...keysIn('\u001b[B\u001b[B\r')]).toEqual(['\u001b[B', '\u001b[B', '\r']);
+        expect([...keysIn('12\r')]).toEqual(['1', '2', '\r']);
+        expect([...keysIn('\u001bOA\u001b[6~j')]).toEqual(['\u001bOA', '\u001b[6~', 'j']);
+    });
+
+    it('leaves a lone escape alone, which is how cancelling is spelt', () => {
+        expect([...keysIn('\u001b')]).toEqual(['\u001b']);
+    });
+});
+
+describe('cutting a styled line', () => {
+    // A row that wraps is a row the erase does not know about, and the width a
+    // terminal counts is the visible one.
+    it('measures without the style codes and closes them off', () => {
+        const styled = `${'\u001b[1m'}a very long label${'\u001b[22m'}`;
+        const short = cut(styled, 8);
+        expect(short.replace(/\u001b\[[0-9;]*m/g, '')).toBe('a very …');
+        expect(short.endsWith('\u001b[0m')).toBe(true);
+    });
+
+    it('leaves a line that already fits exactly as it was', () => {
+        const styled = `${'\u001b[1m'}short${'\u001b[22m'}`;
+        expect(cut(styled, 80)).toBe(styled);
     });
 });
 
@@ -314,6 +395,156 @@ describe('the streaming window', () => {
 
     it('asks for no more rows than there are', () => {
         expect(windowOf('one\ntwo', 40, 6)).toEqual(['one', 'two']);
+    });
+});
+
+describe('dividing the frame', () => {
+    // Same bug, one level up: three blocks now share the rows below the
+    // scrollback, and their total is the thing that must not exceed the
+    // viewport. Anything else on screen is `Static`, which never repaints.
+    // A reasoning block also draws the two rules that box it in.
+    const height = (b: { activity: number; thinking: number; live: number }): number =>
+        b.activity + b.thinking + b.live + (b.thinking ? THINKING_CHROME : 0);
+
+    it('never hands out more rows than the terminal has', () => {
+        for (const rows of [1, 2, 6, 7, 8, 12, 24, 60]) {
+            for (const activity of [0, 1, 3, 6, 20]) {
+                for (const thinking of [0, 1, THINKING_ROWS]) {
+                    const budget = budgetOf(rows, activity, thinking);
+                    expect(height(budget)).toBeLessThanOrEqual(Math.max(2, rows - CHROME_ROWS));
+                    // And exactly as many as it reserves: the region is drawn
+                    // at `total`, so a sum that came out short would leave the
+                    // footer riding on whatever the model happened to say.
+                    expect(height(budget)).toBe(budget.total);
+                }
+            }
+        }
+    });
+
+    it('always leaves a row for the answer', () => {
+        for (const rows of [1, 2, 8, 24]) {
+            expect(budgetOf(rows, 20, THINKING_ROWS).live).toBeGreaterThanOrEqual(1);
+        }
+    });
+
+    it('drops a reasoning block too cramped to be worth boxing', () => {
+        // Two rows to give away cannot carry a rule, a line and a rule.
+        expect(budgetOf(9, 0, THINKING_ROWS).thinking).toBe(0);
+        expect(budgetOf(9, 0, THINKING_ROWS).live).toBe(2);
+        expect(budgetOf(11, 0, THINKING_ROWS).thinking).toBe(1);
+    });
+
+    it('gives a settled reasoning block only the rows it asks for', () => {
+        expect(budgetOf(24, 0, THINKING_ROWS).thinking).toBe(6);
+        expect(budgetOf(24, 0, 1).thinking).toBe(1);
+        expect(budgetOf(24, 0, 1).live).toBe(14);
+    });
+
+    it('caps what is in flight rather than the answer', () => {
+        expect(budgetOf(40, 20, 0).activity).toBe(16);
+        expect(budgetOf(24, 20, 0).activity).toBe(15);
+        expect(budgetOf(24, 2, 0).activity).toBe(2);
+        expect(budgetOf(24, 0, 0).activity).toBe(0);
+    });
+
+    it('gives the activity list nothing when there is no room for it', () => {
+        expect(budgetOf(8, 4, 0).activity).toBe(0);
+    });
+});
+
+describe('sharing the frame between branches', () => {
+    it('spends the allowance on being complete rather than detailed', () => {
+        // Whatever the width of the fork, the boxes fit in what they were given.
+        for (const count of [1, 2, 3, 4, 6, 8]) {
+            const each = branchRows(count, 12);
+            expect(each).toBeGreaterThanOrEqual(1);
+            expect(each).toBeLessThanOrEqual(BRANCH_ROWS);
+            if (count * (BOX_CHROME + 1) <= 12) {
+                expect(count * (BOX_CHROME + each)).toBeLessThanOrEqual(12);
+            }
+        }
+    });
+
+    it('always leaves a branch one row, so a wide fork is cut rather than emptied', () => {
+        expect(branchRows(8, 12)).toBe(1);
+        expect(branchRows(1, 0)).toBe(1);
+        expect(branchRows(0, 12)).toBe(0);
+    });
+});
+
+describe('bounding the answer', () => {
+    it('stops well short of a very wide terminal', () => {
+        expect(answerWidth(200)).toBe(96);
+        expect(answerWidth(100)).toBe(96);
+    });
+
+    it('leaves the margin on a narrow one, and never goes to nothing', () => {
+        expect(answerWidth(80)).toBe(76);
+        expect(answerWidth(10)).toBe(24);
+    });
+});
+
+describe('reading a tool payload', () => {
+    it('gives a lone argument as itself, with no json around it', () => {
+        expect(readable('{"command":"ls -la /tmp"}')).toBe('ls -la /tmp');
+    });
+
+    it('unescapes the quotes a shell command is full of', () => {
+        expect(readable('{"command":"zen rag docs search -d /docs \\"What is NSX\\""}')).toBe(
+            'zen rag docs search -d /docs "What is NSX"',
+        );
+    });
+
+    it('reads a preview that was cut off mid-string', () => {
+        // The common case: the calls worth reading are the long ones, and a
+        // preview is cut to a length, so the json does not close.
+        expect(readable('{"command":"zen rag docs search -d /assets/docs \\"VMware NS')).toBe(
+            'zen rag docs search -d /assets/docs "VMware NS',
+        );
+    });
+
+    it('names the fields when there is more than one', () => {
+        expect(readable('{"exit_code":0,"stdout":"ok"}')).toBe('exit_code=0 stdout=ok');
+    });
+
+    it('leaves something that is not a payload alone', () => {
+        expect(readable('  transferred to docs_searcher  ')).toBe('transferred to docs_searcher');
+    });
+
+    it('keeps a non-string value as written', () => {
+        expect(readable('{"names":["docs_index"]}')).toBe('["docs_index"]');
+    });
+});
+
+describe('clipping to one row', () => {
+    it('flattens the shape a preview happened to arrive in', () => {
+        expect(clip('a\n  b\t c ', 40)).toBe('a b c');
+    });
+
+    it('marks a value it had to cut', () => {
+        expect(clip('abcdefghij', 5)).toBe('abcd…');
+        expect(clip('abcde', 5)).toBe('abcde');
+    });
+});
+
+describe('fenced blocks in an answer', () => {
+    it('leaves an answer with no fence in one piece', () => {
+        expect(segmentsOf('one\ntwo')).toEqual([{ code: false, lines: ['one', 'two'] }]);
+    });
+
+    it('keeps the indentation a code block depends on', () => {
+        const [prose, block] = segmentsOf('look:\n```ts\nif (x) {\n    y();\n}\n```');
+        expect(prose).toEqual({ code: false, lines: ['look:'] });
+        expect(block?.code).toBe(true);
+        expect(block?.title).toBe('ts');
+        expect(block?.lines).toEqual(['if (x) {', '    y();', '}']);
+    });
+
+    it('takes an unlabelled fence, and an unclosed one', () => {
+        const [block] = segmentsOf('```\nx\n');
+        expect(block?.code).toBe(true);
+        expect(block?.title).toBeUndefined();
+        expect(block?.lines).toEqual(['x', '']);
     });
 });
 
@@ -1434,8 +1665,7 @@ describe('where a listing comes from', () => {
     });
 
     const cache = (provider: string, fetchedAt: string, ids: string[]): void =>
-        writeJson(join(paths.catalog(), `${provider}.json`), {
-            version: 1,
+        new Cache(CATALOG_KIND).put(catalogKey(provider as Provider), {
             provider,
             fetchedAt,
             entries: ids.map((id) => ({
@@ -1452,6 +1682,30 @@ describe('where a listing comes from', () => {
         expect(cat.origin).toBe('curated');
         expect(cat.entries.every((e) => e.source === 'curated')).toBe(true);
         expect(cat.entries.map((e) => e.id)).toEqual(CURATED.anthropic.map((e) => e.id));
+    });
+
+    // Vertex offers a different set of models in each location, so a listing
+    // filed under the provider alone answers for a place it never asked.
+    it('files a vertex listing under the place it was asked', async () => {
+        const kept = process.env.GOOGLE_CLOUD_LOCATION;
+        try {
+            process.env.GOOGLE_CLOUD_LOCATION = 'us-central1';
+            cache('vertex', new Date().toISOString(), ['only-in-us-central1']);
+            process.env.GOOGLE_CLOUD_LOCATION = 'us';
+            expect((await loadCatalog('vertex', { offline: true })).origin).toBe('curated');
+
+            process.env.GOOGLE_CLOUD_LOCATION = 'us-central1';
+            const back = await loadCatalog('vertex', { offline: true });
+            expect(back.origin).toBe('cache');
+            expect(back.entries.map((e) => e.id)).toEqual(['only-in-us-central1']);
+        } finally {
+            process.env.GOOGLE_CLOUD_LOCATION = kept;
+        }
+    });
+
+    it('leaves a provider with one listing filed under its own name', () => {
+        expect(catalogKey('openai' as Provider)).toBe(catalogKey('openai' as Provider));
+        expect(catalogKey('openai' as Provider)).not.toContain('global');
     });
 
     it('uses a cache written inside the day without asking anyone', async () => {
@@ -1471,8 +1725,9 @@ describe('where a listing comes from', () => {
     });
 
     it('ignores a cache written by a version that is not this one', async () => {
-        writeJson(join(paths.catalog(), 'openrouter.json'), {
-            version: 99,
+        // The version is part of the key, so an entry from another one is not
+        // read and rejected — it is simply never looked for.
+        new Cache(CATALOG_KIND).put(cacheKey(99, 'openrouter'), {
             provider: 'openrouter',
             fetchedAt: new Date().toISOString(),
             entries: [{ ref: 'openrouter:x', id: 'x', provider: 'openrouter', roles: ['chat'] }],
@@ -1553,5 +1808,14 @@ describe('telling a blocked account from a bad key', () => {
 
     it('keeps an unreachable provider out of both', () => {
         expect(classify(fails('fetch failed')).state).toBe('unknown');
+    });
+
+    // A misspelt vertex location makes up a hostname, and the reply is a
+    // Google error page whose first line, `<!DOCTYPE html>`, names no cause.
+    it('reads a web page as a wrong endpoint', () => {
+        const check = classify(fails('<!DOCTYPE html>\n<html lang=en>\n  <title>Error 404'));
+        expect(check.state).toBe('unknown');
+        expect(check.detail).toMatch(/web page/);
+        expect(check.fix).toMatch(/location/);
     });
 });

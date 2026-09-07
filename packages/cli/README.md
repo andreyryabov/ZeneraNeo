@@ -162,6 +162,7 @@ you are not expected to hand-author `agents.yaml`.
 | `inspect` | Opens or rebuilds a run's `report.html`.                             |
 | `check`   | Validates the project and every file it names, and asks the models.  |
 | `sandbox` | Checks and prepares the container that command-line tools run in.    |
+| `cache`   | What work has been kept, and getting rid of it.                      |
 | `version` | CLI, library and Node versions.                                      |
 
 Commands can also come from a package installed alongside this one, so a new
@@ -255,7 +256,7 @@ zen models test vertex:gemini-embedding-001 # one real call, one verdict
 zen models pick --embedding                 # the first ref that answers, on stdout
 ```
 
-Listings are cached for a day in `~/.zenera/neo/catalog`. When a provider cannot
+Listings are cached for a day in `~/.zenera/neo/cache`. When a provider cannot
 be asked the last listing is used and said to be stale; only if there was never
 one does a short built-in list stand in.
 
@@ -293,7 +294,7 @@ The usual one is a **service-account JSON file** — give its path, not its
 contents. Run the command with nothing piped and it asks:
 
 ```sh
-zen key add vertex --location us-central1
+zen key add vertex --gcp-location us-central1
 # Paste the key, or a path to the file: /Users/you/keys/vertex-sa.json
 ```
 
@@ -301,23 +302,29 @@ The prompt is read by `zen`, not by your shell, so give a full path there — `~
 is not expanded. In a script, pipe the path in instead:
 
 ```sh
-echo ~/keys/vertex-sa.json | zen key add vertex --location us-central1
+echo ~/keys/vertex-sa.json | zen key add vertex --gcp-location us-central1
 ```
 
 The file is copied into `~/.zenera/neo/keys/`, where only you can read it, so
 moving or cleaning up the original later cannot break it.
 
-- `--location <region>` is worth setting. It must be `global` or a **concrete
-  region**; multi-region names like `us` are rejected with a 404. `global`
-  routes across regions and pays about ten seconds of cold start on the first
-  request each process makes — a region answers in about two.
-- `--project <id>` is only needed when the `project_id` inside the file is not
+- `--gcp-location <region>` is worth setting. It takes a concrete region, or one
+  of the endpoints that route across regions: `us` and `eu` pool capacity while
+  keeping processing inside that territory, `global` takes whatever is free and
+  promises no residency. `global` pays about ten seconds of cold start on the
+  first request each process makes — a region answers in about two.
+- Which models a location serves is per model, and not guessable. In one
+  project, `gemini-embedding-2` answered at `us` but 404'd at `us-central1`,
+  while `gemini-2.5-flash` did the opposite. New models often reach `global`,
+  `us` and `eu` first. `zen models test vertex:<model>` is what settles it —
+  `zen key add` only establishes that the credential itself works.
+- `--gcp-project <id>` is only needed when the `project_id` inside the file is not
   the project you want.
 
 The alternative is an **express-mode API key** — a single secret, stored under
 `VERTEX_API_KEY`. It is the Vertex console's way of handing out access without a
-service account, and it needs neither a project nor a region, so `--project` and
-`--location` mean nothing there and are not stored.
+service account, and it needs neither a project nor a region, so `--gcp-project`
+and `--gcp-location` mean nothing there and are not stored.
 
 ### Gemini, three ways
 
@@ -337,15 +344,15 @@ and a region, because the file says which project it belongs to but never which
 region to call:
 
 ```sh
-echo ~/keys/vertex-sa.json | zen key add vertex --location us-central1
+echo ~/keys/vertex-sa.json | zen key add vertex --gcp-location us-central1
 ```
 
-Add `--project` only when the `project_id` inside the file is not the one you
+Add `--gcp-project` only when the `project_id` inside the file is not the one you
 want to bill:
 
 ```sh
 echo ~/keys/vertex-sa.json \
-  | zen key add vertex --project other-project --location europe-west4
+  | zen key add vertex --gcp-project other-project --gcp-location europe-west4
 ```
 
 **Vertex, express mode** — paste the key at the prompt; no flags apply:
@@ -357,8 +364,8 @@ zen key add vertex
 Holding several at once is the ordinary case. Name them and switch:
 
 ```sh
-echo ~/keys/prod-sa.json | zen key add vertex/prod --location us-central1
-echo ~/keys/dev-sa.json  | zen key add vertex/dev  --location global
+echo ~/keys/prod-sa.json | zen key add vertex/prod --gcp-location us-central1
+echo ~/keys/dev-sa.json  | zen key add vertex/dev  --gcp-location global
 zen key add vertex/express       # the express key, same provider
 
 zen key use vertex/dev           # which one the next run uses
@@ -414,6 +421,32 @@ clear where a working provider actually comes from.
 - **Keyring** — `~/.zenera/neo`, readable only by you. Keys are copied into the
   environment just before a run, so an environment variable you set yourself
   always wins and a project checked out on a machine without `zen` still runs.
+- **Cache** — `~/.zenera/neo/cache`, one place for work already done: vectors,
+  parses, model listings, generated mocks. Shared by every project on the
+  machine, and never evicted by anything but you.
+
+## What has already been paid for
+
+Embedding a paragraph, parsing a document, asking a provider what it serves —
+all expensive, all perfectly repeatable. They are kept in one store,
+`~/.zenera/neo/cache/<kind>/`, keyed by every input that produced them. Change
+an input and you are asking a different question, which is why nothing in there
+is ever invalidated: it is simply never asked for again.
+
+```
+zen cache ls                          # what is kept, by kind
+zen cache ls --kind vectors           # and what is in one of them
+zen cache prune --older-than 30d      # drop what has gone unread for a month
+zen cache prune --max-size 2GB        # or keep it under a ceiling
+zen cache clear --kind docs-parse     # throw one kind away
+```
+
+Age is when an entry was last _used_, not when it was written, so a vector a
+weekly rebuild reads is never old. Nothing evicts on its own — a store that
+quietly deletes things is only ever noticed when it has deleted the wrong one —
+so retention is a decision made out loud, here. Nothing in it is precious
+either: every entry is work that can be done again, and the only cost of
+removing one is paying for it a second time.
 
 ## The library underneath
 

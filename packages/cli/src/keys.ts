@@ -1,5 +1,5 @@
 import { EXA_API_KEY_ENV } from '@zenera/neo';
-import { chmodSync, copyFileSync, existsSync, statSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { assertPrivate, ensureDir, paths, readJson, writeJson } from './home.ts';
@@ -260,13 +260,85 @@ export function parseRef(ref: string): { provider: KeyOwner; name?: string } {
 }
 
 /** Which of a provider's forms a raw value is, decided by the value itself. */
-function formOf(provider: KeyOwner, raw: string): CredentialForm {
+export function formOf(provider: KeyOwner, raw: string): CredentialForm {
     const { forms } = SHAPES[provider];
     if (forms.length === 1) {
         return forms[0];
     }
     const wanted = raw.length < 4096 && existsSync(resolve(raw)) ? 'file' : 'secret';
     return forms.find((f) => f.holds === wanted) ?? forms[0];
+}
+
+const REGION = /^[a-z]+-[a-z]+[0-9]+$/;
+
+const REGIONS = new Set([
+    'africa-south1',
+    'asia-east1',
+    'asia-east2',
+    'asia-northeast1',
+    'asia-northeast2',
+    'asia-northeast3',
+    'asia-south1',
+    'asia-south2',
+    'asia-southeast1',
+    'asia-southeast2',
+    'asia-southeast3',
+    'australia-southeast1',
+    'australia-southeast2',
+    'europe-central2',
+    'europe-north1',
+    'europe-southwest1',
+    'europe-west1',
+    'europe-west2',
+    'europe-west3',
+    'europe-west4',
+    'europe-west6',
+    'europe-west8',
+    'europe-west9',
+    'europe-west10',
+    'europe-west12',
+    'me-central1',
+    'me-central2',
+    'me-west1',
+    'northamerica-northeast1',
+    'northamerica-northeast2',
+    'northamerica-south1',
+    'southamerica-east1',
+    'southamerica-west1',
+    'us-central1',
+    'us-east1',
+    'us-east4',
+    'us-east5',
+    'us-south1',
+    'us-west1',
+    'us-west2',
+    'us-west3',
+    'us-west4',
+]);
+
+/**
+ * Endpoints that route across regions rather than naming one. `us` and `eu` keep
+ * processing inside their territory; `global` does not promise that, and takes
+ * whatever capacity is free.
+ */
+const ENDPOINTS = new Set(['global', 'us', 'eu']);
+
+/**
+ * Throws on a name that is neither an endpoint nor shaped like a region — `usa`,
+ * or `us-central` with its digit missing — because those are 404s at the first
+ * call, a long way from the command that caused them. Returns false for a
+ * well-formed name that is merely unrecognised, which the caller reports and
+ * stores anyway: Google adds regions, and a list compiled here would be wrong
+ * before it was old.
+ */
+export function checkRegion(region: string): boolean {
+    if (!ENDPOINTS.has(region) && !REGION.test(region)) {
+        throw usageError(
+            `"${region}" is not a region`,
+            'give a region such as us-central1, or the endpoints global, us or eu',
+        );
+    }
+    return ENDPOINTS.has(region) || REGIONS.has(region);
 }
 
 /** What a credential cannot say about itself. */
@@ -416,6 +488,31 @@ export class KeyStore {
     }
 
     /**
+     * Which GCP project a Vertex entry addresses, and how that was decided —
+     * the same order the library resolves it in, so what is shown is what will
+     * be called. A service-account file states its own project, and nothing was
+     * ever stored for it, so an entry with no `project` is not an entry with no
+     * project: it is one whose project is only knowable by reading the file.
+     */
+    projectOf(entry: KeyEntry): { id: string; from: 'env' | 'stored' | 'file' } | undefined {
+        if (entry.provider !== 'vertex') {
+            return undefined;
+        }
+        const fromEnv = process.env.GOOGLE_CLOUD_PROJECT;
+        if (fromEnv) {
+            return { id: fromEnv, from: 'env' };
+        }
+        if (entry.project) {
+            return { id: entry.project, from: 'stored' };
+        }
+        if (entry.holds !== 'file') {
+            return undefined;
+        }
+        const id = projectIdOf(this.fileOf(entry));
+        return id ? { id, from: 'file' } : undefined;
+    }
+
+    /**
      * What the library would see. Real environment variables win, so CI,
      * `docker run -e` and a one-off `OPENAI_API_KEY=… zen run` all behave
      * exactly as they did before the store existed.
@@ -468,6 +565,20 @@ export class KeyStore {
         // copyFile keeps the source's mode, which may well be group-readable.
         chmodSync(path, 0o600);
         return target;
+    }
+}
+
+/**
+ * `project_id` out of a service-account file. Express-mode keys, gcloud user
+ * ADC and metadata credentials carry none, so finding nothing is an answer.
+ */
+function projectIdOf(path: string): string | undefined {
+    try {
+        const key: unknown = JSON.parse(readFileSync(path, 'utf8'));
+        const id = (key as { project_id?: unknown }).project_id;
+        return typeof id === 'string' && id.trim() ? id.trim() : undefined;
+    } catch {
+        return undefined;
     }
 }
 

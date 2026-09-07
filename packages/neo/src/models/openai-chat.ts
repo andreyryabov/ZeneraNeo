@@ -1,7 +1,11 @@
 import type OpenAI from 'openai';
 import type { StreamDelta } from '../events.ts';
+import { callSites, called, reading, type CallSites, type ProviderNamed } from '../failure.ts';
 import type { Model, ModelRequest, ModelResponse, StopReason } from '../model.ts';
 import { zeroUsage, type Message, type TokenUsage, type ToolCall } from '../types.ts';
+
+/** The SDK call these methods make, named as it is named in a failure. */
+const API = 'chat.completions.create';
 
 // ---------------------------------------------------------------------------
 // OpenAI chat-completions adapter
@@ -26,7 +30,7 @@ function toStopReason(finish: string | null | undefined): StopReason {
  * `ModelRequest`: every provider spells it differently (and most models ignore
  * it), so it belongs to the concrete adapter rather than the `Model` contract.
  */
-export interface OpenAIModelOptions {
+export interface OpenAIModelOptions extends ProviderNamed {
     reasoningEffort?: OpenAI.ReasoningEffort;
 }
 
@@ -34,17 +38,19 @@ export class OpenAIModel implements Model {
     readonly id: string;
     readonly #client: OpenAI;
     readonly #reasoningEffort: OpenAI.ReasoningEffort | undefined;
+    readonly #site: CallSites;
 
     constructor(id: string, client: OpenAI, options: OpenAIModelOptions = {}) {
         this.id = id;
         this.#client = client;
         this.#reasoningEffort = options.reasoningEffort;
+        this.#site = callSites(id, options.provider);
     }
 
     async generate(req: ModelRequest): Promise<ModelResponse> {
-        const res = await this.#client.chat.completions.create(this.#params(req), {
-            signal: req.signal,
-        });
+        const res = await called(this.#site('llm generation', API), () =>
+            this.#client.chat.completions.create(this.#params(req), { signal: req.signal }),
+        );
         const choice = res.choices[0];
         const message = choice?.message;
         return {
@@ -61,10 +67,13 @@ export class OpenAIModel implements Model {
     }
 
     async stream(req: ModelRequest, onDelta: (d: StreamDelta) => void): Promise<ModelResponse> {
-        const stream = await this.#client.chat.completions.create(
-            { ...this.#params(req), stream: true, stream_options: { include_usage: true } },
-            { signal: req.signal },
-        );
+        const site = this.#site('llm streaming', API);
+        const open = () =>
+            this.#client.chat.completions.create(
+                { ...this.#params(req), stream: true, stream_options: { include_usage: true } },
+                { signal: req.signal },
+            );
+        const stream = await called(site, open);
 
         let text = '';
         let thinking = '';
@@ -74,7 +83,7 @@ export class OpenAIModel implements Model {
         // first fragment and arguments trickling in afterwards.
         const calls = new Map<number, ToolCall>();
 
-        for await (const chunk of stream) {
+        for await (const chunk of reading(site, stream, open)) {
             if (chunk.usage) {
                 usage = toUsage(chunk.usage);
             }

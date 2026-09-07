@@ -1,5 +1,6 @@
 import type { Embedder } from '@zenera/neo';
-import { beginBuild, type Journal } from '../common/progress.ts';
+import { embedStream, NO_CACHE, openCache, type VectorCache } from '../common/cache.ts';
+import { beginBuild, type Journal, type PhaseTiming } from '../common/progress.ts';
 import { formatLines, type ChunkOptions } from './chunk.ts';
 import {
     INDEX_VERSION,
@@ -12,7 +13,7 @@ import {
 } from './files.ts';
 import { loadDocuments, type Corpus } from './load.ts';
 import { DOCS_REPORT, PHASES, type Phase } from './readme.ts';
-import { writeChunks, type ChunkRecord } from './store.ts';
+import { openChunks, type ChunkRecord, type ChunkWriter } from './store.ts';
 
 // ---------------------------------------------------------------------------
 // Building an index
@@ -37,12 +38,23 @@ export interface BuildOptions {
     embeddingRef?: string;
     /** told the manifest, so a store can say what wrote it */
     indexer: string;
-    /** texts sent to the embedder at once */
-    batch?: number;
     chunk?: ChunkOptions;
+    /**
+     * The width asked of the embedder, when one was asked for. Part of the cache
+     * key, because a truncated vector is a different vector; left undefined when
+     * nobody asked, because that is a different key again from asking for the
+     * number the model would have chosen anyway.
+     */
+    dimensions?: number;
+    /** reuse vectors and parses this machine already has; on by default */
+    cache?: boolean;
+    /** keep them somewhere other than the shared store */
+    cacheDir?: string;
     signal?: AbortSignal;
     /** what the documents turned out to hold, before a vector has been paid for */
     onRead?: (summary: BuildSummary) => void;
+    /** documents parsed so far, and what the pool is still on */
+    onReading?: (done: number, total: number, pending: readonly string[]) => void;
     onProgress?: (done: number, total: number) => void;
 }
 
@@ -55,9 +67,16 @@ export interface BuildSummary {
 export interface BuildResult {
     manifest: Manifest;
     chunks: ChunkRecord[];
+    /** what each phase cost, so a slow build can say which part was slow */
+    timings: readonly PhaseTiming[];
+    /** what came out of the shared cache instead of being done again */
+    reused: Reused;
 }
 
-const DEFAULT_BATCH = 96;
+export interface Reused {
+    parses: number;
+    vectors: number;
+}
 
 export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
     const journal = beginBuild<Counts, Manifest, Phase>({
@@ -68,9 +87,27 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
         phases: PHASES,
         report: DOCS_REPORT,
     });
+    const ref = options.embeddingRef ?? options.embedder.id;
+    const cache =
+        options.cache === false
+            ? NO_CACHE
+            : openCache(options.embedder, {
+                  ref,
+                  dir: options.cacheDir,
+                  dimensions: options.dimensions,
+              });
+    let writer: ChunkWriter | undefined;
 
     try {
-        const corpus = await loadDocuments(options.files, options.cwd, options.chunk);
+        const corpus = await loadDocuments(options.files, options.cwd, {
+            chunk: options.chunk,
+            cache: options.cache !== false,
+            cacheDir: options.cacheDir,
+            onProgress: (done, total, pending) => {
+                journal.progress(done, total, pending);
+                options.onReading?.(done, total, pending);
+            },
+        });
         const chunks = recordsOf(corpus);
         const sources = corpus.docs.map((doc): DocRecord => ({
             name: doc.name,
@@ -96,9 +133,10 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
         options.onRead?.({ sources, counts, skipped: corpus.skipped });
 
         journal.phase('embedding');
-        const vectors = await embedAll(chunks, options, journal);
+        writer = await openChunks(options.out);
+        const dimensions = await embedAll(chunks, options, journal, cache, writer);
         journal.phase('writing');
-        const written = await writeChunks(options.out, chunks, vectors);
+        const written = await writer.finish();
 
         const manifest: Manifest = {
             version: INDEX_VERSION,
@@ -106,9 +144,10 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
             createdAt: new Date().toISOString(),
             indexer: options.indexer,
             embedding: {
-                ref: options.embeddingRef ?? options.embedder.id,
+                ref,
                 id: options.embedder.id,
-                dimensions: vectors[0]?.length ?? 0,
+                dimensions,
+                requested: options.dimensions,
             },
             sources,
             counts,
@@ -118,9 +157,17 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
         const documents = Object.fromEntries(corpus.docs.map((doc) => [doc.name, doc.text]));
 
         await writeIndex(options.out, { manifest, outline, documents });
+        cache.commit();
         journal.finish(manifest);
-        return { manifest, chunks };
+        return {
+            manifest,
+            chunks,
+            timings: journal.timings,
+            reused: { parses: corpus.cached, vectors: cache.hits },
+        };
     } catch (err) {
+        writer?.close();
+        cache.abandon();
         journal.fail(err);
         throw err;
     }
@@ -151,25 +198,23 @@ async function embedAll(
     chunks: readonly ChunkRecord[],
     options: BuildOptions,
     journal: Journal<Counts, Manifest, Phase>,
-): Promise<Float32Array[]> {
-    const size = options.batch ?? DEFAULT_BATCH;
-    const out: Float32Array[] = [];
-
-    for (let at = 0; at < chunks.length; at += size) {
-        const slice = chunks.slice(at, at + size);
-        const response = await options.embedder.embed({
-            input: slice.map((c) => c.embedText),
-            taskType: 'document',
-            signal: options.signal,
-        });
-        if (response.vectors.length !== slice.length) {
-            throw new Error(
-                `${options.embedder.id} answered ${response.vectors.length} vectors for ${slice.length} texts`,
-            );
-        }
-        out.push(...response.vectors.map((v) => Float32Array.from(v)));
-        journal.progress(out.length, chunks.length);
-        options.onProgress?.(out.length, chunks.length);
-    }
-    return out;
+    cache: VectorCache,
+    writer: ChunkWriter,
+): Promise<number> {
+    // A window at a time, rather than the whole corpus in one call. How many
+    // texts fit in a request, and how many requests may be in flight, are still
+    // the embedder's to answer — it knows the model's caps and it is the one
+    // that sees the 429s. What the window decides is only how much is resident.
+    return embedStream({
+        embedder: options.embedder,
+        cache,
+        records: chunks,
+        textOf: (chunk) => chunk.embedText,
+        signal: options.signal,
+        onProgress: (done, total) => {
+            journal.progress(done, total);
+            options.onProgress?.(done, total);
+        },
+        onWindow: (window, vectors) => writer.add(window, vectors),
+    });
 }

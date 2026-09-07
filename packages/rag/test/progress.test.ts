@@ -5,8 +5,10 @@ import { hostname, tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { LOCK_FILE, README_FILE, type Building } from '../src/common/progress.ts';
+import type { Counts as DocCounts } from '../src/docs/files.ts';
+import { DOCS_REPORT } from '../src/docs/readme.ts';
 import { buildIndex } from '../src/schema/build.ts';
-import { LOCK_FILE, README_FILE } from '../src/common/progress.ts';
 import { StubEmbedder } from './stub.ts';
 
 // ---------------------------------------------------------------------------
@@ -178,5 +180,48 @@ describe('a build that dies', () => {
         expect(readme).toContain('the embedder gave up');
         expect(readme).not.toContain('and said more about it');
         expect(existsSync(join(dir, LOCK_FILE))).toBe(false);
+    });
+});
+
+describe('the README of a build still running', () => {
+    const state = (done: number, pending: readonly string[]): Building<DocCounts> => ({
+        documents: ['a.md'],
+        embedding: 'stub:bag-of-words',
+        started: Date.now() - 1000,
+        now: Date.now(),
+        step: 'reading the documents and cutting them into chunks',
+        phase: 'reading',
+        done,
+        total: 13621,
+        pending,
+        timings: [],
+        summary: undefined,
+    });
+
+    it('never calls an unfinished count finished', () => {
+        // 13619 of 13621 rounds to 100%, and a report that says so turns two
+        // slow documents into a build that looks hung.
+        expect(DOCS_REPORT.building(state(13619, []))).toContain('13619 of 13621 · 99%');
+        expect(DOCS_REPORT.building(state(13621, []))).toContain('13621 of 13621 · 100%');
+    });
+
+    it('says what it is counting, which is not embedding yet', () => {
+        expect(DOCS_REPORT.building(state(10, []))).toContain('parsed');
+        expect(DOCS_REPORT.building(state(10, []))).not.toContain('embedded');
+    });
+
+    it('names the stragglers, and counts a crowd', () => {
+        const few = DOCS_REPORT.building(state(13619, ['big.md', 'huge.md']));
+        expect(few).toContain('still on');
+        expect(few).toContain('big.md, huge.md');
+
+        const many = DOCS_REPORT.building(state(9000, ['a', 'b', 'c', 'd', 'e', 'f', 'g']));
+        expect(many).toContain('still on');
+        expect(many).toContain('7 documents');
+        expect(many).not.toContain('a, b, c');
+    });
+
+    it('says nothing about what it waits on when it waits on nothing', () => {
+        expect(DOCS_REPORT.building(state(10, []))).not.toContain('still on');
     });
 });

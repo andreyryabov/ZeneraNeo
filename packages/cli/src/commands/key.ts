@@ -6,9 +6,11 @@ import {
     ambient,
     ambientId,
     assertNotEmpty,
+    checkRegion,
     describe,
     envNames,
     envOf,
+    formOf,
     keyId,
     KeyStore,
     mask,
@@ -62,6 +64,34 @@ function state(entry: KeyEntry): string {
     return entry.check ? MARK[entry.check.state] : dim('unchecked');
 }
 
+/** Where a Vertex project id came from, since only one of the three was typed. */
+const ORIGIN: Record<'env' | 'stored' | 'file', string> = {
+    env: 'from $GOOGLE_CLOUD_PROJECT',
+    stored: 'from --gcp-project',
+    file: 'from the key file',
+};
+
+/**
+ * Only a Vertex service account addresses a project and a region. An unset
+ * region is shown as the `global` it will actually be, not left blank: it is
+ * the slow endpoint, and a blank column is how it goes unnoticed. The project
+ * is shown whether or not one was stored, because the file names one too and a
+ * blank there reads as "none" rather than "not written down here". Yellow when
+ * the environment supplied either, because then the stored one is not in play.
+ */
+function placed(store: KeyStore, entry: KeyEntry): string {
+    if (entry.provider !== 'vertex' || entry.holds !== 'file') {
+        return '';
+    }
+    const fromEnv = process.env.GOOGLE_CLOUD_LOCATION;
+    const where = fromEnv ?? entry.location ?? 'global';
+    const project = store.projectOf(entry);
+    const id = project ? project.id : '';
+    return [fromEnv ? yellow(where) : dim(where), project?.from === 'env' ? yellow(id) : dim(id)]
+        .join(' ')
+        .trimEnd();
+}
+
 /**
  * An ambient credential borrowed into the shape the rest of this file works
  * in. It is not in the store and never will be: `store.find` misses it, so
@@ -81,7 +111,7 @@ function asEntry(cred: Ambient): KeyEntry {
 
 function rows(store: KeyStore, borrowed: readonly [Ambient, KeyEntry][]): string[] {
     const out: string[][] = [
-        [bold(''), bold('KEY'), bold('VALUE'), bold('STATE'), bold('CHECKED')],
+        [bold(''), bold('KEY'), bold('VALUE'), bold('GCP'), bold('STATE'), bold('CHECKED')],
     ];
     for (const provider of OWNERS) {
         for (const entry of store.for(provider)) {
@@ -90,6 +120,7 @@ function rows(store: KeyStore, borrowed: readonly [Ambient, KeyEntry][]): string
                 store.isActive(entry) ? green('*') : ' ',
                 keyId(entry),
                 dim(describe(store, entry)),
+                placed(store, entry),
                 state(entry),
                 dim(entry.check ? ago(entry.check.at) : '—') +
                     (shadow && store.isActive(entry) ? yellow(`  shadowed by $${shadow}`) : ''),
@@ -100,6 +131,7 @@ function rows(store: KeyStore, borrowed: readonly [Ambient, KeyEntry][]): string
                 dim('~'),
                 dim(ambientId(cred)),
                 dim(describe(store, entry)),
+                placed(store, entry),
                 state(entry),
                 dim(cred.env ? 'from the environment' : 'from gcloud'),
             ]);
@@ -199,17 +231,19 @@ const add: Sub = async (ctx, args) => {
     const { values, positionals } = parse<{
         name?: string;
         'no-check'?: boolean;
-        project?: string;
-        location?: string;
+        'gcp-project'?: string;
+        'gcp-location'?: string;
     }>(
         args,
         {
             name: { type: 'string' },
             'no-check': { type: 'boolean' },
-            project: { type: 'string' },
-            location: { type: 'string' },
+            // Prefixed because every other command's --project is a Zenera one.
+            'gcp-project': { type: 'string' },
+            'gcp-location': { type: 'string' },
         },
-        'zen key add <provider>[/name] [--name <name>] [--project <id>] [--location <region>] [--no-check]',
+        'zen key add <provider>[/name] [--name <name>] [--gcp-project <id>] ' +
+            '[--gcp-location <region>] [--no-check]',
     );
 
     const ref = positionals[0];
@@ -221,11 +255,18 @@ const add: Sub = async (ctx, args) => {
     const name = values.name ?? parsed.name ?? 'default';
     const shape = SHAPES[provider];
 
-    if ((values.project || values.location) && provider !== 'vertex') {
+    if ((values['gcp-project'] || values['gcp-location']) && provider !== 'vertex') {
         throw usageError(
-            `--project and --location mean nothing to ${shape.label}`,
+            `--gcp-project and --gcp-location mean nothing to ${shape.label}`,
             'they configure a Vertex service account',
         );
+    }
+
+    // Checked before the prompt, so a typo does not cost you pasting the key.
+    const region = values['gcp-location'];
+    if (region !== undefined && !checkRegion(region)) {
+        note(yellow(`${region} is not a region this build knows; storing it anyway`));
+        note(dim('  if it is new, this is fine; if it is a typo, Vertex answers 404'));
     }
 
     ensureHome();
@@ -249,9 +290,18 @@ const add: Sub = async (ctx, args) => {
         throw usageError(`no such file: ${raw}`);
     }
 
+    // Which shape was given is only knowable now, and `add` would drop these
+    // two on an express key rather than store a combination Vertex refuses.
+    if (formOf(provider, raw).holds !== 'file' && (values['gcp-project'] || region)) {
+        throw usageError(
+            '--gcp-project and --gcp-location need a service-account file',
+            'the value given is an express-mode key, which addresses no project or region',
+        );
+    }
+
     const entry = store.add(provider, name, raw, {
-        project: values.project,
-        location: values.location,
+        project: values['gcp-project'],
+        location: values['gcp-location'],
     });
 
     // Verified before it is trusted, but stored either way: a key that cannot
@@ -270,6 +320,11 @@ const add: Sub = async (ctx, args) => {
             if (check.fix) {
                 note(dim(`  ${check.fix}`));
             }
+        } else if (check.state === 'unknown' && check.fix) {
+            // Most unknowns are a plane or a proxy and say nothing worth a
+            // line. One carrying a fix is different: we know what is wrong.
+            note(`${yellow('unverified')} ${check.detail}`);
+            note(dim(`  ${check.fix}`));
         }
     }
     store.save();
@@ -291,7 +346,14 @@ const add: Sub = async (ctx, args) => {
         note(yellow(`$${envOf(entry)} is set and will win over this`));
     }
     if (provider === 'vertex' && entry.holds === 'file' && !entry.project) {
-        note(dim('no --project given; the project_id inside the file will be used'));
+        const found = store.projectOf(entry);
+        note(
+            dim(
+                found
+                    ? `no --gcp-project given; project ${found.id}, read from the key file`
+                    : 'no --gcp-project given, and the key file names no project_id',
+            ),
+        );
     }
 };
 
@@ -438,12 +500,14 @@ const show: Sub = async (ctx, args) => {
     }
 
     const value = values.reveal ? store.reveal(entry) : describe(store, entry);
+    const project = store.projectOf(entry);
     if (ctx.json) {
         json({
             key: keyId(entry),
             env: envOf(entry),
             value,
             revealed: Boolean(values.reveal),
+            ...(project ? { project: project.id, projectFrom: project.from } : {}),
         });
         return;
     }
@@ -458,8 +522,10 @@ const show: Sub = async (ctx, args) => {
             [dim('key'), keyId(entry)],
             [dim('env'), envOf(entry)],
             [dim('value'), value],
-            ...(entry.project ? [[dim('project'), entry.project]] : []),
-            ...(entry.location ? [[dim('location'), entry.location]] : []),
+            ...(project
+                ? [[dim('gcp project'), `${project.id} ${dim(ORIGIN[project.from])}`]]
+                : []),
+            ...(entry.location ? [[dim('gcp location'), entry.location]] : []),
             [dim('state'), state(entry)],
             ...(entry.check?.fix ? [[dim('fix'), entry.check.fix]] : []),
             [dim('added'), ago(entry.addedAt)],
@@ -532,8 +598,8 @@ export const key: Command = {
         'Services the tools call: exa.',
         '',
         'Vertex takes either shape: a service-account JSON file, which wants',
-        '--project and --location too, or an express-mode API key, which wants',
-        'neither. Which one you gave is read off the value.',
+        '--gcp-project and --gcp-location too, or an express-mode API key, which',
+        'wants neither. Which one you gave is read off the value.',
         '',
         '  zen key ls [--check]              Everything stored, and its state.',
         '  zen key add <provider>[/name]     Read a key from stdin, or ask for it.',

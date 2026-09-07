@@ -31,6 +31,16 @@ const TABLE = 'chunks';
 /** Below this an IVF index has nothing to train on, and a flat scan is faster. */
 const VECTOR_INDEX_MIN_ROWS = 2000;
 
+/**
+ * Rows per write.
+ *
+ * Arrow addresses a batch's buffers with 32-bit offsets, so one batch carrying
+ * more than 2 GiB does not error — it panics inside the reader, on a thread
+ * whose panic never reaches this one. At 3072 dimensions the vector column
+ * alone crosses that at about 175k rows, which a documentation tree reaches.
+ */
+export const WRITE_BATCH = 8192;
+
 const KINDS = new Set<string>(CHUNK_KINDS);
 
 /** What may go into a string literal in a predicate, and nothing else. */
@@ -78,38 +88,87 @@ export interface WriteResult {
     vector: boolean;
 }
 
-export async function writeChunks(
-    dir: string,
-    rows: readonly ChunkRecord[],
-    vectors: readonly Float32Array[],
-): Promise<WriteResult> {
-    if (rows.length === 0) {
-        throw new CliError(
-            'the documents hold nothing to index',
-            EXIT.invalid,
-            'they are empty, or every one of them is blank',
-        );
-    }
-    const db = await connect(lancePath(dir));
-    // Every column is always populated — never null — so the Arrow schema is
-    // inferred from the first row without a declaration to keep in step.
-    const table = await db.createTable(
-        TABLE,
-        rows.map((row, i) => ({ ...row, vector: vectors[i]! })),
-        { mode: 'overwrite' },
-    );
+/**
+ * A table built a window at a time.
+ *
+ * The corpus used to be embedded into one array and handed over in one call,
+ * which made peak memory a function of corpus size and, past 2 GiB of vectors,
+ * a panic. Rows go in as they are paid for instead, so what is resident is one
+ * window rather than all of it.
+ */
+export interface ChunkWriter {
+    add(rows: readonly ChunkRecord[], vectors: readonly Float32Array[]): Promise<void>;
+    /** Builds the indexes and closes. Throws if nothing was ever added. */
+    finish(): Promise<WriteResult>;
+    /** For a build that failed, so the connection does not outlive it. */
+    close(): void;
+}
 
-    await table.createIndex('text', { config: Index.fts() });
-    await table.createIndex('kind', { config: Index.bitmap() });
-    for (const column of ['path', 'structurePath'] as const) {
-        await table.createIndex(column, { config: Index.btree() });
+export async function openChunks(dir: string): Promise<ChunkWriter> {
+    return new Writer(await connect(lancePath(dir)));
+}
+
+class Writer implements ChunkWriter {
+    readonly #db: Connection;
+    #table: Table | undefined;
+    #rows = 0;
+
+    constructor(db: Connection) {
+        this.#db = db;
     }
-    const vector = rows.length >= VECTOR_INDEX_MIN_ROWS;
-    if (vector) {
-        await table.createIndex('vector');
+
+    async add(rows: readonly ChunkRecord[], vectors: readonly Float32Array[]): Promise<void> {
+        for (let from = 0; from < rows.length; from += WRITE_BATCH) {
+            const batch = rows.slice(from, from + WRITE_BATCH).map((row, i) => ({
+                ...row,
+                vector: vectors[from + i]!,
+            }));
+            if (this.#table) {
+                await this.#table.add(batch);
+            } else {
+                // Every column is always populated — never null — so the Arrow
+                // schema is inferred from the first row without a declaration.
+                this.#table = await this.#db.createTable(TABLE, batch, { mode: 'overwrite' });
+            }
+            this.#rows += batch.length;
+        }
     }
-    db.close();
-    return { rows: rows.length, fts: true, vector };
+
+    async finish(): Promise<WriteResult> {
+        const table = this.#table;
+        if (!table) {
+            throw new CliError(
+                'the documents hold nothing to index',
+                EXIT.invalid,
+                'they are empty, or every one of them is blank',
+            );
+        }
+        // A writer that panicked did not reject, so a short table is the only
+        // evidence left that the rows never landed.
+        const stored = await table.countRows();
+        if (stored !== this.#rows) {
+            throw new CliError(
+                `the table holds ${stored} of ${this.#rows} chunks`,
+                EXIT.failed,
+                'the write did not finish, and a partial index answers as if it were whole',
+            );
+        }
+        await table.createIndex('text', { config: Index.fts() });
+        await table.createIndex('kind', { config: Index.bitmap() });
+        for (const column of ['path', 'structurePath'] as const) {
+            await table.createIndex(column, { config: Index.btree() });
+        }
+        const vector = this.#rows >= VECTOR_INDEX_MIN_ROWS;
+        if (vector) {
+            await table.createIndex('vector');
+        }
+        this.#db.close();
+        return { rows: this.#rows, fts: true, vector };
+    }
+
+    close(): void {
+        this.#db.close();
+    }
 }
 
 export class ChunkStore {

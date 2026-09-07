@@ -25,8 +25,8 @@ keys; one of them is active.
 | `zen key show <ref> [--reveal]`   | Masked by default                       |
 | `zen key env [provider …]`        | Shell exports, for other tools          |
 
-`zen key add` also takes `--project` and `--location`, for a Vertex service
-account.
+`zen key add` also takes `--gcp-project` and `--gcp-location`, for a Vertex
+service account.
 
 ```
 zen key add openai                    # prompts, echo off
@@ -56,18 +56,18 @@ echo-off prompt and from nowhere else.
 
 A **service-account file** is absorbed into `~/.zenera/neo/keys/` and
 `GOOGLE_APPLICATION_CREDENTIALS` points at it. It wants a project too, from
-`--project`, or `GOOGLE_CLOUD_PROJECT`, or the `project_id` inside the file, and
-a region from `--location` (`global` otherwise). Application Default
+`--gcp-project`, or `GOOGLE_CLOUD_PROJECT`, or the `project_id` inside the file,
+and a region from `--gcp-location` (`global` otherwise). Application Default
 Credentials from `gcloud auth application-default login` work with no entry at
 all.
 
 An **express-mode key** is an ordinary secret under `VERTEX_API_KEY`, and
 addresses no project: a key and a project are alternatives, and sending both
-gets a `403` that mentions neither. `--project` and `--location` are therefore
-refused alongside a key.
+gets a `403` that mentions neither. `--gcp-project` and `--gcp-location` are
+therefore refused alongside a key.
 
 ```
-zen key add vertex --project acme-prod --location europe-west4
+zen key add vertex --gcp-project acme-prod --gcp-location europe-west4
 # paste a path  → the file shape
 # paste a key   → the express shape
 ```

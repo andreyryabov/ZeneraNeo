@@ -1,5 +1,6 @@
 import type { Embedder } from '@zenera/neo';
-import { beginBuild, type Journal } from '../common/progress.ts';
+import { embedStream, NO_CACHE, openCache, type VectorCache } from '../common/cache.ts';
+import { beginBuild, type Journal, type PhaseTiming } from '../common/progress.ts';
 import { toEntities, type EntityRecord } from './entities.ts';
 import {
     INDEX_VERSION,
@@ -12,7 +13,7 @@ import {
 import { buildGraph } from './graph.ts';
 import { PHASES, SCHEMA_REPORT, type Phase } from './readme.ts';
 import { loadSpecs, type Corpus } from './spec.ts';
-import { writeStore } from './store.ts';
+import { openStore, type EntityWriter } from './store.ts';
 
 // ---------------------------------------------------------------------------
 // Building an index
@@ -31,10 +32,19 @@ export interface BuildOptions {
     embeddingRef?: string;
     /** told the manifest, so a store can say what wrote it */
     indexer: string;
-    /** texts sent to the embedder at once */
-    batch?: number;
     /** keep a bundled copy of each document in the index. On by default. */
     sources?: boolean;
+    /**
+     * The width asked of the embedder, when one was asked for. Part of the cache
+     * key, because a truncated vector is a different vector; left undefined when
+     * nobody asked, because that is a different key again from asking for the
+     * number the model would have chosen anyway.
+     */
+    dimensions?: number;
+    /** reuse vectors this machine already has; on by default */
+    cache?: boolean;
+    /** keep them somewhere other than the shared store */
+    cacheDir?: string;
     signal?: AbortSignal;
     /** what the documents turned out to hold, before a vector has been paid for */
     onRead?: (summary: BuildSummary) => void;
@@ -49,9 +59,11 @@ export interface BuildSummary {
 export interface BuildResult {
     manifest: Manifest;
     entities: EntityRecord[];
+    /** what each phase cost, so a slow build can say which part was slow */
+    timings: readonly PhaseTiming[];
+    /** vectors that came out of the shared cache instead of being paid for again */
+    reused: number;
 }
-
-const DEFAULT_BATCH = 96;
 
 export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
     const journal = beginBuild<Counts, Manifest, Phase>({
@@ -62,6 +74,16 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
         phases: PHASES,
         report: SCHEMA_REPORT,
     });
+    const ref = options.embeddingRef ?? options.embedder.id;
+    const cache =
+        options.cache === false
+            ? NO_CACHE
+            : openCache(options.embedder, {
+                  ref,
+                  dir: options.cacheDir,
+                  dimensions: options.dimensions,
+              });
+    let writer: EntityWriter | undefined;
 
     try {
         const corpus = await loadSpecs(options.files);
@@ -83,9 +105,10 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
         options.onRead?.(summary);
 
         journal.phase('embedding');
-        const vectors = await embedAll(entities, options, journal);
+        writer = await openStore(options.out);
+        const dimensions = await embedAll(entities, options, journal, cache, writer);
         journal.phase('writing');
-        const written = await writeStore(options.out, entities, vectors);
+        const written = await writer.finish();
 
         const manifest: Manifest = {
             version: INDEX_VERSION,
@@ -93,9 +116,10 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
             createdAt: new Date().toISOString(),
             indexer: options.indexer,
             embedding: {
-                ref: options.embeddingRef ?? options.embedder.id,
+                ref,
                 id: options.embedder.id,
-                dimensions: vectors[0]?.length ?? 0,
+                dimensions,
+                requested: options.dimensions,
             },
             sources: summary.sources,
             counts: summary.counts,
@@ -109,9 +133,12 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
             operations: corpus.operations,
             documents: keep ? corpus.documents : {},
         });
+        cache.commit();
         journal.finish(manifest);
-        return { manifest, entities };
+        return { manifest, entities, timings: journal.timings, reused: cache.hits };
     } catch (err) {
+        writer?.close();
+        cache.abandon();
         journal.fail(err);
         throw err;
     }
@@ -121,27 +148,24 @@ async function embedAll(
     entities: readonly EntityRecord[],
     options: BuildOptions,
     journal: Journal<Counts, Manifest, Phase>,
-): Promise<Float32Array[]> {
-    const size = options.batch ?? DEFAULT_BATCH;
-    const out: Float32Array[] = [];
-
-    for (let at = 0; at < entities.length; at += size) {
-        const slice = entities.slice(at, at + size);
-        const response = await options.embedder.embed({
-            input: slice.map((e) => e.text),
-            taskType: 'document',
-            signal: options.signal,
-        });
-        if (response.vectors.length !== slice.length) {
-            throw new Error(
-                `${options.embedder.id} answered ${response.vectors.length} vectors for ${slice.length} texts`,
-            );
-        }
-        out.push(...response.vectors.map((v) => Float32Array.from(v)));
-        journal.progress(out.length, entities.length);
-        options.onProgress?.(out.length, entities.length);
-    }
-    return out;
+    cache: VectorCache,
+    writer: EntityWriter,
+): Promise<number> {
+    // A window at a time. How many texts fit in a request, and how many
+    // requests may be in flight, are still the embedder's to answer — it knows
+    // the model's caps and it is the one that sees the 429s.
+    return embedStream({
+        embedder: options.embedder,
+        cache,
+        records: entities,
+        textOf: (entity) => entity.text,
+        signal: options.signal,
+        onProgress: (done, total) => {
+            journal.progress(done, total);
+            options.onProgress?.(done, total);
+        },
+        onWindow: (window, vectors) => writer.add(window, vectors),
+    });
 }
 
 /**

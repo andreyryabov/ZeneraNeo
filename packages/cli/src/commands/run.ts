@@ -4,7 +4,7 @@ import type { Command } from '../command.ts';
 import * as Engine from '../engine.ts';
 import { duration, Narrator, stopMark, summary } from '../narrate.ts';
 import * as Projects from '../projects.ts';
-import { target } from '../resolve.ts';
+import { target, type Target } from '../resolve.ts';
 import { display } from '../session.ts';
 import { bold, cyan, dim, json, note, readStdin, usageError, write } from '../term.ts';
 import { parseChoice } from '../tui/theme.ts';
@@ -136,6 +136,7 @@ export const run: Command = {
                 await start(engine, {
                     readOnly: Boolean(values['read-only']),
                     theme: values.theme,
+                    started: { created: where.created, freshWorkspace: where.freshWorkspace },
                 });
                 return;
             }
@@ -143,7 +144,7 @@ export const run: Command = {
             if (!prompt) {
                 throw usageError('nothing to ask', 'give a prompt, or pipe one in');
             }
-            await once(engine, prompt, values, ctx.json, ctx.cwd);
+            await once(engine, prompt, values, ctx.json, ctx.cwd, where);
         } finally {
             await engine.close();
         }
@@ -160,6 +161,7 @@ async function once(
     values: Flags,
     asJson: boolean,
     cwd: string,
+    where: Target,
 ): Promise<void> {
     const narrator = new Narrator({
         quiet: Boolean(values.quiet) || asJson,
@@ -173,8 +175,19 @@ async function once(
     process.once('SIGINT', onInterrupt);
 
     if (!values.quiet && !asJson) {
+        // Two questions were just answered, possibly without being asked. Say
+        // which way they went: a run that quietly resumed the wrong session, or
+        // wrote into the directory you were standing in, is only explainable
+        // afterwards, and this is the one line where it is cheap to say.
         note(
-            `${bold(engine.name)} ${dim(engine.session.id)} ` + dim(display(engine.workspace, cwd)),
+            `${bold(engine.name)} ${dim(where.created ? 'new session' : 'continuing')} ` +
+                `${dim(engine.session.id)}`,
+        );
+        note(
+            dim(
+                `${where.freshWorkspace ? 'new directory' : 'workspace'} ` +
+                    `${display(engine.workspace, cwd)}`,
+            ),
         );
     }
 

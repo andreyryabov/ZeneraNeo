@@ -24,8 +24,24 @@
 export function windowOf(text: string, width: number, rows: number): string[] {
     const w = Math.max(8, width);
     const n = Math.max(1, rows);
-    const wrapped = wrap(text.slice(-w * n * 2).replace(/\n{2,}/g, '\n'), w);
-    return wrapped.slice(-n);
+    // Trailing blank rows are never information, and a stream that ends on a
+    // paragraph break would spend one of the few rows it has on nothing.
+    const tail = text
+        .slice(-w * n * 2)
+        .replace(/\n{2,}/g, '\n')
+        .trimEnd();
+    return wrap(tail, w).slice(-n);
+}
+
+/**
+ * `text` flattened onto one row of at most `width` columns, ellipsized when it
+ * did not fit. Newlines and runs of space collapse: a row is a row, and a tool
+ * argument or a result preview arrives with whatever shape it happened to have.
+ */
+export function clip(text: string, width: number): string {
+    const flat = text.replace(/\s+/g, ' ').trim();
+    const w = Math.max(1, width);
+    return flat.length <= w ? flat : `${flat.slice(0, w - 1)}…`;
 }
 
 /** Word wrap. Every returned row is at most `width` columns wide. */
@@ -57,5 +73,179 @@ export function wrap(text: string, width: number): string[] {
         }
         out.push(line);
     }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// Dividing the frame
+//
+// The same invariant, stated as arithmetic: every repainting block gets its
+// rows from here, and the sum is never more than the viewport has to give.
+// ---------------------------------------------------------------------------
+
+/** The three footer rows, its margin, the prompt, and a row in hand. */
+export const CHROME_ROWS = 7;
+
+/** How much of the reasoning stream is worth showing. It is a progress bar. */
+export const THINKING_ROWS = 6;
+
+/** How much of the frame the work in flight may take. A branch is a box now,
+ *  not a row, so a fan-out of two costs fourteen of these. */
+export const ACTIVITY_ROWS = 16;
+
+/** The rule that opens a reasoning block and the one that closes it. */
+export const THINKING_CHROME = 2;
+
+export interface Budget {
+    /** rows for the list of what is in flight */
+    activity: number;
+    /** rows for the tail of the reasoning stream */
+    thinking: number;
+    /** rows for the answer as it arrives */
+    live: number;
+    /**
+     * What the three of them occupy together, rules included — a constant for
+     * a given terminal, whatever is happening inside it. The region grows to
+     * this and stops, and never shrinks back while the turn runs, which is what
+     * keeps the footer on one row instead of riding up and down on the
+     * reasoning block.
+     */
+    total: number;
+}
+
+/**
+ * How many rows each repainting block may draw in a terminal `rows` tall.
+ *
+ * Activity is capped first and never takes the last two rows: the answer as it
+ * arrives matters more than the machinery producing it. Reasoning yields to it
+ * in turn, because it is a progress indicator and the answer is the point.
+ *
+ * `thinking` is how many rows of reasoning are wanted, counting text only: none
+ * when there is no reasoning, fewer than `THINKING_ROWS` once the stream has
+ * settled and its tail is history rather than progress. The two rules are
+ * charged on top, so a block too cramped to be worth boxing is not drawn at all
+ * rather than drawn as a border with a line in it.
+ */
+export function budgetOf(rows: number, activity: number, thinking: number): Budget {
+    const total = Math.max(2, rows - CHROME_ROWS);
+    const shown = Math.min(Math.max(0, activity), ACTIVITY_ROWS, Math.max(0, total - 2));
+    const rest = total - shown;
+    const room = rest - 1 - THINKING_CHROME;
+    const tail = room >= 1 ? Math.min(Math.max(0, thinking), THINKING_ROWS, room) : 0;
+    return {
+        activity: shown,
+        thinking: tail,
+        live: rest - tail - (tail ? THINKING_CHROME : 0),
+        total,
+    };
+}
+
+/** The rows a branch box may spend on its own calls and its reasoning. */
+export const BRANCH_ROWS = 5;
+
+/** Rows a branch box spends on chrome: the title rule and the closing one. */
+export const BOX_CHROME = 2;
+
+/**
+ * How many call rows each of `count` branch boxes may draw, given the rows the
+ * activity region has to divide between them.
+ *
+ * Every branch gets the same number, because they are the same kind of thing
+ * and a fan-out is read across, not down. A wide fork spends its rows on being
+ * complete rather than on being detailed: eight branches showing one call each
+ * is a picture of the fork, eight rows of one branch is not.
+ */
+export function branchRows(count: number, allowance: number): number {
+    if (count <= 0) {
+        return 0;
+    }
+    const each = Math.floor(Math.max(0, allowance) / count) - BOX_CHROME;
+    return Math.max(1, Math.min(BRANCH_ROWS, each));
+}
+
+/**
+ * How wide the answer is drawn. A line of prose spanning a 200-column terminal
+ * is measurably harder to read than one that stops, which is why every demo in
+ * `examples/` puts its answer in a box of bounded width — the terminal is the
+ * page, not the paragraph.
+ */
+export function answerWidth(columns: number): number {
+    return Math.max(24, Math.min(columns - 4, 96));
+}
+
+// ---------------------------------------------------------------------------
+// Reading a payload
+// ---------------------------------------------------------------------------
+
+/** One field of a preview: a JSON string, or a bare token when it was cut. */
+const FIELD = /"([A-Za-z_][\w-]*)"\s*:\s*("(?:[^"\\]|\\.)*"?|[^,}\s]+)/g;
+
+/**
+ * A tool payload as a person would read it, rather than as it was serialised.
+ *
+ * A lone field is printed as its bare value, because the name of a generic tool
+ * says almost nothing on its own — `run_command` is every shell command there
+ * is, and the argument is the part that identifies THIS call.
+ *
+ * It scans rather than parses: previews are cut to a length, so the JSON very
+ * often does not close, and precisely the calls worth reading are the long ones
+ * that got cut.
+ */
+export function readable(preview: string): string {
+    const found = [...preview.matchAll(FIELD)];
+    if (!found.length) {
+        return preview.trim();
+    }
+    const fields = found.map((m) => [m[1] as string, unquote(m[2] as string)] as const);
+    const one = fields.length === 1 ? fields[0] : undefined;
+    return one ? one[1] : fields.map(([k, v]) => `${k}=${v}`).join(' ');
+}
+
+function unquote(raw: string): string {
+    if (!raw.startsWith('"')) {
+        return raw;
+    }
+    const body = raw.length > 1 && raw.endsWith('"') ? raw.slice(1, -1) : raw.slice(1);
+    return body.replace(/\\[nrt]/g, ' ').replace(/\\(["\\/])/g, '$1');
+}
+
+// ---------------------------------------------------------------------------
+// Fenced blocks
+// ---------------------------------------------------------------------------
+
+/** A run of lines from an answer, and whether it was fenced as code. */
+export interface Segment {
+    code: boolean;
+    /** the fence's info string, when it had one */
+    title?: string;
+    lines: string[];
+}
+
+/**
+ * Splits an answer on ``` fences. Prose is left exactly as it was — the common
+ * answer has no fence in it and comes back in one piece — but a fenced block is
+ * the one thing a terminal must not reflow: its indentation is its meaning, and
+ * wrapping it as prose destroys it.
+ */
+export function segmentsOf(text: string): Segment[] {
+    const out: Segment[] = [];
+    let current: Segment = { code: false, lines: [] };
+    const flush = (): void => {
+        if (current.lines.length) {
+            out.push(current);
+        }
+    };
+    for (const raw of text.split('\n')) {
+        const fence = /^\s*```+\s*(\S*)/.exec(raw);
+        if (!fence) {
+            current.lines.push(raw);
+            continue;
+        }
+        flush();
+        current = current.code
+            ? { code: false, lines: [] }
+            : { code: true, title: fence[1] || undefined, lines: [] };
+    }
+    flush();
     return out;
 }

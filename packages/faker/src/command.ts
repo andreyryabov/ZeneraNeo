@@ -1,8 +1,7 @@
-import { rmSync } from 'node:fs';
-import { readdir, readFile } from 'node:fs/promises';
-import { join, relative, resolve } from 'node:path';
 import {
     bold,
+    cacheItems,
+    clearCache,
     CliError,
     cyan,
     dim,
@@ -23,7 +22,10 @@ import {
     type Command,
     type Context,
 } from '@zenera/cli/lib';
+import { rmSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
 import { GENERATORS } from './box.ts';
+import { FAKER_KIND, type GeneratorMeta } from './cache.ts';
 import { reason } from './generate.ts';
 import { listen } from './server.ts';
 import { open, type Setup } from './setup.ts';
@@ -94,7 +96,7 @@ export const command: Command = {
             ['  --host <h>', dim('Default 127.0.0.1. Anything else is reachable off-machine.')],
             ['  --model <ref>', dim('Which model writes the generators.')],
             ['  --image <ref>', dim('Skip the baked image and use this one.')],
-            ['  --cache <dir>', dim('Where generators live. Default ~/.zenera/neo/faker.')],
+            ['  --cache <dir>', dim("The container's workspace. Default ~/.zenera/neo/faker.")],
             ['  --seed <n>', dim('Answer the same request the same way every time.')],
             ['  --attempts <n>', dim('Tries per generator before giving up. Default 3.')],
             ['  --concurrency <n>', dim('Generators written at once. Default 4.')],
@@ -259,7 +261,7 @@ async function cache(args: readonly string[], ctx: Context): Promise<void> {
     const sub = positionals[0] ?? 'ls';
 
     if (sub === 'ls') {
-        const entries = await listGenerators(root);
+        const entries = listGenerators();
         if (ctx.json) {
             json(entries);
             return;
@@ -283,6 +285,9 @@ async function cache(args: readonly string[], ctx: Context): Promise<void> {
     }
 
     if (sub === 'clear') {
+        clearCache({ kind: FAKER_KIND });
+        // The workspace is scratch — whatever a hit was copied into it is
+        // written again from the cache, or by the model.
         rmSync(join(root, GENERATORS), { recursive: true, force: true });
         // The container is named after its configuration, so a stale one would
         // otherwise sit there stopped forever with nothing pointing at it.
@@ -291,40 +296,25 @@ async function cache(args: readonly string[], ctx: Context): Promise<void> {
         if (mine.length > 0) {
             await removeContainers(mine.map((c) => c.name));
         }
-        note(`${green('cleared')} ${dim(root)}`);
+        note(`${green('cleared')} ${dim(paths.cache())}`);
         return;
     }
 
     throw usageError(`unknown cache command "${sub}"`, 'zen faker cache <ls|clear>');
 }
 
-interface Meta {
-    key: string;
-    method?: string;
-    path?: string;
-    model?: string;
-    attempts?: number;
-}
+type Listed = GeneratorMeta & { key: string };
 
-async function listGenerators(root: string): Promise<Meta[]> {
-    let keys: string[];
-    try {
-        keys = await readdir(join(root, GENERATORS));
-    } catch {
-        return [];
-    }
-    const out: Meta[] = [];
-    for (const key of keys.sort()) {
-        try {
-            const meta = JSON.parse(
-                await readFile(join(root, GENERATORS, key, 'meta.json'), 'utf8'),
-            );
-            out.push({ key, ...meta });
-        } catch {
-            out.push({ key });
-        }
-    }
-    return out;
+/**
+ * The keys are the operation keys, written verbatim — which is why they can be
+ * listed at all. Anything the store cannot parse is left out rather than shown
+ * as a row with nothing in it.
+ */
+function listGenerators(): Listed[] {
+    const { rows } = cacheItems(FAKER_KIND);
+    return rows
+        .map((row) => ({ key: row.key, ...(row.value as { meta?: GeneratorMeta })?.meta }))
+        .sort((a, b) => a.key.localeCompare(b.key));
 }
 
 // ---------------------------------------------------------------------------

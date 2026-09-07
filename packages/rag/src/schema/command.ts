@@ -8,6 +8,7 @@ import {
     json,
     note,
     parse,
+    paths,
     table,
     usageError,
     write,
@@ -19,6 +20,7 @@ import { resolveEmbedder } from '../common/embedder.ts';
 import { locateIndex, outputDir } from '../common/locate.ts';
 import { assertSameEmbedding } from '../common/manifest.ts';
 import { isGlob, loose, matcher, PatternError, wildcard, type Matcher } from '../common/match.ts';
+import { breakdown } from '../common/prose.ts';
 import { buildIndex } from './build.ts';
 import { openIndex, readManifest, readSource, SCHEMA_INDEX, type SourceRecord } from './files.ts';
 import type { ApiGraph, NodeKind } from './graph.ts';
@@ -89,11 +91,17 @@ export const command: Command = {
                 '  -o, --out <dir>',
                 dim(`Where the index goes. Default ${DEFAULT_DIR}, or ${DIR_ENV}.`),
             ],
+            ['  --batch <n>', dim("Texts per embedding request. Default: the model's own cap.")],
             [
-                '  --batch <n>',
-                dim('Texts per embedding request, and how often progress prints. Default 96.'),
+                '  --dimensions <n>',
+                dim("Narrower vectors, if the model allows it. Default: the model's own width."),
             ],
             ['  --no-sources', dim('Do not keep a copy of each document in the index.')],
+            [
+                '  --no-cache',
+                dim('Embed everything again, ignoring vectors this machine already has.'),
+            ],
+            ['  --cache-dir <dir>', dim('Keep the vectors somewhere other than the shared cache.')],
         ]),
         '',
         'Search terms (repeatable)',
@@ -216,7 +224,10 @@ interface IndexFlags {
     out?: string;
     embedding?: string;
     batch?: string;
+    dimensions?: string;
     'no-sources'?: boolean;
+    'no-cache'?: boolean;
+    'cache-dir'?: string;
     quiet?: boolean;
 }
 
@@ -227,7 +238,10 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
             out: { type: 'string', short: 'o' },
             embedding: { type: 'string' },
             batch: { type: 'string' },
+            dimensions: { type: 'string' },
             'no-sources': { type: 'boolean' },
+            'no-cache': { type: 'boolean' },
+            'cache-dir': { type: 'string' },
             quiet: { type: 'boolean' },
         },
         INDEX_USAGE,
@@ -237,23 +251,34 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
         throw usageError('no document given', INDEX_USAGE);
     }
     const out = outputDir(ctx.cwd, values.out, SCHEMA_INDEX);
+    const cacheDir = values['cache-dir'] ? resolve(ctx.cwd, values['cache-dir']) : paths.cache();
     const loud = !values.quiet && !ctx.json;
-    const chosen = await resolveEmbedder(values.embedding);
+    // Undefined when unasked, all the way to the cache key: a width nobody
+    // named is not the same key as the width the model happens to default to,
+    // and resolving it here would miss every vector already paid for.
+    const dimensions = values.dimensions ? count(values.dimensions, '--dimensions') : undefined;
+    const chosen = await resolveEmbedder(values.embedding, {
+        maxBatch: values.batch ? count(values.batch, '--batch') : undefined,
+        dimensions,
+    });
     const started = Date.now();
 
-    const { manifest } = await buildIndex({
+    const { manifest, timings, reused } = await buildIndex({
         files: positionals.map((file) => resolve(ctx.cwd, file)),
         out,
         embedder: chosen,
         embeddingRef: values.embedding,
         indexer: 'zenera-rag',
-        batch: values.batch ? count(values.batch, '--batch') : undefined,
         sources: !values['no-sources'],
+        dimensions,
+        cache: !values['no-cache'],
+        cacheDir: values['cache-dir'] ? cacheDir : undefined,
         onRead: loud
             ? (summary) => {
                   printSources(summary.sources);
-                  // The first batch can take a while and says nothing while it
-                  // does; this is the line that makes that a wait, not a hang.
+                  // Embedding is one call now, and a long one; this is the line
+                  // that makes the wait before the first progress report a wait
+                  // rather than a hang.
                   note(dim(`  embedding ${summary.counts.entities} entities with ${chosen.id} …`));
               }
             : undefined,
@@ -261,7 +286,7 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
             ? (done, total) =>
                   note(
                       dim(
-                          `  embedded ${done}/${total} · ${Math.round((done / total) * 100)}% · ${elapsed(started)}`,
+                          `  embedded ${done}/${total} · ${Math.floor((done / total) * 100)}% · ${elapsed(started)}`,
                       ),
                   )
             : undefined,
@@ -278,6 +303,13 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
     note(
         `  wrote ${bold(String(manifest.counts.entities))} entities to ${bold(out)}, ` +
             `embedded with ${manifest.embedding.ref} (${manifest.embedding.dimensions}d)`,
+    );
+    note(dim(`  ${breakdown(timings)}`));
+    note(
+        dim(
+            `  reused ${reused}/${manifest.counts.entities} vectors` +
+                `${values['no-cache'] ? ' (--no-cache)' : ` from ${cacheDir}`}`,
+        ),
     );
     const where =
         out === resolve(ctx.cwd, DEFAULT_DIR) ? '' : ` --dir ${relative(ctx.cwd, out) || out}`;
@@ -414,7 +446,12 @@ async function search(args: readonly string[], ctx: Context): Promise<void> {
     const ref = values.embedding ?? manifest.embedding.ref;
     assertSameEmbedding(manifest, ref);
 
-    const index = await SchemaIndex.open(dir, await resolveEmbedder(ref));
+    // A query has to be asked at the width the entities were written at, and
+    // the ref alone does not say what that was.
+    const index = await SchemaIndex.open(
+        dir,
+        await resolveEmbedder(ref, { dimensions: manifest.embedding.requested }),
+    );
     try {
         if (values.interactive) {
             await repl(index, query, { format, ...options });

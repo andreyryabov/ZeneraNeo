@@ -8,6 +8,7 @@ import {
     json,
     note,
     parse,
+    paths,
     table,
     usageError,
     write,
@@ -19,7 +20,8 @@ import { resolveEmbedder } from '../common/embedder.ts';
 import { locateIndex, outputDir } from '../common/locate.ts';
 import { assertSameEmbedding } from '../common/manifest.ts';
 import { PatternError } from '../common/match.ts';
-import { grid } from '../common/prose.ts';
+import { INTERVAL_MS } from '../common/progress.ts';
+import { breakdown, grid } from '../common/prose.ts';
 import { assemble, DEFAULT_MAX_LINES } from './assemble.ts';
 import { buildIndex } from './build.ts';
 import { CHUNK_KINDS } from './chunk.ts';
@@ -103,8 +105,17 @@ export const command: Command = {
                 '  -o, --out <dir>',
                 dim(`Where the index goes. Default ${DEFAULT_DIR}, or ${DIR_ENV}.`),
             ],
-            ['  --batch <n>', dim('Texts per embedding request. Default 96.')],
+            ['  --batch <n>', dim("Texts per embedding request. Default: the model's own cap.")],
+            [
+                '  --dimensions <n>',
+                dim("Narrower vectors, if the model allows it. Default: the model's own width."),
+            ],
             ['  --chunk-tokens <n>', dim('Target chunk size. Default 384.')],
+            [
+                '  --no-cache',
+                dim('Parse and embed everything again, ignoring what is already kept.'),
+            ],
+            ['  --cache-dir <dir>', dim('Keep the work somewhere other than the shared cache.')],
         ]),
         '',
         dim('  Every document is copied into the index, so it stays portable and'),
@@ -195,7 +206,10 @@ interface IndexFlags {
     out?: string;
     embedding?: string;
     batch?: string;
+    dimensions?: string;
     'chunk-tokens'?: string;
+    'no-cache'?: boolean;
+    'cache-dir'?: string;
     quiet?: boolean;
 }
 
@@ -206,7 +220,10 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
             out: { type: 'string', short: 'o' },
             embedding: { type: 'string' },
             batch: { type: 'string' },
+            dimensions: { type: 'string' },
             'chunk-tokens': { type: 'string' },
+            'no-cache': { type: 'boolean' },
+            'cache-dir': { type: 'string' },
             quiet: { type: 'boolean' },
         },
         INDEX_USAGE,
@@ -216,20 +233,40 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
         throw usageError('no document, directory or pattern given', INDEX_USAGE);
     }
     const out = outputDir(ctx.cwd, values.out, DOCS_INDEX);
+    const cacheDir = values['cache-dir'] ? resolve(ctx.cwd, values['cache-dir']) : paths.cache();
     const loud = !values.quiet && !ctx.json;
-    const chosen = await resolveEmbedder(values.embedding);
+    // Undefined when unasked, all the way to the cache key: a width nobody
+    // named is not the same key as the width the model happens to default to,
+    // and resolving it here would miss every vector already paid for.
+    const dimensions = values.dimensions ? count(values.dimensions, '--dimensions') : undefined;
+    const chosen = await resolveEmbedder(values.embedding, {
+        maxBatch: values.batch ? count(values.batch, '--batch') : undefined,
+        dimensions,
+    });
     const started = Date.now();
 
-    const { manifest } = await buildIndex({
+    const { manifest, timings, reused } = await buildIndex({
         files: positionals,
         cwd: ctx.cwd,
         out,
         embedder: chosen,
         embeddingRef: values.embedding,
         indexer: 'zenera-rag',
-        batch: values.batch ? count(values.batch, '--batch') : undefined,
         chunk: values['chunk-tokens']
             ? { chunkTokens: count(values['chunk-tokens'], '--chunk-tokens') }
+            : undefined,
+        dimensions,
+        cache: !values['no-cache'],
+        cacheDir: values['cache-dir'] ? cacheDir : undefined,
+        onReading: loud
+            ? throttled((done, total, pending) =>
+                  note(
+                      dim(
+                          `  parsed ${done}/${total} · ${Math.floor((done / total) * 100)}% · ` +
+                              `${elapsed(started)}${still(pending)}`,
+                      ),
+                  ),
+              )
             : undefined,
         onRead: loud
             ? (summary) => {
@@ -237,8 +274,9 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
                   for (const skip of summary.skipped) {
                       note(dim(`  skipped ${skip.name}: ${skip.reason}`));
                   }
-                  // The first batch takes a while and says nothing while it
-                  // does; this is the line that makes that a wait, not a hang.
+                  // Embedding is one call now, and a long one; this is the line
+                  // that makes the wait before the first progress report a wait
+                  // rather than a hang.
                   note(dim(`  embedding ${summary.counts.chunks} chunks with ${chosen.id} …`));
               }
             : undefined,
@@ -246,7 +284,7 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
             ? (done, total) =>
                   note(
                       dim(
-                          `  embedded ${done}/${total} · ${Math.round((done / total) * 100)}% · ${elapsed(started)}`,
+                          `  embedded ${done}/${total} · ${Math.floor((done / total) * 100)}% · ${elapsed(started)}`,
                       ),
                   )
             : undefined,
@@ -264,6 +302,14 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
         `  wrote ${bold(String(manifest.counts.chunks))} chunks from ` +
             `${bold(String(manifest.counts.documents))} document(s) to ${bold(out)}, ` +
             `embedded with ${manifest.embedding.ref} (${manifest.embedding.dimensions}d)`,
+    );
+    note(dim(`  ${breakdown(timings)}`));
+    note(
+        dim(
+            `  reused ${reused.parses}/${manifest.counts.documents} parses, ` +
+                `${reused.vectors}/${manifest.counts.chunks} vectors` +
+                `${values['no-cache'] ? ' (--no-cache)' : ` from ${cacheDir}`}`,
+        ),
     );
     const where =
         out === resolve(ctx.cwd, DEFAULT_DIR) ? '' : ` --dir ${relative(ctx.cwd, out) || out}`;
@@ -307,6 +353,21 @@ function elapsed(since: number): string {
     const seconds = Math.round((Date.now() - since) / 1000);
     return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60}s`;
 }
+
+/** Reading fires per document, and a line per document is not a narration. */
+function throttled<A extends unknown[]>(say: (...args: A) => void): (...args: A) => void {
+    let saidAt = 0;
+    return (...args: A) => {
+        if (Date.now() - saidAt >= INTERVAL_MS) {
+            saidAt = Date.now();
+            say(...args);
+        }
+    };
+}
+
+/** Only worth naming when there are few enough to go and look at. */
+const still = (pending: readonly string[]): string =>
+    pending.length > 0 && pending.length <= 2 ? ` · still on ${pending.join(', ')}` : '';
 
 // ---------------------------------------------------------------------------
 // search
@@ -388,7 +449,12 @@ async function search(args: readonly string[], ctx: Context): Promise<void> {
     const ref = values.embedding ?? manifest.embedding.ref;
     assertSameEmbedding(manifest, ref);
 
-    const found = await DocsIndex.open(dir, await resolveEmbedder(ref));
+    // A query has to be asked at the width the passages were written at, and
+    // the ref alone does not say what that was.
+    const found = await DocsIndex.open(
+        dir,
+        await resolveEmbedder(ref, { dimensions: manifest.embedding.requested }),
+    );
     try {
         if (values.interactive) {
             await repl(found, query, shape);
