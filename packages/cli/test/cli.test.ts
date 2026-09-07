@@ -48,6 +48,10 @@ import { dirSize } from '../src/projects.ts';
 import { scaffold } from '../src/scaffold.ts';
 import { bytes, CliError, EXIT, pad, table } from '../src/term.ts';
 import {
+    answerWidth,
+    BOX_CHROME,
+    BRANCH_ROWS,
+    branchRows,
     budgetOf,
     CHROME_ROWS,
     clip,
@@ -377,6 +381,10 @@ describe('dividing the frame', () => {
                 for (const thinking of [0, 1, THINKING_ROWS]) {
                     const budget = budgetOf(rows, activity, thinking);
                     expect(height(budget)).toBeLessThanOrEqual(Math.max(2, rows - CHROME_ROWS));
+                    // And exactly as many as it reserves: the region is drawn
+                    // at `total`, so a sum that came out short would leave the
+                    // footer riding on whatever the model happened to say.
+                    expect(height(budget)).toBe(budget.total);
                 }
             }
         }
@@ -402,13 +410,46 @@ describe('dividing the frame', () => {
     });
 
     it('caps what is in flight rather than the answer', () => {
-        expect(budgetOf(24, 20, 0).activity).toBe(12);
+        expect(budgetOf(40, 20, 0).activity).toBe(16);
+        expect(budgetOf(24, 20, 0).activity).toBe(15);
         expect(budgetOf(24, 2, 0).activity).toBe(2);
         expect(budgetOf(24, 0, 0).activity).toBe(0);
     });
 
     it('gives the activity list nothing when there is no room for it', () => {
         expect(budgetOf(8, 4, 0).activity).toBe(0);
+    });
+});
+
+describe('sharing the frame between branches', () => {
+    it('spends the allowance on being complete rather than detailed', () => {
+        // Whatever the width of the fork, the boxes fit in what they were given.
+        for (const count of [1, 2, 3, 4, 6, 8]) {
+            const each = branchRows(count, 12);
+            expect(each).toBeGreaterThanOrEqual(1);
+            expect(each).toBeLessThanOrEqual(BRANCH_ROWS);
+            if (count * (BOX_CHROME + 1) <= 12) {
+                expect(count * (BOX_CHROME + each)).toBeLessThanOrEqual(12);
+            }
+        }
+    });
+
+    it('always leaves a branch one row, so a wide fork is cut rather than emptied', () => {
+        expect(branchRows(8, 12)).toBe(1);
+        expect(branchRows(1, 0)).toBe(1);
+        expect(branchRows(0, 12)).toBe(0);
+    });
+});
+
+describe('bounding the answer', () => {
+    it('stops well short of a very wide terminal', () => {
+        expect(answerWidth(200)).toBe(96);
+        expect(answerWidth(100)).toBe(96);
+    });
+
+    it('leaves the margin on a narrow one, and never goes to nothing', () => {
+        expect(answerWidth(80)).toBe(76);
+        expect(answerWidth(10)).toBe(24);
     });
 });
 

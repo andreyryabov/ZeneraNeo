@@ -90,8 +90,8 @@ export const CHROME_ROWS = 7;
 export const THINKING_ROWS = 6;
 
 /** How much of the frame the work in flight may take. A branch is a box now,
- *  not a row, so a fan-out of three costs nine of these. */
-export const ACTIVITY_ROWS = 12;
+ *  not a row, so a fan-out of two costs fourteen of these. */
+export const ACTIVITY_ROWS = 16;
 
 /** The rule that opens a reasoning block and the one that closes it. */
 export const THINKING_CHROME = 2;
@@ -103,6 +103,14 @@ export interface Budget {
     thinking: number;
     /** rows for the answer as it arrives */
     live: number;
+    /**
+     * What the three of them occupy together, rules included — a constant for
+     * a given terminal, whatever is happening inside it. The region grows to
+     * this and stops, and never shrinks back while the turn runs, which is what
+     * keeps the footer on one row instead of riding up and down on the
+     * reasoning block.
+     */
+    total: number;
 }
 
 /**
@@ -124,7 +132,45 @@ export function budgetOf(rows: number, activity: number, thinking: number): Budg
     const rest = total - shown;
     const room = rest - 1 - THINKING_CHROME;
     const tail = room >= 1 ? Math.min(Math.max(0, thinking), THINKING_ROWS, room) : 0;
-    return { activity: shown, thinking: tail, live: rest - tail - (tail ? THINKING_CHROME : 0) };
+    return {
+        activity: shown,
+        thinking: tail,
+        live: rest - tail - (tail ? THINKING_CHROME : 0),
+        total,
+    };
+}
+
+/** The rows a branch box may spend on its own calls and its reasoning. */
+export const BRANCH_ROWS = 5;
+
+/** Rows a branch box spends on chrome: the title rule and the closing one. */
+export const BOX_CHROME = 2;
+
+/**
+ * How many call rows each of `count` branch boxes may draw, given the rows the
+ * activity region has to divide between them.
+ *
+ * Every branch gets the same number, because they are the same kind of thing
+ * and a fan-out is read across, not down. A wide fork spends its rows on being
+ * complete rather than on being detailed: eight branches showing one call each
+ * is a picture of the fork, eight rows of one branch is not.
+ */
+export function branchRows(count: number, allowance: number): number {
+    if (count <= 0) {
+        return 0;
+    }
+    const each = Math.floor(Math.max(0, allowance) / count) - BOX_CHROME;
+    return Math.max(1, Math.min(BRANCH_ROWS, each));
+}
+
+/**
+ * How wide the answer is drawn. A line of prose spanning a 200-column terminal
+ * is measurably harder to read than one that stops, which is why every demo in
+ * `examples/` puts its answer in a box of bounded width — the terminal is the
+ * page, not the paragraph.
+ */
+export function answerWidth(columns: number): number {
+    return Math.max(24, Math.min(columns - 4, 96));
 }
 
 // ---------------------------------------------------------------------------
