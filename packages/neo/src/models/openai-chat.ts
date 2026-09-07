@@ -68,12 +68,12 @@ export class OpenAIModel implements Model {
 
     async stream(req: ModelRequest, onDelta: (d: StreamDelta) => void): Promise<ModelResponse> {
         const site = this.#site('llm streaming', API);
-        const stream = await called(site, () =>
+        const open = () =>
             this.#client.chat.completions.create(
                 { ...this.#params(req), stream: true, stream_options: { include_usage: true } },
                 { signal: req.signal },
-            ),
-        );
+            );
+        const stream = await called(site, open);
 
         let text = '';
         let thinking = '';
@@ -83,7 +83,7 @@ export class OpenAIModel implements Model {
         // first fragment and arguments trickling in afterwards.
         const calls = new Map<number, ToolCall>();
 
-        for await (const chunk of reading(site, stream)) {
+        for await (const chunk of reading(site, stream, open)) {
             if (chunk.usage) {
                 usage = toUsage(chunk.usage);
             }

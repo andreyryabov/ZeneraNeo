@@ -1,4 +1,4 @@
-import { isAbort, statusOf } from './embeddings/rate-limit.ts';
+import { classify, isAbort, statusOf } from './embeddings/rate-limit.ts';
 
 // ---------------------------------------------------------------------------
 // What the runtime was doing when a provider refused
@@ -20,6 +20,21 @@ import { isAbort, statusOf } from './embeddings/rate-limit.ts';
 // copied onto the wrapper because everything that classifies a failure — the
 // embedding limiter here, the CLI's liveness probe — reads it off the error it
 // was handed.
+//
+// Retries
+//
+// A failure that reaches here has already been retried: each client is built
+// with a retry budget (see `models/factory.ts`), and those retries are inside
+// the one call `called()` made. So the report is the elapsed time rather than a
+// count — a connection refused in 200ms and one that spent 40s failing four
+// times are different problems, and only the clock tells them apart.
+//
+// The exception is the response body. Every SDK's backoff wraps the request,
+// and a stream is opened by a request that succeeded, so a connection reset
+// while the answer is arriving is retried by nobody. `reading()` retries that
+// itself, but only while the stream has emitted nothing: once a delta has been
+// handed to the caller it is on screen, and a second stream would repeat it.
+// That is why a failure names the chunks it had already delivered.
 // ---------------------------------------------------------------------------
 
 /** What was being asked of a provider, in the runtime's own words. */
@@ -56,6 +71,26 @@ export interface ProviderNamed {
     provider?: string;
 }
 
+/** How a call went before it failed, which is most of what makes a failure readable. */
+export interface Attempted {
+    /**
+     * How many times THIS runtime opened the call. Usually one: every SDK here
+     * is configured to retry the request itself, and all of that happens inside
+     * a single attempt — which is why the elapsed time matters more than the
+     * count. Above one only where a broken stream was reopened.
+     */
+    attempts: number;
+    elapsedMs: number;
+    /**
+     * Chunks delivered before the stream broke. Any at all means the answer had
+     * already started, and a stream that has emitted cannot be replayed: the
+     * deltas are on screen.
+     */
+    chunks?: number;
+}
+
+const ONCE: Attempted = { attempts: 1, elapsedMs: 0 };
+
 /** A provider call that failed, with the call it was. */
 export class ProviderError extends Error {
     readonly site: CallSite;
@@ -63,14 +98,48 @@ export class ProviderError extends Error {
     readonly detail: string;
     /** the HTTP status, wherever the SDK or the body left it */
     readonly status?: number;
+    readonly attempts: number;
+    readonly elapsedMs: number;
+    readonly chunks?: number;
 
-    constructor(site: CallSite, detail: string, status: number | undefined, cause: unknown) {
-        super(`${site.doing} failed — ${where(site)}: ${detail}`, { cause });
+    constructor(
+        site: CallSite,
+        detail: string,
+        status: number | undefined,
+        cause: unknown,
+        tried: Attempted = ONCE,
+    ) {
+        super(`${site.doing} failed — ${where(site)}: ${detail}${trailer(tried)}`, { cause });
         this.name = 'ProviderError';
         this.site = site;
         this.detail = detail;
         this.status = status;
+        this.attempts = tried.attempts;
+        this.elapsedMs = tried.elapsedMs;
+        this.chunks = tried.chunks;
     }
+}
+
+/**
+ * What the failure cost, when that is worth a person's attention. A call that
+ * failed at once and was never retried spent nothing worth reporting, and the
+ * message is long already.
+ */
+function trailer(tried: Attempted): string {
+    const said: string[] = [];
+    if (tried.attempts > 1) {
+        said.push(`${tried.attempts} attempts`);
+    }
+    if (tried.elapsedMs >= 1_000) {
+        said.push(`${(tried.elapsedMs / 1000).toFixed(1)}s`);
+    }
+    if (tried.chunks) {
+        // Says why it was not retried, which is the first thing asked of a
+        // connection that dropped.
+        const many = tried.chunks === 1 ? '' : 's';
+        said.push(`${tried.chunks} chunk${many} in, too late to retry`);
+    }
+    return said.length ? ` [after ${said.join(', ')}]` : '';
 }
 
 const where = (site: CallSite): string =>
@@ -78,31 +147,81 @@ const where = (site: CallSite): string =>
 
 /** Runs one provider call, and makes sure a refusal says what it refused. */
 export async function called<T>(site: CallSite, run: () => Promise<T>): Promise<T> {
+    const started = Date.now();
     try {
         return await run();
     } catch (err) {
-        throw failed(site, err);
+        // The SDK's own retries are inside this: an OpenAI or Vertex client
+        // gives up only after four of them, so the elapsed time is the only
+        // report of what the wait was spent on.
+        throw failed(site, err, { attempts: 1, elapsedMs: Date.now() - started });
     }
 }
 
 /**
+ * Attempts to reopen a stream that broke before it said anything, and the pause
+ * before each. Short on purpose: the client's own backoff has already been
+ * spent getting the request accepted, and a body that dies on an accepted
+ * connection is usually a dropped socket rather than a busy server.
+ */
+const REOPEN = 2;
+const REOPEN_BACKOFF_MS = 300;
+
+/**
  * The same for a response body: an HTTP error, and every mid-stream failure,
  * arrives while the stream is being read — long after the call that opened it
- * returned successfully.
+ * returned successfully. None of the SDKs retry that: their backoff wraps the
+ * request, and by the time a body is being consumed the request has succeeded.
+ *
+ * So this does, but only while nothing has come out of it. A connection reset
+ * before the first chunk is indistinguishable from one that never opened, and
+ * reopening is invisible to the caller. One chunk later it is not: the deltas
+ * have been delivered, a second stream would repeat them, and the failure has
+ * to be reported instead.
  */
-export async function* reading<T>(site: CallSite, source: AsyncIterable<T>): AsyncIterable<T> {
-    try {
-        yield* source;
-    } catch (err) {
-        throw failed(site, err);
+export async function* reading<T>(
+    site: CallSite,
+    source: AsyncIterable<T>,
+    reopen?: () => Promise<AsyncIterable<T>>,
+): AsyncIterable<T> {
+    const started = Date.now();
+    let stream = source;
+    let chunks = 0;
+
+    for (let attempt = 1; ; attempt++) {
+        try {
+            for await (const item of stream) {
+                chunks++;
+                yield item;
+            }
+            return;
+        } catch (err) {
+            const again =
+                reopen &&
+                chunks === 0 &&
+                attempt <= REOPEN &&
+                !isAbort(err) &&
+                classify(err) !== 'fatal';
+            if (!again) {
+                throw failed(site, err, {
+                    attempts: attempt,
+                    elapsedMs: Date.now() - started,
+                    chunks,
+                });
+            }
+            await sleep(REOPEN_BACKOFF_MS * attempt);
+            stream = await reopen();
+        }
     }
 }
+
+const sleep = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
 
 /** Names for "the caller stopped waiting", which are not the provider's doing. */
 const INTERRUPTED = new Set(['AbortError', 'TimeoutError']);
 
 /** The error to throw in place of `err`, which may be `err` itself. */
-export function failed(site: CallSite, err: unknown): unknown {
+export function failed(site: CallSite, err: unknown, tried: Attempted = ONCE): unknown {
     // An abort is the caller's own decision and a deadline is the caller's own
     // clock. Both are recognised by name upstream, so neither is rewritten.
     const name = (err as { name?: unknown } | null)?.name;
@@ -114,7 +233,7 @@ export function failed(site: CallSite, err: unknown): unknown {
         return err;
     }
     const { detail, status } = explain(err);
-    return new ProviderError(site, detail, status, err);
+    return new ProviderError(site, detail, status, err, tried);
 }
 
 /** Bodies nest at most this deep before the unwrapping is the bug. */

@@ -75,14 +75,14 @@ export class OpenAIResponsesModel implements Model {
 
     async stream(req: ModelRequest, onDelta: (d: StreamDelta) => void): Promise<ModelResponse> {
         const site = this.#site('llm streaming', API);
-        const stream = await called(site, () =>
+        const open = () =>
             this.#client.responses.create(
                 { ...this.#params(req), stream: true },
                 {
                     signal: req.signal,
                 },
-            ),
-        );
+            );
+        const stream = await called(site, open);
 
         let text = '';
         let thinking = '';
@@ -92,7 +92,7 @@ export class OpenAIResponsesModel implements Model {
         // items are still being assembled.
         const calls = new Map<number, ToolCall>();
 
-        for await (const event of reading(site, stream)) {
+        for await (const event of reading(site, stream, open)) {
             // Some models/gateways emit `response.reasoning.delta`, which the
             // SDK does not carry in its event union, so it is matched before
             // the typed switch.

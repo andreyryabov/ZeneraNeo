@@ -111,6 +111,70 @@ describe('a provider refusal', () => {
     });
 });
 
+/** A GenAI client whose stream drops the connection `drops` times, `after` chunks each. */
+function dropping(drops: number, after = 0) {
+    let opened = 0;
+    const client = {
+        models: {
+            generateContentStream: async () => {
+                const broken = ++opened <= drops;
+                return (async function* () {
+                    for (let i = 0; i < after; i++) {
+                        yield said('...');
+                    }
+                    if (broken) {
+                        throw Object.assign(new Error('fetch failed'), {
+                            cause: Object.assign(new Error('read ECONNRESET'), {
+                                code: 'ECONNRESET',
+                            }),
+                        });
+                    }
+                    yield said('hello');
+                })();
+            },
+        },
+    } as unknown as GoogleGenAI;
+    return { client, opens: () => opened };
+}
+
+const said = (text: string) =>
+    ({ candidates: [{ content: { parts: [{ text }] } }] }) as GenerateContentResponse;
+
+describe('a stream that drops', () => {
+    it('is reopened while it has said nothing, because nobody else retries a body', async () => {
+        const { client, opens } = dropping(1);
+        const deltas: string[] = [];
+
+        const res = await gemini(client).stream!(request, (d) => {
+            if (d.type === 'text_delta') {
+                deltas.push(d.delta);
+            }
+        });
+
+        expect(opens()).toBe(2);
+        expect(res.text).toBe('hello');
+        expect(deltas).toEqual(['hello']);
+    });
+
+    it('is not reopened once a delta is out, since that one is already on screen', async () => {
+        const { client, opens } = dropping(1, 1);
+        const err = await gemini(client).stream!(request, () => {}).catch((e: unknown) => e);
+
+        expect(opens()).toBe(1);
+        expect((err as Error).message).toContain('read ECONNRESET (ECONNRESET)');
+        expect((err as Error).message).toContain('[after 1 chunk in, too late to retry]');
+    });
+
+    it('gives up after two reopenings, and says how many it took', async () => {
+        const { client, opens } = dropping(9);
+        const err = await gemini(client).stream!(request, () => {}).catch((e: unknown) => e);
+
+        expect(opens()).toBe(3);
+        expect((err as ProviderError).attempts).toBe(3);
+        expect((err as Error).message).toContain('[after 3 attempts');
+    });
+});
+
 describe('unwrapping what a vendor said', () => {
     it('digs the sentence out of a body quoting another body', () => {
         expect(explain(new Error(GOOGLE_400))).toEqual({

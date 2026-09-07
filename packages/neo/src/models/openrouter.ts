@@ -160,11 +160,14 @@ export class OpenRouterModel implements Model {
 
     async stream(req: ModelRequest, onDelta: (d: StreamDelta) => void): Promise<ModelResponse> {
         const site = this.#site('llm streaming', 'chat.send');
-        const res = await called(site, () => this.#send(req, true));
-        if (!(Symbol.asyncIterator in res)) {
-            throw new Error(`model "${this.id}": asked for a stream, got one completion`);
-        }
-
+        const open = async () => {
+            const res = await this.#send(req, true);
+            if (!(Symbol.asyncIterator in res)) {
+                throw new Error(`model "${this.id}": asked for a stream, got one completion`);
+            }
+            return res;
+        };
+        const res = await called(site, open);
         let text = '';
         let thinking = '';
         let usage: TokenUsage | undefined;
@@ -173,7 +176,7 @@ export class OpenRouterModel implements Model {
         // first fragment and arguments trickling in afterwards.
         const calls = new Map<number, ToolCall>();
 
-        for await (const chunk of reading(site, res)) {
+        for await (const chunk of reading(site, res, open)) {
             // An upstream failure mid-stream arrives as a chunk on a 200, so it
             // has to be raised here or the turn ends early and looks complete.
             if (chunk.error) {

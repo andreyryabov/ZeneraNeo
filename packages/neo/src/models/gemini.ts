@@ -117,13 +117,13 @@ export class GeminiModel implements Model {
 
     async stream(req: ModelRequest, onDelta: (d: StreamDelta) => void): Promise<ModelResponse> {
         const site = this.#site('llm streaming', 'models.generateContentStream');
-        const stream = await called(site, () =>
-            this.#client.models.generateContentStream(this.#params(req)),
-        );
+        const open = (): Promise<AsyncGenerator<GenerateContentResponse>> =>
+            this.#client.models.generateContentStream(this.#params(req));
+        const stream = await called(site, open);
         const read = emptyRead();
         let last: GenerateContentResponse | undefined;
 
-        for await (const chunk of reading(site, stream)) {
+        for await (const chunk of reading(site, stream, open)) {
             last = chunk;
             for (const part of candidateParts(chunk)) {
                 this.#readPart(part, read, onDelta);

@@ -93,13 +93,17 @@ export class AnthropicModel implements Model {
 
     async stream(req: ModelRequest, onDelta: (d: StreamDelta) => void): Promise<ModelResponse> {
         const site = this.#site('llm streaming', 'messages.stream');
-        const stream = this.#client.messages.stream(this.#params(req), { signal: req.signal });
+        // Reassigned when a broken stream is reopened, so that `finalMessage()`
+        // below is asked of whichever stream actually delivered the answer.
+        let stream = this.#client.messages.stream(this.#params(req), { signal: req.signal });
+        const open = async () =>
+            (stream = this.#client.messages.stream(this.#params(req), { signal: req.signal }));
 
         // Blocks are addressed by index, and a tool call's id and name arrive in
         // its `content_block_start` while the arguments trickle in afterwards.
         const calls = new Map<number, ToolCall>();
 
-        for await (const event of reading(site, stream)) {
+        for await (const event of reading(site, stream, open)) {
             if (event.type === 'content_block_start') {
                 const block = event.content_block;
                 if (block.type === 'tool_use') {
