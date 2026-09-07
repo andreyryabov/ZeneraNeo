@@ -126,6 +126,54 @@ describe('unwrapping what a vendor said', () => {
         expect(said.detail).toBe('404 The model `gpt-9` does not exist');
     });
 
+    it('names the argument, which the sentence never does', () => {
+        // `Request contains an invalid argument` on its own is unactionable:
+        // the field that was wrong is in `details`, and nowhere else.
+        const body = JSON.stringify({
+            error: {
+                code: 400,
+                message: 'Request contains an invalid argument.',
+                status: 'INVALID_ARGUMENT',
+                details: [
+                    {
+                        '@type': 'type.googleapis.com/google.rpc.BadRequest',
+                        fieldViolations: [
+                            {
+                                field: 'tools[0].function_declarations[2].parameters',
+                                description: 'Invalid JSON schema: unsupported keyword "$ref"',
+                            },
+                        ],
+                    },
+                ],
+            },
+        });
+        expect(explain(new Error(body)).detail).toBe(
+            'Request contains an invalid argument. — tools[0].function_declarations[2]' +
+                '.parameters: Invalid JSON schema: unsupported keyword "$ref" ' +
+                '(400 INVALID_ARGUMENT)',
+        );
+    });
+
+    it('takes whatever a detail says when it names no field', () => {
+        const body = JSON.stringify({
+            error: {
+                code: 429,
+                message: 'Quota exceeded.',
+                details: [
+                    { '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'RATE_LIMIT' },
+                ],
+            },
+        });
+        expect(explain(new Error(body)).detail).toBe('Quota exceeded. — RATE_LIMIT (429)');
+    });
+
+    it('names the parameter openai objected to', () => {
+        const body = JSON.stringify({
+            error: { message: 'Unknown parameter.', type: 'invalid_request_error', param: 'top_k' },
+        });
+        expect(explain(new Error(body)).detail).toBe('Unknown parameter. — top_k');
+    });
+
     it('blames the cause when the message is only `fetch failed`', () => {
         const err = new Error('fetch failed', {
             cause: Object.assign(new Error('getaddrinfo ENOTFOUND api.example'), {

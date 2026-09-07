@@ -132,6 +132,8 @@ interface Said {
     status?: number;
     /** the vendor's symbolic name for the refusal — `INVALID_ARGUMENT` */
     code?: string;
+    /** what the vendor's `details` add, which is usually the argument's name */
+    about?: string;
 }
 
 /**
@@ -141,6 +143,7 @@ interface Said {
 export function explain(err: unknown): { detail: string; status?: number } {
     let status = statusOf(err);
     let code: string | undefined;
+    let about: string | undefined;
     let text = messageOf(err);
 
     // Unwrapping once is not enough — Google's body holds a body — and
@@ -154,10 +157,13 @@ export function explain(err: unknown): { detail: string; status?: number } {
         // says which argument was invalid.
         status = said.status ?? status;
         code = said.code ?? code;
+        about = said.about ?? about;
         text = said.message;
     }
 
-    text = collapse(text);
+    // `Request contains an invalid argument` names no argument. The vendor's
+    // `details` are where the field that was wrong is, when it is anywhere.
+    text = collapse(about ? `${text.trim()} — ${about}` : text);
     if (!text || OPAQUE.test(text)) {
         // `fetch failed` is undici's word for DNS, refused, TLS and timeout
         // alike; the reason is only ever in the cause.
@@ -191,7 +197,13 @@ function body(text: string): Said | undefined {
     if (!error || typeof error !== 'object') {
         return undefined;
     }
-    const said = error as { message?: unknown; code?: unknown; status?: unknown };
+    const said = error as {
+        message?: unknown;
+        code?: unknown;
+        status?: unknown;
+        details?: unknown;
+        param?: unknown;
+    };
     if (typeof said.message !== 'string') {
         return undefined;
     }
@@ -207,7 +219,46 @@ function body(text: string): Said | undefined {
                 : typeof said.code === 'string'
                   ? said.code
                   : undefined,
+        about: aboutOf(said.details) ?? (typeof said.param === 'string' ? said.param : undefined),
     };
+}
+
+/** Names of the field a `google.rpc` detail is about, and of what was wrong with it. */
+const VIOLATION = ['field', 'description', 'reason', 'detail', 'message'] as const;
+
+/**
+ * What a vendor's `details` array says, flattened to one clause.
+ *
+ * This is where a 400 keeps the part a person needs: the top-level message is
+ * `Request contains an invalid argument`, and `fieldViolations[0].field` is the
+ * argument. The shapes are `google.rpc.BadRequest`, `ErrorInfo` and `DebugInfo`
+ * — read by the field names they have in common rather than by `@type`, since
+ * a detail nobody anticipated is still worth printing.
+ */
+function aboutOf(details: unknown): string | undefined {
+    if (!Array.isArray(details)) {
+        return undefined;
+    }
+    const clauses: string[] = [];
+    for (const entry of details.flatMap(violations)) {
+        if (!entry || typeof entry !== 'object') {
+            continue;
+        }
+        const said = entry as Record<string, unknown>;
+        const parts = VIOLATION.map((key) => said[key]).filter(
+            (v): v is string => typeof v === 'string' && v.length > 0,
+        );
+        if (parts.length) {
+            clauses.push(parts.join(': '));
+        }
+    }
+    return clauses.length ? clauses.join('; ') : undefined;
+}
+
+/** A detail entry, or the violations inside it when it carries a list of them. */
+function violations(entry: unknown): unknown[] {
+    const list = (entry as { fieldViolations?: unknown } | null)?.fieldViolations;
+    return Array.isArray(list) ? list : [entry];
 }
 
 /** One line, however many the vendor sent, and never a whole document. */
