@@ -3,7 +3,9 @@ import { basename, join } from 'node:path';
 import { Agent, AgentRegistry, type ForkOptions } from '../agent.ts';
 import type { Embedder } from '../embedding.ts';
 import { RunStream } from '../events.ts';
-import type { MemoryStore } from '../memory.ts';
+import { MemoryIndex } from '../memory/index.ts';
+import { MemoryStore } from '../memory/store.ts';
+import type { MemoryBinding } from '../memory/types.ts';
 import type { Model } from '../model.ts';
 import {
     ModelRegistry,
@@ -70,7 +72,9 @@ export interface ProjectOptions<TCtx = unknown> {
      * project never reaches the network.
      */
     registry?: ModelRegistry;
-    memory?: MemoryStore[];
+    memory?: MemoryIndex;
+    /** turns an agent-visible path into a host path, so files can be remembered */
+    resolveFile?: (path: string) => string;
     payloads?: PayloadStore;
     /** extra providers merged with the ones the project declares */
     skills?: SkillProvider[];
@@ -152,6 +156,7 @@ export async function loadProject<TCtx = unknown>(
             handoffs: spec.handoffs,
             skills: bindingFor(spec, providers),
             fork: forkFor(spec),
+            memory: memoryFor(spec),
         });
     }
 
@@ -162,12 +167,15 @@ export async function loadProject<TCtx = unknown>(
     // `embedding:` fails at load like a broken `model:` does.
     embedders(config.embedding, 'embedding');
 
+    const memory = opts.memory ?? (await openMemory(root, config, embedders));
+
     return new AgentProject<TCtx>({
         root,
         source,
         config,
         entry: entrypoint(config),
         registry,
+        memory,
         skillProviders: providers,
         assets,
         models,
@@ -185,10 +193,10 @@ interface ProjectParts<TCtx> {
     skillProviders: SkillProvider[];
     assets: string | undefined;
     models: ModelRegistry;
+    memory: MemoryIndex | undefined;
     embedders: (ref: string | undefined, where: string) => Embedder | undefined;
     options: ProjectOptions<TCtx>;
 }
-
 /**
  * A loaded project: immutable, and therefore shareable.
  *
@@ -215,6 +223,8 @@ export class AgentProject<TCtx = unknown> {
     readonly assets: string | undefined;
     /** the providers this project declared, and the clients behind them */
     readonly models: ModelRegistry;
+    /** the one memory graph, when this project has one */
+    readonly memory: MemoryIndex | undefined;
     readonly #embedders: (ref: string | undefined, where: string) => Embedder | undefined;
     readonly #options: ProjectOptions<TCtx>;
     #runner?: AgentRunner<TCtx>;
@@ -228,8 +238,14 @@ export class AgentProject<TCtx = unknown> {
         this.skillProviders = parts.skillProviders;
         this.assets = parts.assets;
         this.models = parts.models;
+        this.memory = parts.memory;
         this.#embedders = parts.embedders;
         this.#options = parts.options;
+    }
+
+    /** Releases the memory lock. A project that holds no memory need not be closed. */
+    close(): void {
+        this.memory?.store.release();
     }
 
     get agents(): readonly Agent<TCtx>[] {
@@ -267,7 +283,8 @@ export class AgentProject<TCtx = unknown> {
     #build(overrides: RunnerOptions<TCtx> = {}): AgentRunner<TCtx> {
         const runner = new AgentRunner<TCtx>({
             payloads: this.#options.payloads,
-            memory: this.#options.memory,
+            memory: this.memory,
+            resolveFile: this.#options.resolveFile,
             skills: [...this.skillProviders],
             ...overrides,
         });
@@ -456,6 +473,66 @@ function forkFor(spec: AgentConfig): ForkOptions | undefined {
         return undefined;
     }
     return spec.fork === true ? {} : spec.fork;
+}
+
+/**
+ * `memory: true` is the whole feature working the obvious way: read and write,
+ * and recall before a turn that follows new user input. An agent that has to
+ * remember to go looking mostly does not, so auto-recall is on by default and
+ * `autoRecall: false` is how you turn it off.
+ */
+function memoryFor(spec: AgentConfig): MemoryBinding | undefined {
+    const b = spec.memory;
+    if (!b) {
+        return undefined;
+    }
+    const auto = b.autoRecall ?? true;
+    return {
+        access: b.access,
+        sees: b.sees,
+        writes: b.writes,
+        autoRecall: auto
+            ? { query: 'last_user_input', limit: auto === true ? 5 : auto.limit }
+            : undefined,
+    };
+}
+
+/**
+ * Where this project's memory lives, or `undefined` when it has none. Shared
+ * with the front end, which has to mount the same directory into the sandbox:
+ * two answers to this question would mean `/memory` pointing somewhere the
+ * graph is not.
+ */
+export function memoryDir(root: string, config: ProjectConfig): string | undefined {
+    if (!config.memory && !config.agents.some((a) => a.memory)) {
+        return undefined;
+    }
+    return join(root, config.memory?.dir ?? 'memory');
+}
+
+/**
+ * Opened only when something will use it, so an ordinary project neither
+ * creates a directory nor takes a lock. A `memory:` block with no agent bound
+ * to it still counts: it is how a project declares the graph `zen memory`
+ * inspects between runs.
+ */
+async function openMemory(
+    root: string,
+    config: ProjectConfig,
+    embedders: (ref: string | undefined, where: string) => Embedder | undefined,
+): Promise<MemoryIndex | undefined> {
+    const dir = memoryDir(root, config);
+    if (!dir) {
+        return undefined;
+    }
+    const declared = config.memory;
+    const embedder = embedders(declared?.embedding ?? config.embedding, 'memory.embedding');
+    return new MemoryIndex({
+        store: await MemoryStore.open(dir),
+        embedder,
+        kinds: declared?.kinds,
+        relations: declared?.relations,
+    });
 }
 
 function skillProviders<TCtx>(

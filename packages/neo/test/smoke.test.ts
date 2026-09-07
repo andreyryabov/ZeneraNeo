@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { InMemoryMemoryStore } from '../src/memory-stores/in-memory.ts';
+import { MemoryIndex } from '../src/memory/index.ts';
+import { MemoryStore } from '../src/memory/store.ts';
 import type { Model, ModelRequest, ModelResponse } from '../src/model.ts';
 import { InMemoryPayloadStore } from '../src/payload-stores/in-memory.ts';
 import { exportRun, importRun } from '../src/payload.ts';
@@ -287,40 +288,54 @@ describe('smoke', () => {
         ).toBe(true);
     });
 
-    it('writes memory and recalls it on a later run', async () => {
-        const store = new InMemoryMemoryStore('mem');
+    it('remembers a subgraph and recalls it on a later run', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'neo-smoke-mem-'));
+        const memory = new MemoryIndex({ store: await MemoryStore.open(dir) });
         const model = new RuleModel(
-            (req) => (hasToolResult(req, 'memory_write') ? say('noted') : undefined),
+            (req) => (hasToolResult(req, 'memory_commit') ? say('noted') : undefined),
             (req) =>
-                allText(req).includes('Relevant memories')
+                allText(req).includes('memory-recollection')
                     ? say('I remember you like trains')
                     : undefined,
-            () => callTool('memory_write', { text: 'the user prefers trains over planes' }),
+            () =>
+                callTool('memory_commit', {
+                    nodes: [
+                        { ref: 'pref', kind: 'fact', text: 'the user prefers trains over planes' },
+                        { ref: 'why', kind: 'fact', text: 'trains have more legroom' },
+                    ],
+                    edges: [{ from: 'why', to: 'pref', relation: 'INFORMED' }],
+                }),
         );
-        const runner = new AgentRunner({ model, memory: [store] });
+        const runner = new AgentRunner({ model, memory });
         runner.agent({
             name: 'assistant',
             instructions: 'ASSIST',
-            memory: [
-                {
-                    store: 'mem',
-                    scope: 'user:u1',
-                    access: 'read-write',
-                    autoRecall: { query: 'last_user_input', limit: 3 },
-                },
-            ],
+            memory: {
+                access: 'read-write',
+                autoRecall: { query: 'last_user_input', limit: 3 },
+            },
         });
 
-        const first = await runner.run('assistant', 'remember that I prefer trains');
-        expect(first.output).toBe('noted');
-        const op = findNode(first.state, 'memory_op');
-        expect(op.op).toBe('write');
-        expect(op.scope).toBe('user:u1');
+        try {
+            const first = await runner.run('assistant', 'remember that I prefer trains');
+            expect(first.output).toBe('noted');
+            const op = findNode(first.state, 'memory_op');
+            expect(op.op).toBe('commit');
+            expect(op.nodes).toHaveLength(2);
 
-        const second = await runner.run('assistant', 'how should I travel by trains?');
-        const recall = findNode(second.state, 'memory_recall');
-        expect(recall.hits).toHaveLength(1);
-        expect(second.output).toBe('I remember you like trains');
+            // The graph outlives the run, which is the whole point.
+            expect(memory.graph.order).toBe(2);
+
+            const second = await runner.run('assistant', 'how should I travel by trains?');
+            const recall = findNode(second.state, 'memory_recall');
+            expect(recall.seeds.length).toBeGreaterThan(0);
+            // The link is pulled in even though only one node matched.
+            expect(recall.nodes).toHaveLength(2);
+            expect(second.output).toBe('I remember you like trains');
+        } finally {
+            memory.store.release();
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 
     it('declares a skill tool up front and unlocks it on load', async () => {

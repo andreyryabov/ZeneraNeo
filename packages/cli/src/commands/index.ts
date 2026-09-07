@@ -6,6 +6,7 @@ import { init } from './init.ts';
 import { inspect } from './inspect.ts';
 import { key } from './key.ts';
 import { list } from './list.ts';
+import { memory } from './memory.ts';
 import { models } from './models.ts';
 import { open } from './open.ts';
 import { run } from './run.ts';
@@ -26,6 +27,7 @@ export const COMMANDS: Record<string, Command> = {
     models,
     check,
     inspect,
+    memory,
     sandbox,
     cache,
     version,
@@ -40,6 +42,7 @@ export const ALIASES: Record<string, string> = {
     validate: 'check',
     doctor: 'check',
     report: 'inspect',
+    mem: 'memory',
     edit: 'open',
     code: 'open',
     mock: 'faker',

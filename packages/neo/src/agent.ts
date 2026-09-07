@@ -1,4 +1,4 @@
-import type { MemoryBinding, ResolvedBinding } from './memory.ts';
+import { ALL_AGENTS, type MemoryBinding, type ResolvedMemoryBinding } from './memory/types.ts';
 import type { Model } from './model.ts';
 import type { Instructions } from './prompt.ts';
 import type { SkillBinding } from './skills.ts';
@@ -28,8 +28,8 @@ export interface AgentOptions<TCtx = unknown> {
     tools?: AnyTool<TCtx>[];
     /** agents this one may hand the conversation over to (by name or instance) */
     handoffs?: (string | Agent<TCtx>)[];
-    /** long-lived memory spaces this agent may read and/or write */
-    memory?: MemoryBinding<TCtx>[];
+    /** how this agent sees the shared memory graph */
+    memory?: MemoryBinding<TCtx>;
     /** on-demand instruction bundles */
     skills?: SkillBinding;
     /** opt-in to parallel sub-agents */
@@ -47,7 +47,7 @@ export class Agent<TCtx = unknown> {
     readonly model?: Model;
     readonly tools: AnyTool<TCtx>[];
     readonly handoffs: string[];
-    readonly memory: MemoryBinding<TCtx>[];
+    readonly memory?: MemoryBinding<TCtx>;
     readonly skills?: SkillBinding;
     readonly fork?: ForkOptions;
 
@@ -58,23 +58,29 @@ export class Agent<TCtx = unknown> {
         this.model = opts.model;
         this.tools = opts.tools ?? [];
         this.handoffs = (opts.handoffs ?? []).map((h) => (typeof h === 'string' ? h : h.name));
-        this.memory = opts.memory ?? [];
+        this.memory = opts.memory;
         this.skills = opts.skills;
         this.fork = opts.fork;
     }
 
     /**
-     * Memory bindings with their scope resolved against the run context. The
+     * The memory mask with `sees` resolved against the run context. The
      * resolved value is what gets recorded in the trajectory, so a resumed run
-     * cannot drift into another user's space.
+     * cannot drift into another agent's slice. Everyone always sees the public
+     * label, so a binding can only ever widen from there.
      */
-    memoryBindings(ctx: TCtx): ResolvedBinding[] {
-        return this.memory.map((b) => ({
-            store: b.store,
-            scope: typeof b.scope === 'function' ? b.scope(ctx) : (b.scope ?? `agent:${this.name}`),
+    memoryBinding(ctx: TCtx): ResolvedMemoryBinding | undefined {
+        const b = this.memory;
+        if (!b) {
+            return undefined;
+        }
+        const sees = typeof b.sees === 'function' ? b.sees(ctx) : (b.sees ?? []);
+        return {
             access: b.access,
+            sees: [...new Set([ALL_AGENTS, ...sees])],
+            writes: b.writes ?? [ALL_AGENTS],
             autoRecall: b.autoRecall,
-        }));
+        };
     }
 }
 

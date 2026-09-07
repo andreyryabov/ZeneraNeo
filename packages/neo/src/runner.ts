@@ -13,8 +13,8 @@ import {
 } from './events.ts';
 import { systemClock, type IdClock } from './ids.ts';
 import * as Kernel from './kernel.ts';
-import type { MemoryStore } from './memory.ts';
-import { renderMemories } from './memory.ts';
+import type { MemoryIndex } from './memory/index.ts';
+import { renderRecollection } from './memory/render.ts';
 import type { Model, ModelRequest } from './model.ts';
 import { PayloadResolver, type PayloadStore } from './payload.ts';
 import { Services } from './services.ts';
@@ -117,7 +117,9 @@ export interface RunnerOptions<TCtx = unknown> {
     context?: TCtx;
     services?: Services;
     payloads?: PayloadStore | PayloadResolver;
-    memory?: MemoryStore[];
+    memory?: MemoryIndex;
+    /** turns an agent-visible path into a host path, so files can be remembered */
+    resolveFile?: (path: string) => string;
     skills?: SkillProvider[];
     handoffPolicy?: HandoffPolicy;
     /** renders the nodes a policy selected; defaults to a structural note */
@@ -175,19 +177,21 @@ export class AgentRunner<TCtx = unknown> {
     constructor(opts: RunnerOptions<TCtx> = {}) {
         this.#model = opts.model;
         this.#context = opts.context;
+        this.#clock = opts.clock ?? systemClock;
         this.services =
             opts.services ??
             new Services({
                 payloads: opts.payloads,
                 memory: opts.memory,
+                resolveFile: opts.resolveFile,
                 skills: opts.skills,
+                clock: this.#clock,
             });
         this.#handoffPolicy = opts.handoffPolicy;
         this.#summarizer = opts.summarizer ?? structuralSummarizer;
         this.#joinPolicy = opts.joinPolicy ?? defaultJoinPolicy;
         this.#stream = opts.stream ?? true;
         this.#recordRequests = opts.recordRequests ?? false;
-        this.#clock = opts.clock ?? systemClock;
     }
 
     /** Registers agents; chainable. */
@@ -559,11 +563,12 @@ export class AgentRunner<TCtx = unknown> {
      * caching for a marginal gain.
      */
     async #autoRecall(state: AgentState, env: Kernel.KernelEnv): Promise<AgentState> {
-        const agent = this.registry.get(state.agentName);
-        const bindings = agent
-            .memoryBindings(state.context as TCtx)
-            .filter((b) => b.autoRecall && b.autoRecall.query !== 'none');
-        if (!bindings.length || !shouldRecall(state)) {
+        const memory = this.services.memory;
+        const binding = this.registry.get(state.agentName).memoryBinding(state.context as TCtx);
+        if (!memory || !binding?.autoRecall || binding.autoRecall.query === 'none') {
+            return state;
+        }
+        if (!shouldRecall(state)) {
             return state;
         }
         const input = Kernel.lastUserInput(state);
@@ -575,37 +580,33 @@ export class AgentRunner<TCtx = unknown> {
                 p.type === 'text' ? this.services.payloads.get(p.text) : Promise.resolve(''),
             ),
         );
-        const query = parts.filter(Boolean).join('\n');
-        if (!query) {
+        const text = parts.filter(Boolean).join('\n');
+        if (!text) {
             return state;
         }
 
-        let next = state;
-        for (const b of bindings) {
-            const hits = await this.services
-                .memoryStore(b.store)
-                .search(b.scope, { text: query, limit: b.autoRecall?.limit ?? 5 });
-            if (!hits.length) {
-                continue;
-            }
-            next = await Kernel.applyMemoryEffect(
-                next,
-                {
-                    kind: 'recall',
-                    store: b.store,
-                    scope: b.scope,
-                    query: { text: query, limit: b.autoRecall?.limit ?? 5 },
-                    hits: hits.map((h) => ({
-                        id: h.record.id,
-                        score: h.score,
-                        revision: h.record.revision,
-                    })),
-                    content: renderMemories(hits),
-                },
-                env,
-            );
+        const query = { text, limit: binding.autoRecall.limit };
+        const rec = await memory.search(query, binding.sees);
+        const content = renderRecollection(rec);
+        if (!content) {
+            return state;
         }
-        return next;
+        return Kernel.applyMemoryEffect(
+            state,
+            {
+                kind: 'recall',
+                query,
+                seeds: [...rec.seeds],
+                nodes: rec.nodes.map((n) => ({
+                    id: n.node.id,
+                    kind: n.node.kind,
+                    score: n.score,
+                })),
+                edges: [...rec.edges],
+                content,
+            },
+            env,
+        );
     }
 
     /**

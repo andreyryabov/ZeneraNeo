@@ -23,6 +23,7 @@ embeddings: {} # named vectorisers
 embedding: main # the one `embedder()` hands back when asked for none
 skills: agents/skills # one directory, or a list
 assets: assets # reference material, read-only at /assets
+memory: {} # the shared graph agents remember into
 sandbox: {} # the container shell commands run in
 
 agents:
@@ -59,6 +60,7 @@ they should be unambiguous in both.
 | `embedding`  | embedding ref           | The one `embedder()` returns when asked for none           |
 | `skills`     | string or string[]      | Skill directories, merged into one catalog                 |
 | `assets`     | string                  | Reference material, mounted read-only at `/assets`         |
+| `memory`     | memory                  | Where the shared memory graph lives, and how it is indexed |
 | `sandbox`    | sandbox                 | The container `run_command` and friends execute in         |
 | `agents`     | agent[]                 | At least one                                               |
 
@@ -632,6 +634,122 @@ reading it.
 
 ---
 
+## `memory:`
+
+What agents remember between runs, and from each other. Memory is a **graph**,
+not a list: a node is one thing worth keeping — a task, a plan, a fact, a
+snippet, a file, an API call — and an edge says how one led to another. Recall
+returns the connected piece, so an agent that finds the right answer also gets
+the reasoning that produced it and the script that ran it.
+
+It lives with the project, not the session. A memory that died with the session
+would be a cache.
+
+```yaml
+memory:
+    dir: memory
+    embedding: main
+
+agents:
+    - name: auditor
+      memory: true
+```
+
+That is the whole feature: the agent can search, load, and commit, and it
+recalls automatically before answering new user input.
+
+| Field       | Type          | Default        | Meaning                             |
+| ----------- | ------------- | -------------- | ----------------------------------- |
+| `dir`       | path          | `memory`       | Relative to the project root        |
+| `embedding` | embedding ref | the top-level  | The vectoriser recall searches with |
+| `kinds`     | name[]        | the six below  | Replaces the node vocabulary        |
+| `relations` | name[]        | the four below | Replaces the edge vocabulary        |
+
+The block is optional. A project whose agents say `memory: true` gets the
+defaults without writing one, and a project that mentions memory nowhere opens
+no store and creates no directory.
+
+**Kinds** are `task`, `plan`, `fact`, `snippet`, `file`, `operation`.
+**Relations** are `PRODUCED`, `INFORMED`, `CALLS`, `SUPERSEDES`. Both are closed
+sets, offered to the model as enums, which is what keeps a graph built by a
+language model queryable a month later. Override them only if the defaults
+genuinely do not fit the domain — a wider vocabulary is a vaguer one.
+
+**Embedding is optional but wanted.** Without one, recall falls back to term
+overlap, which finds a memory phrased the way the query was and misses the rest.
+The width is learned from the first response rather than declared, and changing
+the model afterwards is refused rather than silently mixing two vector spaces.
+
+### Remembered files
+
+An agent that writes a working script can keep it. The file is copied under a
+generated id and mounted read-only at `/memory`, so a later run can execute it
+directly:
+
+```
+run_command  python3 /memory/01JD9Q7X8N2K4M6P8R0T2V4W6Y.py
+```
+
+The graph holds the provenance around it — what asked for it, what plan it came
+from, what it called — and that subgraph is what comes back on recall. Files are
+capped at 2 MiB, and one under 32 KiB is returned inline rather than as a path.
+
+### `agents[].memory`
+
+```yaml
+agents:
+    - name: auditor
+      memory:
+          access: read-write
+          sees: [audit]
+          writes: [audit]
+          autoRecall: { limit: 3 }
+```
+
+| Field        | Type                       | Default         | Meaning                                      |
+| ------------ | -------------------------- | --------------- | -------------------------------------------- |
+| `access`     | `read`/`read-write`/`full` | `read-write`    | Which of the four tools this agent gets      |
+| `sees`       | name[]                     | `[]`            | Private slices this agent may read, plus `*` |
+| `writes`     | name[]                     | `[*]`           | Labels it may write under                    |
+| `autoRecall` | boolean or `{ limit }`     | `true`, limit 5 | Recall before a turn that follows user input |
+
+`access` decides the tools, and nothing else does:
+
+| Level        | Tools                           |
+| ------------ | ------------------------------- |
+| `read`       | `memory_search`, `memory_load`  |
+| `read-write` | the above, plus `memory_commit` |
+| `full`       | the above, plus `memory_forget` |
+
+**One memory, masked — not one memory each.** Every node carries an audience,
+and `sees` is the set of audiences an agent reads. `*` is the public slice and
+is always included, so a binding can only ever widen what an agent sees, never
+hide the common ground. Two agents with `sees: []` share everything public; give
+one `sees: [audit]` and it also reads what was committed under `audit`, which
+nothing else can see at all — an invisible node is indistinguishable from a
+missing one, deliberately, so that a mask cannot be probed by id.
+
+`writes` is the other half: an agent can only commit under a label it was given,
+so an agent that reads a private slice need not be able to add to it. When
+`writes` names exactly one label the tool schema omits the field entirely and
+applies it — there is nothing to choose, and nothing for the model to get wrong.
+
+**Auto-recall is on by default** because an agent that has to remember to go
+looking mostly does not. It costs one embedding call and a small prompt section
+on turns that follow new user input, and it is off for everything else — a turn
+after a tool result does not re-recall. `autoRecall: false` turns it off without
+giving up the tools, which is the right setting for an agent that should decide
+for itself when to search.
+
+**Correction is a new node, not an edit.** A memory that turns out to be wrong
+gets superseded by one that is right, joined by a `SUPERSEDES` edge, and recall
+follows the edge forward. The old node stays because the reason a thing changed
+is often the useful part. `memory_forget` — `access: full` — is for the case
+where something should never have been written down at all: it removes the node,
+its vector, and its file bytes together.
+
+---
+
 ## `sandbox:`
 
 Where `run_command` runs. Command-line tools execute in a Linux container with
@@ -881,6 +999,7 @@ agents:
 | `tools`       | Tool selectors resolved against `ProjectOptions.tools` — code cannot live in yaml                    |
 | `handoffs`    | Agent names this one may transfer to                                                                 |
 | `skills`      | Skill binding; see below                                                                             |
+| `memory`      | `true`, or a binding — opt-in to the shared memory; see below                                        |
 | `fork`        | `true`, or a binding — opt-in to parallel branches; see below                                        |
 | `sandbox`     | Overrides on the top-level `sandbox:`; see below                                                     |
 | `default`     | `true` marks the entry point, if no top-level `default:`                                             |

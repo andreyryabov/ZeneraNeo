@@ -1,44 +1,53 @@
 import { PayloadResolver, type PayloadStore } from './payload.ts';
 // The composition root is the one place in the core allowed to name a backend:
 // it has to fall back to something when the caller supplies no store.
-import type { MemoryStore } from './memory.ts';
+import { systemClock, type IdClock } from './ids.ts';
+import type { MemoryIndex } from './memory/index.ts';
 import { InMemoryPayloadStore } from './payload-stores/in-memory.ts';
 import type { SkillProvider } from './skills.ts';
 
 /**
- * The I/O the kernel is not allowed to do itself: payload resolution, memory
- * backends and skill catalogs. Held by the driver (runner or Temporal
+ * The I/O the kernel is not allowed to do itself: payload resolution, the
+ * memory graph and skill catalogs. Held by the driver (runner or Temporal
  * activity) and handed to the kernel and to tools explicitly, so nothing reads
  * ambient state.
+ *
+ * There is one memory, not a map of them: an agent sees a slice of the single
+ * graph through its `sees` mask, which is what makes a memory shareable
+ * between agents at all.
  */
 export class Services {
     readonly payloads: PayloadResolver;
-    readonly #memory = new Map<string, MemoryStore>();
+    /** the one memory graph, when the project has one */
+    readonly memory?: MemoryIndex;
+    /**
+     * Turns a path the agent can see into a host path, for the one tool that
+     * needs it: remembering a file. Supplied by whoever built the workspace,
+     * because only it knows the mounts. Without it, files cannot be
+     * remembered — which is a refusal, not a crash.
+     */
+    readonly resolveFile?: (path: string) => string;
+    /** the driver's clock, so a tool that stamps a node stays replayable */
+    readonly clock: IdClock;
     readonly #skills = new Map<string, SkillProvider>();
 
     constructor(
         opts: {
             payloads?: PayloadResolver | PayloadStore;
-            memory?: MemoryStore[];
+            memory?: MemoryIndex;
             skills?: SkillProvider[];
+            clock?: IdClock;
+            resolveFile?: (path: string) => string;
         } = {},
     ) {
         const p = opts.payloads ?? new InMemoryPayloadStore();
         this.payloads = p instanceof PayloadResolver ? p : new PayloadResolver(p);
-        for (const m of opts.memory ?? []) {
-            this.#memory.set(m.id, m);
-        }
+        this.memory = opts.memory;
+        this.resolveFile = opts.resolveFile;
+        this.clock = opts.clock ?? systemClock;
         for (const s of opts.skills ?? []) {
             this.#skills.set(s.id, s);
         }
-    }
-
-    memoryStore(id: string): MemoryStore {
-        const s = this.#memory.get(id);
-        if (!s) {
-            throw new Error(`unknown memory store: ${id} (known: ${[...this.#memory.keys()]})`);
-        }
-        return s;
     }
 
     skillProvider(id: string): SkillProvider {
@@ -49,8 +58,8 @@ export class Services {
         return p;
     }
 
-    hasMemory(id: string): boolean {
-        return this.#memory.has(id);
+    hasMemory(): boolean {
+        return this.memory !== undefined;
     }
 
     hasSkills(id: string): boolean {

@@ -150,7 +150,6 @@ of surfacing three turns into a run as a confused model.
 | `@zenera/neo`                 | agents, models, tools, kernel, inspection |
 | `@zenera/neo/project`         | loading a project folder                  |
 | `@zenera/neo/skill-providers` | skill discovery and loading               |
-| `@zenera/neo/memory-stores`   | `MemoryStore` implementations             |
 | `@zenera/neo/payload-stores`  | payload persistence                       |
 
 ## Documentation

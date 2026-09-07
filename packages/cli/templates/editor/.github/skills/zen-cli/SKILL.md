@@ -24,6 +24,7 @@ zen key      <ls|add|use|check|rm|show|env> [ref] [options]
 zen models   <providers|ls|search|show|test|pick> [ref] [options]
 zen check    [name|dir] [--project <name|dir>] [--no-sandbox] [--no-models] [--strict] [--quiet]
 zen inspect  [run] [--session <id>] [--open] [--rebuild] [--serve [port]]
+zen memory   [stats|ls|show|export|forget] [args] [options]
 zen sandbox  [status|up|pull|clean|disk] [options]
 zen version
 
@@ -48,6 +49,7 @@ guess a flag, and do not read them all.
 | Which models exist, whether one works, recovering from a refusal    | [models.md](./references/models.md)     |
 | The container shell commands run in, images, `persist`              | [sandbox.md](./references/sandbox.md)   |
 | Run reports, trajectories, what a session directory holds           | [inspect.md](./references/inspect.md)   |
+| What the agents remember, why something was recalled, forgetting    | [memory.md](./references/memory.md)     |
 | `zen faker` — a mock API from an OpenAPI/Swagger document           | [faker.md](./references/faker.md)       |
 | `zen rag` — searching an API description, or a pile of markdown     | [rag.md](./references/rag.md)           |
 
@@ -59,6 +61,7 @@ zen check                             validate everything before spending a turn
 zen run                               the TUI
 zen run "what changed?"               one answer, this directory as the workspace
 zen inspect --open                    what the model was actually given
+zen memory export --open              the whole memory graph, as a page
 zen key ls --check                    which credentials still work
 zen models test <ref>                 whether one model actually answers
 zen models pick --embedding           the first embedder that does, on stdout

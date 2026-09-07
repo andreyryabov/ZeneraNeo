@@ -1,6 +1,12 @@
-# Sessions hold run state, memory, blobs and whatever the agent wrote.
+# Sessions hold run state, blobs and whatever the agent wrote.
 # None of it is source.
 sessions/
+
+# Memory is worth keeping: `graph.json` and `files/` are what the agents
+# learned, and they diff. The vectors are not — they are derived from the
+# graph and can be rebuilt with `zen memory reembed`.
+memory/vectors.*
+memory/.lock
 
 # Scratch, inside the workspace so the sandbox can reach it.
 .tmp/

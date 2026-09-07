@@ -55,7 +55,7 @@ function build(): AgentRunner<Ctx> {
             preload: ['shipping'],
             allow: ['refunds', 'shipping'],
         },
-        memory: [{ store: 'notes', scope: (c) => `user:${c.user}`, access: 'read-write' }],
+        memory: { access: 'read-write', sees: (c) => [`user:${c.user}`], writes: ['*'] },
     });
     runner.agent({
         name: 'resolver',
@@ -74,9 +74,12 @@ describe('architecture snapshot', () => {
         const router = arch.agents[0]!;
         expect(router.description).toBe('routes');
         expect(router.handoffs).toEqual(['resolver']);
-        expect(router.memory).toEqual([
-            { store: 'notes', scope: 'user:u-1', access: 'read-write', autoRecall: undefined },
-        ]);
+        expect(router.memory).toEqual({
+            access: 'read-write',
+            sees: ['*', 'user:u-1'],
+            writes: ['*'],
+            autoRecall: undefined,
+        });
 
         const resolver = arch.agents[1]!;
         expect(resolver.fork).toEqual({ agents: undefined, maxBranches: 2 });
@@ -121,13 +124,13 @@ describe('architecture snapshot', () => {
         });
     });
 
-    it('keeps a context-dependent scope symbolic when there is no context', async () => {
+    it('keeps a context-dependent mask symbolic when there is no context', async () => {
         const runner = new AgentRunner<{ user: string }>();
         runner.agent({
             name: 'a',
-            memory: [{ store: 'notes', scope: (c) => `user:${c.user}`, access: 'read' }],
+            memory: { access: 'read', sees: (c) => [`user:${c.user}`] },
         });
         const arch = await runner.describe();
-        expect(arch.agents[0]!.memory[0]!.scope).toBe('(per run)');
+        expect(arch.agents[0]!.memory!.sees).toBe('(per run)');
     });
 });

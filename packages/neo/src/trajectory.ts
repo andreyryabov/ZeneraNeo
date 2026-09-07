@@ -1,4 +1,4 @@
-import type { MemoryQuery } from './memory.ts';
+import type { MemoryEdge, MemoryQuery } from './memory/types.ts';
 import type { Payload, PayloadResolver } from './payload.ts';
 import type { PromptSource } from './prompt.ts';
 import {
@@ -60,25 +60,23 @@ export interface LoadSkillsNode extends NodeBase {
 
 export interface MemoryRecallNode extends NodeBase {
     type: 'memory_recall';
-    store: string;
-    scope: string;
     query: MemoryQuery;
+    /** the matches; the rest of `nodes` is the subgraph stitched around them */
+    seeds: string[];
     /** ids, not bodies — the rendered block is the payload */
-    hits: { id: string; score: number; revision: number }[];
+    nodes: { id: string; kind: string; score: number }[];
+    edges: MemoryEdge[];
     content: Payload;
 }
 
 export interface MemoryOpNode extends NodeBase {
     type: 'memory_op';
-    op: 'write' | 'update' | 'delete';
-    store: string;
-    scope: string;
+    op: 'commit' | 'forget';
     /** sha256(runId, callId) — deterministic, so a replay is deduplicated */
     opId: string;
-    recordId: string;
-    revision: number;
-    before?: Payload;
-    after?: Payload;
+    nodes: { id: string; kind: string; revision: number }[];
+    edges: MemoryEdge[];
+    files: number;
 }
 
 export interface LlmCallNode extends NodeBase {

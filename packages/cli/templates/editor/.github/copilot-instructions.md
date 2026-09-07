@@ -1601,9 +1601,9 @@ zen models pick --embedding    # or --chat; the ref goes to stdout, alone
 Then re-run `zen check`.
 
 CLI (`zen --help` for the authoritative list): `zen init`, `zen run`, `zen check`,
-`zen inspect`, `zen key`, `zen models`, `zen list`. **stdout is the answer, stderr
-is the narration**; every command takes `--json`. Exit codes: `0` ok, `1` failed,
-`2` usage, `3` invalid project, `4` no usable credential.
+`zen inspect`, `zen memory`, `zen key`, `zen models`, `zen list`. **stdout is the
+answer, stderr is the narration**; every command takes `--json`. Exit codes: `0`
+ok, `1` failed, `2` usage, `3` invalid project, `4` no usable credential.
 
 ---
 

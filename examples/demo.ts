@@ -1,5 +1,9 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { z } from 'zod';
-import { InMemoryMemoryStore } from '../packages/neo/src/memory-stores/in-memory.ts';
+import { MemoryIndex } from '../packages/neo/src/memory/index.ts';
+import { MemoryStore } from '../packages/neo/src/memory/store.ts';
 import { InMemoryPayloadStore } from '../packages/neo/src/payload-stores/in-memory.ts';
 import { exportRun, importRun } from '../packages/neo/src/payload.ts';
 import { AgentRunner } from '../packages/neo/src/runner.ts';
@@ -52,8 +56,10 @@ const TripPlan = z.object({
  *  this is also what `exportRun` walks to build a portable bundle. */
 const payloads = new InMemoryPayloadStore('blobs');
 
-/** Long-term memory. One store can hold many scopes — see `scope` below. */
-const userMemory = new InMemoryMemoryStore('user-memory');
+/** Long-term memory: one graph, shared by every agent, sliced by audience. */
+const userMemory = new MemoryIndex({
+    store: await MemoryStore.open(mkdtempSync(join(tmpdir(), 'neo-demo-memory-'))),
+});
 
 /** Curated instruction bundles the agent can pull in on demand. */
 const travelSkills = new StaticSkillProvider(
@@ -78,7 +84,7 @@ async function test() {
         model,
         context: { userId: 'u-1' },
         payloads,
-        memory: [userMemory],
+        memory: userMemory,
         skills: [travelSkills],
         // Keep every request behind its `llm_call` node, so the HTML report
         // written at the end can show exactly what the model was sent.
@@ -97,16 +103,14 @@ async function test() {
         // 'index' injects the skill list into the prompt; the agent pulls the
         // full body of a skill on demand instead of paying for it up front.
         skills: { provider: travelSkills.id, discovery: 'index' },
-        memory: [
-            {
-                store: userMemory.id,
-                // Scope keys partition the store, here one bucket per user.
-                scope: (ctx) => `user:${ctx.userId}`,
-                access: 'read-write',
-                // Recall relevant memories automatically before each turn.
-                autoRecall: { query: 'last_user_input', limit: 3 },
-            },
-        ],
+        memory: {
+            access: 'read-write',
+            // Everyone sees the public slice; this agent also sees its own.
+            sees: (ctx) => [`user:${ctx.userId}`],
+            writes: ['*'],
+            // Recall relevant memories automatically before each turn.
+            autoRecall: { query: 'last_user_input', limit: 3 },
+        },
         // Cap on parallel sub-runs this agent may spawn.
         fork: { maxBranches: 3 },
     });
