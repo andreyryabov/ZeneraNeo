@@ -198,6 +198,13 @@ export interface AppOptions {
     readOnly: boolean;
     /** `dark`, `light` or `auto`. Unset means `auto`. */
     theme?: string;
+    /**
+     * How this session was arrived at. The two questions before the first
+     * frame can be answered with two keystrokes, so the header repeats which
+     * way they went — a run that resumed when you meant to start over should
+     * say so before the first turn, not after it.
+     */
+    started?: { created: boolean; freshWorkspace: boolean };
 }
 
 interface Props {
@@ -665,7 +672,12 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                 <Static items={[BANNER, ...lines]}>
                     {(item) =>
                         isBanner(item) ? (
-                            <Header key={item.key} engine={engine} readOnly={options.readOnly} />
+                            <Header
+                                key={item.key}
+                                engine={engine}
+                                readOnly={options.readOnly}
+                                started={options.started}
+                            />
                         ) : (
                             <Row key={item.key} line={item} />
                         )
@@ -737,9 +749,11 @@ function App({ engine, options, theme }: Props): React.ReactElement {
 function Header({
     engine,
     readOnly,
+    started,
 }: {
     engine: Engine.Engine;
     readOnly: boolean;
+    started?: AppOptions['started'];
 }): React.ReactElement {
     const theme = useTheme();
     const model = engine.project.config.model;
@@ -747,10 +761,16 @@ function Header({
         <Box flexDirection="column" marginBottom={1}>
             <Box>
                 <Text bold>{engine.name}</Text>
+                {started ? (
+                    <Text color={theme.accent}>
+                        {started.created ? ' new session' : ' continuing'}
+                    </Text>
+                ) : null}
                 <Text dimColor> {engine.session.id}</Text>
                 {readOnly ? <Text color={theme.warn}> read-only</Text> : null}
             </Box>
             <Text dimColor>
+                {started ? `${started.freshWorkspace ? 'new directory' : 'workspace'} ` : ''}
                 {display(engine.workspace)}
                 {model ? ` · ${model}` : ''}
             </Text>

@@ -46,7 +46,7 @@ import { classify, probeModels } from '../src/liveness.ts';
 import { engineDisk, ensurePodmanReady, ownedContainers } from '../src/podman.ts';
 import { dirSize } from '../src/projects.ts';
 import { scaffold } from '../src/scaffold.ts';
-import { bytes, CliError, EXIT, pad, table } from '../src/term.ts';
+import { bytes, CliError, cut, EXIT, keysIn, pad, table } from '../src/term.ts';
 import {
     answerWidth,
     BOX_CHROME,
@@ -333,6 +333,37 @@ describe('columns', () => {
                 ['bbbb', 'two'],
             ]),
         ).toEqual(['a     one', 'bbbb  two']);
+    });
+});
+
+describe('reading the keyboard', () => {
+    // The bug this exists for: one read carries several keystrokes when keys
+    // are held or a line is pasted, so a picker that treats the chunk as one
+    // key acts on the first and silently drops the Enter behind it.
+    it('splits a chunk into one string per key', () => {
+        expect([...keysIn('\u001b[B\u001b[B\r')]).toEqual(['\u001b[B', '\u001b[B', '\r']);
+        expect([...keysIn('12\r')]).toEqual(['1', '2', '\r']);
+        expect([...keysIn('\u001bOA\u001b[6~j')]).toEqual(['\u001bOA', '\u001b[6~', 'j']);
+    });
+
+    it('leaves a lone escape alone, which is how cancelling is spelt', () => {
+        expect([...keysIn('\u001b')]).toEqual(['\u001b']);
+    });
+});
+
+describe('cutting a styled line', () => {
+    // A row that wraps is a row the erase does not know about, and the width a
+    // terminal counts is the visible one.
+    it('measures without the style codes and closes them off', () => {
+        const styled = `${'\u001b[1m'}a very long label${'\u001b[22m'}`;
+        const short = cut(styled, 8);
+        expect(short.replace(/\u001b\[[0-9;]*m/g, '')).toBe('a very …');
+        expect(short.endsWith('\u001b[0m')).toBe(true);
+    });
+
+    it('leaves a line that already fits exactly as it was', () => {
+        const styled = `${'\u001b[1m'}short${'\u001b[22m'}`;
+        expect(cut(styled, 80)).toBe(styled);
     });
 });
 

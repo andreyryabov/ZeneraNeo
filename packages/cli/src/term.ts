@@ -210,8 +210,29 @@ export interface Choice<T> {
     key?: string;
 }
 
-/** A numbered list. The pretty picker is the TUI's; this is the fallback. */
-export async function choose<T>(title: string, choices: readonly Choice<T>[]): Promise<T> {
+export interface ChooseOptions {
+    /**
+     * The choice Enter takes, as an index. It is marked `*`, because a default
+     * nobody can see is a default nobody uses.
+     */
+    initial?: number;
+    /** How many rows stay on screen at once; anything beyond them scrolls. */
+    window?: number;
+}
+
+/** Rows kept on screen when the caller does not say. */
+const WINDOW = 10;
+
+/**
+ * A list, arrow-driven where the terminal allows it and numbered where it does
+ * not. Both forms agree on the two things that matter: every row has a stable
+ * number you can type, and one of them is the default Enter takes.
+ */
+export async function choose<T>(
+    title: string,
+    choices: readonly Choice<T>[],
+    options: ChooseOptions = {},
+): Promise<T> {
     if (choices.length === 0) {
         throw usageError(`nothing to choose from: ${title}`);
     }
@@ -219,32 +240,263 @@ export async function choose<T>(title: string, choices: readonly Choice<T>[]): P
         return choices[0].value;
     }
     requireTty(title, 'the matching flag');
-    note(bold(title));
+    const initial = Math.min(Math.max(options.initial ?? 0, 0), choices.length - 1);
     // A keyed choice is out of the sequence, so it does not consume a number.
     let seq = 0;
     const keys = choices.map((c) => c.key ?? String(++seq));
-    // And its key is the one thing on the row you have to be told, since it is
-    // not where counting would have put it.
-    const rows = choices.map((c, i) => {
-        const key = `${keys[i]}.`;
-        return [`  ${c.key === undefined ? dim(key) : cyan(key)}`, c.label, dim(c.detail ?? '')];
-    });
-    for (const line of table(rows)) {
-        note(line);
+    // A terminal that cannot move its own cursor gets the list printed once and
+    // answers with a number; anything else gets the arrows.
+    const dumb =
+        typeof process.stdin.setRawMode !== 'function' ||
+        (process.env['TERM'] ?? 'dumb') === 'dumb';
+    if (dumb) {
+        return await numbered(title, choices, keys, initial);
+    }
+    return await pick(title, choices, keys, initial, options.window ?? WINDOW);
+}
+
+/** The rows themselves, column-aligned once and then reused every frame. */
+function listOf<T>(choices: readonly Choice<T>[], keys: string[], initial: number): string[] {
+    // A key that is not where counting would have put it is the one thing on
+    // the row you have to be told, so it is the one that takes a colour.
+    return table(
+        choices.map((c, i) => [
+            `${i === initial ? cyan('*') : ' '} ` +
+                (c.key === undefined ? dim(`${keys[i]}.`) : cyan(`${keys[i]}.`)),
+            c.label,
+            dim(c.detail ?? ''),
+        ]),
+    );
+}
+
+/** The fallback: print everything, read a number. No raw mode, no repainting. */
+async function numbered<T>(
+    title: string,
+    choices: readonly Choice<T>[],
+    keys: string[],
+    initial: number,
+): Promise<T> {
+    note(bold(title));
+    for (const line of listOf(choices, keys, initial)) {
+        note(`  ${line}`);
     }
     const extra = keys.filter((_, i) => choices[i].key !== undefined);
+    const counted = keys.length - extra.length;
     const hint =
-        `Enter a number between 1 and ${seq}` +
+        `Enter a number between 1 and ${counted}` +
         (extra.length ? `, or ${extra.join(' / ')}` : '') +
         '.';
     for (;;) {
-        const answer = await ask('Choose', '1');
+        const answer = await ask('Choose', keys[initial]);
         const at = keys.indexOf(answer);
         if (at >= 0) {
             return choices[at].value;
         }
         note(dim(hint));
     }
+}
+
+/**
+ * The arrow-driven form. A long list is shown through a window rather than all
+ * at once: twenty-five sessions printed in full push the question itself off
+ * the screen, and the question is the part being answered.
+ *
+ * The frame is a fixed number of lines so it can be erased by counting them
+ * back, which is also why every line is cut to the terminal's width — a row
+ * that wraps is two rows the erase does not know about. When it is over the
+ * whole frame is replaced by the one line saying what was chosen.
+ */
+async function pick<T>(
+    title: string,
+    choices: readonly Choice<T>[],
+    keys: string[],
+    initial: number,
+    window: number,
+): Promise<T> {
+    const out = process.stderr;
+    const stdin = process.stdin;
+    const rows = listOf(choices, keys, initial);
+    const shown = Math.max(1, Math.min(window, choices.length, (out.rows ?? 24) - 3));
+    const height = shown + 2;
+
+    let at = initial;
+    let top = Math.min(Math.max(0, at - shown + 1), Math.max(0, choices.length - shown));
+    let typed = '';
+    let painted = false;
+    let done = false;
+
+    const columns = Math.max(20, (out.columns ?? 80) - 1);
+
+    const paint = (): void => {
+        if (painted) {
+            out.write(`\u001b[${height}A`);
+        }
+        const lines = [bold(title)];
+        for (let i = top; i < top + shown; i++) {
+            lines.push(`${i === at ? cyan('\u276f') : ' '} ${rows[i]}`);
+        }
+        lines.push(
+            dim(
+                '  \u2191\u2193 move \u00b7 enter choose \u00b7 esc cancel' +
+                    (typed ? ` \u00b7 ${typed}` : '') +
+                    (choices.length > shown ? `   ${at + 1}/${choices.length}` : ''),
+            ),
+        );
+        for (const line of lines) {
+            out.write(`\u001b[2K${cut(line, columns)}\n`);
+        }
+        painted = true;
+    };
+
+    const goto = (i: number): void => {
+        at = Math.min(Math.max(i, 0), choices.length - 1);
+        top = Math.min(Math.max(top, at - shown + 1), at);
+        paint();
+    };
+
+    const move = (delta: number): void => {
+        typed = '';
+        goto(at + delta);
+    };
+
+    return await new Promise<T>((settle, reject) => {
+        const wasRaw = stdin.isRaw;
+        stdin.setRawMode(true);
+        stdin.resume();
+        stdin.setEncoding('utf8');
+        out.write('\u001b[?25l');
+
+        const close = (summary: string): void => {
+            stdin.off('data', onData);
+            stdin.setRawMode(Boolean(wasRaw));
+            if (!wasRaw) {
+                stdin.pause();
+            }
+            // The list has served its purpose; the answer has not.
+            out.write(`\u001b[${height}A\u001b[0J\u001b[?25h`);
+            out.write(`${cut(`${bold(title)} ${cyan('\u276f')} ${summary}`, columns)}\n`);
+        };
+
+        const jump = (digit: string): void => {
+            const next = typed + digit;
+            const to = keys.indexOf(next);
+            typed = to >= 0 ? next : digit;
+            const found = to >= 0 ? to : keys.indexOf(digit);
+            goto(found >= 0 ? found : at);
+        };
+
+        const onData = (data: string): void => {
+            // One read can carry several keystrokes — held keys, a paste, or a
+            // fast typist — so it is split into keys before any of it is acted
+            // on. Reading the chunk as one key loses everything after the first.
+            for (const key of keysIn(data)) {
+                if (done) {
+                    return;
+                }
+                act(key);
+            }
+        };
+
+        const act = (key: string): void => {
+            switch (key) {
+                case '\r':
+                case '\n': {
+                    const picked = choices[at];
+                    done = true;
+                    close(picked.detail ? `${picked.label} ${dim(picked.detail)}` : picked.label);
+                    settle(picked.value);
+                    return;
+                }
+                case '\u0003':
+                case '\u001b':
+                case 'q':
+                    done = true;
+                    close(dim('cancelled'));
+                    reject(usageError('cancelled'));
+                    return;
+                case '\u001b[A':
+                case '\u001bOA':
+                case 'k':
+                    return move(-1);
+                case '\u001b[B':
+                case '\u001bOB':
+                case 'j':
+                    return move(1);
+                case '\u001b[5~':
+                    return move(-shown);
+                case '\u001b[6~':
+                    return move(shown);
+                case '\u001b[H':
+                case '\u001b[1~':
+                    return move(-choices.length);
+                case '\u001b[F':
+                case '\u001b[4~':
+                    return move(choices.length);
+                case '\u007f':
+                case '\u0008':
+                    typed = '';
+                    return paint();
+                default:
+                    // Typing digits is how a two-digit row is reached without
+                    // twelve keystrokes, so they accumulate until one matches.
+                    if (key >= '0' && key <= '9') {
+                        jump(key);
+                    }
+            }
+        };
+
+        stdin.on('data', onData);
+        paint();
+    });
+}
+
+/** Escape sequences a keyboard sends: CSI (`ESC [ … final`) and SS3 (`ESC O x`). */
+const SEQUENCE = /^\u001b(?:\[[0-9;]*[A-Za-z~]|O[A-Za-z])/;
+
+/** A chunk of raw input, split into one string per keystroke. */
+export function* keysIn(data: string): Generator<string> {
+    let i = 0;
+    while (i < data.length) {
+        if (data[i] === '\u001b') {
+            const found = SEQUENCE.exec(data.slice(i));
+            if (found) {
+                yield found[0];
+                i += found[0].length;
+                continue;
+            }
+        }
+        yield data[i++];
+    }
+}
+
+/**
+ * Cut to a visible width, carrying the style codes over. Styling is invisible
+ * to the terminal's column count but not to `String.length`, so a naive slice
+ * either cuts too early or leaves a colour turned on.
+ */
+export function cut(s: string, max: number): string {
+    if (width(s).length <= max) {
+        return s;
+    }
+    let out = '';
+    let seen = 0;
+    for (let i = 0; i < s.length;) {
+        if (s[i] === '\u001b') {
+            const end = s.indexOf('m', i);
+            if (end < 0) {
+                break;
+            }
+            out += s.slice(i, end + 1);
+            i = end + 1;
+            continue;
+        }
+        if (seen === max - 1) {
+            break;
+        }
+        out += s[i++];
+        seen++;
+    }
+    return `${out}\u2026\u001b[0m`;
 }
 
 // ---------------------------------------------------------------------------

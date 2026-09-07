@@ -5,6 +5,7 @@ import * as Projects from './projects.ts';
 import {
     createSession,
     listSessions,
+    readSessionMeta,
     requireSession,
     sessionPaths,
     type SessionPaths,
@@ -15,6 +16,7 @@ import {
     choose,
     confirm,
     cyan,
+    dim,
     isInteractive,
     usageError,
     warn,
@@ -44,6 +46,10 @@ export interface Target {
     session: SessionPaths;
     /** true when this call created the session */
     created: boolean;
+    /** absolute path the agent's file tools are rooted at */
+    workspace: string;
+    /** true when that directory is the session's own, made by this call */
+    freshWorkspace: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,38 +91,67 @@ export async function target(want: Wanted): Promise<Target> {
         throw usageError('--session and --new contradict each other');
     }
     if (want.session) {
-        return {
-            project: found,
-            session: requireSession(dir, want.session),
-            created: false,
-        };
+        return await resumed(found, requireSession(dir, want.session));
     }
     if (!want.fresh) {
         const existing = await pickExisting(dir);
         if (existing) {
-            return { project: found, session: existing, created: false };
+            return await resumed(found, existing);
         }
     }
-    return { project: found, session: await create(dir, want), created: true };
+    const made = await create(dir, want);
+    return {
+        project: found,
+        session: made.session,
+        created: true,
+        workspace: made.workspace,
+        freshWorkspace: contains(made.session.dir, made.workspace),
+    };
+}
+
+/** A session that already exists brings its own workspace; it is never re-asked. */
+async function resumed(project: Projects.Project, session: SessionPaths): Promise<Target> {
+    const meta = await readSessionMeta(session);
+    return {
+        project,
+        session,
+        created: false,
+        workspace: resolve(meta.workspace),
+        freshWorkspace: false,
+    };
 }
 
 /**
- * Resuming is the default: the common case is continuing what you were doing.
- * With one session it is taken without asking; with several, the others are
- * offered, because "the most recent" is only usually what you meant.
+ * Past this many, you are looking for a session by name rather than scrolling
+ * to it — and `--session <id>` is how you say a name.
+ */
+const MAX_SESSIONS = 25;
+
+/**
+ * Starting fresh is first, and it is the default: `zen run` followed by Enter
+ * should be a new conversation in a new directory, because that is what the
+ * command is asked for most often and the only answer that cannot go wrong.
+ * Everything already here is offered under it, newest first.
  *
  * A session that has never run has nothing to continue — it is indistinguishable
  * from a fresh one, so it is left out rather than offered as a choice.
  */
 async function pickExisting(projectDir: string): Promise<SessionPaths | undefined> {
-    const sessions = (await listSessions(projectDir)).filter((s) => s.runs > 0 || s.busy);
-    if (sessions.length === 0) {
+    const all = (await listSessions(projectDir)).filter((s) => s.runs > 0 || s.busy);
+    if (all.length === 0) {
         return undefined;
     }
     if (!isInteractive()) {
-        return sessionPaths(projectDir, sessions[0]!.id);
+        return sessionPaths(projectDir, all[0]!.id);
     }
+    const sessions = all.slice(0, MAX_SESSIONS);
     const choice = await choose<string | undefined>('Session', [
+        {
+            key: '0',
+            label: bold(cyan('New session…')),
+            detail: dim('a fresh conversation, in a directory of its own'),
+            value: undefined,
+        },
         ...sessions.map((s) => ({
             label: s.title ?? s.id,
             detail:
@@ -124,11 +159,13 @@ async function pickExisting(projectDir: string): Promise<SessionPaths | undefine
                 `${s.runs} run${s.runs === 1 ? '' : 's'}${s.busy ? yellow('  running') : ''}`,
             value: s.id as string | undefined,
         })),
-        // Starting fresh is a first-class answer, not the faded way out: it is
-        // the one entry here that is not a session, and the one most often meant.
-        { key: '0', label: bold(cyan('New session…')), value: undefined },
     ]);
     return choice ? sessionPaths(projectDir, choice) : undefined;
+}
+
+interface Made {
+    session: SessionPaths;
+    workspace: string;
 }
 
 /**
@@ -136,11 +173,11 @@ async function pickExisting(projectDir: string): Promise<SessionPaths | undefine
  * asked against the real paths — and so a cancelled answer leaves no directory
  * behind.
  */
-async function create(projectDir: string, want: Wanted): Promise<SessionPaths> {
+async function create(projectDir: string, want: Wanted): Promise<Made> {
     const id = stamp();
     const planned = sessionPaths(projectDir, id);
     const workspace = await chooseWorkspace(planned, want);
-    return createSession(projectDir, id, workspace);
+    return { session: createSession(projectDir, id, workspace), workspace };
 }
 
 // ---------------------------------------------------------------------------
