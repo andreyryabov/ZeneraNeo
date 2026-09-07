@@ -171,7 +171,31 @@ describe('unwrapping what a vendor said', () => {
         const body = JSON.stringify({
             error: { message: 'Unknown parameter.', type: 'invalid_request_error', param: 'top_k' },
         });
-        expect(explain(new Error(body)).detail).toBe('Unknown parameter. — top_k');
+        expect(explain(new Error(body)).detail).toBe(
+            'Unknown parameter. — top_k (400 invalid_request_error)',
+        );
+    });
+
+    it('reads a status off the vendor word when a stream carried none', () => {
+        // A refusal raised from inside a stream arrives in a 200: the SDK has
+        // no status to put on it, and everything that decides whether to retry
+        // reads the status.
+        const err = Object.assign(new Error('Your input exceeds the context window.'), {
+            code: 'context_length_exceeded',
+            type: 'invalid_request_error',
+        });
+        expect(explain(err)).toEqual({
+            detail: 'Your input exceeds the context window. (400 context_length_exceeded)',
+            status: 400,
+        });
+    });
+
+    it('does not invent a status for a word it does not know', () => {
+        const err = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+        expect(explain(err)).toEqual({
+            detail: 'socket hang up (ECONNRESET)',
+            status: undefined,
+        });
     });
 
     it('blames the cause when the message is only `fetch failed`', () => {

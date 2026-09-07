@@ -161,6 +161,14 @@ export function explain(err: unknown): { detail: string; status?: number } {
         text = said.message;
     }
 
+    code ??= symbolOf(err);
+    // A failure raised from inside a stream has no HTTP status to carry: the
+    // response was a 200 and the refusal arrived as an event in it. The vendor's
+    // own word for what went wrong is the only thing left to classify on, and
+    // everything downstream — the retry limiter, the CLI's liveness probe —
+    // classifies on the status.
+    status ??= code ? STATUS.get(code.toLowerCase()) : undefined;
+
     // `Request contains an invalid argument` names no argument. The vendor's
     // `details` are where the field that was wrong is, when it is anywhere.
     text = collapse(about ? `${text.trim()} — ${about}` : text);
@@ -175,6 +183,53 @@ export function explain(err: unknown): { detail: string; status?: number } {
 
 const messageOf = (err: unknown): string =>
     err instanceof Error ? err.message : typeof err === 'string' ? err : String(err);
+
+/** The vendor's word for the kind of refusal, off the error object itself. */
+function symbolOf(err: unknown): string | undefined {
+    for (const link of chain(err)) {
+        for (const key of ['code', 'type'] as const) {
+            const said = (link as Record<string, unknown>)[key];
+            if (typeof said === 'string' && said) {
+                return said;
+            }
+        }
+    }
+    return undefined;
+}
+
+/** The error and everything it blames, guarded against a self-referential cause. */
+function* chain(err: unknown): Generator<object> {
+    const seen = new Set<unknown>();
+    for (let at = err; at && typeof at === 'object' && !seen.has(at); at = cause(at)) {
+        seen.add(at);
+        yield at;
+    }
+}
+
+const cause = (err: object): unknown => (err as { cause?: unknown }).cause;
+
+/**
+ * What a symbolic refusal would have been as an HTTP status, for the vendors
+ * that omit one. Only the unambiguous ones: a guess here is a retry decision.
+ */
+const STATUS = new Map<string, number>([
+    ['invalid_request_error', 400],
+    ['invalid_argument', 400],
+    ['context_length_exceeded', 400],
+    ['authentication_error', 401],
+    ['unauthenticated', 401],
+    ['permission_error', 403],
+    ['permission_denied', 403],
+    ['not_found_error', 404],
+    ['not_found', 404],
+    ['rate_limit_error', 429],
+    ['rate_limit_exceeded', 429],
+    ['resource_exhausted', 429],
+    ['api_error', 500],
+    ['internal', 500],
+    ['unavailable', 503],
+    ['overloaded_error', 529],
+]);
 
 /** A JSON error body, wherever the message happens to begin with one. */
 function body(text: string): Said | undefined {
@@ -201,6 +256,7 @@ function body(text: string): Said | undefined {
         message?: unknown;
         code?: unknown;
         status?: unknown;
+        type?: unknown;
         details?: unknown;
         param?: unknown;
     };
@@ -211,14 +267,16 @@ function body(text: string): Said | undefined {
         message: said.message,
         // `code` is the status on Google and a symbol on OpenAI; `status` is
         // the other way round. Which is which is decided by the type, not by
-        // the vendor.
+        // the vendor. `type` is where OpenAI and Anthropic keep the kind.
         status: typeof said.code === 'number' ? said.code : undefined,
         code:
             typeof said.status === 'string'
                 ? said.status
                 : typeof said.code === 'string'
                   ? said.code
-                  : undefined,
+                  : typeof said.type === 'string'
+                    ? said.type
+                    : undefined,
         about: aboutOf(said.details) ?? (typeof said.param === 'string' ? said.param : undefined),
     };
 }

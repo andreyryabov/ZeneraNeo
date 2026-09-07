@@ -1,6 +1,13 @@
 import type OpenAI from 'openai';
 import type { StreamDelta } from '../events.ts';
-import { callSites, called, reading, type CallSites, type ProviderNamed } from '../failure.ts';
+import {
+    callSites,
+    called,
+    failed,
+    reading,
+    type CallSites,
+    type ProviderNamed,
+} from '../failure.ts';
 import type { Model, ModelRequest, ModelResponse, StopReason } from '../model.ts';
 import { zeroUsage, type Message, type TokenUsage, type ToolCall } from '../types.ts';
 
@@ -148,9 +155,20 @@ export class OpenAIResponsesModel implements Model {
                     }
                     break;
                 }
-                case 'response.completed':
-                case 'response.incomplete':
                 case 'response.failed': {
+                    // The request was accepted, so the refusal arrives as an
+                    // event in a 200 rather than as a status. Returning it as a
+                    // response would make it an empty answer.
+                    const said = event.response.error;
+                    throw failed(
+                        site,
+                        Object.assign(new Error(said?.message ?? 'the response failed'), {
+                            code: said?.code,
+                        }),
+                    );
+                }
+                case 'response.completed':
+                case 'response.incomplete': {
                     final = event.response;
                     break;
                 }
