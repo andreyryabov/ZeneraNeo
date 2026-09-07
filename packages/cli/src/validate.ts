@@ -131,6 +131,8 @@ export interface SkillReport {
 export interface ModelReport {
     /** the alias it is declared under, or the reference itself */
     name: string;
+    /** what `name` resolves to, when it is an alias rather than a reference */
+    ref?: string;
     /** what the config declared it for */
     role: DeclaredRole;
     /** the provider it resolves to */
@@ -520,7 +522,7 @@ async function askModels(
         if (probe.check.state === 'live') {
             return;
         }
-        const where = `${report.role} "${report.name}"${report.provider ? ` (${report.provider})` : ''}`;
+        const where = named(report);
         if (probe.check.state === 'blocked') {
             const pick = report.role === 'embedding' ? '--embedding' : '--chat';
             add({
@@ -1694,6 +1696,15 @@ function checkModels(
             if (keys) {
                 report.credential = held.present ? 'present' : 'missing';
             }
+            // An alias is the one name the provider has never heard of, so the
+            // report says what it stands for — otherwise `main was refused`
+            // names nothing anyone can look up or retype.
+            const spec = typeof ref === 'string' ? registry.parse(ref) : ref;
+            const api = 'api' in spec && spec.api ? `/${spec.api}` : '';
+            const resolved = `${need.provider}${api}:${spec.model}`;
+            if (resolved !== name) {
+                report.ref = resolved;
+            }
         } catch (err) {
             add({
                 severity: 'error',
@@ -1720,7 +1731,7 @@ function checkModels(
             add({
                 severity: 'warning',
                 code: `credential.${issue.reason}`,
-                where: `${role} "${name}" (${issue.provider})`,
+                where: named(report, issue.provider),
                 message:
                     issue.reason === 'missing'
                         ? `nothing to authenticate with — ${issue.env} is not set, and the ` +
@@ -1773,6 +1784,15 @@ function checkModels(
     }
 
     return { providers: registry.names(), models, targets };
+}
+
+/** How a finding names a model: as written, and as resolved when the two differ. */
+function named(report: ModelReport, provider = report.provider): string {
+    return (
+        `${report.role} "${report.name}"` +
+        (report.ref ? ` = ${report.ref}` : '') +
+        (provider ? ` (${provider})` : '')
+    );
 }
 
 /** The config key a bad reference was written under. */
