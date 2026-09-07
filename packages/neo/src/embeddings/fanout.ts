@@ -4,6 +4,7 @@ import {
     type EmbeddingRequest,
     type EmbeddingResponse,
 } from '../embedding.ts';
+import type { ProviderNamed } from '../failure.ts';
 import { zeroUsage, type TokenUsage } from '../types.ts';
 import { RateLimiter } from './limiter.ts';
 
@@ -38,7 +39,7 @@ export interface EmbeddingSlice {
 }
 
 /** The per-model knobs every adapter shares, and the connection they share it with. */
-export interface BatchOptions {
+export interface BatchOptions extends ProviderNamed {
     /** texts per request; the model's own cap applies when unset */
     maxBatch?: number;
     /** estimated tokens per request; the model's own cap applies when unset */

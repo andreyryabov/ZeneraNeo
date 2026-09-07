@@ -24,8 +24,13 @@
 export function windowOf(text: string, width: number, rows: number): string[] {
     const w = Math.max(8, width);
     const n = Math.max(1, rows);
-    const wrapped = wrap(text.slice(-w * n * 2).replace(/\n{2,}/g, '\n'), w);
-    return wrapped.slice(-n);
+    // Trailing blank rows are never information, and a stream that ends on a
+    // paragraph break would spend one of the few rows it has on nothing.
+    const tail = text
+        .slice(-w * n * 2)
+        .replace(/\n{2,}/g, '\n')
+        .trimEnd();
+    return wrap(tail, w).slice(-n);
 }
 
 /**
@@ -84,8 +89,12 @@ export const CHROME_ROWS = 7;
 /** How much of the reasoning stream is worth showing. It is a progress bar. */
 export const THINKING_ROWS = 6;
 
-/** How many things in flight are worth naming at once. */
-export const ACTIVITY_ROWS = 6;
+/** How much of the frame the work in flight may take. A branch is a box now,
+ *  not a row, so a fan-out of three costs nine of these. */
+export const ACTIVITY_ROWS = 12;
+
+/** The rule that opens a reasoning block and the one that closes it. */
+export const THINKING_CHROME = 2;
 
 export interface Budget {
     /** rows for the list of what is in flight */
@@ -102,13 +111,56 @@ export interface Budget {
  * Activity is capped first and never takes the last two rows: the answer as it
  * arrives matters more than the machinery producing it. Reasoning yields to it
  * in turn, because it is a progress indicator and the answer is the point.
+ *
+ * `thinking` is how many rows of reasoning are wanted, counting text only: none
+ * when there is no reasoning, fewer than `THINKING_ROWS` once the stream has
+ * settled and its tail is history rather than progress. The two rules are
+ * charged on top, so a block too cramped to be worth boxing is not drawn at all
+ * rather than drawn as a border with a line in it.
  */
-export function budgetOf(rows: number, activity: number, thinking: boolean): Budget {
+export function budgetOf(rows: number, activity: number, thinking: number): Budget {
     const total = Math.max(2, rows - CHROME_ROWS);
     const shown = Math.min(Math.max(0, activity), ACTIVITY_ROWS, Math.max(0, total - 2));
     const rest = total - shown;
-    const tail = thinking ? Math.min(THINKING_ROWS, rest - 1) : 0;
-    return { activity: shown, thinking: tail, live: rest - tail };
+    const room = rest - 1 - THINKING_CHROME;
+    const tail = room >= 1 ? Math.min(Math.max(0, thinking), THINKING_ROWS, room) : 0;
+    return { activity: shown, thinking: tail, live: rest - tail - (tail ? THINKING_CHROME : 0) };
+}
+
+// ---------------------------------------------------------------------------
+// Reading a payload
+// ---------------------------------------------------------------------------
+
+/** One field of a preview: a JSON string, or a bare token when it was cut. */
+const FIELD = /"([A-Za-z_][\w-]*)"\s*:\s*("(?:[^"\\]|\\.)*"?|[^,}\s]+)/g;
+
+/**
+ * A tool payload as a person would read it, rather than as it was serialised.
+ *
+ * A lone field is printed as its bare value, because the name of a generic tool
+ * says almost nothing on its own — `run_command` is every shell command there
+ * is, and the argument is the part that identifies THIS call.
+ *
+ * It scans rather than parses: previews are cut to a length, so the JSON very
+ * often does not close, and precisely the calls worth reading are the long ones
+ * that got cut.
+ */
+export function readable(preview: string): string {
+    const found = [...preview.matchAll(FIELD)];
+    if (!found.length) {
+        return preview.trim();
+    }
+    const fields = found.map((m) => [m[1] as string, unquote(m[2] as string)] as const);
+    const one = fields.length === 1 ? fields[0] : undefined;
+    return one ? one[1] : fields.map(([k, v]) => `${k}=${v}`).join(' ');
+}
+
+function unquote(raw: string): string {
+    if (!raw.startsWith('"')) {
+        return raw;
+    }
+    const body = raw.length > 1 && raw.endsWith('"') ? raw.slice(1, -1) : raw.slice(1);
+    return body.replace(/\\[nrt]/g, ' ').replace(/\\(["\\/])/g, '$1');
 }
 
 // ---------------------------------------------------------------------------

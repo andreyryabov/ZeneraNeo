@@ -9,7 +9,17 @@ import {
     sessionPaths,
     type SessionPaths,
 } from './session.ts';
-import { ago, choose, confirm, dim, isInteractive, usageError, warn, yellow } from './term.ts';
+import {
+    ago,
+    bold,
+    choose,
+    confirm,
+    cyan,
+    isInteractive,
+    usageError,
+    warn,
+    yellow,
+} from './term.ts';
 
 // ---------------------------------------------------------------------------
 // Resolution
@@ -114,7 +124,9 @@ async function pickExisting(projectDir: string): Promise<SessionPaths | undefine
                 `${s.runs} run${s.runs === 1 ? '' : 's'}${s.busy ? yellow('  running') : ''}`,
             value: s.id as string | undefined,
         })),
-        { key: '0', label: dim('New session…'), value: undefined },
+        // Starting fresh is a first-class answer, not the faded way out: it is
+        // the one entry here that is not a session, and the one most often meant.
+        { key: '0', label: bold(cyan('New session…')), value: undefined },
     ]);
     return choice ? sessionPaths(projectDir, choice) : undefined;
 }

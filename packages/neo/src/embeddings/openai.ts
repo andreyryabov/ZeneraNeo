@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
 import type { Embedder, EmbeddingRequest, EmbeddingResponse } from '../embedding.ts';
+import { callSites, called, type CallSites } from '../failure.ts';
 import { fanout, type BatchOptions } from './fanout.ts';
 import { RateLimiter } from './limiter.ts';
 
@@ -46,12 +47,14 @@ export class OpenAIEmbedder implements Embedder {
     readonly #limiter: RateLimiter;
     readonly #maxBatch: number;
     readonly #maxBatchTokens: number;
+    readonly #site: CallSites;
 
     constructor(id: string, client: OpenAI, options: OpenAIEmbedderOptions = {}) {
         this.id = id;
         this.#client = client;
         this.#dimensions = options.dimensions;
         this.#limiter = options.limiter ?? new RateLimiter();
+        this.#site = callSites(id, options.provider);
         const known = OPENAI_MODEL.test(id);
         this.#maxBatch = options.maxBatch ?? (known ? MAX_BATCH : GATEWAY_BATCH);
         this.#maxBatchTokens =
@@ -65,17 +68,20 @@ export class OpenAIEmbedder implements Embedder {
             maxBatch: this.#maxBatch,
             maxBatchTokens: this.#maxBatchTokens,
             send: async (input) => {
-                const res = await this.#client.embeddings.create(
-                    {
-                        model: this.id,
-                        input,
-                        dimensions: req.dimensions ?? this.#dimensions,
-                    },
-                    // The client's own retrying is off because a retry it serves
-                    // is one the limiter never sees: the call succeeds, nothing
-                    // learns the provider is refusing, and the run quietly takes
-                    // as long as the backoff it did not report.
-                    { signal: req.signal, maxRetries: 0 },
+                const res = await called(this.#site('embedding', 'embeddings.create'), () =>
+                    this.#client.embeddings.create(
+                        {
+                            model: this.id,
+                            input,
+                            dimensions: req.dimensions ?? this.#dimensions,
+                        },
+                        // The client's own retrying is off because a retry it
+                        // serves is one the limiter never sees: the call
+                        // succeeds, nothing learns the provider is refusing, and
+                        // the run quietly takes as long as the backoff it did
+                        // not report.
+                        { signal: req.signal, maxRetries: 0 },
+                    ),
                 );
                 // The API documents the order but does not promise it, and
                 // `index` is the only thing tying a vector back to its text.

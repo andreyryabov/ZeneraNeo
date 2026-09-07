@@ -9,6 +9,7 @@ import type {
     ProviderPreferences,
 } from '@openrouter/sdk/models';
 import type { StreamDelta } from '../events.ts';
+import { callSites, called, reading, type CallSites, type ProviderNamed } from '../failure.ts';
 import type { Model, ModelRequest, ModelResponse, StopReason } from '../model.ts';
 import { zeroUsage, type Message, type TokenUsage, type ToolCall } from '../types.ts';
 
@@ -51,7 +52,7 @@ export type OpenRouterEffort =
     'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | null;
 
 /** Provider-specific knobs. */
-export interface OpenRouterModelOptions {
+export interface OpenRouterModelOptions extends ProviderNamed {
     reasoningEffort?: OpenRouterEffort;
     /** ask for a reasoning summary from models that expose one */
     reasoningSummary?: 'auto' | 'concise' | 'detailed';
@@ -124,15 +125,19 @@ export class OpenRouterModel implements Model {
     readonly id: string;
     readonly #client: OpenRouter;
     readonly #options: OpenRouterModelOptions;
+    readonly #site: CallSites;
 
     constructor(id: string, client: OpenRouter, options: OpenRouterModelOptions = {}) {
         this.id = id;
         this.#client = client;
         this.#options = options;
+        this.#site = callSites(id, options.provider);
     }
 
     async generate(req: ModelRequest): Promise<ModelResponse> {
-        const res = await this.#send(req, false);
+        const res = await called(this.#site('llm generation', 'chat.send'), () =>
+            this.#send(req, false),
+        );
         // Both overloads are declared to return the same union, so the narrowing
         // the `stream` flag implies has to be done here.
         if (Symbol.asyncIterator in res) {
@@ -154,7 +159,8 @@ export class OpenRouterModel implements Model {
     }
 
     async stream(req: ModelRequest, onDelta: (d: StreamDelta) => void): Promise<ModelResponse> {
-        const res = await this.#send(req, true);
+        const site = this.#site('llm streaming', 'chat.send');
+        const res = await called(site, () => this.#send(req, true));
         if (!(Symbol.asyncIterator in res)) {
             throw new Error(`model "${this.id}": asked for a stream, got one completion`);
         }
@@ -167,7 +173,7 @@ export class OpenRouterModel implements Model {
         // first fragment and arguments trickling in afterwards.
         const calls = new Map<number, ToolCall>();
 
-        for await (const chunk of res) {
+        for await (const chunk of reading(site, res)) {
             // An upstream failure mid-stream arrives as a chunk on a 200, so it
             // has to be raised here or the turn ends early and looks complete.
             if (chunk.error) {

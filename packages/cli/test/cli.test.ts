@@ -47,7 +47,17 @@ import { engineDisk, ensurePodmanReady, ownedContainers } from '../src/podman.ts
 import { dirSize } from '../src/projects.ts';
 import { scaffold } from '../src/scaffold.ts';
 import { bytes, CliError, EXIT, pad, table } from '../src/term.ts';
-import { budgetOf, CHROME_ROWS, clip, segmentsOf, windowOf, wrap } from '../src/tui/wrap.ts';
+import {
+    budgetOf,
+    CHROME_ROWS,
+    clip,
+    readable,
+    segmentsOf,
+    THINKING_CHROME,
+    THINKING_ROWS,
+    windowOf,
+    wrap,
+} from '../src/tui/wrap.ts';
 import { validateProject, type Report } from '../src/validate.ts';
 
 // ---------------------------------------------------------------------------
@@ -357,13 +367,14 @@ describe('dividing the frame', () => {
     // Same bug, one level up: three blocks now share the rows below the
     // scrollback, and their total is the thing that must not exceed the
     // viewport. Anything else on screen is `Static`, which never repaints.
+    // A reasoning block also draws the two rules that box it in.
     const height = (b: { activity: number; thinking: number; live: number }): number =>
-        b.activity + b.thinking + b.live;
+        b.activity + b.thinking + b.live + (b.thinking ? THINKING_CHROME : 0);
 
     it('never hands out more rows than the terminal has', () => {
         for (const rows of [1, 2, 6, 7, 8, 12, 24, 60]) {
             for (const activity of [0, 1, 3, 6, 20]) {
-                for (const thinking of [false, true]) {
+                for (const thinking of [0, 1, THINKING_ROWS]) {
                     const budget = budgetOf(rows, activity, thinking);
                     expect(height(budget)).toBeLessThanOrEqual(Math.max(2, rows - CHROME_ROWS));
                 }
@@ -373,18 +384,63 @@ describe('dividing the frame', () => {
 
     it('always leaves a row for the answer', () => {
         for (const rows of [1, 2, 8, 24]) {
-            expect(budgetOf(rows, 20, true).live).toBeGreaterThanOrEqual(1);
+            expect(budgetOf(rows, 20, THINKING_ROWS).live).toBeGreaterThanOrEqual(1);
         }
     });
 
+    it('drops a reasoning block too cramped to be worth boxing', () => {
+        // Two rows to give away cannot carry a rule, a line and a rule.
+        expect(budgetOf(9, 0, THINKING_ROWS).thinking).toBe(0);
+        expect(budgetOf(9, 0, THINKING_ROWS).live).toBe(2);
+        expect(budgetOf(11, 0, THINKING_ROWS).thinking).toBe(1);
+    });
+
+    it('gives a settled reasoning block only the rows it asks for', () => {
+        expect(budgetOf(24, 0, THINKING_ROWS).thinking).toBe(6);
+        expect(budgetOf(24, 0, 1).thinking).toBe(1);
+        expect(budgetOf(24, 0, 1).live).toBe(14);
+    });
+
     it('caps what is in flight rather than the answer', () => {
-        expect(budgetOf(24, 20, false).activity).toBe(6);
-        expect(budgetOf(24, 2, false).activity).toBe(2);
-        expect(budgetOf(24, 0, false).activity).toBe(0);
+        expect(budgetOf(24, 20, 0).activity).toBe(12);
+        expect(budgetOf(24, 2, 0).activity).toBe(2);
+        expect(budgetOf(24, 0, 0).activity).toBe(0);
     });
 
     it('gives the activity list nothing when there is no room for it', () => {
-        expect(budgetOf(8, 4, false).activity).toBe(0);
+        expect(budgetOf(8, 4, 0).activity).toBe(0);
+    });
+});
+
+describe('reading a tool payload', () => {
+    it('gives a lone argument as itself, with no json around it', () => {
+        expect(readable('{"command":"ls -la /tmp"}')).toBe('ls -la /tmp');
+    });
+
+    it('unescapes the quotes a shell command is full of', () => {
+        expect(readable('{"command":"zen rag docs search -d /docs \\"What is NSX\\""}')).toBe(
+            'zen rag docs search -d /docs "What is NSX"',
+        );
+    });
+
+    it('reads a preview that was cut off mid-string', () => {
+        // The common case: the calls worth reading are the long ones, and a
+        // preview is cut to a length, so the json does not close.
+        expect(readable('{"command":"zen rag docs search -d /assets/docs \\"VMware NS')).toBe(
+            'zen rag docs search -d /assets/docs "VMware NS',
+        );
+    });
+
+    it('names the fields when there is more than one', () => {
+        expect(readable('{"exit_code":0,"stdout":"ok"}')).toBe('exit_code=0 stdout=ok');
+    });
+
+    it('leaves something that is not a payload alone', () => {
+        expect(readable('  transferred to docs_searcher  ')).toBe('transferred to docs_searcher');
+    });
+
+    it('keeps a non-string value as written', () => {
+        expect(readable('{"names":["docs_index"]}')).toBe('["docs_index"]');
     });
 });
 

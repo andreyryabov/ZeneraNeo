@@ -8,9 +8,10 @@
 // the person's own turn, the agent name, a warning, an error — take a colour.
 //
 // That alone fixes most of it. `white` was the bug: it is legible on exactly
-// one kind of background, and half the world runs the other kind. What is left
-// is the handful of accents that ANSI *does* let a light theme get wrong —
-// `cyan` on paper, `gray` on paper — so those swap.
+// one kind of background, and half the world runs the other kind. `gray` was
+// the same bug wearing a hat — bright black, dimmed again, is a step from
+// unreadable on dark and invisible on paper. What is left is the handful of
+// accents that ANSI *does* let a light theme get wrong, so those swap.
 //
 // Note what is *not* here: no hex, no 256-colour ramps, no attempt at a brand.
 // A palette that ignores the user's scheme is worse on both schemes than one
@@ -35,8 +36,6 @@ export interface Theme {
     readonly accent: string;
     /** Read-only badge, busy label. */
     readonly warn: string;
-    /** Gutters and marks: structure, not content. Always drawn dim. */
-    readonly rule?: string;
     /**
      * Branch colours, cycled in order of first sight. A fan-out is the one
      * place where colour carries information rather than decoration: eight
@@ -50,19 +49,21 @@ const DARK: Theme = {
     line: {
         you: { color: 'cyan' },
         agent: {},
-        tool: { color: 'gray', dim: true },
+        // Dim alone, never dim *and* `gray`: bright black is already the
+        // faintest colour a terminal has, and dimming it again puts the bulk
+        // of the transcript a step from unreadable.
+        tool: { dim: true },
         note: { color: 'cyan', dim: true },
         error: { color: 'red' },
     },
     accent: 'cyan',
     warn: 'yellow',
-    rule: 'gray',
     lanes: ['magenta', 'cyan', 'green', 'yellow', 'blue', 'red'],
 };
 
-// On a light background `gray` is bright black — pale grey on white — and
-// `cyan` and `yellow` are barely darker than the paper. Dimmed default
-// foreground and `blue`/`magenta` are the same information, still legible.
+// On a light background `cyan` and `yellow` are barely darker than the paper.
+// Dimmed default foreground and `blue`/`magenta` are the same information,
+// still legible.
 const LIGHT: Theme = {
     appearance: 'light',
     line: {

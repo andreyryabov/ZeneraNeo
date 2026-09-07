@@ -5,6 +5,7 @@ import type {
     EmbeddingResponse,
     EmbeddingTaskType,
 } from '../embedding.ts';
+import { callSites, called, type CallSites } from '../failure.ts';
 import { fanout, type BatchOptions } from './fanout.ts';
 import { RateLimiter } from './limiter.ts';
 
@@ -57,12 +58,14 @@ export class GeminiEmbedder implements Embedder {
     readonly #limiter: RateLimiter;
     readonly #maxBatch: number;
     readonly #maxBatchTokens: number;
+    readonly #site: CallSites;
 
     constructor(id: string, client: GoogleGenAI, options: GeminiEmbedderOptions = {}) {
         this.id = id;
         this.#client = client;
         this.#options = options;
         this.#limiter = options.limiter ?? new RateLimiter();
+        this.#site = callSites(id, options.provider);
         this.#maxBatch = options.maxBatch ?? (LEGACY_MODEL.test(id) ? LEGACY_MAX_BATCH : MAX_BATCH);
         this.#maxBatchTokens = options.maxBatchTokens ?? MAX_BATCH_TOKENS;
     }
@@ -90,15 +93,17 @@ export class GeminiEmbedder implements Embedder {
             maxBatch: this.#maxBatch,
             maxBatchTokens: this.#maxBatchTokens,
             send: async (input) => {
-                const res = await this.#client.models.embedContent({
-                    model: this.id,
-                    // Spelled out as one `Content` per text. `ContentListUnion`
-                    // also accepts a `string[]`, and reads it as the *parts of a
-                    // single document* — six sentences in, one vector back, and
-                    // no error.
-                    contents: input.map((text): Content => ({ parts: [{ text }] })),
-                    config,
-                });
+                const res = await called(this.#site('embedding', 'models.embedContent'), () =>
+                    this.#client.models.embedContent({
+                        model: this.id,
+                        // Spelled out as one `Content` per text.
+                        // `ContentListUnion` also accepts a `string[]`, and
+                        // reads it as the *parts of a single document* — six
+                        // sentences in, one vector back, and no error.
+                        contents: input.map((text): Content => ({ parts: [{ text }] })),
+                        config,
+                    }),
+                );
                 return { vectors: (res.embeddings ?? []).map((e) => e.values ?? []) };
             },
         });

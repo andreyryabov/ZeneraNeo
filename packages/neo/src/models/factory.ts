@@ -468,6 +468,11 @@ export class ModelRegistry {
             spec.client ??
             (hasCredentials(spec) ? buildClient(name, kind, spec, provider) : this.client(name));
 
+        // The *resolved* name, not `spec.provider`: a bare ref carries none,
+        // and a failure that cannot say which connection refused it is the
+        // thing this is here to prevent.
+        const options = { ...spec, provider: name };
+
         // Every protocol but OpenAI's has exactly one API, so naming one is a
         // mistake worth reporting rather than a field to ignore.
         if (defaults.protocol !== 'openai') {
@@ -478,11 +483,11 @@ export class ModelRegistry {
             }
             switch (defaults.protocol) {
                 case 'anthropic':
-                    return new AnthropicModel(spec.model, client as Anthropic, spec);
+                    return new AnthropicModel(spec.model, client as Anthropic, options);
                 case 'gemini':
-                    return new GeminiModel(spec.model, client as GoogleGenAI, spec);
+                    return new GeminiModel(spec.model, client as GoogleGenAI, options);
                 case 'openrouter':
-                    return new OpenRouterModel(spec.model, client as OpenRouter, spec);
+                    return new OpenRouterModel(spec.model, client as OpenRouter, options);
             }
         }
 
@@ -494,8 +499,8 @@ export class ModelRegistry {
             );
         }
         return api === 'responses'
-            ? new OpenAIResponsesModel(spec.model, client as OpenAI, spec)
-            : new OpenAIModel(spec.model, client as OpenAI, spec);
+            ? new OpenAIResponsesModel(spec.model, client as OpenAI, options)
+            : new OpenAIModel(spec.model, client as OpenAI, options);
     }
 
     /**
@@ -517,6 +522,7 @@ export class ModelRegistry {
         // budget: they get pacing of their own rather than the provider's.
         const options = {
             ...spec,
+            provider: name,
             limiter: spec.limiter ?? (hasCredentials(spec) ? undefined : this.#limiter(name)),
         };
 

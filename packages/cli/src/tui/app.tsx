@@ -16,7 +16,15 @@ import { format } from '../narrate.ts';
 import { display } from '../session.ts';
 import { CliError } from '../term.ts';
 import { resolveTheme, THEMES, type Kind, type Theme } from './theme.ts';
-import { budgetOf, clip, segmentsOf, windowOf } from './wrap.ts';
+import {
+    budgetOf,
+    clip,
+    readable,
+    segmentsOf,
+    THINKING_CHROME,
+    THINKING_ROWS,
+    windowOf,
+} from './wrap.ts';
 
 // ---------------------------------------------------------------------------
 // The drawing surface
@@ -33,6 +41,8 @@ import { budgetOf, clip, segmentsOf, windowOf } from './wrap.ts';
 interface Line {
     key: string;
     kind: Kind;
+    /** Drawn ahead of `text` at full weight: the name of the thing the row is about. */
+    lead?: string;
     text: string;
     detail?: string;
 }
@@ -91,6 +101,9 @@ const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', 
 /** Redraw cadence for the activity region, independent of events. */
 const FRAME_MS = 100;
 
+/** How long after the last delta reasoning is still called live. */
+const SETTLE_MS = 800;
+
 // The theme is decided once, before the first frame, and never changes while
 // the app is up — a terminal does not repaint its own scheme underneath us.
 // A context rather than props only because every part of the view wants it.
@@ -108,8 +121,14 @@ function Row({ line }: { line: Line }): React.ReactElement {
                 {line.kind === 'agent' ? (
                     <Answer text={line.text} />
                 ) : (
-                    <Text color={style.color} dimColor={style.dim} bold={line.kind === 'you'}>
-                        {line.text}
+                    // The lead is what the eye scans for down the left edge, so
+                    // it keeps the row's colour without its dimming. Nested
+                    // rather than one string: Ink dims a whole Text or none of it.
+                    <Text>
+                        {line.lead ? <Text color={style.color}>{`${line.lead} `}</Text> : null}
+                        <Text color={style.color} dimColor={style.dim} bold={line.kind === 'you'}>
+                            {line.text}
+                        </Text>
                     </Text>
                 )}
                 {line.detail ? <Text dimColor>{line.detail}</Text> : null}
@@ -126,20 +145,14 @@ function Answer({ text }: { text: string }): React.ReactElement {
             {segments.map((s, i) =>
                 s.code ? (
                     <Box key={i} flexDirection="column" marginY={1}>
-                        <Text color={theme.rule} dimColor>
-                            {`\u250c\u2500${s.title ? ` ${s.title}` : ''}`}
-                        </Text>
+                        <Text dimColor>{`\u250c\u2500${s.title ? ` ${s.title}` : ''}`}</Text>
                         {s.lines.map((l, j) => (
                             <Box key={j} flexDirection="row">
-                                <Text color={theme.rule} dimColor>
-                                    {'\u2502 '}
-                                </Text>
+                                <Text dimColor>{'\u2502 '}</Text>
                                 <Text>{l || ' '}</Text>
                             </Box>
                         ))}
-                        <Text color={theme.rule} dimColor>
-                            {'\u2514\u2500'}
-                        </Text>
+                        <Text dimColor>{'\u2514\u2500'}</Text>
                     </Box>
                 ) : (
                     <Text key={i}>{s.lines.join('\n')}</Text>
@@ -208,6 +221,8 @@ function App({ engine, options, theme }: Props): React.ReactElement {
     // exact figure replaces it when the turn lands.
     const spent = useRef(zeroUsage());
     const startedAt = useRef(0);
+    /** When reasoning text last arrived, which is the only proof it is still coming. */
+    const flowing = useRef(0);
 
     const stopping = useRef<AbortController | undefined>(undefined);
     const seq = useRef(0);
@@ -284,18 +299,35 @@ function App({ engine, options, theme }: Props): React.ReactElement {
     const rows = stdout?.rows ?? 24;
     const columns = stdout?.columns ?? 80;
     const spin = SPINNER[frame % SPINNER.length] as string;
-    const activity = busy
-        ? activityOf(running.current, branches.current, Date.now(), columns - GUTTER - 2, lane)
+    const boxes = busy
+        ? branchBoxesOf(running.current, branches.current, Date.now(), columns - GUTTER, lane)
         : [];
-    const budget = budgetOf(rows, activity.length, Boolean(thinking));
+    const trunkRows = busy
+        ? trunkRowsOf(running.current, branches.current, Date.now(), columns - GUTTER - 2)
+        : [];
     // Priced as far as it has got. Read during render, so the frame timer is
     // what advances the clock.
     const inflight = busy
         ? { usage: spent.current, durationMs: Date.now() - startedAt.current }
         : undefined;
+    // Reasoning survives the call that produced it, because it is why the tool
+    // now running is running. That makes settled text indistinguishable from
+    // live text unless the difference is drawn, and a paragraph that has quietly
+    // stopped moving reads as a hang.
+    const streaming = busy && Date.now() - flowing.current < SETTLE_MS;
+    // A settled block collapses to its opening line. It still says why the work
+    // now running is running, but it stops holding six rows of a paragraph that
+    // finished a minute ago — during a fan-out the trunk makes no call of its
+    // own, so nothing clears it and it reads as hung.
+    const budget = budgetOf(
+        rows,
+        activityHeight(boxes, trunkRows),
+        thinking ? (streaming ? THINKING_ROWS : 1) : 0,
+    );
+    const fitted = fitActivity(boxes, trunkRows, budget.activity);
 
-    const push = useCallback((kind: Kind, text: string, detail?: string): void => {
-        setLines((prev) => [...prev, { key: `${seq.current++}`, kind, text, detail }]);
+    const push = useCallback((kind: Kind, text: string, detail?: string, lead?: string): void => {
+        setLines((prev) => [...prev, { key: `${seq.current++}`, kind, lead, text, detail }]);
     }, []);
 
     // Deltas arrive far faster than a terminal can usefully redraw, so text is
@@ -320,6 +352,7 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                 if (event.type === 'text_delta') {
                     setLive((prev) => prev + event.delta);
                 } else if (event.type === 'thinking_delta') {
+                    flowing.current = Date.now();
                     setThinking((prev) => prev + event.delta);
                 }
                 return;
@@ -369,8 +402,9 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                     // read belongs in the report, not in the scrollback.
                     push(
                         'tool',
-                        clip(`${node.name}(${call?.args ?? ''})`, columns - 4),
+                        clip(readable(call?.args ?? ''), columns - node.name.length - 5),
                         detailOf(node, from, columns - 4),
+                        node.name,
                     );
                     break;
                 }
@@ -379,6 +413,11 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                     push('note', `→ ${event.to}`, `handed off from ${event.from}`);
                     break;
                 case 'before_fork':
+                    // Whatever the trunk was reasoning about, forking is the
+                    // conclusion it reached. It makes no call of its own until
+                    // the join, so nothing else would clear it and it would sit
+                    // there for the length of the fork looking hung.
+                    setThinking('');
                     push(
                         'note',
                         `⑂ ${event.node.branches.length} branches`,
@@ -533,10 +572,17 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                     }
                 </Static>
 
-                <Activity rows={activity.slice(0, budget.activity)} />
+                <Branches boxes={fitted.boxes} spin={spin} columns={columns} />
+                <Activity rows={fitted.trunk} hidden={fitted.hidden} />
 
-                {thinking ? (
-                    <Thinking text={thinking} columns={columns} rows={budget.thinking} />
+                {thinking && budget.thinking ? (
+                    <Thinking
+                        text={thinking}
+                        columns={columns}
+                        rows={budget.thinking}
+                        spin={spin}
+                        live={streaming}
+                    />
                 ) : null}
 
                 {/* The answer as it arrives, in the terminal's own foreground:
@@ -552,7 +598,8 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                     model={model}
                     stats={stats}
                     inflight={inflight}
-                    thinking={Boolean(thinking)}
+                    reasoning={streaming}
+                    columns={columns}
                 />
 
                 {busy ? null : (
@@ -643,61 +690,186 @@ interface ActivityRow {
     color?: string;
 }
 
+/** A branch of a fork, drawn as a box of its own. */
+interface BranchBox {
+    name: string;
+    color?: string;
+    title: string;
+    stats: string;
+    rows: ActivityRow[];
+}
+
+/** Rows a branch box spends on its own chrome: the title rule and the closing one. */
+const BOX_CHROME = 2;
+
+/** In-flight calls named inside one branch box. A branch's tools are sequential
+ *  unless the model asks for several at once, so this is nearly always one. */
+const BRANCH_ROWS = 2;
+
 /**
- * Branches first, then tools. A fork's branches are the shape of what is
- * happening and their tools are detail within it, so the ordering survives
- * being cut off at `ACTIVITY_ROWS`.
+ * A fan-out, demultiplexed into one box per branch. Interleaving eight
+ * branches' calls into a single list is not a picture of parallel work, it is
+ * eight pictures shuffled together; a box per branch is what `examples/board.ts`
+ * gets right and what makes the shape of the fork legible at a glance.
+ *
+ * A branch between calls is not idle, it is deciding what to call next, so its
+ * box keeps a row saying so rather than collapsing and making the whole board
+ * jump every time a tool returns.
  */
-function activityOf(
+function branchBoxesOf(
     tools: ReadonlyMap<string, Running>,
     branches: ReadonlyMap<string, Branch>,
     now: number,
     width: number,
     lane: (name?: string) => string | undefined,
-): ActivityRow[] {
-    const rows: ActivityRow[] = [];
+): BranchBox[] {
+    const boxes: BranchBox[] = [];
     for (const b of branches.values()) {
-        const detail =
-            `  ${b.steps} ${b.steps === 1 ? 'step' : 'steps'}` +
-            (b.tools ? `  ${b.tools} ${b.tools === 1 ? 'tool' : 'tools'}` : '') +
-            `  ${secs(now - b.startedAt)}`;
-        rows.push({
-            key: `b:${b.name}`,
-            label: clip(`⑂ ${b.name}${b.agent ? ` · ${b.agent}` : ''}`, width - detail.length),
-            detail,
+        const rows: ActivityRow[] = [];
+        for (const t of tools.values()) {
+            if (t.branch === b.name && rows.length < BRANCH_ROWS) {
+                const detail = `  ${secs(now - t.startedAt)}`;
+                rows.push({
+                    key: `t:${t.callId}`,
+                    label: clip(`${t.name} ${readable(t.args)}`, width - detail.length - 2),
+                    detail,
+                });
+            }
+        }
+        if (!rows.length) {
+            rows.push({ key: `w:${b.name}`, label: 'thinking…', detail: '' });
+        }
+        boxes.push({
+            name: b.name,
             color: lane(b.name),
+            title: `${b.name}${b.agent ? ` · ${b.agent}` : ''}`,
+            stats:
+                `${b.steps} ${b.steps === 1 ? 'step' : 'steps'}` +
+                (b.tools ? `  ${b.tools} ${b.tools === 1 ? 'tool' : 'tools'}` : '') +
+                `  ${secs(now - b.startedAt)}`,
+            rows,
         });
     }
+    return boxes;
+}
+
+/** What the trunk itself has in flight. It is one thread, so it gets no box. */
+function trunkRowsOf(
+    tools: ReadonlyMap<string, Running>,
+    branches: ReadonlyMap<string, Branch>,
+    now: number,
+    width: number,
+): ActivityRow[] {
+    const rows: ActivityRow[] = [];
     for (const t of tools.values()) {
-        const detail = `  ${secs(now - t.startedAt)}`;
-        rows.push({
-            key: `t:${t.callId}`,
-            label: clip(`${t.name}(${t.args})`, width - detail.length),
-            detail,
-            color: lane(t.branch),
-        });
+        if (t.branch === undefined || !branches.has(t.branch)) {
+            const detail = `  ${secs(now - t.startedAt)}`;
+            rows.push({
+                key: `t:${t.callId}`,
+                label: clip(`${t.name} ${readable(t.args)}`, width - detail.length),
+                detail,
+            });
+        }
     }
     return rows;
 }
 
-function Activity({ rows }: { rows: ActivityRow[] }): React.ReactElement | null {
-    const theme = useTheme();
-    if (!rows.length) {
+/** The rows the whole region wants before anything is cut. */
+function activityHeight(boxes: readonly BranchBox[], trunk: readonly ActivityRow[]): number {
+    return boxes.reduce((n, b) => n + BOX_CHROME + b.rows.length, 0) + trunk.length;
+}
+
+/**
+ * Boxes first and whole: half a box is an opening rule with nothing to close
+ * it, so a branch that does not fit is counted rather than clipped.
+ */
+function fitActivity(
+    boxes: readonly BranchBox[],
+    trunk: readonly ActivityRow[],
+    allowance: number,
+): { boxes: BranchBox[]; trunk: ActivityRow[]; hidden: number } {
+    const kept: BranchBox[] = [];
+    let used = 0;
+    for (const b of boxes) {
+        const h = BOX_CHROME + b.rows.length;
+        if (used + h > allowance) {
+            break;
+        }
+        kept.push(b);
+        used += h;
+    }
+    const left = boxes.length - kept.length;
+    const hidden = left && used < allowance ? left : 0;
+    return {
+        boxes: kept,
+        trunk: trunk.slice(0, Math.max(0, allowance - used - (hidden ? 1 : 0))),
+        hidden,
+    };
+}
+
+function Branches({
+    boxes,
+    spin,
+    columns,
+}: {
+    boxes: BranchBox[];
+    spin: string;
+    columns: number;
+}): React.ReactElement {
+    return (
+        <Box flexDirection="column">
+            {boxes.map((b) => {
+                // Ink truncates rather than wraps, so an over-wide rule clips
+                // instead of costing the box a row it was not given.
+                const used = 3 + b.title.length + 2 + 2 + b.stats.length + 1;
+                return (
+                    <Box key={b.name} flexDirection="column" height={BOX_CHROME + b.rows.length}>
+                        <Text wrap="truncate-end">
+                            <Text dimColor>{'╭─ '}</Text>
+                            <Text color={b.color}>{b.title}</Text>
+                            <Text color={b.color}>{` ${spin}`}</Text>
+                            <Text dimColor>{`  ${b.stats} `}</Text>
+                            <Text dimColor>{'─'.repeat(Math.max(0, columns - used))}</Text>
+                        </Text>
+                        {b.rows.map((r) => (
+                            <Text key={r.key} wrap="truncate-end">
+                                <Text color={b.color}>{'│ '}</Text>
+                                <Text dimColor>{r.label}</Text>
+                                <Text dimColor>{r.detail}</Text>
+                            </Text>
+                        ))}
+                        <Text dimColor>{'╰─'}</Text>
+                    </Box>
+                );
+            })}
+        </Box>
+    );
+}
+
+function Activity({
+    rows,
+    hidden,
+}: {
+    rows: ActivityRow[];
+    hidden: number;
+}): React.ReactElement | null {
+    if (!rows.length && !hidden) {
         return null;
     }
     return (
-        <Box flexDirection="column" height={rows.length} overflow="hidden">
+        <Box flexDirection="column" height={rows.length + (hidden ? 1 : 0)} overflow="hidden">
             {rows.map((r) => (
                 <Text key={r.key} wrap="truncate-end">
-                    <Text color={theme.rule} dimColor>
-                        {'  '}
-                    </Text>
+                    <Text dimColor>{'  '}</Text>
                     <Text color={r.color} dimColor={r.color === undefined}>
                         {r.label}
                     </Text>
                     <Text dimColor>{r.detail}</Text>
                 </Text>
             ))}
+            {hidden ? (
+                <Text dimColor>{`  + ${hidden} more ${hidden === 1 ? 'branch' : 'branches'}`}</Text>
+            ) : null}
         </Box>
     );
 }
@@ -734,25 +906,67 @@ interface StreamProps {
     rows: number;
 }
 
-function Thinking({ text, columns, rows }: StreamProps): React.ReactElement {
+/** A reasoning summary's own headings, which arrive as markdown. */
+const HEADING = /^\s*(?:#{1,6}\s*)?\*\*(.+?)\*\*[:.]?\s*$/;
+
+const TITLE = 'reasoning';
+
+/**
+ * Reasoning is dim prose sitting between dim tool rows and a dim footer, with
+ * nothing to say where it starts or stops — so it reads as part of whatever is
+ * above it, and it never leaves the bottom of the screen. A rule at each end
+ * gives it an edge. Round, to tell live chrome from the square fences an answer
+ * puts around code.
+ */
+/** Where a settled block got to: its last heading, or failing that its opening. */
+function gistOf(text: string, width: number): string {
+    const lines = text.split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+        const head = HEADING.exec(lines[i] ?? '');
+        if (head?.[1]) {
+            return clip(head[1], width);
+        }
+    }
+    return clip(text, width);
+}
+
+function Thinking({
+    text,
+    columns,
+    rows,
+    spin,
+    live,
+}: StreamProps & { spin: string; live: boolean }): React.ReactElement {
     const theme = useTheme();
-    const shown = windowOf(text, columns - GUTTER, rows);
+    // Settled, the block is down to one row, and the tail of a paragraph is a
+    // fragment ("ports.") rather than a summary. The last heading the model
+    // wrote is the shortest true account of where it got to.
+    const shown = live ? windowOf(text, columns - GUTTER, rows) : [gistOf(text, columns - GUTTER)];
+    // Ink truncates rather than wraps, so an over-wide rule clips instead of
+    // costing the block a row it was not given.
+    const dashes = Math.max(0, columns - TITLE.length - (live ? 6 : 4));
     return (
-        <Box flexDirection="row" height={shown.length} overflow="hidden">
-            <Box flexDirection="column" width={GUTTER}>
-                {shown.map((_, i) => (
-                    <Text key={i} color={theme.rule} dimColor>
-                        {i === 0 ? '◇ ' : '  '}
+        <Box flexDirection="column" height={shown.length + THINKING_CHROME} overflow="hidden">
+            <Text wrap="truncate-end">
+                <Text dimColor>{'╭─ '}</Text>
+                <Text dimColor>{TITLE}</Text>
+                {live ? <Text color={theme.warn}>{` ${spin}`}</Text> : null}
+                <Text dimColor>{` ${'─'.repeat(dashes)}`}</Text>
+            </Text>
+            {shown.map((row, i) => {
+                // Not italic: dim italic on a dark terminal is the least
+                // legible thing available, and this is meant to be read.
+                const head = HEADING.exec(row);
+                return (
+                    <Text key={i} wrap="truncate-end">
+                        <Text dimColor>{'│ '}</Text>
+                        <Text dimColor bold={head !== null}>
+                            {head ? head[1] : row}
+                        </Text>
                     </Text>
-                ))}
-            </Box>
-            <Box flexDirection="column">
-                {shown.map((row, i) => (
-                    <Text key={i} dimColor italic wrap="truncate-end">
-                        {row}
-                    </Text>
-                ))}
-            </Box>
+                );
+            })}
+            <Text dimColor>{'╰─'}</Text>
         </Box>
     );
 }
@@ -782,7 +996,8 @@ function Footer({
     model,
     stats,
     inflight,
-    thinking,
+    reasoning,
+    columns,
 }: {
     agent: string;
     busy: boolean;
@@ -792,18 +1007,10 @@ function Footer({
     model?: string;
     stats: Stats;
     inflight?: { usage: TokenUsage; durationMs: number };
-    thinking: boolean;
+    reasoning: boolean;
+    columns: number;
 }): React.ReactElement {
     const theme = useTheme();
-    // Named tools beat the generic words: "thinking" while three shell commands
-    // are out is the least informative thing the footer could say.
-    const what = running.length
-        ? running.length === 1
-            ? `running ${running[0]?.name}`
-            : `running ${running.length} tools`
-        : thinking
-          ? 'reasoning'
-          : 'thinking';
     // Who before what. The agent is the subject of the sentence, and in a
     // handoff it is the thing that changed.
     const aside = [
@@ -811,6 +1018,23 @@ function Footer({
         ...(model ? [model] : []),
         'esc to stop',
     ].join(' · ');
+    // The argument is what identifies a generic tool — `run_command` is every
+    // shell command there is — but the activity row above carries it in full,
+    // so the footer takes it only when there is width to say something useful.
+    const first = running[0];
+    const room = columns - agent.length - aside.length - 12;
+    const what =
+        running.length > 1
+            ? `running ${running.length} tools`
+            : first
+              ? room >= 24
+                  ? clip(`${first.name} ${readable(first.args)}`, room)
+                  : `running ${first.name}`
+              : reasoning
+                ? 'reasoning'
+                : 'thinking';
+    // A clip has already ended it with one.
+    const status = what.endsWith('…') ? what : `${what}…`;
     return (
         <Box flexDirection="column" marginTop={1}>
             <Box>
@@ -820,7 +1044,7 @@ function Footer({
                 {busy ? (
                     <Text color={theme.warn}>
                         {'  '}
-                        {spin} {what}…
+                        {spin} {status}
                     </Text>
                 ) : null}
                 {busy ? <Text dimColor>{`  ${aside}`}</Text> : null}
@@ -831,20 +1055,26 @@ function Footer({
                     {tokens(inflight.usage)}
                     {` · ${secs(inflight.durationMs)}`}
                 </Text>
-            ) : stats.turn ? (
-                <Text dimColor>
-                    {'last turn'.padEnd(LABEL)}
-                    {tokens(stats.turn)}
-                    {stats.durationMs === undefined
-                        ? ''
-                        : ` · ${durationOf(stats.durationMs) ?? ''}`}
-                </Text>
-            ) : null}
-            <Text dimColor>
-                {'session'.padEnd(LABEL)}
-                {tokens(stats.session)}
-                {stats.calls ? ` · ${stats.calls} ${stats.calls === 1 ? 'call' : 'calls'}` : ''}
-            </Text>
+            ) : (
+                <>
+                    {stats.turn ? (
+                        <Text dimColor>
+                            {'last turn'.padEnd(LABEL)}
+                            {tokens(stats.turn)}
+                            {stats.durationMs === undefined
+                                ? ''
+                                : ` · ${durationOf(stats.durationMs) ?? ''}`}
+                        </Text>
+                    ) : null}
+                    <Text dimColor>
+                        {'session'.padEnd(LABEL)}
+                        {tokens(stats.session)}
+                        {stats.calls
+                            ? ` · ${stats.calls} ${stats.calls === 1 ? 'call' : 'calls'}`
+                            : ''}
+                    </Text>
+                </>
+            )}
         </Box>
     );
 }
@@ -890,11 +1120,12 @@ function detailOf(
         ...(branch ? [`⑂ ${branch}`] : []),
         ...(node.isError ? ['failed'] : []),
         ...(durationOf(node.durationMs) ? [durationOf(node.durationMs) as string] : []),
-        ...(node.result.preview ? [node.result.preview] : []),
+        ...(node.result.preview ? [readable(node.result.preview)] : []),
     ];
-    // Two rows of it. A preview is already a preview; the whole result is a
-    // click away in the report, and a wall of it here buries the next answer.
-    return clip(parts.join(' · '), Math.max(40, width * 2));
+    // One row. Two left a six-character orphan under most results, and a
+    // preview is already a preview: the whole of it is a click away in the
+    // report, and a wall of it here buries the next answer.
+    return clip(parts.join(' · '), Math.max(40, width));
 }
 
 // ---------------------------------------------------------------------------

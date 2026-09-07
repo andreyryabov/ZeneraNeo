@@ -5,6 +5,7 @@ import type {
     CreateEmbeddingsRequestBody,
 } from '@openrouter/sdk/models/operations';
 import type { Embedder, EmbeddingRequest, EmbeddingResponse } from '../embedding.ts';
+import { callSites, called, type CallSites } from '../failure.ts';
 import { fanout, type BatchOptions } from './fanout.ts';
 import { RateLimiter } from './limiter.ts';
 
@@ -44,12 +45,14 @@ export class OpenRouterEmbedder implements Embedder {
     readonly #client: OpenRouter;
     readonly #options: OpenRouterEmbedderOptions;
     readonly #limiter: RateLimiter;
+    readonly #site: CallSites;
 
     constructor(id: string, client: OpenRouter, options: OpenRouterEmbedderOptions = {}) {
         this.id = id;
         this.#client = client;
         this.#options = options;
         this.#limiter = options.limiter ?? new RateLimiter();
+        this.#site = callSites(id, options.provider);
     }
 
     async embed(req: EmbeddingRequest): Promise<EmbeddingResponse> {
@@ -71,16 +74,18 @@ export class OpenRouterEmbedder implements Embedder {
                     // default anyway. The string branch of `embedding` below is
                     // what catches a gateway that decides otherwise.
                 };
-                const res = await this.#client.embeddings.generate(
-                    { requestBody },
-                    {
-                        fetchOptions: { signal: req.signal },
-                        // No retrying here: a 429 the SDK swallows is a 429 the
-                        // limiter never hears about, and it is the only thing
-                        // that can slow the whole run down rather than this one
-                        // request.
-                        retries: { strategy: 'none' },
-                    },
+                const res = await called(this.#site('embedding', 'embeddings.generate'), () =>
+                    this.#client.embeddings.generate(
+                        { requestBody },
+                        {
+                            fetchOptions: { signal: req.signal },
+                            // No retrying here: a 429 the SDK swallows is a 429
+                            // the limiter never hears about, and it is the only
+                            // thing that can slow the whole run down rather than
+                            // this one request.
+                            retries: { strategy: 'none' },
+                        },
+                    ),
                 );
                 // The response is declared as the body *or* a bare string, so
                 // the parsed shape has to be established before anything is

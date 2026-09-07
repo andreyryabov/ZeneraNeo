@@ -3,6 +3,7 @@ export * from './architecture.ts';
 export * from './embedding.ts';
 export * from './embeddings/index.ts';
 export * from './events.ts';
+export * from './failure.ts';
 export * from './ids.ts';
 export * from './inspect/index.ts';
 export * as Kernel from './kernel.ts';
@@ -22,3 +23,4 @@ export * from './state.ts';
 export * from './tools/index.ts';
 export * from './trajectory.ts';
 export * from './types.ts';
+

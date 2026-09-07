@@ -223,7 +223,12 @@ export async function choose<T>(title: string, choices: readonly Choice<T>[]): P
     // A keyed choice is out of the sequence, so it does not consume a number.
     let seq = 0;
     const keys = choices.map((c) => c.key ?? String(++seq));
-    const rows = choices.map((c, i) => [`  ${dim(`${keys[i]}.`)}`, c.label, dim(c.detail ?? '')]);
+    // And its key is the one thing on the row you have to be told, since it is
+    // not where counting would have put it.
+    const rows = choices.map((c, i) => {
+        const key = `${keys[i]}.`;
+        return [`  ${c.key === undefined ? dim(key) : cyan(key)}`, c.label, dim(c.detail ?? '')];
+    });
     for (const line of table(rows)) {
         note(line);
     }

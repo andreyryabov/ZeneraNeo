@@ -10,6 +10,7 @@ import type {
     ThinkingLevel,
 } from '@google/genai';
 import type { StreamDelta } from '../events.ts';
+import { callSites, called, reading, type CallSites, type ProviderNamed } from '../failure.ts';
 import type { Model, ModelRequest, ModelResponse, StopReason } from '../model.ts';
 import {
     zeroUsage,
@@ -34,7 +35,7 @@ export type GeminiThinkingLevel = 'minimal' | 'low' | 'medium' | 'high';
  * 3 takes a coarse `thinkingLevel`, and passing the wrong one is an API error
  * rather than something this adapter can paper over.
  */
-export interface GeminiModelOptions {
+export interface GeminiModelOptions extends ProviderNamed {
     /** hard cap on output tokens; the model's own default applies when unset */
     maxTokens?: number;
     /** 2.5-era budget, in tokens: `0` disables thinking, `-1` lets the model decide */
@@ -93,16 +94,20 @@ export class GeminiModel implements Model {
     readonly id: string;
     readonly #client: GoogleGenAI;
     readonly #options: GeminiModelOptions;
+    readonly #site: CallSites;
     #nextId = 0;
 
     constructor(id: string, client: GoogleGenAI, options: GeminiModelOptions = {}) {
         this.id = id;
         this.#client = client;
         this.#options = options;
+        this.#site = callSites(id, options.provider);
     }
 
     async generate(req: ModelRequest): Promise<ModelResponse> {
-        const res = await this.#client.models.generateContent(this.#params(req));
+        const res = await called(this.#site('llm generation', 'models.generateContent'), () =>
+            this.#client.models.generateContent(this.#params(req)),
+        );
         const read = emptyRead();
         for (const part of candidateParts(res)) {
             this.#readPart(part, read);
@@ -111,11 +116,14 @@ export class GeminiModel implements Model {
     }
 
     async stream(req: ModelRequest, onDelta: (d: StreamDelta) => void): Promise<ModelResponse> {
-        const stream = await this.#client.models.generateContentStream(this.#params(req));
+        const site = this.#site('llm streaming', 'models.generateContentStream');
+        const stream = await called(site, () =>
+            this.#client.models.generateContentStream(this.#params(req)),
+        );
         const read = emptyRead();
         let last: GenerateContentResponse | undefined;
 
-        for await (const chunk of stream) {
+        for await (const chunk of reading(site, stream)) {
             last = chunk;
             for (const part of candidateParts(chunk)) {
                 this.#readPart(part, read, onDelta);

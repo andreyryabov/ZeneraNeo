@@ -1,5 +1,6 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import type { StreamDelta } from '../events.ts';
+import { callSites, called, reading, type CallSites, type ProviderNamed } from '../failure.ts';
 import type { Model, ModelRequest, ModelResponse, StopReason } from '../model.ts';
 import {
     zeroUsage,
@@ -32,7 +33,7 @@ type Base64Media = Anthropic.Messages.Base64ImageSource['media_type'];
  * exist. 8192 is the largest value every current Claude model accepts, which
  * makes it the only safe default — raise it per model when you know better.
  */
-export interface AnthropicModelOptions {
+export interface AnthropicModelOptions extends ProviderNamed {
     /** hard cap on output tokens; required by the API, so it always has a value */
     maxTokens?: number;
     /**
@@ -61,10 +62,12 @@ export class AnthropicModel implements Model {
     readonly #client: Anthropic;
     readonly #maxTokens: number;
     readonly #thinkingBudget: number | undefined;
+    readonly #site: CallSites;
 
     constructor(id: string, client: Anthropic, options: AnthropicModelOptions = {}) {
         this.id = id;
         this.#client = client;
+        this.#site = callSites(id, options.provider);
         this.#thinkingBudget =
             options.thinkingBudgetTokens && options.thinkingBudgetTokens >= MIN_THINKING_BUDGET
                 ? options.thinkingBudgetTokens
@@ -78,7 +81,9 @@ export class AnthropicModel implements Model {
     }
 
     async generate(req: ModelRequest): Promise<ModelResponse> {
-        const res = await this.#client.messages.create(this.#params(req), { signal: req.signal });
+        const res = await called(this.#site('llm generation', 'messages.create'), () =>
+            this.#client.messages.create(this.#params(req), { signal: req.signal }),
+        );
         return {
             ...readBlocks(res.content),
             usage: toUsage(res.usage),
@@ -87,13 +92,14 @@ export class AnthropicModel implements Model {
     }
 
     async stream(req: ModelRequest, onDelta: (d: StreamDelta) => void): Promise<ModelResponse> {
+        const site = this.#site('llm streaming', 'messages.stream');
         const stream = this.#client.messages.stream(this.#params(req), { signal: req.signal });
 
         // Blocks are addressed by index, and a tool call's id and name arrive in
         // its `content_block_start` while the arguments trickle in afterwards.
         const calls = new Map<number, ToolCall>();
 
-        for await (const event of stream) {
+        for await (const event of reading(site, stream)) {
             if (event.type === 'content_block_start') {
                 const block = event.content_block;
                 if (block.type === 'tool_use') {
@@ -133,7 +139,7 @@ export class AnthropicModel implements Model {
         // The accumulated message is authoritative: it has the parsed tool
         // inputs and the final usage, so the deltas above are for the UI only
         // and nothing here depends on having reassembled them correctly.
-        const final = await stream.finalMessage();
+        const final = await called(site, () => stream.finalMessage());
         return {
             ...readBlocks(final.content),
             usage: toUsage(final.usage),
