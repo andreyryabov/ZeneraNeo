@@ -541,6 +541,18 @@ function verdict(probe: ModelProbe): string {
     }
 }
 
+/**
+ * Which project and region a Vertex call was actually made in. A publisher
+ * model is only missing *somewhere*, and the somewhere is the part nobody
+ * typed: it comes off the key, or out of the service-account file itself.
+ */
+function vertexAt(where: Credentialed): string {
+    const entry = where.fromEnv.has('vertex') ? undefined : where.store.active('vertex');
+    const id = entry ? where.store.projectOf(entry)?.id : process.env.GOOGLE_CLOUD_PROJECT;
+    const location = process.env.GOOGLE_CLOUD_LOCATION ?? entry?.location ?? 'global';
+    return `vertex: project ${id ?? 'unset'} · location ${location}`;
+}
+
 const test: Sub = async (ctx, args) => {
     const { values, positionals } = parse<RoleFlags>(
         args,
@@ -555,7 +567,7 @@ const test: Sub = async (ctx, args) => {
     // Every ref is split before anything is built, so a typo in the third one
     // does not arrive after two billable calls.
     const parsed = positionals.map((ref) => ({ ref, ...split(ref) }));
-    await credentials();
+    const where = await credentials();
 
     const probes: ModelProbe[] = [];
     const bar = ctx.json ? undefined : progress();
@@ -584,6 +596,11 @@ const test: Sub = async (ctx, args) => {
             if (p.check.fix) {
                 note(dim(`${p.ref}: ${p.check.fix}`));
             }
+        }
+        // A Vertex refusal is about a model *in a project*, and the project is
+        // the half of that nobody typed.
+        if (parsed.some((p) => p.provider === 'vertex')) {
+            note(dim(vertexAt(where)));
         }
     }
     const failed = probes.filter((p) => p.check.state !== 'live');

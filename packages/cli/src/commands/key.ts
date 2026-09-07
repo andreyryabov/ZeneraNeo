@@ -64,19 +64,32 @@ function state(entry: KeyEntry): string {
     return entry.check ? MARK[entry.check.state] : dim('unchecked');
 }
 
+/** Where a Vertex project id came from, since only one of the three was typed. */
+const ORIGIN: Record<'env' | 'stored' | 'file', string> = {
+    env: 'from $GOOGLE_CLOUD_PROJECT',
+    stored: 'from --gcp-project',
+    file: 'from the key file',
+};
+
 /**
  * Only a Vertex service account addresses a project and a region. An unset
  * region is shown as the `global` it will actually be, not left blank: it is
- * the slow endpoint, and a blank column is how it goes unnoticed. Yellow when
- * the environment supplied it, because then the stored one is not in play.
+ * the slow endpoint, and a blank column is how it goes unnoticed. The project
+ * is shown whether or not one was stored, because the file names one too and a
+ * blank there reads as "none" rather than "not written down here". Yellow when
+ * the environment supplied either, because then the stored one is not in play.
  */
-function placed(entry: KeyEntry): string {
+function placed(store: KeyStore, entry: KeyEntry): string {
     if (entry.provider !== 'vertex' || entry.holds !== 'file') {
         return '';
     }
     const fromEnv = process.env.GOOGLE_CLOUD_LOCATION;
     const where = fromEnv ?? entry.location ?? 'global';
-    return [fromEnv ? yellow(where) : dim(where), dim(entry.project ?? '')].join(' ').trimEnd();
+    const project = store.projectOf(entry);
+    const id = project ? project.id : '';
+    return [fromEnv ? yellow(where) : dim(where), project?.from === 'env' ? yellow(id) : dim(id)]
+        .join(' ')
+        .trimEnd();
 }
 
 /**
@@ -107,7 +120,7 @@ function rows(store: KeyStore, borrowed: readonly [Ambient, KeyEntry][]): string
                 store.isActive(entry) ? green('*') : ' ',
                 keyId(entry),
                 dim(describe(store, entry)),
-                placed(entry),
+                placed(store, entry),
                 state(entry),
                 dim(entry.check ? ago(entry.check.at) : '—') +
                     (shadow && store.isActive(entry) ? yellow(`  shadowed by $${shadow}`) : ''),
@@ -118,7 +131,7 @@ function rows(store: KeyStore, borrowed: readonly [Ambient, KeyEntry][]): string
                 dim('~'),
                 dim(ambientId(cred)),
                 dim(describe(store, entry)),
-                placed(entry),
+                placed(store, entry),
                 state(entry),
                 dim(cred.env ? 'from the environment' : 'from gcloud'),
             ]);
@@ -333,7 +346,14 @@ const add: Sub = async (ctx, args) => {
         note(yellow(`$${envOf(entry)} is set and will win over this`));
     }
     if (provider === 'vertex' && entry.holds === 'file' && !entry.project) {
-        note(dim('no --gcp-project given; the project_id inside the file will be used'));
+        const found = store.projectOf(entry);
+        note(
+            dim(
+                found
+                    ? `no --gcp-project given; project ${found.id}, read from the key file`
+                    : 'no --gcp-project given, and the key file names no project_id',
+            ),
+        );
     }
 };
 
@@ -480,12 +500,14 @@ const show: Sub = async (ctx, args) => {
     }
 
     const value = values.reveal ? store.reveal(entry) : describe(store, entry);
+    const project = store.projectOf(entry);
     if (ctx.json) {
         json({
             key: keyId(entry),
             env: envOf(entry),
             value,
             revealed: Boolean(values.reveal),
+            ...(project ? { project: project.id, projectFrom: project.from } : {}),
         });
         return;
     }
@@ -500,7 +522,9 @@ const show: Sub = async (ctx, args) => {
             [dim('key'), keyId(entry)],
             [dim('env'), envOf(entry)],
             [dim('value'), value],
-            ...(entry.project ? [[dim('gcp project'), entry.project]] : []),
+            ...(project
+                ? [[dim('gcp project'), `${project.id} ${dim(ORIGIN[project.from])}`]]
+                : []),
             ...(entry.location ? [[dim('gcp location'), entry.location]] : []),
             [dim('state'), state(entry)],
             ...(entry.check?.fix ? [[dim('fix'), entry.check.fix]] : []),

@@ -1,5 +1,5 @@
 import { EXA_API_KEY_ENV } from '@zenera/neo';
-import { chmodSync, copyFileSync, existsSync, statSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { assertPrivate, ensureDir, paths, readJson, writeJson } from './home.ts';
@@ -488,6 +488,31 @@ export class KeyStore {
     }
 
     /**
+     * Which GCP project a Vertex entry addresses, and how that was decided —
+     * the same order the library resolves it in, so what is shown is what will
+     * be called. A service-account file states its own project, and nothing was
+     * ever stored for it, so an entry with no `project` is not an entry with no
+     * project: it is one whose project is only knowable by reading the file.
+     */
+    projectOf(entry: KeyEntry): { id: string; from: 'env' | 'stored' | 'file' } | undefined {
+        if (entry.provider !== 'vertex') {
+            return undefined;
+        }
+        const fromEnv = process.env.GOOGLE_CLOUD_PROJECT;
+        if (fromEnv) {
+            return { id: fromEnv, from: 'env' };
+        }
+        if (entry.project) {
+            return { id: entry.project, from: 'stored' };
+        }
+        if (entry.holds !== 'file') {
+            return undefined;
+        }
+        const id = projectIdOf(this.fileOf(entry));
+        return id ? { id, from: 'file' } : undefined;
+    }
+
+    /**
      * What the library would see. Real environment variables win, so CI,
      * `docker run -e` and a one-off `OPENAI_API_KEY=… zen run` all behave
      * exactly as they did before the store existed.
@@ -540,6 +565,20 @@ export class KeyStore {
         // copyFile keeps the source's mode, which may well be group-readable.
         chmodSync(path, 0o600);
         return target;
+    }
+}
+
+/**
+ * `project_id` out of a service-account file. Express-mode keys, gcloud user
+ * ADC and metadata credentials carry none, so finding nothing is an answer.
+ */
+function projectIdOf(path: string): string | undefined {
+    try {
+        const key: unknown = JSON.parse(readFileSync(path, 'utf8'));
+        const id = (key as { project_id?: unknown }).project_id;
+        return typeof id === 'string' && id.trim() ? id.trim() : undefined;
+    } catch {
+        return undefined;
     }
 }
 
