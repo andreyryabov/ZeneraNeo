@@ -999,6 +999,14 @@ function diagram() {
   return lines.join('\\n');
 }
 
+// Mermaid refuses a diagram past either of these (defaults 500 edges and
+// 50000 characters, which a long run passes easily) and the pane then shows
+// only its error. Both are "secure" options, so initialize() is the one place
+// they can be raised from. The report is a file on disk, not a live page —
+// a slow render beats a refused one.
+const MAX_EDGES = 20000;
+const MAX_TEXT_SIZE = 5000000;
+
 // One Mermaid, two diagrams. Loading it is the only network the page does, so
 // it happens once and both panes wait on the same promise.
 let mermaidLib = null;
@@ -1007,6 +1015,7 @@ function mermaid() {
     mermaidLib = import(MERMAID_URL).then(function (m) {
       m.default.initialize({
         startOnLoad: false, theme: 'dark', securityLevel: 'strict',
+        maxEdges: MAX_EDGES, maxTextSize: MAX_TEXT_SIZE,
         flowchart: { htmlLabels: false }
       });
       return m.default;
