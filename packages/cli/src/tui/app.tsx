@@ -1,5 +1,12 @@
 import { TextInput } from '@inkjs/ui';
-import { isCheckpoint, turns, zeroUsage, type AgentEvent, type TokenUsage } from '@zenera/neo';
+import {
+    addUsage,
+    isCheckpoint,
+    turns,
+    zeroUsage,
+    type AgentEvent,
+    type TokenUsage,
+} from '@zenera/neo';
 import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
 import { pathToFileURL } from 'node:url';
 import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
@@ -196,6 +203,12 @@ function App({ engine, options, theme }: Props): React.ReactElement {
     const branches = useRef(new Map<string, Branch>());
     const lane = useLanes(theme);
 
+    // What the turn now running has cost so far, summed per model call rather
+    // than read off the state: it is wanted between calls, not after them. The
+    // exact figure replaces it when the turn lands.
+    const spent = useRef(zeroUsage());
+    const startedAt = useRef(0);
+
     const stopping = useRef<AbortController | undefined>(undefined);
     const seq = useRef(0);
 
@@ -275,6 +288,11 @@ function App({ engine, options, theme }: Props): React.ReactElement {
         ? activityOf(running.current, branches.current, Date.now(), columns - GUTTER - 2, lane)
         : [];
     const budget = budgetOf(rows, activity.length, Boolean(thinking));
+    // Priced as far as it has got. Read during render, so the frame timer is
+    // what advances the clock.
+    const inflight = busy
+        ? { usage: spent.current, durationMs: Date.now() - startedAt.current }
+        : undefined;
 
     const push = useCallback((kind: Kind, text: string, detail?: string): void => {
         setLines((prev) => [...prev, { key: `${seq.current++}`, kind, text, detail }]);
@@ -320,6 +338,8 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                     }
                     break;
                 case 'after_llm_call':
+                    // Branches included: they are what this turn is spending on.
+                    spent.current = addUsage(spent.current, event.node.usage);
                     if (!from) {
                         setModel(event.node.model);
                     }
@@ -410,6 +430,12 @@ function App({ engine, options, theme }: Props): React.ReactElement {
             }
             if (text === '/help') {
                 push('note', 'commands', '/help  /clear  /exit · ↑ recalls, esc stops a turn');
+                push(
+                    'note',
+                    'the footer',
+                    'in = what was sent · out = what came back · a number in brackets is part' +
+                        ' of the one before it, not an extra',
+                );
                 return;
             }
             if (text === '/clear') {
@@ -423,6 +449,8 @@ function App({ engine, options, theme }: Props): React.ReactElement {
             setLive('');
             setThinking('');
             setStep(0);
+            spent.current = zeroUsage();
+            startedAt.current = Date.now();
             running.current.clear();
             branches.current.clear();
             const controller = new AbortController();
@@ -523,6 +551,7 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                     step={step}
                     model={model}
                     stats={stats}
+                    inflight={inflight}
                     thinking={Boolean(thinking)}
                 />
 
@@ -741,6 +770,9 @@ function Live({ text, columns, rows }: StreamProps): React.ReactElement {
     );
 }
 
+/** The label column the two number rows line up behind. */
+const LABEL = 10;
+
 function Footer({
     agent,
     busy,
@@ -749,6 +781,7 @@ function Footer({
     step,
     model,
     stats,
+    inflight,
     thinking,
 }: {
     agent: string;
@@ -758,6 +791,7 @@ function Footer({
     step: number;
     model?: string;
     stats: Stats;
+    inflight?: { usage: TokenUsage; durationMs: number };
     thinking: boolean;
 }): React.ReactElement {
     const theme = useTheme();
@@ -770,36 +804,44 @@ function Footer({
         : thinking
           ? 'reasoning'
           : 'thinking';
+    // Who before what. The agent is the subject of the sentence, and in a
+    // handoff it is the thing that changed.
+    const aside = [
+        ...(step ? [`step ${step}`] : []),
+        ...(model ? [model] : []),
+        'esc to stop',
+    ].join(' · ');
     return (
         <Box flexDirection="column" marginTop={1}>
             <Box>
-                {busy ? (
-                    <Text color={theme.warn}>
-                        {spin} {what}…{' '}
-                    </Text>
-                ) : null}
                 <Text color={theme.accent} dimColor>
                     {agent}
                 </Text>
-                {busy && step ? (
-                    <Text dimColor>
-                        {`  step ${step}`}
-                        {model ? ` · ${model}` : ''}
+                {busy ? (
+                    <Text color={theme.warn}>
+                        {'  '}
+                        {spin} {what}…
                     </Text>
                 ) : null}
-                {!busy && stats.turn ? (
-                    <Text dimColor>
-                        {'  turn '}
-                        {tokens(stats.turn)}
-                        {stats.durationMs === undefined
-                            ? ''
-                            : ` · ${durationOf(stats.durationMs) ?? ''}`}
-                    </Text>
-                ) : null}
-                {busy ? <Text dimColor>{'  esc to stop'}</Text> : null}
+                {busy ? <Text dimColor>{`  ${aside}`}</Text> : null}
             </Box>
+            {inflight ? (
+                <Text dimColor>
+                    {'this turn'.padEnd(LABEL)}
+                    {tokens(inflight.usage)}
+                    {` · ${secs(inflight.durationMs)}`}
+                </Text>
+            ) : stats.turn ? (
+                <Text dimColor>
+                    {'last turn'.padEnd(LABEL)}
+                    {tokens(stats.turn)}
+                    {stats.durationMs === undefined
+                        ? ''
+                        : ` · ${durationOf(stats.durationMs) ?? ''}`}
+                </Text>
+            ) : null}
             <Text dimColor>
-                {'session '}
+                {'session'.padEnd(LABEL)}
                 {tokens(stats.session)}
                 {stats.calls ? ` · ${stats.calls} ${stats.calls === 1 ? 'call' : 'calls'}` : ''}
             </Text>
@@ -808,20 +850,15 @@ function Footer({
 }
 
 /**
- * Cache and reasoning are subsets of the numbers beside them, not additions to
- * them, and they are only worth the width when a provider actually reports one
- * — most do not, and a row of zeroes teaches nobody anything.
+ * Cache and reasoning are SUBSETS of the number beside them, so they are drawn
+ * inside it. On one dotted line they read as four things to add up, which is
+ * the single reading that is wrong. Both are skipped when the provider reports
+ * nothing — most do not, and a row of zeroes teaches nobody anything.
  */
 function tokens(usage: TokenUsage): string {
-    const parts = [`${format(usage.inputTokens)} in`];
-    if (usage.cachedInputTokens) {
-        parts.push(`${format(usage.cachedInputTokens)} cached`);
-    }
-    parts.push(`${format(usage.outputTokens)} out`);
-    if (usage.reasoningTokens) {
-        parts.push(`${format(usage.reasoningTokens)} thinking`);
-    }
-    return parts.join(' · ');
+    const cached = usage.cachedInputTokens ? ` (${format(usage.cachedInputTokens)} cached)` : '';
+    const think = usage.reasoningTokens ? ` (${format(usage.reasoningTokens)} thinking)` : '';
+    return `${format(usage.inputTokens)} in${cached} · ${format(usage.outputTokens)} out${think}`;
 }
 
 /** What the last turn added. Usage only ever grows, so a subtraction is safe. */

@@ -78,8 +78,8 @@ export function wrap(text: string, width: number): string[] {
 // rows from here, and the sum is never more than the viewport has to give.
 // ---------------------------------------------------------------------------
 
-/** The two footer rows, its margin, the prompt, and a row in hand. */
-export const CHROME_ROWS = 6;
+/** The three footer rows, its margin, the prompt, and a row in hand. */
+export const CHROME_ROWS = 7;
 
 /** How much of the reasoning stream is worth showing. It is a progress bar. */
 export const THINKING_ROWS = 6;
