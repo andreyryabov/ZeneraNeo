@@ -908,6 +908,48 @@ describe('apply_patch', () => {
             expect(out.error).toContain('Nowhere');
             expect(read('missing.py')).toBe(SOURCE);
         });
+
+        /**
+         * Models invent headings — `@@ class DfwRiskScanner` for a file of
+         * plain functions. The heading only narrows the search, so when the
+         * context occurs once it was never needed.
+         */
+        it('ignores an invented heading when the context is unique', async () => {
+            seed('invented.py', SOURCE);
+            const out = await patch(
+                '*** Update File: invented.py',
+                '@@ class DfwRiskScanner',
+                "-        alg = entry.get('alg', '').upper()",
+                "+        alg = entry.get('alg', '').title()",
+            );
+            expect(out.error).toBeUndefined();
+            expect(out.ignoredHeadings).toBe(1);
+            expect(read('invented.py')).toContain('.title()');
+        });
+
+        /** With the context repeated, the heading was load-bearing after all. */
+        it('refuses an invented heading when the context is ambiguous', async () => {
+            seed('ambiguous.py', 'def a():\n    return 0\n\ndef b():\n    return 0\n');
+            const out = await patch(
+                '*** Update File: ambiguous.py',
+                '@@ class Nope',
+                '-    return 0',
+                '+    return 9',
+            );
+            expect(out.error).toContain('more than once');
+            expect(read('ambiguous.py')).toBe('def a():\n    return 0\n\ndef b():\n    return 0\n');
+        });
+
+        it('says so when neither the heading nor the context is there', async () => {
+            seed('neither.py', SOURCE);
+            const out = await patch(
+                '*** Update File: neither.py',
+                '@@ class Nope',
+                '-    nothing like this',
+                '+    gone',
+            );
+            expect(out.error).toContain('not in the file either');
+        });
     });
 
     /** Claiming a line is absent when it is merely above the cursor is a lie. */

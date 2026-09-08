@@ -765,21 +765,52 @@ function matchedUpTo(lines: string[], want: string[], from: number): number {
     return best;
 }
 
+/** How many places `want` occurs at or after `from`, counted no further than two. */
+function countMatches(lines: string[], want: string[], from: number): number {
+    if (want.length === 0) {
+        return 2;
+    }
+    let found = 0;
+    let at = from;
+    while (found < 2) {
+        const hit = locate(lines, want, at);
+        if (hit.index < 0) {
+            break;
+        }
+        found++;
+        at = hit.index + 1;
+    }
+    return found;
+}
+
 /** Applies one file's chunks to its lines. Throws `PatchError` on a miss. */
 function patchLines(
     lines: string[],
     chunks: PatchChunk[],
     file: string,
-): { lines: string[]; fuzz: number } {
+): { lines: string[]; fuzz: number; ignored: number } {
     const out = lines.slice();
     let cursor = 0;
     let fuzz = 0;
+    let ignored = 0;
     for (const chunk of chunks) {
         for (const heading of chunk.headings) {
             const at = findHeading(out, heading, cursor);
             if (at < 0) {
+                // A heading only narrows the search. Models invent them —
+                // `@@ class DfwRiskScanner` for a file of plain functions — and
+                // when the context occurs once the heading was never needed, so
+                // refusing spends a turn to learn nothing.
+                if (countMatches(out, chunk.before, cursor) === 1) {
+                    ignored++;
+                    break;
+                }
                 throw new PatchError(
-                    `${file}: no line matching '@@ ${heading}' after the previous chunk`,
+                    `${file}: no line matching '@@ ${heading}' after the previous chunk` +
+                        (countMatches(out, chunk.before, cursor) === 0
+                            ? ", and the chunk's context is not in the file either"
+                            : ", and the chunk's context occurs more than once, so a heading " +
+                              'that matches a line of the file is needed'),
                 );
             }
             // Not `at + 1`: models routinely repeat the heading as the first
@@ -845,7 +876,7 @@ function patchLines(
         out.splice(found.index, chunk.before.length, ...after);
         cursor = found.index + after.length;
     }
-    return { lines: out, fuzz };
+    return { lines: out, fuzz, ignored };
 }
 
 // ---------------------------------------------------------------------------
@@ -1343,6 +1374,7 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
     // and the others are lost with the patch still reporting them applied.
     const targets = new Set<string>();
     let fuzz = 0;
+    let ignored = 0;
 
     for (const op of ops) {
         const at = patchPath(ws, op.path);
@@ -1409,6 +1441,7 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
         const body = await readFile(at, 'utf8');
         const patched = patchLines(toLines(body), op.chunks, ws.show(at));
         fuzz += patched.fuzz;
+        ignored += patched.ignored;
         // Whether the file ended in a newline is a property of the file, not of
         // the patch, so it survives the edit.
         const trailing = body === '' || body.endsWith('\n');
@@ -1471,6 +1504,9 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
         // ignored landed where the tool thinks it should, not where the patch
         // said, and that is a thing to check.
         fuzzy: fuzz > 0 ? fuzz : undefined,
+        // A heading that named nothing, applied anyway because the context was
+        // unique. Says the heading was wrong without having refused the edit.
+        ignoredHeadings: ignored > 0 ? ignored : undefined,
     };
 }
 
