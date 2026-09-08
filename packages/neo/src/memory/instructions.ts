@@ -47,16 +47,19 @@ export function memoryInstructions(binding: ResolvedMemoryBinding): string {
 const READING = `Memory is a graph shared with other agents, and it outlives this run.
 
 A <${RECOLLECTION_TAG}> block is a subgraph, not a ranked list — the links are
-as much of the answer as the nodes. It has two halves. The first is a mermaid
-\`graph LR\` whose node ids are memory ids and whose labels are only the kind:
-\`(fact)\` is an ordinary note, \`[/file/]\` is an artifact kept under /memory
-that you can open or run. Arrows carry the relation between two ids.
+as much of the answer as the nodes. It is an outline, and the indentation is
+the graph. A line at the left margin reads \`score kind id\` and is something
+the search matched. A line indented under it reads \`<arrow>relation kind id\`
+and is a neighbour: \`\u2192produced\` means the line above produced this one,
+\`\u2190informed\` means this one informed the line above. A neighbour the
+search matched in its own right carries a score too, after the arrow. Under
+each header, indented further, is that node's text — and for a \`file\`, the
+path under /memory you can open or run, its size and how often it has been read.
 
-Below the blank line is one row per node: id, score, kind, summary. A score of
-\`--\` means the node was not itself a match — it is there because it links to
-one. Summaries are clipped, and a file row also shows its path, its size and
-how often it has been read. Copy an id into \`${MEMORY_LOAD_TOOL}\` to read a
-node whole; \`${MEMORY_SEARCH_TOOL}\` finds ids, it does not return contents.
+A line beginning \`+\` is a link to an id already shown above, for an edge the
+outline could not nest. Text is clipped: copy an id into \`${MEMORY_LOAD_TOOL}\`
+to read a node whole. \`${MEMORY_SEARCH_TOOL}\` finds ids, it does not return
+contents.
 
 You see part of the graph, not all of it. Finding nothing means nothing you can
 see, not that it never happened.`;
@@ -69,7 +72,10 @@ memory, and splitting them leaves a later run holding a script with no idea why
 it exists.
 
 Do not commit the request restated, progress notes, anything you have not
-verified, or anything a search already returned.
+verified, or anything a search already returned. A node that says what one
+already in memory says is folded into it and its existing id comes back under
+your ref, so the links you asked for still land — on the memory that was
+already there.
 
 Never edit a memory to correct it. Add the new one and link it to the old with
 SUPERSEDES; the wrong answer is evidence too, and the link is what hides it

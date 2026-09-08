@@ -202,6 +202,7 @@ describe('the instructions match what the renderer emits', () => {
                 }),
                 score: 0,
                 seed: false,
+                via: { from: 'T1', relation: 'PRODUCED', outbound: true },
             },
         ],
         edges: [{ source: 'T1', target: 'F1', relation: 'PRODUCED' }],
@@ -212,25 +213,28 @@ describe('the instructions match what the renderer emits', () => {
     const prose = memoryInstructions(binding('read'));
     const out = renderRecollection(rec, { now: Date.parse(T0) });
 
-    it('claims a mermaid graph, and gets one', () => {
-        expect(prose).toContain('graph LR');
-        expect(out).toContain('graph LR');
+    it('claims a root reads `score kind id`, and it does', () => {
+        expect(prose).toContain('`score kind id`');
+        expect(out).toContain('0.90  task  T1');
     });
 
-    it('claims a file is drawn differently, and it is', () => {
-        expect(prose).toContain('[/file/]');
-        expect(out).toContain('[/file/]');
+    it('claims an arrow names the relation, and it does', () => {
+        expect(prose).toContain('\u2192produced');
+        expect(out).toContain('  \u2192produced  file  F1');
     });
 
-    it('claims a non-match scores `--`, and it does', () => {
-        expect(prose).toContain('`--`');
-        expect(out).toMatch(/F1\s+--\s+file/);
+    it('claims a file shows its path under /memory, and it does', () => {
+        expect(prose).toContain('/memory');
+        expect(out).toContain('/memory/F1.py · 4.2 KB · unused');
     });
 
-    it('claims two halves split by a blank line, and there are', () => {
-        const [diagram, legend] = out.split('\n\n');
-        expect(diagram).toContain('graph LR');
-        expect(legend).toContain('/memory/F1.py');
-        expect(diagram).not.toContain('/memory/F1.py');
+    it('claims indentation is the graph, and the child is indented under its parent', () => {
+        const [root, , child] = out.split('\n').slice(1);
+        expect(root?.startsWith('0.90')).toBe(true);
+        expect(child?.startsWith('  \u2192')).toBe(true);
+    });
+
+    it('states each id once, so nothing has to be matched across halves', () => {
+        expect(out.match(/\bT1\b/g)?.length).toBe(1);
     });
 });

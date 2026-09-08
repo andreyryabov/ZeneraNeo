@@ -1,10 +1,12 @@
 import type { MemoryGraph } from './graph.ts';
 import {
     PREFERENCE_KIND,
+    SPINE_RELATIONS,
     visible,
     type MemoryEdge,
     type MemoryNode,
     type MemoryQuery,
+    type NodeVia,
     type Recollection,
     type ScoredNode,
 } from './types.ts';
@@ -36,9 +38,6 @@ export const DEFAULT_MAX_NODES = 25;
 
 /** Below this, a "match" is noise that costs context and buys nothing. */
 export const DEFAULT_MIN_SCORE = 0.15;
-
-/** Relations that carry the work forward; walked before mere context. */
-const SPINE: ReadonlySet<string> = new Set(['PRODUCED', 'CALLS', 'SUPERSEDES']);
 
 const SEED = 0;
 const LINK = 1;
@@ -144,6 +143,9 @@ export function stitch(
 
     const tier = new Map<string, number>();
     const scores = new Map<string, number>();
+    // What admitted each node, which is the branch the renderer hangs it from.
+    // A seed never gets one: its tier is 0 and no edge can better that.
+    const via = new Map<string, NodeVia>();
     for (const seed of seeds) {
         tier.set(seed.node.id, SEED);
         scores.set(seed.node.id, seed.score);
@@ -158,7 +160,7 @@ export function stitch(
                 if (superseded.has(other)) {
                     continue;
                 }
-                const rung = SPINE.has(edge.relation) ? LINK : FILL;
+                const rung = SPINE_RELATIONS.has(edge.relation) ? LINK : FILL;
                 const known = tier.get(other);
                 if (known !== undefined && known <= rung) {
                     continue;
@@ -167,6 +169,7 @@ export function stitch(
                     next.push(other);
                 }
                 tier.set(other, rung);
+                via.set(other, { from: id, relation: edge.relation, outbound: edge.source === id });
             }
         }
         frontier = next;
@@ -185,7 +188,15 @@ export function stitch(
     const edges: MemoryEdge[] = graph.between(ids, sees);
 
     return {
-        nodes: kept.map((k) => ({ node: k.node, score: k.score, seed: k.rung === SEED })),
+        nodes: kept.map((k) => {
+            const branch = via.get(k.node.id);
+            return {
+                node: k.node,
+                score: k.score,
+                seed: k.rung === SEED,
+                ...(branch ? { via: branch } : {}),
+            };
+        }),
         edges,
         seeds: seeds.map((s) => s.node.id),
         truncated: ranked.length > kept.length,

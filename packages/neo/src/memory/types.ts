@@ -76,6 +76,17 @@ export const RELATION_HELP: Readonly<Record<Relation, string>> = {
     SUPERSEDES: 'the source replaces the target; the target is stale',
 };
 
+/**
+ * The relations that carry the work forward, as opposed to the ones that merely
+ * supply context. Recall walks these first when spending its budget, and the
+ * renderer prefers them when a node has more than one branch it could hang from.
+ */
+export const SPINE_RELATIONS: ReadonlySet<string> = new Set([
+    'PRODUCED',
+    'CALLS',
+    'SUPERSEDES',
+]);
+
 /** An audience label every agent holds implicitly. */
 export const ALL_AGENTS = '*';
 
@@ -150,11 +161,25 @@ export interface MemoryQuery {
     minScore?: number;
 }
 
+/**
+ * The edge a stitched node was reached by. A recollection renders as a tree,
+ * and this is the branch each node hangs from; the edges left over once every
+ * node has used its own are the ones the tree cannot carry.
+ */
+export interface NodeVia {
+    from: string;
+    relation: Relation;
+    /** the edge runs from `from` to this node rather than back the other way */
+    outbound: boolean;
+}
+
 export interface ScoredNode {
     node: MemoryNode;
     score: number;
     /** the ranker found this one; everything else is here to connect it */
     seed: boolean;
+    /** absent on a seed: nothing reached it, it was the reason for the walk */
+    via?: NodeVia;
 }
 
 export interface Recollection {

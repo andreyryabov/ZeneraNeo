@@ -258,36 +258,47 @@ describe('rendering a recollection', () => {
         return renderRecollection(rec, { now: NOW });
     }
 
-    it('emits a mermaid graph and a legend inside the tag', () => {
+    it('nests the subgraph under the seed that reached it', () => {
         const out = render();
         expect(out.startsWith(`<${RECOLLECTION_TAG}>`)).toBe(true);
-        expect(out).toContain('graph LR');
-        expect(out).toContain('-->|PRODUCED|');
-        expect(out).toContain('ask(task)');
-        expect(out).toContain('script[/file/]');
+        const lines = out.split('\n');
+        const ask = lines.findIndex((l) => l.endsWith('task  ask'));
+        const script = lines.findIndex((l) => l.includes('file  script'));
+        const call = lines.findIndex((l) => l.includes('operation  call'));
+
+        // The seed is a root, and what it produced hangs off it.
+        expect(lines[ask]).toMatch(/^0\.\d\d {2}task {2}ask$/);
+        expect(lines[script]).toBe('  \u2192produced  file  script');
+        expect(lines[call]).toBe('    \u2192calls  operation  call');
+        expect(ask).toBeLessThan(script);
+        expect(script).toBeLessThan(call);
     });
 
-    it('puts a file path and its size in the legend, not the diagram', () => {
+    it('states each id once and puts its text underneath it', () => {
         const out = render();
-        const [dia, leg] = out.split('\n\n');
-        expect(leg).toContain('/memory/script.py');
-        expect(leg).toContain('4.2 KB');
-        expect(dia).not.toContain('/memory/script.py');
+        // The old format named every id in an arrow and again in a legend.
+        expect(out.match(/\bask\b/g)?.length).toBe(1);
+        expect(out.match(/\bcall\b/g)?.length).toBe(1);
+        expect(out).toContain('\n      /memory/script.py · 4.2 KB · unused');
+        expect(out).toContain('\n      risk report generator');
     });
 
-    it('keeps mermaid-hostile text out of the diagram entirely', () => {
+    it('marks a child that points back at its parent', () => {
+        const out = render();
+        // `plan` and `note` both informed the script rather than the other way.
+        expect(out).toContain('\u2190informed  plan  plan');
+        expect(out).toContain('\u2190informed  fact  note');
+    });
+
+    it('carries text no diagram could have held', () => {
         const graph = new MemoryGraph();
         const nasty = 'fn(a["b"], c|d) # {e}\nsecond line';
         graph.add({ id: 'N1', kind: 'snippet', text: nasty, audience: ['*'] }, T0);
         const rec = recall({ graph, query: query('fn'), sees: ['*'], now: NOW });
         const out = renderRecollection(rec, { now: NOW });
 
-        const diagram = out.split('\n\n')[0];
-        for (const ch of ['"', '(a[', '|d', '#', '{e}']) {
-            expect(diagram).not.toContain(ch);
-        }
-        expect(diagram).toContain('N1(snippet)');
-        // Collapsed onto one line so a node is always exactly one legend row.
+        expect(out).toContain('1.00  snippet  N1');
+        // Collapsed onto one line so a node is always one header and its text.
         expect(out).toContain('fn(a["b"], c|d) # {e} second line');
     });
 
@@ -303,7 +314,67 @@ describe('rendering a recollection', () => {
             sees: ['*'],
             now: NOW,
         });
-        expect(renderRecollection(rec, { now: NOW })).toContain('LONE(fact)');
+        expect(renderRecollection(rec, { now: NOW })).toContain('fact  LONE');
+    });
+
+    /**
+     * A seed carries no `via`, so two of them joined by an edge both used to
+     * land at the left margin with the link between them demoted to a `+` —
+     * the better a query matched, the flatter the outline drew.
+     */
+    it('nests a match under the higher-ranked match it hangs from', () => {
+        const graph = new MemoryGraph();
+        const vectors = new VectorBlock(DIMS);
+        const add = (id: string, kind: string, text: string) => {
+            graph.add({ id, kind, text, audience: ['*'] }, T0);
+            vectors.set(id, embed(text));
+        };
+        add('T', 'task', 'audit the firewall rules and report risky ports');
+        add('F', 'file', 'audit the firewall rules and report risky domains');
+        graph.link('T', 'F', 'PRODUCED', T0);
+
+        const q = query('audit the firewall rules and report risky ports');
+        const rec = recall({
+            graph,
+            vectors,
+            vector: embed(q.text!),
+            query: q,
+            sees: ['*'],
+            now: NOW,
+        });
+        expect(rec.seeds).toEqual(['T', 'F']);
+
+        const out = renderRecollection(rec, { now: NOW });
+        expect(out).toContain('1.00  task  T');
+        // Nested, and still carrying the score that says it matched on its own.
+        expect(out).toContain('\n  \u2192produced  0.83  file  F');
+        expect(out).not.toContain('+ ');
+    });
+
+    it('hangs an edge the nesting could not carry off the later endpoint', () => {
+        const graph = new MemoryGraph();
+        const add = (id: string, kind: string, text: string) =>
+            graph.add({ id, kind, text, audience: ['*'] }, T0);
+        add('T', 'task', 'audit the gateway rules');
+        add('P', 'plan', 'scope first, then service');
+        add('F', 'file', 'pulls every entry and flags wide matches');
+        graph.link('T', 'P', 'INFORMED', T0);
+        graph.link('T', 'F', 'PRODUCED', T0);
+        graph.link('P', 'F', 'INFORMED', T0);
+
+        const rec = recall({
+            graph,
+            query: query('audit the gateway rules'),
+            sees: ['*'],
+            now: NOW,
+        });
+        const out = renderRecollection(rec, { now: NOW });
+
+        // PRODUCED is spine, so it wins the branch; the diamond's other side
+        // degrades to a reference, and it points back at an id already shown.
+        expect(out).toContain('  \u2192produced  file  F');
+        expect(out).toContain('+ \u2192informed  F');
+        expect(out.indexOf('file  F')).toBeLessThan(out.indexOf('+ \u2192informed  F'));
     });
 
     it('is empty when nothing matched', () => {

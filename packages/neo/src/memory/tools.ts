@@ -198,7 +198,8 @@ export function memoryTools<TCtx>(opts: MemoryToolsOptions): AnyTool<TCtx>[] {
             name: MEMORY_COMMIT_TOOL,
             description:
                 'Remember something as a small graph, in one call: the nodes and the links ' +
-                'between them. Link a new node to an existing one by using its id.',
+                'between them. Link a new node to an existing one by using its id. A node ' +
+                'that already exists is folded into it, and its id comes back under your ref.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -289,7 +290,7 @@ export function memoryTools<TCtx>(opts: MemoryToolsOptions): AnyTool<TCtx>[] {
                 try {
                     res = await index.commit(
                         { nodes, edges },
-                        { writes: labels, clock: tc.services.clock },
+                        { writes: labels, sees: binding.sees, clock: tc.services.clock },
                     );
                 } catch (err) {
                     return refusal(err);
@@ -302,6 +303,9 @@ export function memoryTools<TCtx>(opts: MemoryToolsOptions): AnyTool<TCtx>[] {
                 }
                 if (res.files) {
                     parts.push(`${res.files} files`);
+                }
+                if (res.merged) {
+                    parts.push(`${res.merged} already known`);
                 }
                 const spec: MemoryOpSpec = {
                     kind: 'op',

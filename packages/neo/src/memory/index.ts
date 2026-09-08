@@ -37,6 +37,13 @@ import {
 /** Past this a `load` returns the path and lets the agent open it itself. */
 export const INLINE_FILE_BYTES = 32 * 1024;
 
+/**
+ * Cosine at or above this is one memory written twice, not two memories. Set
+ * high on purpose: merging two things that only resembled each other loses a
+ * memory outright, while missing a merge only wastes a node.
+ */
+export const DUPLICATE_SCORE = 0.97;
+
 export interface MemoryIndexOptions {
     store: MemoryStore;
     /** absent ranks by term overlap and stores no vectors */
@@ -74,6 +81,8 @@ export interface MemoryTransaction {
 export interface CommitOptions {
     /** audience labels this agent may assign */
     writes: readonly string[];
+    /** labels it may read; a duplicate is only a duplicate if it can see it */
+    sees: readonly string[];
     clock: IdClock;
 }
 
@@ -84,6 +93,8 @@ export interface CommitResult {
     updated: number;
     edges: number;
     files: number;
+    /** new nodes that turned out to already exist, and were folded into them */
+    merged: number;
 }
 
 export interface LoadedNode {
@@ -191,6 +202,10 @@ export class MemoryIndex {
             plan.embed.map((e) => e.text),
             'document',
         );
+        // Keyed before anything is dropped: `#merge` reshapes `plan.embed`, and
+        // the vectors only line up with it positionally until it does.
+        const vector = new Map(plan.embed.map((e, i) => [e.id, vectors?.[i]]));
+        const merged = this.#merge(plan, vector, opts.sees);
 
         // Files first, so a failed copy can be undone before the graph knows.
         const written: MemoryFile[] = [];
@@ -220,8 +235,11 @@ export class MemoryIndex {
         for (const edge of plan.edges) {
             this.graph.link(edge.source, edge.target, edge.relation, at);
         }
-        if (vectors) {
-            plan.embed.forEach((e, i) => this.store.vectors?.set(e.id, vectors[i]));
+        for (const e of plan.embed) {
+            const v = vector.get(e.id);
+            if (v) {
+                this.store.vectors?.set(e.id, v);
+            }
         }
 
         await this.store.commit();
@@ -231,7 +249,73 @@ export class MemoryIndex {
             updated,
             edges: plan.edges.length,
             files: plan.files.length,
+            merged,
         };
+    }
+
+    /**
+     * A second run that learns the same thing should join the graph, not fork
+     * it. Nothing tells an agent the id of a node it is about to write, so two
+     * runs of one job commit two identical tasks and split every edge between
+     * them — which is what makes a five-seed recall return two memories.
+     *
+     * Detected here rather than in `#plan` because the vectors that answer it
+     * have just been paid for, so the check is a dot product over what is
+     * already in memory and costs no extra call. A merged node keeps its
+     * original id, and every edge and ref in this commit is re-pointed at it,
+     * so the caller is told the canonical id and can link to it next time.
+     *
+     * File-bearing nodes never merge: their text is a summary of the artifact,
+     * and two summaries can read alike while the bytes underneath differ.
+     */
+    #merge(
+        plan: Plan,
+        vector: ReadonlyMap<string, number[] | undefined>,
+        sees: readonly string[],
+    ): number {
+        const minted = new Set(plan.nodes.map((n) => n.id));
+        const carries = new Set(plan.files.map((f) => f.id));
+        const stale = this.graph.superseded(sees);
+
+        const twins = new Map<string, string>();
+        for (const item of plan.nodes) {
+            if (item.existing || carries.has(item.id)) {
+                continue;
+            }
+            const { kind, text } = item.draft;
+            const eligible = (id: string): boolean => {
+                if (minted.has(id) || stale.has(id)) {
+                    return false;
+                }
+                const node = this.graph.get(id);
+                return !!node && node.kind === kind && !node.file && visible(node, sees);
+            };
+            const mine = vector.get(item.id);
+            const twin = mine
+                ? this.store.vectors?.topK(mine, 1, eligible).find((h) => h.score >= DUPLICATE_SCORE)
+                      ?.id
+                : this.graph
+                      .nodes(sees)
+                      .find((n) => eligible(n.id) && flatten(n.text) === flatten(text))?.id;
+            if (twin) {
+                twins.set(item.id, twin);
+            }
+        }
+        if (!twins.size) {
+            return 0;
+        }
+
+        const to = (id: string): string => twins.get(id) ?? id;
+        plan.nodes = plan.nodes.filter((n) => !twins.has(n.id));
+        plan.embed = plan.embed.filter((e) => !twins.has(e.id));
+        for (const [ref, id] of Object.entries(plan.ids)) {
+            plan.ids[ref] = to(id);
+        }
+        // A self-edge is what two refs collapsing onto one node leaves behind.
+        plan.edges = plan.edges
+            .map((e) => ({ ...e, source: to(e.source), target: to(e.target) }))
+            .filter((e) => e.source !== e.target);
+        return twins.size;
     }
 
     async forget(ids: readonly string[], sees: readonly string[]): Promise<MemoryNode[]> {
@@ -403,6 +487,11 @@ export class MemoryIndex {
 type PlannedNode =
     | { existing: false; id: string; draft: NodeDraft }
     | { existing: true; id: string; patch: NodePatch };
+
+/** Whitespace and case are not what makes two memories different. */
+function flatten(text: string): string {
+    return text.replace(/\s+/g, ' ').trim().toLowerCase();
+}
 
 interface PlannedFile {
     id: string;

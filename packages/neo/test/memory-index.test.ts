@@ -81,7 +81,8 @@ describe('committing a subgraph', () => {
         await rm(work, { recursive: true, force: true });
     });
 
-    const commit = (tx: MemoryTransaction) => index.commit(tx, { writes: WRITES, clock });
+    const commit = (tx: MemoryTransaction) =>
+        index.commit(tx, { writes: WRITES, sees: WRITES, clock });
 
     const audit: MemoryTransaction = {
         nodes: [
@@ -161,6 +162,40 @@ describe('committing a subgraph', () => {
             commit({ nodes: [{ id: res.ids.ask, text: 'again', expectedRevision: 1 }] }),
         ).rejects.toThrow();
     });
+
+    /** Two runs of one job used to leave two copies of it and split the edges. */
+    it('folds a node that already exists into it and re-points the edges', async () => {
+        const first = await commit(audit);
+        const again = await commit(audit);
+
+        expect(again).toMatchObject({ created: 0, merged: 3 });
+        expect(again.ids).toEqual(first.ids);
+        expect(index.graph.order).toBe(3);
+        expect(index.graph.size).toBe(2);
+    });
+
+    it('leaves a node that merely resembles one alone', async () => {
+        await commit(audit);
+        const res = await commit({
+            nodes: [{ ref: 'ask', kind: 'task', text: 'audit the routing tables for open relays' }],
+        });
+        expect(res).toMatchObject({ created: 1, merged: 0 });
+        expect(index.graph.order).toBe(4);
+    });
+
+    it('never folds two artifacts whose summaries happen to read alike', async () => {
+        const twin = join(work, 'twin.py');
+        await writeFile(twin, 'print("other")\n');
+        const text = 'risk report generator';
+        const first = await commit({
+            nodes: [{ ref: 'a', kind: 'file', text, file: { source } }],
+        });
+        const second = await commit({
+            nodes: [{ ref: 'b', kind: 'file', text, file: { source: twin } }],
+        });
+        expect(second.ids.b).not.toBe(first.ids.a);
+        expect(second).toMatchObject({ created: 1, merged: 0 });
+    });
 });
 
 describe('a commit that cannot be honoured', () => {
@@ -187,7 +222,8 @@ describe('a commit that cannot be honoured', () => {
         await rm(work, { recursive: true, force: true });
     });
 
-    const commit = (tx: MemoryTransaction) => index.commit(tx, { writes: WRITES, clock });
+    const commit = (tx: MemoryTransaction) =>
+        index.commit(tx, { writes: WRITES, sees: WRITES, clock });
 
     /** The whole point of one transactional tool: no half-built graphs. */
     it('leaves nothing behind when a later edge is bad', async () => {
@@ -281,7 +317,7 @@ describe('loading and forgetting', () => {
                 ],
                 edges: [{ from: 'ask', to: 'script', relation: 'PRODUCED' }],
             },
-            { writes: ['*', 'triage'], clock },
+            { writes: ['*', 'triage'], sees: ['*', 'triage'], clock },
         ));
     });
 

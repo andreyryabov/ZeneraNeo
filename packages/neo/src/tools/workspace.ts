@@ -595,7 +595,9 @@ function parsePatch(text: string): PatchOp[] {
                         chunk = undefined;
                     }
                     const heading = body.slice(2).trim();
-                    if (heading) {
+                    // `@@ ...` is a model eliding the lines between chunks, not
+                    // naming a block, and there is no such line to find.
+                    if (heading && !/^[.\u2026]+$/.test(heading)) {
                         open().headings.push(heading);
                     } else {
                         open();
@@ -673,13 +675,72 @@ function locate(lines: string[], want: string[], from: number): { index: number;
     return { index: -1, fuzz: 0 };
 }
 
+/**
+ * Finds the line a `@@ heading` names. Exact, then trimmed, then any line that
+ * contains it: a model writes `@@ check_risk` where the file says
+ * `def check_risk(entry):`, and the worked example in the tool description —
+ * `@@ class Server` — teaches exactly that. Separate sweeps, so an exact match
+ * anywhere beats a loose one earlier.
+ */
 function findHeading(lines: string[], heading: string, from: number): number {
-    for (let i = from; i < lines.length; i++) {
-        if (lines[i] === heading || lines[i].trim() === heading.trim()) {
-            return i;
+    const want = heading.trim();
+    const passes: ((line: string) => boolean)[] = [
+        (line) => line === heading,
+        (line) => line.trim() === want,
+        (line) => line.includes(want),
+    ];
+    for (const same of passes) {
+        for (let i = from; i < lines.length; i++) {
+            if (same(lines[i])) {
+                return i;
+            }
         }
     }
     return -1;
+}
+
+function indentOf(line: string): string {
+    return line.slice(0, line.length - line.trimStart().length);
+}
+
+/**
+ * The single shift that turns the patch's indentation into the file's, replayed
+ * onto `after`. Null when the lines disagree about it: that is not a
+ * mis-indented chunk, it is a chunk matched in the wrong place.
+ *
+ * Prefix arithmetic rather than column counts, because a tab and four spaces
+ * are different bytes and Python does not treat them alike.
+ */
+function reindent(after: string[], file: string[], want: string[], at: number): string[] | null {
+    let add: string | undefined;
+    let drop: string | undefined;
+    for (let k = 0; k < want.length; k++) {
+        if (want[k].trim() === '') {
+            continue;
+        }
+        const have = indentOf(file[at + k]);
+        const said = indentOf(want[k]);
+        const step = have.startsWith(said)
+            ? { add: have.slice(said.length), drop: '' }
+            : said.startsWith(have)
+              ? { add: '', drop: said.slice(have.length) }
+              : undefined;
+        if (!step || (add !== undefined && (add !== step.add || drop !== step.drop))) {
+            return null;
+        }
+        add = step.add;
+        drop = step.drop;
+    }
+    if (!add && !drop) {
+        return after;
+    }
+    return after.map((line) => {
+        if (line.trim() === '') {
+            return line;
+        }
+        const bare = drop && line.startsWith(drop) ? line.slice(drop.length) : line;
+        return add ? add + bare : bare;
+    });
 }
 
 /** Applies one file's chunks to its lines. Throws `PatchError` on a miss. */
@@ -699,7 +760,9 @@ function patchLines(
                     `${file}: no line matching '@@ ${heading}' after the previous chunk`,
                 );
             }
-            cursor = at + 1;
+            // Not `at + 1`: models routinely repeat the heading as the first
+            // context line, and consuming it makes that line unfindable.
+            cursor = at;
         }
         // An end-of-file chunk is tried against the tail first; failing that it
         // is an ordinary search, because the marker is often optimistic.
@@ -720,14 +783,37 @@ function patchLines(
         }
         if (found.index < 0) {
             const first = chunk.before[0] ?? '';
+            // Saying "not in the file" about a line that is plainly in it, just
+            // above the cursor, sends the model back to re-read and retry the
+            // same patch. Look once more from the top to tell the two apart.
+            if (cursor > 0 && locate(out, chunk.before, 0).index >= 0) {
+                throw new PatchError(
+                    `${file}: the chunk at patch line ${chunk.at} matches earlier in the file ` +
+                        `than the previous chunk — chunks must be in file order`,
+                );
+            }
             throw new PatchError(
                 `${file}: the context of the chunk at patch line ${chunk.at} is not in the file` +
                     (first ? ` — looked for: ${first.trim()}` : ''),
             );
         }
         fuzz += found.fuzz > 0 ? 1 : 0;
-        out.splice(found.index, chunk.before.length, ...chunk.after);
-        cursor = found.index + chunk.after.length;
+        // Pass 2 matched by ignoring indentation, so writing `after` as the
+        // patch spelled it would put the model's wrong indentation in the file
+        // — a syntax error in Python, and silent, since the chunk "applied".
+        let after = chunk.after;
+        if (found.fuzz === 2 && after.length > 0) {
+            const fixed = reindent(after, out, chunk.before, found.index);
+            if (!fixed) {
+                throw new PatchError(
+                    `${file}: the chunk at patch line ${chunk.at} matches only when indentation ` +
+                        `is ignored, and its lines disagree about how far out they are`,
+                );
+            }
+            after = fixed;
+        }
+        out.splice(found.index, chunk.before.length, ...after);
+        cursor = found.index + after.length;
     }
     return { lines: out, fuzz };
 }
@@ -850,7 +936,10 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
                 lines: total,
                 start_line: from,
                 end_line: from + taken.length - 1,
-                truncated: cut || !whole || to < total || from > 1 ? true : undefined,
+                // Where the range started is not truncation: a read that ends
+                // on the last line withheld nothing, and saying otherwise
+                // teaches the model to distrust every ranged read it makes.
+                truncated: cut || !whole || to < total ? true : undefined,
                 content: taken.join('\n'),
             };
         },
@@ -1219,6 +1308,10 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
     const steps: PatchStep[] = [];
     const touched: Record<string, unknown>[] = [];
     const seen = new Set<string>();
+    // Where a move lands is a path this patch writes as surely as one it names,
+    // and `rename` overwrites: without this, the last step to touch a path wins
+    // and the others are lost with the patch still reporting them applied.
+    const targets = new Set<string>();
     let fuzz = 0;
 
     for (const op of ops) {
@@ -1228,6 +1321,11 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
         }
         if (seen.has(at)) {
             throw new PatchError(`${ws.show(at)} appears twice in the patch`);
+        }
+        if (targets.has(at)) {
+            throw new PatchError(
+                `${ws.show(at)} is where an earlier part of this patch moves a file`,
+            );
         }
         seen.add(at);
 
@@ -1307,6 +1405,12 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
                 if (await statOrNull(to)) {
                     throw new PatchError(`${ws.show(to)} already exists`);
                 }
+                if (seen.has(to) || targets.has(to)) {
+                    throw new PatchError(
+                        `${ws.show(to)} is already written by another part of this patch`,
+                    );
+                }
+                targets.add(to);
                 steps.push({ kind: 'move', from: at, to });
                 entry.action = 'moved';
                 entry.to = ws.show(to);
