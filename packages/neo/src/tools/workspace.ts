@@ -743,6 +743,28 @@ function reindent(after: string[], file: string[], want: string[], at: number): 
     });
 }
 
+/**
+ * How many lines of `want` the closest near-miss got through, so an error can
+ * name the line that actually diverged. Naming the first line of the block
+ * instead sends the model to verify a line that was never the problem.
+ */
+function matchedUpTo(lines: string[], want: string[], from: number): number {
+    let best = 0;
+    for (let start = from; start < lines.length; start++) {
+        let k = 0;
+        while (k < want.length && start + k < lines.length) {
+            if (lines[start + k].trim() !== want[k].trim()) {
+                break;
+            }
+            k++;
+        }
+        if (k > best) {
+            best = k;
+        }
+    }
+    return best;
+}
+
 /** Applies one file's chunks to its lines. Throws `PatchError` on a miss. */
 function patchLines(
     lines: string[],
@@ -782,7 +804,6 @@ function patchLines(
             found = locate(out, chunk.before, cursor);
         }
         if (found.index < 0) {
-            const first = chunk.before[0] ?? '';
             // Saying "not in the file" about a line that is plainly in it, just
             // above the cursor, sends the model back to re-read and retry the
             // same patch. Look once more from the top to tell the two apart.
@@ -792,9 +813,18 @@ function patchLines(
                         `than the previous chunk — chunks must be in file order`,
                 );
             }
+            const k = matchedUpTo(out, chunk.before, cursor);
+            const missed = chunk.before[k] ?? chunk.before[0] ?? '';
             throw new PatchError(
-                `${file}: the context of the chunk at patch line ${chunk.at} is not in the file` +
-                    (first ? ` — looked for: ${first.trim()}` : ''),
+                `${file}: the chunk at patch line ${chunk.at} does not match — line ${k + 1} of ` +
+                    `its context is not in the file` +
+                    (missed ? `: ${missed.trim()}` : '') +
+                    // A model that has been reading escaped tool output writes
+                    // one patch line where the file has two.
+                    (missed.includes('\\n')
+                        ? " — that line holds a literal '\\n'; each line of a patch is one line " +
+                          'of the file'
+                        : ''),
             );
         }
         fuzz += found.fuzz > 0 ? 1 : 0;

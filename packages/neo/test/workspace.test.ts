@@ -927,6 +927,37 @@ describe('apply_patch', () => {
         expect(read('order.txt')).toBe('one\ntwo\nthree\n');
     });
 
+    /**
+     * Naming the first line of the block sends the model to check a line that
+     * was never the problem: it verifies, finds it there, and retries as-is.
+     */
+    it('names the line of the context that actually diverged', async () => {
+        seed('which.py', 'alpha\nbeta\ngamma\n');
+        const out = await patch(
+            '*** Update File: which.py',
+            ' alpha',
+            ' beta',
+            '-not this line at all',
+            '+delta',
+        );
+        expect(out.error).toContain('line 3 of its context');
+        expect(out.error).toContain('not this line at all');
+        expect(out.error).not.toContain('alpha');
+    });
+
+    /** A model quoting escaped output writes one line where the file has two. */
+    it('points at a context line holding a literal backslash-n', async () => {
+        seed('joined.py', 'if x:\n    go()\n    stop()\n');
+        const out = await patch(
+            '*** Update File: joined.py',
+            ' if x:',
+            '-    go()\\n    stop()',
+            '+    halt()',
+        );
+        expect(out.error).toContain("literal '\\n'");
+        expect(read('joined.py')).toBe('if x:\n    go()\n    stop()\n');
+    });
+
     it('refuses a patch that changes nothing at all', async () => {
         const out = await apply.execute({ patch: '*** Begin Patch\n*** End Patch' }, {} as never);
         expect((out as any).error).toContain('changes nothing');
