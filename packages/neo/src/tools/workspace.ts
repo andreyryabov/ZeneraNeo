@@ -449,6 +449,11 @@ function toLines(body: string): string[] {
     return lines;
 }
 
+/** Whether every line of the file ends CRLF, so converting the lot is lossless. */
+function isCrlf(body: string): boolean {
+    return body.includes('\r\n') && !/(^|[^\r])\n/.test(body);
+}
+
 // ---------------------------------------------------------------------------
 // The patch format
 //
@@ -794,6 +799,15 @@ function patchLines(
     let fuzz = 0;
     let ignored = 0;
     for (const chunk of chunks) {
+        // Nothing to search for and no marker to append after: the top of the file
+        // is a guess, and a guess that reports success is worse than a refusal.
+        if (chunk.before.length === 0 && !chunk.eof && chunk.headings.length === 0) {
+            throw new PatchError(
+                `${file}: the chunk at patch line ${chunk.at} adds lines without any context, ` +
+                    'so there is nowhere to put them — keep a line of the file above the ' +
+                    'insertion, or end the chunk with *** End of File to append',
+            );
+        }
         for (const heading of chunk.headings) {
             const at = findHeading(out, heading, cursor);
             if (at < 0) {
@@ -1373,6 +1387,9 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
     // and `rename` overwrites: without this, the last step to touch a path wins
     // and the others are lost with the patch still reporting them applied.
     const targets = new Set<string>();
+    // Steps run in patch order, so a path deleted by an earlier op is free by the
+    // time a later move lands on it, however occupied it still looks on disk.
+    const removed = new Set<string>();
     let fuzz = 0;
     let ignored = 0;
 
@@ -1400,6 +1417,7 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
                 throw new PatchError(`${ws.show(at)} is a directory`);
             }
             steps.push({ kind: 'delete', at });
+            removed.add(at);
             touched.push({ path: ws.show(at), action: 'deleted' });
             continue;
         }
@@ -1439,14 +1457,19 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
             throw new PatchError(`${ws.show(at)} is a ${shape.format} file, not text`);
         }
         const body = await readFile(at, 'utf8');
-        const patched = patchLines(toLines(body), op.chunks, ws.show(at));
+        // Matched against LF-only lines. A patch never carries a CR, so a CRLF
+        // file would miss exactly, match on the trailing-whitespace pass, and be
+        // spliced with bare LF — mixed endings behind a successful apply.
+        const eol = isCrlf(body) ? '\r\n' : '\n';
+        const flat = eol === '\n' ? body : body.split(eol).join('\n');
+        const patched = patchLines(toLines(flat), op.chunks, ws.show(at));
         fuzz += patched.fuzz;
         ignored += patched.ignored;
         // Whether the file ended in a newline is a property of the file, not of
         // the patch, so it survives the edit.
-        const trailing = body === '' || body.endsWith('\n');
+        const trailing = flat === '' || flat.endsWith('\n');
         const content =
-            patched.lines.length === 0 ? '' : patched.lines.join('\n') + (trailing ? '\n' : '');
+            patched.lines.length === 0 ? '' : patched.lines.join(eol) + (trailing ? eol : '');
         if (Buffer.byteLength(content) > MAX_WRITE) {
             throw new PatchError(`${ws.show(at)} would exceed ${MAX_WRITE} bytes`);
         }
@@ -1465,13 +1488,13 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
                 throw new PatchError('cannot move a file onto the workspace root');
             }
             if (to !== at) {
-                if (await statOrNull(to)) {
-                    throw new PatchError(`${ws.show(to)} already exists`);
-                }
-                if (seen.has(to) || targets.has(to)) {
+                if (targets.has(to) || (seen.has(to) && !removed.has(to))) {
                     throw new PatchError(
                         `${ws.show(to)} is already written by another part of this patch`,
                     );
+                }
+                if (!removed.has(to) && (await statOrNull(to))) {
+                    throw new PatchError(`${ws.show(to)} already exists`);
                 }
                 targets.add(to);
                 steps.push({ kind: 'move', from: at, to });

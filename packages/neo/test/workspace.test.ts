@@ -704,6 +704,18 @@ describe('apply_patch', () => {
         expect(read('near.txt')).toBe('value = 1;  \nmiddle\nvalue = 2;\n');
     });
 
+    /**
+     * No context and no end-of-file marker gives no location at all, and the top
+     * of the file is a guess. Silently prepending reports success for an edit
+     * that landed nowhere near where it was meant to.
+     */
+    it('refuses an insertion that gave no context', async () => {
+        seed('ins.txt', 'a\nb\n');
+        const out = await patch('*** Update File: ins.txt', '+first');
+        expect(out.error).toContain('without any context');
+        expect(read('ins.txt')).toBe('a\nb\n');
+    });
+
     it('reads a patch that arrives with CRLF line endings', async () => {
         seed('crlf.txt', 'first\nsecond\n');
         const out = await apply.execute(
@@ -720,6 +732,31 @@ describe('apply_patch', () => {
         );
         expect((out as any).applied).toBe(1);
         expect(read('crlf.txt')).toBe('first\nchanged\n');
+    });
+
+    /**
+     * The other half of that: a CRLF *file*. The patch never carries a CR, so the
+     * context misses exactly and matches on the trailing-whitespace pass — and a
+     * replacement spliced in as written would leave the file with mixed endings
+     * behind a patch that reported success.
+     */
+    it('keeps a CRLF file consistently CRLF', async () => {
+        seed('crlf.py', 'def f():\r\n    return 1\r\n    return 2\r\n');
+        const out = await patch('*** Update File: crlf.py', '-    return 1', '+    return 9');
+        expect(out.error).toBeUndefined();
+        expect(read('crlf.py')).toBe('def f():\r\n    return 9\r\n    return 2\r\n');
+    });
+
+    it('keeps CRLF when one line becomes two', async () => {
+        seed('split.py', 'if x:\r\n    go()\r\n    done()\r\n');
+        const out = await patch(
+            '*** Update File: split.py',
+            '-    go()',
+            '+    go()',
+            '+    stop()',
+        );
+        expect(out.error).toBeUndefined();
+        expect(read('split.py')).toBe('if x:\r\n    go()\r\n    stop()\r\n    done()\r\n');
     });
 
     /**
@@ -830,6 +867,22 @@ describe('apply_patch', () => {
         );
         expect(out.error).toContain('another part of this patch');
         expect(existsSync(join(root, 'merged.txt'))).toBe(false);
+    });
+
+    /** Steps run in patch order, so by the time the move lands the path is free. */
+    it('allows a move onto a path an earlier part of the patch deletes', async () => {
+        seed('old.txt', 'old\n');
+        seed('new.txt', 'new\n');
+        const out = await patch(
+            '*** Delete File: old.txt',
+            '*** Update File: new.txt',
+            '*** Move to: old.txt',
+            '-new',
+            '+fresh',
+        );
+        expect(out.error).toBeUndefined();
+        expect(read('old.txt')).toBe('fresh\n');
+        expect(existsSync(join(root, 'new.txt'))).toBe(false);
     });
 
     /** The reverse order: an add must not land on where a move is going. */
