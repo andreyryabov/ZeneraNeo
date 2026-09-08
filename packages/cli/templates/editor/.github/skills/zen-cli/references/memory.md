@@ -12,6 +12,10 @@ memory always eventually raises: **why did it recall that?**
 Only projects that enable memory have one, and the commands say so rather than
 inventing an empty graph. Turning it on is the `memory:` block in `agents.yaml`.
 
+This document is the command. For how the graph is organised, how to configure
+it, and how to decide what an agent should remember, read the `zen-memory`
+skill.
+
 ## Subcommands
 
 | Command                   | What it does                                |
