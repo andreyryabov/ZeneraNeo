@@ -15,6 +15,8 @@
 //
 // Visibility is per node, by label, denied by default. One graph serves every
 // agent in a project; `audience` decides which of them may see a node at all.
+// A second user is a second graph, not a second label: `audience` is about
+// which agent may read a node, never about whose memory it is.
 // ---------------------------------------------------------------------------
 
 /**
@@ -22,11 +24,24 @@
  * or loading branches on it — anything else is free text wearing an enum
  * costume, and it costs the model accuracy when it has to choose one.
  *
- * Projects may add their own (`memory.kinds` in the config); the tool schema is
- * built from the resulting set, so the provider constrains decoding to labels
- * that actually exist.
+ * A project may declare its own set (`memory.kinds` in the config), which
+ * *replaces* this one; the tool schema is built from the result, so the
+ * provider constrains decoding to labels that actually exist.
+ *
+ * `preference` is the exception, and `MemoryIndex` re-adds it to whatever a
+ * project declares: the engine itself reads that kind to build the system
+ * prompt, so a project able to define it away would silently lose the feature
+ * rather than opt out of it.
  */
-export const MEMORY_KINDS = ['task', 'plan', 'fact', 'snippet', 'file', 'operation'] as const;
+export const MEMORY_KINDS = [
+    'task',
+    'plan',
+    'fact',
+    'snippet',
+    'file',
+    'operation',
+    'preference',
+] as const;
 
 export type MemoryKind = (typeof MEMORY_KINDS)[number];
 
@@ -37,6 +52,7 @@ export const KIND_HELP: Readonly<Record<MemoryKind, string>> = {
     snippet: 'a short piece of code or configuration, too small to be a file',
     file: 'an artifact kept whole under /memory and re-runnable',
     operation: 'an external call that was made — an endpoint, command or query',
+    preference: 'a standing instruction from the user that applies to every run',
 };
 
 /**
@@ -44,6 +60,10 @@ export const KIND_HELP: Readonly<Record<MemoryKind, string>> = {
  * forward and drops what it points at, so a corrected artifact hides the one it
  * replaced without deleting the history. The other three shape which tier of
  * the budget a node is pulled in on, and read as prose in the rendered graph.
+ *
+ * `SUPERSEDES` itself never reaches the renderer on the ordinary path — recall
+ * drops the node it points at, so the edge has no second endpoint to draw. It
+ * appears only under `stale`, which is the audit view.
  */
 export const MEMORY_RELATIONS = ['PRODUCED', 'INFORMED', 'CALLS', 'SUPERSEDES'] as const;
 
@@ -58,6 +78,9 @@ export const RELATION_HELP: Readonly<Record<Relation, string>> = {
 
 /** An audience label every agent holds implicitly. */
 export const ALL_AGENTS = '*';
+
+/** Read by the engine, not just by the model: it becomes part of the system prompt. */
+export const PREFERENCE_KIND = 'preference';
 
 /**
  * `hint` is the recovery step, kept separate from the message because the tool

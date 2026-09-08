@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { Agent, AgentRegistry, handoffTarget, handoffTool } from './agent.ts';
 import type { PendingToolCall } from './events.ts';
 import { systemClock, type IdClock } from './ids.ts';
+import { memoryInstructions, renderPreferences } from './memory/instructions.ts';
 import { memoryTools } from './memory/tools.ts';
 import type { MemoryOpSpec, MemoryRecallSpec } from './memory/types.ts';
 import type { ModelRequest, ModelResponse } from './model.ts';
@@ -478,11 +479,12 @@ function toSchema(t: ToolSchema): ToolSchema {
 }
 
 /**
- * Prompt text the runtime owns rather than the author: the skill index and the
- * `final_output` instruction. Both used to be appended inside `buildRequest`,
- * which meant part of the system prompt existed in no node and showed up in no
- * audit. Composed in now, always last, so the volatile tail never invalidates
- * the cacheable prefix.
+ * Prompt text the runtime owns rather than the author: how to use memory, the
+ * user's standing preferences, the skill index and the `final_output`
+ * instruction. Most used to be appended inside `buildRequest`, which meant part
+ * of the system prompt existed in no node and showed up in no audit. Composed
+ * in now, always last, so the volatile tail never invalidates the cacheable
+ * prefix.
  */
 async function derivedPrompt<TCtx>(
     agent: Agent<TCtx>,
@@ -490,6 +492,15 @@ async function derivedPrompt<TCtx>(
     env: KernelEnv,
 ): Promise<string[]> {
     const out: string[] = [];
+    const memory = agent.memoryBinding(state.context as TCtx);
+    if (memory && env.services.memory) {
+        // The one part of the prompt that reads mutable state. It is allowed
+        // because preferences change at most once in a run and
+        // `applySystemPrompt` is keyed on the rendered bytes, so a commit
+        // re-renders the prefix once rather than every turn.
+        out.push(memoryInstructions(memory));
+        out.push(renderPreferences(env.services.memory.preferences(memory.sees)));
+    }
     if (agent.skills?.discovery === 'index') {
         const binding = agent.skills;
         const provider = env.services.skillProvider(binding.provider);

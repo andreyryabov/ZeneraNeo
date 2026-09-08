@@ -658,22 +658,28 @@ agents:
 That is the whole feature: the agent can search, load, and commit, and it
 recalls automatically before answering new user input.
 
-| Field       | Type          | Default        | Meaning                             |
-| ----------- | ------------- | -------------- | ----------------------------------- |
-| `dir`       | path          | `memory`       | Relative to the project root        |
-| `embedding` | embedding ref | the top-level  | The vectoriser recall searches with |
-| `kinds`     | name[]        | the six below  | Replaces the node vocabulary        |
-| `relations` | name[]        | the four below | Replaces the edge vocabulary        |
+| Field       | Type          | Default         | Meaning                             |
+| ----------- | ------------- | --------------- | ----------------------------------- |
+| `dir`       | path          | `memory`        | Relative to the project root        |
+| `embedding` | embedding ref | the top-level   | The vectoriser recall searches with |
+| `kinds`     | name[]        | the seven below | Replaces the node vocabulary        |
+| `relations` | name[]        | the four below  | Replaces the edge vocabulary        |
 
 The block is optional. A project whose agents say `memory: true` gets the
 defaults without writing one, and a project that mentions memory nowhere opens
 no store and creates no directory.
 
-**Kinds** are `task`, `plan`, `fact`, `snippet`, `file`, `operation`.
+**Kinds** are `task`, `plan`, `fact`, `snippet`, `file`, `operation`,
+`preference`.
 **Relations** are `PRODUCED`, `INFORMED`, `CALLS`, `SUPERSEDES`. Both are closed
 sets, offered to the model as enums, which is what keeps a graph built by a
 language model queryable a month later. Override them only if the defaults
 genuinely do not fit the domain — a wider vocabulary is a vaguer one.
+
+`kinds` _replaces_ the default set rather than extending it, with one exception:
+`preference` is always available, because the engine itself reads that kind to
+build the system prompt. A project that could define it away would lose the
+feature silently rather than opt out of it.
 
 **Embedding is optional but wanted.** Without one, recall falls back to term
 overlap, which finds a memory phrased the way the query was and misses the rest.
@@ -693,6 +699,35 @@ run_command  python3 /memory/01JD9Q7X8N2K4M6P8R0T2V4W6Y.py
 The graph holds the provenance around it — what asked for it, what plan it came
 from, what it called — and that subgraph is what comes back on recall. Files are
 capped at 2 MiB, and one under 32 KiB is returned inline rather than as a path.
+
+### Standing preferences
+
+A memory of kind `preference` is a standing instruction from the user — "always
+report findings as a table", "use ISO dates". These are not recalled by
+similarity, because they are not _about_ the request in front of the agent: an
+instruction on how to report is nowhere near a question about gateway rules in
+embedding space, and a search would never surface it.
+
+So they are listed instead of ranked, and rendered into the system prompt with
+their ids:
+
+```
+<memory-preferences>
+- report findings as a table with a severity column [01JD9Q7X8N2K4M6P8R0T2V4W6Y]
+</memory-preferences>
+```
+
+The prompt is also where the agent is told how to read a recollection and when
+committing is worthwhile; that text is derived from `access`, so an agent that
+cannot write is never told how. Because it all lands in the cached prefix rather
+than in the conversation, it costs once per run rather than once per turn, and
+the id is what lets the model replace a preference with `SUPERSEDES` instead of
+quietly ignoring it.
+
+Preferences are deliberately left out of ordinary recall results — they are in
+the prompt already, and repeating them would state the same instruction twice in
+two framings. `memory_search` with `kinds: [preference]` still finds them, which
+is how an agent checks for a duplicate before committing another.
 
 ### `agents[].memory`
 

@@ -13,6 +13,7 @@ import {
     type MemoryFile,
     type MemoryNode,
     type MemoryQuery,
+    PREFERENCE_KIND,
     type Recollection,
     type Relation,
     visible,
@@ -100,7 +101,7 @@ export class MemoryIndex {
     constructor(opts: MemoryIndexOptions) {
         this.store = opts.store;
         this.#embedder = opts.embedder;
-        this.#kinds = new Set(opts.kinds ?? MEMORY_KINDS);
+        this.#kinds = new Set([...(opts.kinds ?? MEMORY_KINDS), PREFERENCE_KIND]);
         this.#relations = new Set(opts.relations ?? MEMORY_RELATIONS);
     }
 
@@ -126,6 +127,21 @@ export class MemoryIndex {
             vector: vector?.[0],
             vectors: this.store.vectors,
         });
+    }
+
+    /**
+     * Listed rather than ranked, and deliberately not routed through `recall`:
+     * ranking decays by `lastUsedAt`, only `memory_load` bumps that, and a
+     * preference is injected rather than loaded — so it would age out of its
+     * own list. Ordered so the rendered block is byte-stable between runs,
+     * because an unstable one would invalidate the prompt prefix for nothing.
+     */
+    preferences(sees: readonly string[]): MemoryNode[] {
+        const stale = this.graph.superseded(sees);
+        return this.graph
+            .nodes(sees)
+            .filter((n) => n.kind === PREFERENCE_KIND && !stale.has(n.id))
+            .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     }
 
     /**

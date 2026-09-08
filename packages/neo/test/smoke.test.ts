@@ -293,8 +293,11 @@ describe('smoke', () => {
         const memory = new MemoryIndex({ store: await MemoryStore.open(dir) });
         const model = new RuleModel(
             (req) => (hasToolResult(req, 'memory_commit') ? say('noted') : undefined),
+            // Messages only: the system prompt now names the tag when it
+            // explains the format, so matching on the whole request would fire
+            // before anything had been recalled.
             (req) =>
-                allText(req).includes('memory-recollection')
+                JSON.stringify(req.messages).includes('memory-recollection')
                     ? say('I remember you like trains')
                     : undefined,
             () =>
@@ -332,6 +335,69 @@ describe('smoke', () => {
             // The link is pulled in even though only one node matched.
             expect(recall.nodes).toHaveLength(2);
             expect(second.output).toBe('I remember you like trains');
+        } finally {
+            memory.store.release();
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('puts standing preferences in the system prompt, not in the conversation', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'neo-smoke-pref-'));
+        const memory = new MemoryIndex({ store: await MemoryStore.open(dir) });
+        memory.graph.add(
+            {
+                id: 'PREF1',
+                kind: 'preference',
+                text: 'always report findings as a table',
+                audience: ['*'],
+            },
+            '2025-01-01T00:00:00.000Z',
+        );
+        const model = new RuleModel(() => say('ok'));
+        const runner = new AgentRunner({ model, memory });
+        runner.agent({
+            name: 'assistant',
+            instructions: 'ASSIST',
+            memory: { access: 'read-write', autoRecall: { query: 'none', limit: 3 } },
+        });
+
+        try {
+            const res = await runner.run('assistant', 'hello');
+            const { system, messages } = await projectMessages(
+                res.state.trajectory,
+                runner.services.payloads,
+            );
+            expect(system).toContain('ASSIST');
+            expect(system).toContain('always report findings as a table [PREF1]');
+            // Author text stays first: the derived tail is what may move.
+            expect(system!.indexOf('ASSIST')).toBeLessThan(system!.indexOf('memory-preferences'));
+            expect(JSON.stringify(messages)).not.toContain('memory-preferences');
+        } finally {
+            memory.store.release();
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('records one system prompt for an agent that only has memory', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'neo-smoke-pref2-'));
+        const memory = new MemoryIndex({ store: await MemoryStore.open(dir) });
+        const model = new RuleModel(() => say('ok'));
+        const runner = new AgentRunner({ model, memory });
+        runner.agent({
+            name: 'assistant',
+            memory: { access: 'read', autoRecall: { query: 'none', limit: 3 } },
+        });
+
+        try {
+            const res = await runner.run('assistant', 'hello');
+            const prompts = res.state.trajectory.filter((n) => n.type === 'system_prompt');
+            expect(prompts).toHaveLength(1);
+            const { system } = await projectMessages(
+                res.state.trajectory,
+                runner.services.payloads,
+            );
+            expect(system).toContain('memory-recollection');
+            expect(system).not.toContain('memory_commit');
         } finally {
             memory.store.release();
             rmSync(dir, { recursive: true, force: true });

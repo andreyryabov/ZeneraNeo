@@ -10,6 +10,7 @@ export * as Kernel from './kernel.ts';
 export * from './memory/files.ts';
 export * from './memory/graph.ts';
 export * from './memory/index.ts';
+export * from './memory/instructions.ts';
 export * from './memory/page.ts';
 export * from './memory/recall.ts';
 export * from './memory/render.ts';

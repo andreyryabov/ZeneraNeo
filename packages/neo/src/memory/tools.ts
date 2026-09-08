@@ -198,9 +198,7 @@ export function memoryTools<TCtx>(opts: MemoryToolsOptions): AnyTool<TCtx>[] {
             name: MEMORY_COMMIT_TOOL,
             description:
                 'Remember something as a small graph, in one call: the nodes and the links ' +
-                'between them. Link a new node to an existing one by using its id. To ' +
-                'correct an earlier memory, add a new node and link it with SUPERSEDES ' +
-                'rather than editing the old one.',
+                'between them. Link a new node to an existing one by using its id.',
             parameters: {
                 type: 'object',
                 properties: {

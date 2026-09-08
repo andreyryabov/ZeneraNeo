@@ -15,9 +15,10 @@ import type { MemoryEdge, MemoryNode, Recollection, ScoredNode } from './types.t
 // a line. Ids appear in both halves because the id is what the model has to
 // copy into `memory_load`.
 //
-// Direction does real work here: a SUPERSEDES arrow tells the model which of
-// two scripts is the live one by pointing at the dead one, which as a JSON edge
-// would be a lookup it has to perform and can get backwards.
+// No SUPERSEDES arrow can appear on the ordinary path: recall drops the node
+// one points at, so the edge loses an endpoint before it reaches here. It shows
+// up only under `stale`, which is the audit view, and `memory/instructions.ts`
+// therefore does not teach the model to look for one.
 // ---------------------------------------------------------------------------
 
 export const RECOLLECTION_TAG = 'memory-recollection';

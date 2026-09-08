@@ -1,5 +1,6 @@
 import type { MemoryGraph } from './graph.ts';
 import {
+    PREFERENCE_KIND,
     visible,
     type MemoryEdge,
     type MemoryNode,
@@ -110,6 +111,13 @@ function eligible(node: MemoryNode, query: MemoryQuery, sees: readonly string[])
         return false;
     }
     if (query.kinds?.length && !query.kinds.includes(node.kind)) {
+        return false;
+    }
+    // A preference is in the system prompt already. Recalling one would state
+    // the same standing instruction twice in two framings; asking for the kind
+    // by name still finds it, which is how an agent checks for a duplicate
+    // before committing another.
+    if (!query.kinds?.length && node.kind === PREFERENCE_KIND) {
         return false;
     }
     if (query.newerThan && node.createdAt < query.newerThan) {
