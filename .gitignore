@@ -15,10 +15,21 @@ coverage/
 .vitest/
 
 # Environment
-.keys
+.keys/
 .env
 .env.*
 !.env.example
+
+# Credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*-key.json
+*-credentials.json
+id_rsa*
+.netrc
 
 # Logs
 *.log

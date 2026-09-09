@@ -1,0 +1,40 @@
+#!/bin/sh
+# Secret scan for staged changes. Enabled via `core.hooksPath` (npm run prepare).
+# Bypass a false positive with: git commit --no-verify
+
+set -e
+
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -n "$staged" ] || exit 0
+
+fail=0
+
+# 1. Filenames that should never be committed.
+blocked=$(printf '%s\n' "$staged" |
+    grep -Ei '(^|/)(\.env|\.netrc|id_rsa)|(^|/)\.keys/|\.(pem|p12|pfx|jks)$|-(key|credentials)\.json$' |
+    grep -v '\.env\.example$' || true)
+if [ -n "$blocked" ]; then
+    echo "pre-commit: refusing to commit credential files:" >&2
+    printf '  %s\n' $blocked >&2
+    fail=1
+fi
+
+# 2. Content scan. Prefer gitleaks when available; otherwise a coarse pattern match.
+if command -v gitleaks >/dev/null 2>&1; then
+    gitleaks protect --staged --redact --no-banner || fail=1
+else
+    hits=$(git diff --cached -U0 --no-color -- $staged |
+        grep -E '^\+' |
+        grep -Ei 'sk-(proj|ant|or)?-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|-----BEGIN [A-Z ]*PRIVATE KEY-----' |
+        grep -viE 'not-a-real|not-a-key|example|placeholder|fixture|redacted|abcdef' || true)
+    if [ -n "$hits" ]; then
+        echo "pre-commit: possible secret in staged changes:" >&2
+        printf '%s\n' "$hits" | cut -c1-120 | sed 's/^/  /' >&2
+        fail=1
+    fi
+fi
+
+[ "$fail" -eq 0 ] || {
+    echo "pre-commit: blocked. Re-run with --no-verify if this is a false positive." >&2
+    exit 1
+}

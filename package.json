@@ -19,6 +19,7 @@
         "node": ">=24"
     },
     "scripts": {
+        "prepare": "git config core.hooksPath .githooks || true",
         "build": "tsc -b tsconfig.build.json",
         "build:watch": "tsc -b tsconfig.build.json --watch",
         "clean": "tsc -b tsconfig.build.json --clean && rm -rf packages/*/dist coverage .dev .out",
