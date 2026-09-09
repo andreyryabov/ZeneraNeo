@@ -1,5 +1,5 @@
 import type { Agent } from './agent.ts';
-import type { MemoryOpSpec } from './memory.ts';
+import type { MemoryOpSpec, MemoryRecallSpec } from './memory/types.ts';
 import type { Services } from './services.ts';
 import type { SkillLoadSpec } from './skills.ts';
 import type { AgentState } from './state.ts';
@@ -198,7 +198,8 @@ export interface ToolOutcome {
 }
 
 export type ToolEffect =
-    { kind: 'memory_op'; spec: MemoryOpSpec } | { kind: 'skill_load'; spec: SkillLoadSpec };
+    | { kind: 'memory_op'; spec: MemoryOpSpec | MemoryRecallSpec }
+    | { kind: 'skill_load'; spec: SkillLoadSpec };
 
 const TOOL_RETURN = Symbol('agent.toolReturn');
 
@@ -368,9 +369,9 @@ export const HANDOFF_PREFIX = 'transfer_to_';
 export const FORK_TOOL = 'fork';
 export const FINAL_OUTPUT_TOOL = 'final_output';
 export const MEMORY_SEARCH_TOOL = 'memory_search';
-export const MEMORY_WRITE_TOOL = 'memory_write';
-export const MEMORY_UPDATE_TOOL = 'memory_update';
-export const MEMORY_DELETE_TOOL = 'memory_delete';
+export const MEMORY_LOAD_TOOL = 'memory_load';
+export const MEMORY_COMMIT_TOOL = 'memory_commit';
+export const MEMORY_FORGET_TOOL = 'memory_forget';
 export const SKILL_SEARCH_TOOL = 'skill_search';
 export const SKILL_LOAD_TOOL = 'skill_load';
 

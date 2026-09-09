@@ -1,9 +1,15 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Model, ModelResponse } from '../src/model.ts';
-import { loadProject, parseConfig, projectPath } from '../src/project/index.ts';
+import type { Model, ModelRequest, ModelResponse } from '../src/model.ts';
+import {
+    AgentProject,
+    loadProject,
+    memoryDir,
+    parseConfig,
+    projectPath,
+} from '../src/project/index.ts';
 import { tool, zeroUsage } from '../src/types.ts';
 
 // ---------------------------------------------------------------------------
@@ -609,6 +615,25 @@ class Fixed implements Model {
     }
 }
 
+/** What the model was actually offered — the only honest measure of a binding. */
+async function toolNames(p: AgentProject): Promise<string[]> {
+    let seen: string[] = [];
+    const model: Model = {
+        id: 'spy',
+        generate: (req: ModelRequest) => {
+            seen = (req.tools ?? []).map((t) => t.name);
+            return Promise.resolve({
+                text: 'ok',
+                toolCalls: [],
+                stopReason: 'stop' as const,
+                usage: zeroUsage(),
+            });
+        },
+    };
+    await p.runner({ model, stream: false }).run(p.entry, 'hello');
+    return seen;
+}
+
 describe('running a project', () => {
     it('runs the entry agent end to end', async () => {
         const p = await loadProject(project(MINIMAL));
@@ -636,5 +661,105 @@ describe('running a project', () => {
         expect(a.state.runId).not.toBe(b.state.runId);
         // Neither transcript picked up the other's input.
         expect(a.state.trajectory.length).toBe(b.state.trajectory.length);
+    });
+});
+
+describe('memory in agents.yaml', () => {
+    const withMemory = (body: string) => ({
+        'agents.yaml': `agents:\n  - name: solo\n${body}`,
+    });
+
+    it('opens no memory, and creates no directory, for a project that never mentions it', async () => {
+        const root = project(MINIMAL);
+        const p = await loadProject(root);
+        expect(p.memory).toBeUndefined();
+        expect(existsSync(join(root, 'memory'))).toBe(false);
+    });
+
+    it('gives `memory: true` the four tools, read-write, with auto-recall on', async () => {
+        const root = project(withMemory('    memory: true\n'));
+        const p = await loadProject(root);
+        try {
+            expect(p.memory).toBeDefined();
+            expect(p.agents[0]!.memoryBinding(undefined)).toEqual({
+                access: 'read-write',
+                sees: ['*'],
+                writes: ['*'],
+                autoRecall: { query: 'last_user_input', limit: 5 },
+            });
+        } finally {
+            p.close();
+        }
+    });
+
+    it('leaves a read-only agent without the writing tools', async () => {
+        const p = await loadProject(project(withMemory('    memory:\n      access: read\n')));
+        try {
+            const names = await toolNames(p);
+            expect(names).toContain('memory_search');
+            expect(names).toContain('memory_load');
+            expect(names).not.toContain('memory_commit');
+            expect(names).not.toContain('memory_forget');
+        } finally {
+            p.close();
+        }
+    });
+
+    it('offers memory_forget only at full access', async () => {
+        const p = await loadProject(project(withMemory('    memory:\n      access: full\n')));
+        try {
+            expect(await toolNames(p)).toContain('memory_forget');
+        } finally {
+            p.close();
+        }
+    });
+
+    it('adds the public slice to `sees` rather than replacing it', async () => {
+        const p = await loadProject(
+            project(withMemory('    memory:\n      sees: [triage]\n      writes: [triage]\n')),
+        );
+        try {
+            expect(p.agents[0]!.memoryBinding(undefined)).toMatchObject({
+                sees: ['*', 'triage'],
+                writes: ['triage'],
+            });
+        } finally {
+            p.close();
+        }
+    });
+
+    it('turns auto-recall off without giving up the tools', async () => {
+        const p = await loadProject(project(withMemory('    memory:\n      autoRecall: false\n')));
+        try {
+            expect(p.agents[0]!.memoryBinding(undefined)?.autoRecall).toBeUndefined();
+            expect(await toolNames(p)).toContain('memory_search');
+        } finally {
+            p.close();
+        }
+    });
+
+    it('puts the graph where `memory.dir` says', async () => {
+        const root = project({
+            'agents.yaml': 'memory:\n  dir: brain\nagents:\n  - name: solo\n    memory: true\n',
+        });
+        const p = await loadProject(root);
+        try {
+            expect(memoryDir(root, p.config)).toBe(join(root, 'brain'));
+            expect(existsSync(join(root, 'brain', 'files'))).toBe(true);
+        } finally {
+            p.close();
+        }
+    });
+
+    it('refuses a key it does not honour', () => {
+        expect(() =>
+            parseConfig('agents:\n  - name: a\n    memory:\n      scope: user\n', 'agents.yaml'),
+        ).toThrow(/scope/);
+    });
+
+    it('refuses an access level that is not one of the three', () => {
+        expect(() =>
+            parseConfig('agents:\n  - name: a\n    memory:\n      access: write\n', 'agents.yaml'),
+        ).toThrow(/access/);
     });
 });

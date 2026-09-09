@@ -134,8 +134,9 @@ of surfacing three turns into a run as a confused model.
   wildcard. Workspace file tools and a Podman sandbox ship with the library.
 - **Skills** — instruction bundles discovered and loaded on demand instead of
   permanently occupying the prompt, optionally owning their own tools.
-- **Memory** — pluggable `MemoryStore`s, with scopes deciding what is private to
-  an agent and what is shared.
+- **Memory** — a timed, masked knowledge graph that outlives a run: recall
+  returns a stitched subgraph rather than a ranked list, remembered files are
+  mounted at `/memory`, and standing preferences go into the system prompt.
 - **Trajectory** — an append-only log of everything that happened. What is sent
   to a provider is derived from it, and compaction _covers_ nodes rather than
   deleting them, so the full record survives even when older turns have to be
@@ -150,7 +151,6 @@ of surfacing three turns into a run as a confused model.
 | `@zenera/neo`                 | agents, models, tools, kernel, inspection |
 | `@zenera/neo/project`         | loading a project folder                  |
 | `@zenera/neo/skill-providers` | skill discovery and loading               |
-| `@zenera/neo/memory-stores`   | `MemoryStore` implementations             |
 | `@zenera/neo/payload-stores`  | payload persistence                       |
 
 ## Documentation

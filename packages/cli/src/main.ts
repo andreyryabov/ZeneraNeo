@@ -168,4 +168,14 @@ async function usage(name?: string): Promise<void> {
     write(`\n${dim(`Start with ${cyan(`${NAME} init`)}, then ${cyan(`${NAME} run`)}.`)}`);
 }
 
+// `zen memory ls | head` closes the pipe while we are still writing to it, and
+// an unhandled EPIPE turns that ordinary shell idiom into a stack trace. The
+// reader having left is not our error, so we stop quietly.
+process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code !== 'EPIPE') {
+        throw err;
+    }
+    process.exit(0);
+});
+
 process.exitCode = await main(process.argv.slice(2));

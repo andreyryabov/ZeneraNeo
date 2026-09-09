@@ -4,14 +4,19 @@
 // A terminal already has a colour scheme, and it is not ours to replace. The
 // rule here is to name as few colours as possible and to name them by role:
 // the answer is drawn in the terminal's *own* foreground (no colour at all),
-// asides are drawn dim, and only the few things that must stand out —
-// the person's own turn, the agent name, a warning, an error — take a colour.
+// and only the few things that must stand out — the person's own turn, the
+// agent name, what it is reasoning about, a warning, an error — take a colour.
 //
 // That alone fixes most of it. `white` was the bug: it is legible on exactly
 // one kind of background, and half the world runs the other kind. `gray` was
 // the same bug wearing a hat — bright black, dimmed again, is a step from
 // unreadable on dark and invisible on paper. What is left is the handful of
 // accents that ANSI *does* let a light theme get wrong, so those swap.
+//
+// Dim is spent on *chrome* — box rules, clocks, the footer's numbers — and no
+// longer on content. Tool rows are most of what is on screen, and dimming them
+// put the bulk of the transcript one step from unreadable: the whole thing read
+// as too dark. They are content, so they get the foreground like content does.
 //
 // Note what is *not* here: no hex, no 256-colour ramps, no attempt at a brand.
 // A palette that ignores the user's scheme is worse on both schemes than one
@@ -37,6 +42,13 @@ export interface Theme {
     /** Read-only badge, busy label. */
     readonly warn: string;
     /**
+     * Reasoning. It is not a tool call and it is not the answer, and drawn in
+     * the same dim foreground as the rows around it there was nothing to say
+     * which — a wall of one weight reads as one thing. Its own hue is what
+     * separates the model's thinking from the work it went on to do.
+     */
+    readonly thinking: LineStyle;
+    /**
      * Branch colours, cycled in order of first sight. A fan-out is the one
      * place where colour carries information rather than decoration: eight
      * branches reporting at once are only separable if they are told apart.
@@ -49,16 +61,17 @@ const DARK: Theme = {
     line: {
         you: { color: 'cyan' },
         agent: {},
-        // Dim alone, never dim *and* `gray`: bright black is already the
-        // faintest colour a terminal has, and dimming it again puts the bulk
-        // of the transcript a step from unreadable.
-        tool: { dim: true },
-        note: { color: 'cyan', dim: true },
+        // Never dim, and never `gray`: bright black is already the faintest
+        // colour a terminal has, and either one puts the bulk of the
+        // transcript a step from unreadable.
+        tool: {},
+        note: { color: 'cyan' },
         error: { color: 'red' },
     },
     accent: 'cyan',
     warn: 'yellow',
-    lanes: ['magenta', 'cyan', 'green', 'yellow', 'blue', 'red'],
+    thinking: { color: 'magenta' },
+    lanes: ['cyan', 'green', 'yellow', 'blue', 'red', 'magenta'],
 };
 
 // On a light background `cyan` and `yellow` are barely darker than the paper.
@@ -69,14 +82,15 @@ const LIGHT: Theme = {
     line: {
         you: { color: 'blue' },
         agent: {},
-        tool: { dim: true },
-        note: { color: 'blue', dim: true },
+        tool: {},
+        note: { color: 'blue' },
         error: { color: 'red' },
     },
     accent: 'blue',
     warn: 'magenta',
+    thinking: { color: 'magenta' },
     // No cyan or yellow: on paper they are barely darker than the paper.
-    lanes: ['magenta', 'blue', 'green', 'red'],
+    lanes: ['blue', 'green', 'red', 'magenta'],
 };
 
 export const THEMES: Record<Appearance, Theme> = { dark: DARK, light: LIGHT };

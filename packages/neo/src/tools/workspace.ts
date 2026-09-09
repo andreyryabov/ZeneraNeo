@@ -449,6 +449,11 @@ function toLines(body: string): string[] {
     return lines;
 }
 
+/** Whether every line of the file ends CRLF, so converting the lot is lossless. */
+function isCrlf(body: string): boolean {
+    return body.includes('\r\n') && !/(^|[^\r])\n/.test(body);
+}
+
 // ---------------------------------------------------------------------------
 // The patch format
 //
@@ -595,7 +600,9 @@ function parsePatch(text: string): PatchOp[] {
                         chunk = undefined;
                     }
                     const heading = body.slice(2).trim();
-                    if (heading) {
+                    // `@@ ...` is a model eliding the lines between chunks, not
+                    // naming a block, and there is no such line to find.
+                    if (heading && !/^[.\u2026]+$/.test(heading)) {
                         open().headings.push(heading);
                     } else {
                         open();
@@ -673,13 +680,112 @@ function locate(lines: string[], want: string[], from: number): { index: number;
     return { index: -1, fuzz: 0 };
 }
 
+/**
+ * Finds the line a `@@ heading` names. Exact, then trimmed, then any line that
+ * contains it: a model writes `@@ check_risk` where the file says
+ * `def check_risk(entry):`, and the worked example in the tool description —
+ * `@@ class Server` — teaches exactly that. Separate sweeps, so an exact match
+ * anywhere beats a loose one earlier.
+ */
 function findHeading(lines: string[], heading: string, from: number): number {
-    for (let i = from; i < lines.length; i++) {
-        if (lines[i] === heading || lines[i].trim() === heading.trim()) {
-            return i;
+    const want = heading.trim();
+    const passes: ((line: string) => boolean)[] = [
+        (line) => line === heading,
+        (line) => line.trim() === want,
+        (line) => line.includes(want),
+    ];
+    for (const same of passes) {
+        for (let i = from; i < lines.length; i++) {
+            if (same(lines[i])) {
+                return i;
+            }
         }
     }
     return -1;
+}
+
+function indentOf(line: string): string {
+    return line.slice(0, line.length - line.trimStart().length);
+}
+
+/**
+ * The single shift that turns the patch's indentation into the file's, replayed
+ * onto `after`. Null when the lines disagree about it: that is not a
+ * mis-indented chunk, it is a chunk matched in the wrong place.
+ *
+ * Prefix arithmetic rather than column counts, because a tab and four spaces
+ * are different bytes and Python does not treat them alike.
+ */
+function reindent(after: string[], file: string[], want: string[], at: number): string[] | null {
+    let add: string | undefined;
+    let drop: string | undefined;
+    for (let k = 0; k < want.length; k++) {
+        if (want[k].trim() === '') {
+            continue;
+        }
+        const have = indentOf(file[at + k]);
+        const said = indentOf(want[k]);
+        const step = have.startsWith(said)
+            ? { add: have.slice(said.length), drop: '' }
+            : said.startsWith(have)
+              ? { add: '', drop: said.slice(have.length) }
+              : undefined;
+        if (!step || (add !== undefined && (add !== step.add || drop !== step.drop))) {
+            return null;
+        }
+        add = step.add;
+        drop = step.drop;
+    }
+    if (!add && !drop) {
+        return after;
+    }
+    return after.map((line) => {
+        if (line.trim() === '') {
+            return line;
+        }
+        const bare = drop && line.startsWith(drop) ? line.slice(drop.length) : line;
+        return add ? add + bare : bare;
+    });
+}
+
+/**
+ * How many lines of `want` the closest near-miss got through, so an error can
+ * name the line that actually diverged. Naming the first line of the block
+ * instead sends the model to verify a line that was never the problem.
+ */
+function matchedUpTo(lines: string[], want: string[], from: number): number {
+    let best = 0;
+    for (let start = from; start < lines.length; start++) {
+        let k = 0;
+        while (k < want.length && start + k < lines.length) {
+            if (lines[start + k].trim() !== want[k].trim()) {
+                break;
+            }
+            k++;
+        }
+        if (k > best) {
+            best = k;
+        }
+    }
+    return best;
+}
+
+/** How many places `want` occurs at or after `from`, counted no further than two. */
+function countMatches(lines: string[], want: string[], from: number): number {
+    if (want.length === 0) {
+        return 2;
+    }
+    let found = 0;
+    let at = from;
+    while (found < 2) {
+        const hit = locate(lines, want, at);
+        if (hit.index < 0) {
+            break;
+        }
+        found++;
+        at = hit.index + 1;
+    }
+    return found;
 }
 
 /** Applies one file's chunks to its lines. Throws `PatchError` on a miss. */
@@ -687,19 +793,43 @@ function patchLines(
     lines: string[],
     chunks: PatchChunk[],
     file: string,
-): { lines: string[]; fuzz: number } {
+): { lines: string[]; fuzz: number; ignored: number } {
     const out = lines.slice();
     let cursor = 0;
     let fuzz = 0;
+    let ignored = 0;
     for (const chunk of chunks) {
+        // Nothing to search for and no marker to append after: the top of the file
+        // is a guess, and a guess that reports success is worse than a refusal.
+        if (chunk.before.length === 0 && !chunk.eof && chunk.headings.length === 0) {
+            throw new PatchError(
+                `${file}: the chunk at patch line ${chunk.at} adds lines without any context, ` +
+                    'so there is nowhere to put them — keep a line of the file above the ' +
+                    'insertion, or end the chunk with *** End of File to append',
+            );
+        }
         for (const heading of chunk.headings) {
             const at = findHeading(out, heading, cursor);
             if (at < 0) {
+                // A heading only narrows the search. Models invent them —
+                // `@@ class DfwRiskScanner` for a file of plain functions — and
+                // when the context occurs once the heading was never needed, so
+                // refusing spends a turn to learn nothing.
+                if (countMatches(out, chunk.before, cursor) === 1) {
+                    ignored++;
+                    break;
+                }
                 throw new PatchError(
-                    `${file}: no line matching '@@ ${heading}' after the previous chunk`,
+                    `${file}: no line matching '@@ ${heading}' after the previous chunk` +
+                        (countMatches(out, chunk.before, cursor) === 0
+                            ? ", and the chunk's context is not in the file either"
+                            : ", and the chunk's context occurs more than once, so a heading " +
+                              'that matches a line of the file is needed'),
                 );
             }
-            cursor = at + 1;
+            // Not `at + 1`: models routinely repeat the heading as the first
+            // context line, and consuming it makes that line unfindable.
+            cursor = at;
         }
         // An end-of-file chunk is tried against the tail first; failing that it
         // is an ordinary search, because the marker is often optimistic.
@@ -719,17 +849,48 @@ function patchLines(
             found = locate(out, chunk.before, cursor);
         }
         if (found.index < 0) {
-            const first = chunk.before[0] ?? '';
+            // Saying "not in the file" about a line that is plainly in it, just
+            // above the cursor, sends the model back to re-read and retry the
+            // same patch. Look once more from the top to tell the two apart.
+            if (cursor > 0 && locate(out, chunk.before, 0).index >= 0) {
+                throw new PatchError(
+                    `${file}: the chunk at patch line ${chunk.at} matches earlier in the file ` +
+                        `than the previous chunk — chunks must be in file order`,
+                );
+            }
+            const k = matchedUpTo(out, chunk.before, cursor);
+            const missed = chunk.before[k] ?? chunk.before[0] ?? '';
             throw new PatchError(
-                `${file}: the context of the chunk at patch line ${chunk.at} is not in the file` +
-                    (first ? ` — looked for: ${first.trim()}` : ''),
+                `${file}: the chunk at patch line ${chunk.at} does not match — line ${k + 1} of ` +
+                    `its context is not in the file` +
+                    (missed ? `: ${missed.trim()}` : '') +
+                    // A model that has been reading escaped tool output writes
+                    // one patch line where the file has two.
+                    (missed.includes('\\n')
+                        ? " — that line holds a literal '\\n'; each line of a patch is one line " +
+                          'of the file'
+                        : ''),
             );
         }
         fuzz += found.fuzz > 0 ? 1 : 0;
-        out.splice(found.index, chunk.before.length, ...chunk.after);
-        cursor = found.index + chunk.after.length;
+        // Pass 2 matched by ignoring indentation, so writing `after` as the
+        // patch spelled it would put the model's wrong indentation in the file
+        // — a syntax error in Python, and silent, since the chunk "applied".
+        let after = chunk.after;
+        if (found.fuzz === 2 && after.length > 0) {
+            const fixed = reindent(after, out, chunk.before, found.index);
+            if (!fixed) {
+                throw new PatchError(
+                    `${file}: the chunk at patch line ${chunk.at} matches only when indentation ` +
+                        `is ignored, and its lines disagree about how far out they are`,
+                );
+            }
+            after = fixed;
+        }
+        out.splice(found.index, chunk.before.length, ...after);
+        cursor = found.index + after.length;
     }
-    return { lines: out, fuzz };
+    return { lines: out, fuzz, ignored };
 }
 
 // ---------------------------------------------------------------------------
@@ -850,7 +1011,10 @@ export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<
                 lines: total,
                 start_line: from,
                 end_line: from + taken.length - 1,
-                truncated: cut || !whole || to < total || from > 1 ? true : undefined,
+                // Where the range started is not truncation: a read that ends
+                // on the last line withheld nothing, and saying otherwise
+                // teaches the model to distrust every ranged read it makes.
+                truncated: cut || !whole || to < total ? true : undefined,
                 content: taken.join('\n'),
             };
         },
@@ -1219,7 +1383,15 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
     const steps: PatchStep[] = [];
     const touched: Record<string, unknown>[] = [];
     const seen = new Set<string>();
+    // Where a move lands is a path this patch writes as surely as one it names,
+    // and `rename` overwrites: without this, the last step to touch a path wins
+    // and the others are lost with the patch still reporting them applied.
+    const targets = new Set<string>();
+    // Steps run in patch order, so a path deleted by an earlier op is free by the
+    // time a later move lands on it, however occupied it still looks on disk.
+    const removed = new Set<string>();
     let fuzz = 0;
+    let ignored = 0;
 
     for (const op of ops) {
         const at = patchPath(ws, op.path);
@@ -1228,6 +1400,11 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
         }
         if (seen.has(at)) {
             throw new PatchError(`${ws.show(at)} appears twice in the patch`);
+        }
+        if (targets.has(at)) {
+            throw new PatchError(
+                `${ws.show(at)} is where an earlier part of this patch moves a file`,
+            );
         }
         seen.add(at);
 
@@ -1240,6 +1417,7 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
                 throw new PatchError(`${ws.show(at)} is a directory`);
             }
             steps.push({ kind: 'delete', at });
+            removed.add(at);
             touched.push({ path: ws.show(at), action: 'deleted' });
             continue;
         }
@@ -1279,13 +1457,19 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
             throw new PatchError(`${ws.show(at)} is a ${shape.format} file, not text`);
         }
         const body = await readFile(at, 'utf8');
-        const patched = patchLines(toLines(body), op.chunks, ws.show(at));
+        // Matched against LF-only lines. A patch never carries a CR, so a CRLF
+        // file would miss exactly, match on the trailing-whitespace pass, and be
+        // spliced with bare LF — mixed endings behind a successful apply.
+        const eol = isCrlf(body) ? '\r\n' : '\n';
+        const flat = eol === '\n' ? body : body.split(eol).join('\n');
+        const patched = patchLines(toLines(flat), op.chunks, ws.show(at));
         fuzz += patched.fuzz;
+        ignored += patched.ignored;
         // Whether the file ended in a newline is a property of the file, not of
         // the patch, so it survives the edit.
-        const trailing = body === '' || body.endsWith('\n');
+        const trailing = flat === '' || flat.endsWith('\n');
         const content =
-            patched.lines.length === 0 ? '' : patched.lines.join('\n') + (trailing ? '\n' : '');
+            patched.lines.length === 0 ? '' : patched.lines.join(eol) + (trailing ? eol : '');
         if (Buffer.byteLength(content) > MAX_WRITE) {
             throw new PatchError(`${ws.show(at)} would exceed ${MAX_WRITE} bytes`);
         }
@@ -1304,9 +1488,15 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
                 throw new PatchError('cannot move a file onto the workspace root');
             }
             if (to !== at) {
-                if (await statOrNull(to)) {
+                if (targets.has(to) || (seen.has(to) && !removed.has(to))) {
+                    throw new PatchError(
+                        `${ws.show(to)} is already written by another part of this patch`,
+                    );
+                }
+                if (!removed.has(to) && (await statOrNull(to))) {
                     throw new PatchError(`${ws.show(to)} already exists`);
                 }
+                targets.add(to);
                 steps.push({ kind: 'move', from: at, to });
                 entry.action = 'moved';
                 entry.to = ws.show(to);
@@ -1337,6 +1527,9 @@ async function runPatch(ws: Workspace, patch: string): Promise<unknown> {
         // ignored landed where the tool thinks it should, not where the patch
         // said, and that is a thing to check.
         fuzzy: fuzz > 0 ? fuzz : undefined,
+        // A heading that named nothing, applied anyway because the context was
+        // unique. Says the heading was wrong without having refused the edit.
+        ignoredHeadings: ignored > 0 ? ignored : undefined,
     };
 }
 

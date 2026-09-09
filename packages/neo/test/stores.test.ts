@@ -2,8 +2,6 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { FileMemoryStore, createMemoryStore } from '../src/memory-stores/index.ts';
-import { memoryOpId } from '../src/memory.ts';
 import { InMemoryPayloadStore } from '../src/payload-stores/in-memory.ts';
 import { FilePayloadStore, createPayloadStore } from '../src/payload-stores/index.ts';
 import { PayloadResolver, exportRun, hash, importRun } from '../src/payload.ts';
@@ -70,67 +68,6 @@ describe('FilePayloadStore', () => {
         const restored = await importRun<typeof state>(bundle, target);
         expect(restored.note.store).toBe('restored');
         expect(await target.get(restored.note)).toBe('exported note');
-    });
-});
-
-describe('FileMemoryStore', () => {
-    it('writes, searches and updates across instances', async () => {
-        const store = new FileMemoryStore({ dir, id: 'user' });
-        const rec = await store.write(
-            'user:u1',
-            { text: 'the user prefers trains over planes' },
-            memoryOpId('run-1', 'call-1'),
-        );
-        expect(rec.revision).toBe(1);
-
-        const reopened = new FileMemoryStore({ dir, id: 'user' });
-        const hits = await reopened.search('user:u1', { text: 'trains' });
-        expect(hits).toHaveLength(1);
-        expect(hits[0].record.id).toBe(rec.id);
-
-        const updated = await reopened.update(
-            'user:u1',
-            rec.id,
-            { text: 'the user prefers trains', expectedRevision: 1 },
-            memoryOpId('run-1', 'call-2'),
-        );
-        expect(updated.revision).toBe(2);
-    });
-
-    it('makes a replayed write idempotent', async () => {
-        const store = new FileMemoryStore(dir);
-        const opId = memoryOpId('run-1', 'call-1');
-        const first = await store.write('s', { text: 'once' }, opId);
-        const replay = await store.write('s', { text: 'once' }, opId);
-        expect(replay.id).toBe(first.id);
-        expect(await store.search('s', {})).toHaveLength(1);
-    });
-
-    it('rejects a stale revision', async () => {
-        const store = new FileMemoryStore(dir);
-        const rec = await store.write('s', { text: 'v1' }, memoryOpId('r', 'c1'));
-        await expect(
-            store.update('s', rec.id, { text: 'v2', expectedRevision: 7 }, memoryOpId('r', 'c2')),
-        ).rejects.toThrow(/memory conflict/);
-    });
-
-    it('deletes and keeps scopes isolated', async () => {
-        const store = new FileMemoryStore(dir);
-        const a = await store.write('a', { text: 'in a' }, memoryOpId('r', 'c1'));
-        await store.write('b', { text: 'in b' }, memoryOpId('r', 'c2'));
-        expect(await store.search('a', {})).toHaveLength(1);
-        await store.delete('a', a.id, memoryOpId('r', 'c3'));
-        expect(await store.search('a', {})).toHaveLength(0);
-        expect(await store.search('b', {})).toHaveLength(1);
-    });
-
-    it('refuses a record id that would escape the scope directory', async () => {
-        const store = new FileMemoryStore(dir);
-        await expect(store.get('s', '../../etc/passwd')).rejects.toThrow(/invalid record id/);
-    });
-
-    it('returns nothing for an unknown scope', async () => {
-        expect(await createMemoryStore(`file:${dir}`).search('never:written', {})).toEqual([]);
     });
 });
 

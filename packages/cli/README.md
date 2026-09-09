@@ -160,6 +160,7 @@ you are not expected to hand-author `agents.yaml`.
 | `models`  | What this machine can use — list, search, test, pick.                |
 | `run`     | Runs the project — the TUI on a terminal, a single answer otherwise. |
 | `inspect` | Opens or rebuilds a run's `report.html`.                             |
+| `memory`  | What the agents remember — size, listing, one node, or a whole page. |
 | `check`   | Validates the project and every file it names, and asks the models.  |
 | `sandbox` | Checks and prepares the container that command-line tools run in.    |
 | `cache`   | What work has been kept, and getting rid of it.                      |

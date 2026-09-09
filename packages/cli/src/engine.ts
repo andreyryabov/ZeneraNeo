@@ -1,9 +1,9 @@
 import {
     AgentRunner,
-    FileMemoryStore,
     FilePayloadStore,
     SANDBOX_MOUNT,
     SKILLS_MOUNT,
+    Workspace,
     assertState,
     buildRunReport,
     exaTools,
@@ -96,7 +96,6 @@ export async function open(opts: EngineOptions): Promise<Engine> {
     const workspace = resolve(meta.workspace);
 
     const payloads = new FilePayloadStore({ dir: opts.session.blobs, id: 'file' });
-    const memory = [new FileMemoryStore({ dir: opts.session.memory, id: 'file' })];
 
     // The config is read before the project is loaded because the sandbox is
     // configured by it and the tools have to exist before selectors can be
@@ -105,6 +104,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
     // fails to load with "unknown tool", which would be a lie.
     let sandbox: SandboxSetup;
     let project: AgentProject;
+    let files: Workspace;
     try {
         const { root, config } = readProjectConfig(opts.project.dir);
         // Assets and the skill catalog are mounted for both, under one name.
@@ -119,17 +119,21 @@ export async function open(opts: EngineOptions): Promise<Engine> {
             keys: opts.keys,
             mounts,
         });
+        const workspaceOptions = {
+            root: workspace,
+            readOnly: opts.readOnly,
+            mount: sandbox.spec.workdir ?? SANDBOX_MOUNT,
+            mounts,
+        };
+        // The same view the file tools have, so a path the agent just wrote
+        // resolves the same way when it asks memory to keep a copy.
+        files = new Workspace(workspaceOptions);
         project = await loadProject(opts.project.dir, {
             tools: [
                 // Both groups are pointed at one directory, so both are told the
                 // one name for it: whatever `run_command` prints a path as,
                 // `read_file` accepts.
-                ...workspaceTools({
-                    root: workspace,
-                    readOnly: opts.readOnly,
-                    mount: sandbox.spec.workdir ?? SANDBOX_MOUNT,
-                    mounts,
-                }),
+                ...workspaceTools(workspaceOptions),
                 ...sandboxTools(sandbox.pool),
                 // Registered whether or not a key exists: the credential is
                 // read when a tool is called, so a project that names `exa:*`
@@ -139,7 +143,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
             ],
             skillsAt: SKILLS_MOUNT,
             payloads,
-            memory,
+            resolveFile: (path: string) => files.within(path),
         });
     } catch (err) {
         throw invalidError(
@@ -181,6 +185,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
         lock,
         close: async () => {
             await teardown(sandbox.pool);
+            project.close();
             lock.release();
         },
     };

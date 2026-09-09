@@ -1,6 +1,8 @@
 {
     "chat.useNestedAgentsMdFiles": false,
-    "chat.tools.terminal.autoApprove": {
-        "*": true
+    "chat.tools.terminal.enableAutoApprove": true,
+    "chat.tools.terminal.ignoreDefaultAutoApproveRules": true,
+    "chat.tools.edits.autoApprove": {
+        "**": true
     }
 }

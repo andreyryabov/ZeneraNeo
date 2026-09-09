@@ -141,10 +141,10 @@ function Row({ line }: { line: Line }): React.ReactElement {
                     <Answer text={line.text} />
                 ) : (
                     // The lead is what the eye scans for down the left edge, so
-                    // it keeps the row's colour without its dimming. Nested
+                    // it carries the weight the row's text does not. Nested
                     // rather than one string: Ink dims a whole Text or none of it.
                     <Text>
-                        {line.lead ? <Text color={style.color}>{`${line.lead} `}</Text> : null}
+                        {line.lead ? <Text color={style.color} bold>{`${line.lead} `}</Text> : null}
                         <Text color={style.color} dimColor={style.dim} bold={line.kind === 'you'}>
                             {line.text}
                         </Text>
@@ -825,6 +825,8 @@ interface ActivityRow {
     color?: string;
     /** a call that has already come back, kept as the branch's recent history */
     past?: boolean;
+    /** what the branch is reasoning about rather than something it called */
+    thinking?: boolean;
 }
 
 /** A branch of a fork, drawn as a box of its own. */
@@ -890,11 +892,13 @@ function branchBoxesOf(
             }),
             // Between the calls it made and the one it is making: the reasoning
             // is what got it from one to the other.
-            ...(gist ? [{ key: `g:${b.name}`, label: `… ${gist}`, detail: '', past: true }] : []),
+            ...(gist
+                ? [{ key: `g:${b.name}`, label: `… ${gist}`, detail: '', thinking: true }]
+                : []),
             ...live,
         ];
         if (!rows.length) {
-            rows.push({ key: `w:${b.name}`, label: 'thinking…', detail: '', past: false });
+            rows.push({ key: `w:${b.name}`, label: 'thinking…', detail: '', thinking: true });
         }
         boxes.push({
             name: b.name,
@@ -972,6 +976,7 @@ function Branches({
     spin: string;
     columns: number;
 }): React.ReactElement {
+    const theme = useTheme();
     return (
         <Box flexDirection="column">
             {boxes.map((b) => {
@@ -990,7 +995,12 @@ function Branches({
                         {b.rows.map((r) => (
                             <Text key={r.key} wrap="truncate-end">
                                 <Text color={b.color}>{'│ '}</Text>
-                                <Text dimColor>{r.label}</Text>
+                                <Text
+                                    color={r.thinking ? theme.thinking.color : undefined}
+                                    dimColor={r.thinking ? theme.thinking.dim : undefined}
+                                >
+                                    {r.label}
+                                </Text>
                                 <Text dimColor>{r.detail}</Text>
                             </Text>
                         ))}
@@ -1017,9 +1027,7 @@ function Activity({
             {rows.map((r) => (
                 <Text key={r.key} wrap="truncate-end">
                     <Text dimColor>{'  '}</Text>
-                    <Text color={r.color} dimColor={r.color === undefined}>
-                        {r.label}
-                    </Text>
+                    <Text color={r.color}>{r.label}</Text>
                     <Text dimColor>{r.detail}</Text>
                 </Text>
             ))}
@@ -1101,22 +1109,24 @@ function Thinking({
     // Ink truncates rather than wraps, so an over-wide rule clips instead of
     // costing the block a row it was not given.
     const dashes = Math.max(0, columns - TITLE.length - (live ? 6 : 4));
+    const { color, dim } = theme.thinking;
     return (
         <Box flexDirection="column" height={shown.length + THINKING_CHROME} overflow="hidden">
             <Text wrap="truncate-end">
                 <Text dimColor>{'╭─ '}</Text>
-                <Text dimColor>{TITLE}</Text>
-                {live ? <Text color={theme.warn}>{` ${spin}`}</Text> : null}
+                <Text color={color}>{TITLE}</Text>
+                {live ? <Text color={color}>{` ${spin}`}</Text> : null}
                 <Text dimColor>{` ${'─'.repeat(dashes)}`}</Text>
             </Text>
             {shown.map((row, i) => {
-                // Not italic: dim italic on a dark terminal is the least
-                // legible thing available, and this is meant to be read.
+                // Not italic, and not dim: dim italic on a dark terminal is the
+                // least legible thing available, and this is meant to be read.
+                // Its own hue is what separates it from the tool rows instead.
                 const head = HEADING.exec(row);
                 return (
                     <Text key={i} wrap="truncate-end">
-                        <Text dimColor>{'│ '}</Text>
-                        <Text dimColor bold={head !== null}>
+                        <Text color={color}>{'│ '}</Text>
+                        <Text color={color} dimColor={dim} bold={head !== null}>
                             {head ? head[1] : row}
                         </Text>
                     </Text>
@@ -1200,14 +1210,15 @@ function Footer({
                   : 'thinking';
     // A clip has already ended it with one.
     const status = what.endsWith('…') ? what : `${what}…`;
+    // Nothing of its own in flight means the word above is about reasoning, so
+    // it takes the same hue the reasoning block does.
+    const musing = !running.length && !forked;
     return (
         <Box flexDirection="column" marginTop={1}>
             <Box>
-                <Text color={theme.accent} dimColor>
-                    {agent}
-                </Text>
+                <Text color={theme.accent}>{agent}</Text>
                 {busy ? (
-                    <Text color={theme.warn}>
+                    <Text color={musing ? theme.thinking.color : theme.warn}>
                         {'  '}
                         {spin} {status}
                     </Text>

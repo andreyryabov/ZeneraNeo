@@ -351,6 +351,12 @@ describe('the workspace tools', () => {
         expect(middle.end_line).toBe(3);
         expect(middle.truncated).toBe(true);
 
+        // Starting late is not truncation; a read that reaches the last line
+        // withheld nothing, and claiming otherwise devalues the flag.
+        const tail = await call('read_file', { path: 'poem.txt', start_line: 3 });
+        expect(tail.content).toBe('three\nfour');
+        expect(tail.truncated).toBeUndefined();
+
         const past = await call('read_file', { path: 'poem.txt', start_line: 99 });
         expect(past.error).toContain('4 lines');
     });
@@ -633,12 +639,81 @@ describe('apply_patch', () => {
         expect(read('sloppy.ts')).toBe('function f() {\n    return 2;\n}\n');
     });
 
+    /**
+     * A chunk that matched only because indentation was ignored has to land at
+     * the file's indentation, not the patch's: in Python the difference is a
+     * syntax error, and the tool reports the patch applied either way.
+     */
+    it('re-indents a chunk that matched only with indentation ignored', async () => {
+        const source =
+            'def check(entry, reasons):\n' +
+            "    for proto in ('tcp', 'udp'):\n" +
+            '        matched = [p for p in entry if p in HIGH_RISK]\n' +
+            '        if matched:\n' +
+            '            reasons.append(f"{proto}: {matched}")\n' +
+            '    return reasons\n';
+        seed('risk.py', source);
+
+        // Every line dedented by four, the way a model retyping context does.
+        const out = await patch(
+            '*** Update File: risk.py',
+            '     matched = [p for p in entry if p in HIGH_RISK]',
+            '     if matched:',
+            '-        reasons.append(f"{proto}: {matched}")',
+            '+        reasons.append(f"high-risk {proto}: {matched}")',
+        );
+
+        expect(out.error).toBeUndefined();
+        expect(out.fuzzy).toBe(1);
+        expect(read('risk.py')).toBe(source.replace('f"{proto}', 'f"high-risk {proto}'));
+    });
+
+    /** The other direction: the shift is a prefix to strip, not one to add. */
+    it('re-indents a chunk the patch indented too far', async () => {
+        seed('deep.py', 'if x:\n    go()\n    stop()\n');
+        const out = await patch(
+            '*** Update File: deep.py',
+            '         go()',
+            '-        stop()',
+            '+        halt()',
+        );
+        expect(out.fuzzy).toBe(1);
+        expect(read('deep.py')).toBe('if x:\n    go()\n    halt()\n');
+    });
+
+    /** No single shift explains the miss, so the match is a guess — refuse it. */
+    it('refuses a chunk whose lines disagree about how far out they are', async () => {
+        const source = 'def f():\n    a = 1\n    b = 2\n    return a + b\n';
+        seed('mixed.py', source);
+        const out = await patch(
+            '*** Update File: mixed.py',
+            '         a = 1',
+            '     b = 2',
+            '-    return a + b',
+            '+    return a * b',
+        );
+        expect(out.error).toContain('indentation');
+        expect(read('mixed.py')).toBe(source);
+    });
+
     /** An exact match anywhere beats a whitespace-only match earlier in the file. */
     it('prefers the exact match to the near one', async () => {
         seed('near.txt', 'value = 1;  \nmiddle\nvalue = 1;\n');
         const out = await patch('*** Update File: near.txt', '-value = 1;', '+value = 2;');
         expect(out.fuzzy).toBeUndefined();
         expect(read('near.txt')).toBe('value = 1;  \nmiddle\nvalue = 2;\n');
+    });
+
+    /**
+     * No context and no end-of-file marker gives no location at all, and the top
+     * of the file is a guess. Silently prepending reports success for an edit
+     * that landed nowhere near where it was meant to.
+     */
+    it('refuses an insertion that gave no context', async () => {
+        seed('ins.txt', 'a\nb\n');
+        const out = await patch('*** Update File: ins.txt', '+first');
+        expect(out.error).toContain('without any context');
+        expect(read('ins.txt')).toBe('a\nb\n');
     });
 
     it('reads a patch that arrives with CRLF line endings', async () => {
@@ -657,6 +732,31 @@ describe('apply_patch', () => {
         );
         expect((out as any).applied).toBe(1);
         expect(read('crlf.txt')).toBe('first\nchanged\n');
+    });
+
+    /**
+     * The other half of that: a CRLF *file*. The patch never carries a CR, so the
+     * context misses exactly and matches on the trailing-whitespace pass — and a
+     * replacement spliced in as written would leave the file with mixed endings
+     * behind a patch that reported success.
+     */
+    it('keeps a CRLF file consistently CRLF', async () => {
+        seed('crlf.py', 'def f():\r\n    return 1\r\n    return 2\r\n');
+        const out = await patch('*** Update File: crlf.py', '-    return 1', '+    return 9');
+        expect(out.error).toBeUndefined();
+        expect(read('crlf.py')).toBe('def f():\r\n    return 9\r\n    return 2\r\n');
+    });
+
+    it('keeps CRLF when one line becomes two', async () => {
+        seed('split.py', 'if x:\r\n    go()\r\n    done()\r\n');
+        const out = await patch(
+            '*** Update File: split.py',
+            '-    go()',
+            '+    go()',
+            '+    stop()',
+        );
+        expect(out.error).toBeUndefined();
+        expect(read('split.py')).toBe('if x:\r\n    go()\r\n    stop()\r\n    done()\r\n');
     });
 
     /**
@@ -733,10 +833,224 @@ describe('apply_patch', () => {
         expect(read('taken.txt')).toBe('occupied\n');
     });
 
+    /**
+     * `rename` overwrites, so a move onto a path the same patch also writes
+     * would report both applied and keep only whichever step ran last.
+     */
+    it('refuses a move onto a file the same patch adds', async () => {
+        seed('donor.txt', 'source\n');
+        const out = await patch(
+            '*** Add File: landing.txt',
+            '+added',
+            '*** Update File: donor.txt',
+            '*** Move to: landing.txt',
+            '-source',
+            '+moved',
+        );
+        expect(out.error).toContain('another part of this patch');
+        expect(existsSync(join(root, 'landing.txt'))).toBe(false);
+        expect(read('donor.txt')).toBe('source\n');
+    });
+
+    it('refuses two moves onto the same target', async () => {
+        seed('one.txt', 'one\n');
+        seed('two.txt', 'two\n');
+        const out = await patch(
+            '*** Update File: one.txt',
+            '*** Move to: merged.txt',
+            '-one',
+            '+ONE',
+            '*** Update File: two.txt',
+            '*** Move to: merged.txt',
+            '-two',
+            '+TWO',
+        );
+        expect(out.error).toContain('another part of this patch');
+        expect(existsSync(join(root, 'merged.txt'))).toBe(false);
+    });
+
+    /** Steps run in patch order, so by the time the move lands the path is free. */
+    it('allows a move onto a path an earlier part of the patch deletes', async () => {
+        seed('old.txt', 'old\n');
+        seed('new.txt', 'new\n');
+        const out = await patch(
+            '*** Delete File: old.txt',
+            '*** Update File: new.txt',
+            '*** Move to: old.txt',
+            '-new',
+            '+fresh',
+        );
+        expect(out.error).toBeUndefined();
+        expect(read('old.txt')).toBe('fresh\n');
+        expect(existsSync(join(root, 'new.txt'))).toBe(false);
+    });
+
+    /** The reverse order: an add must not land on where a move is going. */
+    it('refuses to add a file where an earlier move lands', async () => {
+        seed('mover.txt', 'body\n');
+        const out = await patch(
+            '*** Update File: mover.txt',
+            '*** Move to: arrival.txt',
+            '-body',
+            '+edited',
+            '*** Add File: arrival.txt',
+            '+added',
+        );
+        expect(out.error).toContain('moves a file');
+        expect(existsSync(join(root, 'arrival.txt'))).toBe(false);
+    });
+
     it('reports the heading it could not find', async () => {
         seed('heading.ts', 'class A {}\n');
         const out = await patch('*** Update File: heading.ts', '@@ class B', '-x', '+y');
         expect(out.error).toContain('class B');
+    });
+
+    /**
+     * The headings a model writes, none of which used to match: `...` for the
+     * lines it elided, the name of a block rather than the whole line, and the
+     * heading repeated as the first context line.
+     */
+    describe('the headings a model writes', () => {
+        const SOURCE =
+            'def check_service_entry_risk(entry):\n' +
+            "    resource_type = entry.get('resource_type')\n" +
+            "    elif resource_type == 'ALGTypeServiceEntry':\n" +
+            "        alg = entry.get('alg', '').upper()\n" +
+            '        return True, reasons\n';
+
+        it('takes `@@ ...` as a chunk separator, not a heading', async () => {
+            seed('elide.py', SOURCE);
+            const out = await patch(
+                '*** Update File: elide.py',
+                '@@ ...',
+                "-        alg = entry.get('alg', '').upper()",
+                "+        alg = entry.get('alg', '').strip().upper()",
+            );
+            expect(out.error).toBeUndefined();
+            expect(read('elide.py')).toContain('.strip().upper()');
+        });
+
+        it('takes a heading that names the block without quoting the line', async () => {
+            seed('name.py', SOURCE);
+            await patch(
+                '*** Update File: name.py',
+                '@@ check_service_entry_risk',
+                "-        alg = entry.get('alg', '').upper()",
+                "+        alg = entry.get('alg', '').casefold()",
+            );
+            expect(read('name.py')).toContain('.casefold()');
+        });
+
+        it('lets the heading line serve as the first context line', async () => {
+            seed('anchor.py', SOURCE);
+            await patch(
+                '*** Update File: anchor.py',
+                "@@     elif resource_type == 'ALGTypeServiceEntry':",
+                "     elif resource_type == 'ALGTypeServiceEntry':",
+                "-        alg = entry.get('alg', '').upper()",
+                "+        alg = entry.get('alg', '').lower()",
+            );
+            expect(read('anchor.py')).toContain('.lower()');
+        });
+
+        /** The loosening must not turn a genuine miss into a wrong match. */
+        it('still refuses a heading that is nowhere in the file', async () => {
+            seed('missing.py', SOURCE);
+            const out = await patch('*** Update File: missing.py', '@@ class Nowhere', '-x', '+y');
+            expect(out.error).toContain('Nowhere');
+            expect(read('missing.py')).toBe(SOURCE);
+        });
+
+        /**
+         * Models invent headings — `@@ class DfwRiskScanner` for a file of
+         * plain functions. The heading only narrows the search, so when the
+         * context occurs once it was never needed.
+         */
+        it('ignores an invented heading when the context is unique', async () => {
+            seed('invented.py', SOURCE);
+            const out = await patch(
+                '*** Update File: invented.py',
+                '@@ class DfwRiskScanner',
+                "-        alg = entry.get('alg', '').upper()",
+                "+        alg = entry.get('alg', '').title()",
+            );
+            expect(out.error).toBeUndefined();
+            expect(out.ignoredHeadings).toBe(1);
+            expect(read('invented.py')).toContain('.title()');
+        });
+
+        /** With the context repeated, the heading was load-bearing after all. */
+        it('refuses an invented heading when the context is ambiguous', async () => {
+            seed('ambiguous.py', 'def a():\n    return 0\n\ndef b():\n    return 0\n');
+            const out = await patch(
+                '*** Update File: ambiguous.py',
+                '@@ class Nope',
+                '-    return 0',
+                '+    return 9',
+            );
+            expect(out.error).toContain('more than once');
+            expect(read('ambiguous.py')).toBe('def a():\n    return 0\n\ndef b():\n    return 0\n');
+        });
+
+        it('says so when neither the heading nor the context is there', async () => {
+            seed('neither.py', SOURCE);
+            const out = await patch(
+                '*** Update File: neither.py',
+                '@@ class Nope',
+                '-    nothing like this',
+                '+    gone',
+            );
+            expect(out.error).toContain('not in the file either');
+        });
+    });
+
+    /** Claiming a line is absent when it is merely above the cursor is a lie. */
+    it('says chunks are out of order rather than that the line is missing', async () => {
+        seed('order.txt', 'one\ntwo\nthree\n');
+        const out = await patch(
+            '*** Update File: order.txt',
+            '@@',
+            '-three',
+            '+THREE',
+            '@@',
+            '-one',
+            '+ONE',
+        );
+        expect(out.error).toContain('in file order');
+        expect(out.error).not.toContain('is not in the file');
+        expect(read('order.txt')).toBe('one\ntwo\nthree\n');
+    });
+
+    /**
+     * Naming the first line of the block sends the model to check a line that
+     * was never the problem: it verifies, finds it there, and retries as-is.
+     */
+    it('names the line of the context that actually diverged', async () => {
+        seed('which.py', 'alpha\nbeta\ngamma\n');
+        const out = await patch(
+            '*** Update File: which.py',
+            ' alpha',
+            ' beta',
+            '-not this line at all',
+            '+delta',
+        );
+        expect(out.error).toContain('line 3 of its context');
+        expect(out.error).toContain('not this line at all');
+        expect(out.error).not.toContain('alpha');
+    });
+
+    /** A model quoting escaped output writes one line where the file has two. */
+    it('points at a context line holding a literal backslash-n', async () => {
+        seed('joined.py', 'if x:\n    go()\n    stop()\n');
+        const out = await patch(
+            '*** Update File: joined.py',
+            ' if x:',
+            '-    go()\\n    stop()',
+            '+    halt()',
+        );
+        expect(out.error).toContain("literal '\\n'");
+        expect(read('joined.py')).toBe('if x:\n    go()\n    stop()\n');
     });
 
     it('refuses a patch that changes nothing at all', async () => {

@@ -1,13 +1,16 @@
 import {
     ASSETS_MOUNT,
     assetsDir,
+    FILES_DIR,
+    MEMORY_MOUNT,
+    memoryDir,
     skillDirs,
     skillMounts,
     SKILLS_MOUNT,
     type ProjectConfig,
     type SandboxMount,
 } from '@zenera/neo';
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { paths, readJson, writeJson } from './home.ts';
 import { isStamp } from './ids.ts';
@@ -65,6 +68,14 @@ export function projectMounts(root: string, config: ProjectConfig): SandboxMount
     // cannot be added at the moment `skill_load` asks for it.
     for (const dir of skillMounts(skillDirs(root, config), SKILLS_MOUNT)) {
         mounts.push({ host: realpathSync(dir.path), at: dir.at, readOnly: true });
+    }
+    const memory = memoryDir(root, config);
+    if (memory) {
+        // Created here because the mount is decided before the project is
+        // loaded, and podman would refuse a source that does not exist yet.
+        const files = join(memory, FILES_DIR);
+        mkdirSync(files, { recursive: true });
+        mounts.push({ host: realpathSync(files), at: MEMORY_MOUNT, readOnly: true });
     }
     return mounts;
 }

@@ -61,6 +61,15 @@ const ROOT = flatten(STATE.trajectory, 0, null);
 
 function names(list) { return list.join(', '); }
 
+// The edges are what makes a recollection a subgraph rather than a hit list,
+// so they are shown even though the injected block already renders them.
+function edgeLines(edges) {
+  if (!edges || !edges.length) return '';
+  return '\\n\\n' + edges.map(function (e) {
+    return e.source + ' --' + e.relation + '--> ' + e.target;
+  }).join('\\n');
+}
+
 function base(path) { return path.split('/').pop() || path; }
 
 function label(n) {
@@ -69,8 +78,8 @@ function label(n) {
     case 'system_prompt': return 'system prompt'
       + (n.sources && n.sources.length ? ': ' + names(n.sources.map(function (s) { return base(s.path); })) : '');
     case 'load_skills': return 'skills: ' + names(n.skills.map(function (s) { return s.name; }));
-    case 'memory_recall': return 'memory recall: ' + n.scope;
-    case 'memory_op': return 'memory ' + n.op;
+    case 'memory_recall': return 'memory recall: ' + n.nodes.length + ' nodes';
+    case 'memory_op': return 'memory ' + n.op + ': ' + n.nodes.length + ' nodes';
     case 'llm_call': return 'llm: ' + n.model + (n.toolCalls.length
       ? ' -> ' + names(n.toolCalls.map(function (c) { return c.name; })) : '');
     case 'tool_call': return 'call: ' + n.name;
@@ -513,18 +522,20 @@ function detailFor(e) {
       break;
 
     case 'memory_recall':
-      out.appendChild(textBlock('Query', JSON.stringify(n.query, null, 2), n.store + ' · ' + n.scope));
-      out.appendChild(textBlock('Hits', n.hits.map(function (hit) {
-        return hit.id + '  score=' + hit.score + '  rev=' + hit.revision;
-      }).join('\\n')));
+      out.appendChild(textBlock('Query', JSON.stringify(n.query, null, 2),
+        n.seeds.length + ' seed(s)'));
+      out.appendChild(textBlock('Subgraph', n.nodes.map(function (m) {
+        return m.id + '  ' + m.kind
+          + (n.seeds.indexOf(m.id) >= 0 ? '  score=' + m.score.toFixed(3) : '  (stitched)');
+      }).join('\\n') + edgeLines(n.edges)));
       out.appendChild(textBlock('Injected block', blob(n.content)));
       break;
 
     case 'memory_op':
-      out.appendChild(textBlock('Operation',
-        n.op + ' ' + n.recordId + ' (rev ' + n.revision + ')', n.store + ' · ' + n.scope));
-      if (n.before) out.appendChild(textBlock('Before', blob(n.before)));
-      if (n.after) out.appendChild(textBlock('After', blob(n.after)));
+      out.appendChild(textBlock('Operation', n.nodes.map(function (m) {
+        return n.op + ' ' + m.id + '  ' + m.kind + '  rev ' + m.revision;
+      }).join('\\n') + edgeLines(n.edges),
+        n.files ? n.files + ' file(s)' : undefined));
       break;
 
     case 'llm_call': {
@@ -1108,7 +1119,7 @@ ENTRIES.forEach(function (e) {
   } else if (n.type === 'handoff') {
     bump(USED.handoffs, n.from + SEP + n.to, e.key);
   } else if (n.type === 'memory_recall' || n.type === 'memory_op') {
-    bump(USED.memory, n.agent + SEP + n.store + '/' + n.scope, e.key);
+    bump(USED.memory, n.agent, e.key);
   } else if (n.type === 'fork') {
     n.branches.forEach(function (b) { bump(USED.forks, n.agent + SEP + b.agent, e.key); });
   }
@@ -1123,7 +1134,7 @@ function observedArchitecture() {
   const byName = new Map();
   function agentOf(name) {
     if (!byName.has(name)) {
-      byName.set(name, { name: name, tools: [], handoffs: [], memory: [] });
+      byName.set(name, { name: name, tools: [], handoffs: [] });
     }
     return byName.get(name);
   }
@@ -1152,15 +1163,10 @@ function observedArchitecture() {
       agentOf(n.to);
       if (from.handoffs.indexOf(n.to) < 0) from.handoffs.push(n.to);
     } else if (n.type === 'memory_recall' || n.type === 'memory_op') {
-      const known = a.memory.some(function (m) {
-        return m.store === n.store && m.scope === n.scope;
-      });
-      if (!known) {
-        a.memory.push({
-          store: n.store, scope: n.scope,
-          access: n.type === 'memory_op' ? 'read-write' : 'read'
-        });
-      }
+      // A run shows that an agent reached the memory, never how wide its mask
+      // was: nothing it did not read leaves a trace to read the mask off.
+      if (!a.memory) a.memory = { access: 'read', sees: [], writes: [] };
+      if (n.type === 'memory_op') a.memory.access = 'read-write';
     } else if (n.type === 'fork') {
       if (!a.fork) a.fork = { agents: [] };
       n.branches.forEach(function (b) {
@@ -1265,15 +1271,16 @@ function archDiagram() {
       lines.push('  ' + self + ' --- ' + k);
     }
 
-    a.memory.forEach(function (m) {
-      const used = USED.memory.get(a.name + SEP + m.store + '/' + m.scope);
+    if (a.memory) {
+      const used = USED.memory.get(a.name);
       const k = archKey(used);
-      lines.push('  ' + k + '[("' + safe(m.store) + ' / ' + safe(m.scope)
-        + (m.access === 'read-write' ? ' (rw)' : ' (ro)') + '")]');
+      const sees = Array.isArray(a.memory.sees) ? a.memory.sees : [a.memory.sees];
+      lines.push('  ' + k + '[("memory ' + (a.memory.access === 'read' ? '(ro)' : '(rw)')
+        + ' sees ' + safe(sees.join(' ') || '*') + '")]');
       lines.push('  class ' + k + ' mem;');
       if (!used) lines.push('  class ' + k + ' idle;');
       lines.push('  ' + self + ' --- ' + k);
-    });
+    }
     lines.push('  end');
     // Mermaid's default subgraph is a light box, which on a dark page reads as
     // the foreground rather than as the container. An agent nobody entered is

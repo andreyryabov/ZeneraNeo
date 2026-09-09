@@ -38,10 +38,6 @@
             "types": "./dist/payload-stores/index.d.ts",
             "default": "./dist/payload-stores/index.js"
         },
-        "./memory-stores": {
-            "types": "./dist/memory-stores/index.d.ts",
-            "default": "./dist/memory-stores/index.js"
-        },
         "./skill-providers": {
             "types": "./dist/skill-providers/index.d.ts",
             "default": "./dist/skill-providers/index.js"
@@ -66,6 +62,7 @@
         "prepack": "tsc -b"
     },
     "dependencies": {
+        "graphology": "^0.26.0",
         "yaml": "^2.9.0",
         "zod": "^4.4.3"
     },

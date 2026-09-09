@@ -83,11 +83,13 @@ run history. Ids look like `20260825-143012-a7f3`.
     .data/
         state.json      the live, resumable state, rewritten after every run
         session.json    when it was made, and the workspace it is rooted at
-        memory/
         blobs/
         sandbox/home/   /home/agent inside the container
     .lock               held while a run is in flight
 ```
+
+Memory is **not** in here: the graph belongs to the project, at
+`<project>/memory/`, so what one session learned is there for the next one.
 
 The recorded workspace is what makes resuming safe: a session that quietly
 changed what "the workspace" meant between turns would be unexplainable, so it

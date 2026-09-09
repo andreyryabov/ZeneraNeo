@@ -181,6 +181,54 @@ const forkBinding = z
     .strict();
 
 /**
+ * What an agent may do with the project's one memory graph, and which slice of
+ * it it can see. Both lists are audience labels; `'*'` is the public slice and
+ * is always readable, so `sees` can only ever widen from there.
+ *
+ * `sees` and `writes` are here and not in any tool schema on purpose: an agent
+ * that could name its own audience could read another agent's slice just by
+ * asking for it.
+ */
+const memoryBinding = z
+    .object({
+        access: z.enum(['read', 'read-write', 'full']).default('read-write'),
+        /** audience labels this agent may read, on top of the public slice */
+        sees: z.array(name).optional(),
+        /** labels it may put on what it writes */
+        writes: z.array(name).optional(),
+        /**
+         * Recall before a turn that follows new user input, rather than before
+         * every call: recalling on every turn costs tokens and defeats prompt
+         * caching for a marginal gain. `false` leaves the agent the tools and
+         * lets it decide when to look.
+         */
+        autoRecall: z
+            .union([z.boolean(), z.object({ limit: z.int().positive().default(5) }).strict()])
+            .optional(),
+    })
+    .strict();
+
+/** Where the project's memory lives, and what vectorises it. */
+const memoryConfig = z
+    .object({
+        /** relative to the project root */
+        dir: z.string().min(1).default('memory'),
+        /**
+         * A name from `embeddings:`. Without one, recall ranks by term overlap
+         * — which works, but only finds the words the agent happened to reuse.
+         */
+        embedding: modelRef.optional(),
+        /**
+         * Closed vocabularies. Absent means the built-in sets, which is almost
+         * always right: a kind nothing else understands is a kind no other
+         * agent can search for.
+         */
+        kinds: z.array(name).min(1).optional(),
+        relations: z.array(name).min(1).optional(),
+    })
+    .strict();
+
+/**
  * The container command-line tools run in.
  *
  * Everything here is a *resource* decision — which image, how much of the
@@ -292,6 +340,20 @@ const agent = z
         /** parallel sub-agents; `true` is the unrestricted form */
         fork: z.union([z.boolean(), forkBinding]).optional(),
         /**
+         * The shared memory graph. `true` is the whole feature working the
+         * obvious way — read and write, with auto-recall on.
+         *
+         * Normalised before validation rather than unioned with a boolean, so
+         * that a misspelled key inside the block is reported as
+         * `agents[0].memory.scope` instead of collapsing to "invalid input".
+         */
+        memory: z
+            .preprocess(
+                (v) => (typeof v === 'boolean' ? (v ? {} : undefined) : v),
+                memoryBinding.optional(),
+            )
+            .optional(),
+        /**
          * Overrides on the project's sandbox. An agent that overrides nothing
          * shares the container with everyone else, which is what a hand-off
          * usually wants; an agent that names its own image gets its own.
@@ -333,6 +395,12 @@ export const projectSchema = z
         assets: z.string().min(1).optional(),
         /** the container `run_command` and friends execute in */
         sandbox: sandbox.optional(),
+        /**
+         * The one graph every agent's `memory:` binding is a view onto. Declare
+         * it to choose where it lives or what embeds it; an agent that opts in
+         * without this block gets the defaults.
+         */
+        memory: memoryConfig.optional(),
         agents: z.array(agent).min(1),
     })
     .strict();
@@ -344,6 +412,8 @@ export type ModelConfig = z.infer<typeof modelSpec>;
 export type EmbeddingConfig = z.infer<typeof embeddingSpec>;
 export type SandboxConfig = z.infer<typeof sandbox>;
 export type SandboxBuildConfig = z.infer<typeof build>;
+export type MemoryConfig = z.infer<typeof memoryConfig>;
+export type MemoryBindingConfig = z.infer<typeof memoryBinding>;
 
 /**
  * Re-renders a zod failure as `agents.yaml: agents[1].skills.discovery — …`.

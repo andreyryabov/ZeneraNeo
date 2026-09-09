@@ -1,4 +1,5 @@
 import type { Agent, AgentRegistry } from './agent.ts';
+import { ALL_AGENTS, type MemoryAccess } from './memory/types.ts';
 import type { Model } from './model.ts';
 import type { Services } from './services.ts';
 import type { SkillBinding, SkillSummary } from './skills.ts';
@@ -38,10 +39,11 @@ export interface ArchSkill {
 }
 
 export interface ArchMemory {
-    store: string;
-    /** `(per run)` when the binding resolves its scope from the run context */
-    scope: string;
-    access: 'read' | 'read-write';
+    access: MemoryAccess;
+    /** audience labels this agent may read; `(per run)` when resolved from context */
+    sees: string[] | '(per run)';
+    /** labels it may write */
+    writes: string[];
     autoRecall?: boolean;
 }
 
@@ -63,7 +65,7 @@ export interface ArchAgent {
         /** the binding names a provider the services do not know */
         unresolved?: boolean;
     };
-    memory: ArchMemory[];
+    memory?: ArchMemory;
     fork?: { agents?: string[]; maxBranches?: number };
 }
 
@@ -184,22 +186,33 @@ function allowFilter(binding: SkillBinding): (s: SkillSummary) => boolean {
 
 /**
  * With a context in hand this is exactly what the run will record. Without
- * one, a scope function is left symbolic rather than called: it would be
- * handed `undefined` and either throw or invent a space no run ever uses.
+ * one, a `sees` function is left symbolic rather than called: it would be
+ * handed `undefined` and either throw or invent a mask no run ever uses.
  */
-function describeMemory<TCtx>(agent: Agent<TCtx>, context: TCtx | undefined): ArchMemory[] {
-    if (context !== undefined) {
-        return agent.memoryBindings(context).map((b) => ({
-            store: b.store,
-            scope: b.scope,
-            access: b.access,
-            autoRecall: b.autoRecall ? true : undefined,
-        }));
+function describeMemory<TCtx>(
+    agent: Agent<TCtx>,
+    context: TCtx | undefined,
+): ArchMemory | undefined {
+    const b = agent.memory;
+    if (!b) {
+        return undefined;
     }
-    return agent.memory.map((b) => ({
-        store: b.store,
-        scope: typeof b.scope === 'function' ? '(per run)' : (b.scope ?? `agent:${agent.name}`),
+    if (context !== undefined) {
+        const r = agent.memoryBinding(context)!;
+        return {
+            access: r.access,
+            sees: r.sees,
+            writes: r.writes,
+            autoRecall: r.autoRecall ? true : undefined,
+        };
+    }
+    return {
         access: b.access,
+        sees:
+            typeof b.sees === 'function'
+                ? '(per run)'
+                : [...new Set([ALL_AGENTS, ...(b.sees ?? [])])],
+        writes: b.writes ?? [ALL_AGENTS],
         autoRecall: b.autoRecall ? true : undefined,
-    }));
+    };
 }

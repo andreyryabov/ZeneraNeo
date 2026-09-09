@@ -141,8 +141,9 @@ my-project/
 │           ├── SKILL.md
 │           └── scripts/calculate.py   run at /skills/refund_policy/scripts — §3.4.1
 ├── assets/                       reference material, read-only at /assets
+├── memory/                       the graph agents remember into — §5.3
 ├── sandbox/Dockerfile            the image commands run in — §3.7
-└── sessions/                     run state, memory, whatever the agent wrote
+└── sessions/                     run state, whatever the agent wrote
 ```
 
 Only `agents.yaml` is required, and only `agents:` is required inside it.
@@ -1031,21 +1032,37 @@ agents:
 
 ### 5.3 Memory
 
-Memory is the read-write twin of skills: written by the run, not authored. A
-**scope** is a namespace string; agents bound to the same scope share what is
-in it, and the default scope is the agent's own — so memory is private until
-something says otherwise. Recall is automatic: matches for the current input
-are injected before each call, which is what makes memory work without the
-model remembering to look, and an agent with write access also gets tools to
-search, add, update and delete entries.
+Memory is the read-write twin of skills: written by the run, not authored. It is
+a **graph** — a node is one thing worth keeping, an edge says how one led to
+another — so recall returns the connected piece rather than a ranked list, and a
+remembered script arrives with the request that asked for it.
 
-It is a session-level facility rather than an `agents.yaml` key: `zen run`
-binds each session's store under `sessions/`, so memory travels with the
-session and is not part of this repository.
+It is configured in `agents.yaml`: a top-level `memory:` block says where the
+graph lives and what vectorises it, and `agents[].memory` says what each agent
+may do with it. It lives with the **project**, not the session — a memory that
+died with the session would be a cache. Recall is automatic on turns that follow
+new user input, which is what makes memory work without the model remembering to
+look.
+
+```yaml
+memory:
+    embedding: main # without one, recall falls back to term overlap
+agents:
+    - name: auditor
+      memory: true # read, write, and recall before each new question
+```
+
+Every node carries an **audience**, and an agent's `sees` is the set it reads:
+one graph, masked per agent, never one graph each. The four `memory_*` tools are
+derived from `access` and are never listed in `tools:`.
 
 Do not treat memory as a database. It is for things learned that should
 persist. Anything authoritative — a rate, a policy clause, a procedure — belongs
 in a skill, where it is versioned and reviewable.
+
+The full treatment — kinds and relations, how ranking and stitching spend their
+budget, remembered files under `/memory`, audience design, and how to put memory
+in front of a `zen rag` index — is in the `zen-memory` skill.
 
 ### 5.4 Cache discipline
 
@@ -1601,9 +1618,9 @@ zen models pick --embedding    # or --chat; the ref goes to stdout, alone
 Then re-run `zen check`.
 
 CLI (`zen --help` for the authoritative list): `zen init`, `zen run`, `zen check`,
-`zen inspect`, `zen key`, `zen models`, `zen list`. **stdout is the answer, stderr
-is the narration**; every command takes `--json`. Exit codes: `0` ok, `1` failed,
-`2` usage, `3` invalid project, `4` no usable credential.
+`zen inspect`, `zen memory`, `zen key`, `zen models`, `zen list`. **stdout is the
+answer, stderr is the narration**; every command takes `--json`. Exit codes: `0`
+ok, `1` failed, `2` usage, `3` invalid project, `4` no usable credential.
 
 ---
 

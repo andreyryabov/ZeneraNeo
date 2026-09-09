@@ -2,7 +2,9 @@ import { z } from 'zod';
 import { Agent, AgentRegistry, handoffTarget, handoffTool } from './agent.ts';
 import type { PendingToolCall } from './events.ts';
 import { systemClock, type IdClock } from './ids.ts';
-import { memoryTools, type MemoryOpSpec, type MemoryRecallSpec } from './memory.ts';
+import { memoryInstructions, renderPreferences } from './memory/instructions.ts';
+import { memoryTools } from './memory/tools.ts';
+import type { MemoryOpSpec, MemoryRecallSpec } from './memory/types.ts';
 import type { ModelRequest, ModelResponse } from './model.ts';
 import { hash, type Payload } from './payload.ts';
 import { composePrompt } from './prompt.ts';
@@ -435,7 +437,10 @@ export async function resolveTools<TCtx>(
     for (const name of agent.handoffs) {
         tools.push(handoffTool<TCtx>(name, reg.find(name)?.description));
     }
-    tools.push(...memoryTools<TCtx>(agent.memoryBindings(ctx)));
+    const binding = agent.memoryBinding(ctx);
+    if (binding && env.services.memory) {
+        tools.push(...memoryTools<TCtx>({ index: env.services.memory, binding }));
+    }
     if (agent.skills) {
         const binding = agent.skills;
         tools.push(...skillTools<TCtx>(binding));
@@ -474,11 +479,12 @@ function toSchema(t: ToolSchema): ToolSchema {
 }
 
 /**
- * Prompt text the runtime owns rather than the author: the skill index and the
- * `final_output` instruction. Both used to be appended inside `buildRequest`,
- * which meant part of the system prompt existed in no node and showed up in no
- * audit. Composed in now, always last, so the volatile tail never invalidates
- * the cacheable prefix.
+ * Prompt text the runtime owns rather than the author: how to use memory, the
+ * user's standing preferences, the skill index and the `final_output`
+ * instruction. Most used to be appended inside `buildRequest`, which meant part
+ * of the system prompt existed in no node and showed up in no audit. Composed
+ * in now, always last, so the volatile tail never invalidates the cacheable
+ * prefix.
  */
 async function derivedPrompt<TCtx>(
     agent: Agent<TCtx>,
@@ -486,6 +492,15 @@ async function derivedPrompt<TCtx>(
     env: KernelEnv,
 ): Promise<string[]> {
     const out: string[] = [];
+    const memory = agent.memoryBinding(state.context as TCtx);
+    if (memory && env.services.memory) {
+        // The one part of the prompt that reads mutable state. It is allowed
+        // because preferences change at most once in a run and
+        // `applySystemPrompt` is keyed on the rendered bytes, so a commit
+        // re-renders the prefix once rather than every turn.
+        out.push(memoryInstructions(memory));
+        out.push(renderPreferences(env.services.memory.preferences(memory.sees)));
+    }
     if (agent.skills?.discovery === 'index') {
         const binding = agent.skills;
         const provider = env.services.skillProvider(binding.provider);
@@ -904,10 +919,12 @@ export async function applyToolResult(
     });
 
     for (const effect of outcome.effects ?? []) {
-        if (effect.kind === 'memory_op') {
+        if (effect.kind === 'skill_load') {
+            await addSkillLoad(b, env, effect.spec);
+        } else if (effect.spec.kind === 'op') {
             await addMemoryOp(b, env, effect.spec);
         } else {
-            await addSkillLoad(b, env, effect.spec);
+            await addMemoryRecall(b, env, effect.spec);
         }
     }
 
@@ -947,13 +964,21 @@ async function addMemoryOp(b: Draft, env: KernelEnv, spec: MemoryOpSpec): Promis
     b.add<MemoryOpNode>({
         type: 'memory_op',
         op: spec.op,
-        store: spec.store,
-        scope: spec.scope,
         opId: spec.opId,
-        recordId: spec.recordId,
-        revision: spec.revision,
-        before: spec.before === undefined ? undefined : await put(env, spec.before),
-        after: spec.after === undefined ? undefined : await put(env, spec.after),
+        nodes: spec.nodes,
+        edges: spec.edges,
+        files: spec.files,
+    });
+}
+
+async function addMemoryRecall(b: Draft, env: KernelEnv, spec: MemoryRecallSpec): Promise<void> {
+    b.add<MemoryRecallNode>({
+        type: 'memory_recall',
+        query: spec.query,
+        seeds: spec.seeds,
+        nodes: spec.nodes,
+        edges: spec.edges,
+        content: await put(env, spec.content),
     });
 }
 
@@ -982,14 +1007,7 @@ export async function applyMemoryEffect(
     if (effect.kind === 'op') {
         await addMemoryOp(b, env, effect);
     } else {
-        b.add<MemoryRecallNode>({
-            type: 'memory_recall',
-            store: effect.store,
-            scope: effect.scope,
-            query: effect.query,
-            hits: effect.hits,
-            content: await put(env, effect.content),
-        });
+        await addMemoryRecall(b, env, effect);
     }
     return b.commit({});
 }

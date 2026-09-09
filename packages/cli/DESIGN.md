@@ -122,6 +122,7 @@ two.
 | `models`  | What this machine can use: list, search, test, pick (§6.5).                |
 | `run`     | Runs the project — the TUI on a terminal, one shot otherwise (§7).         |
 | `inspect` | Opens or rebuilds a run's `report.html`.                                   |
+| `memory`  | The memory graph from outside the agents (§9.3).                           |
 | `check`   | Reports on the project in full: files, wiring, credentials, models (§9.2). |
 | `sandbox` | Checks and prepares the container command-line tools run in (§9).          |
 | `cache`   | What work has been kept, and getting rid of it (§4.2).                     |
@@ -802,7 +803,73 @@ something trims them. `machine inspect` no longer carries the path, so the
 documented default location is checked and the line is simply absent when the
 file is not there.
 
-## 10. Not here
+## 10. Memory — `zen memory`
+
+A project can give its agents a memory: a graph of what they were asked, what
+they planned, what they learned, and the files they kept. It is `@zenera/neo`
+that owns it. What the CLI owes it is a way to look.
+
+The question that makes the command necessary is **why did it recall that?**,
+and it cannot be answered from inside a run. Recall is masked per agent, ranked
+and truncated before an agent ever sees it, so what reached the prompt is a
+selection — and when the selection is wrong, the evidence is in the part that
+was left out.
+
+So **every subcommand reads the graph unmasked**. That is not a hole in the
+model: the mask keeps agents apart, and this command is a person at a terminal
+in the project directory, who already owns the files. Withholding a node from
+them would protect nothing and hide the bug.
+
+**Nothing here contacts a model.** The store is opened with no embedder, so
+inspection is free, offline, and cannot fail on a missing credential — which is
+precisely the state a project is in when someone starts debugging it. The price
+is that `ls` filters on text rather than on meaning, and that is the right way
+round for a tool whose job is to show what is there rather than to find what is
+relevant.
+
+For the same reason it does not call `loadProject`. Loading would resolve every
+model and read every prompt file in order to inspect a graph that needs none of
+them, and would fail on a project whose credentials are missing. It reads the
+config and opens the directory, and that is all.
+
+### 10.1 `export` — the whole graph as one page
+
+`zen memory export` writes a single self-contained HTML file, and it is the
+subcommand the others exist around. Three panes: the node list with its filters
+on the left, the graph in the middle, and the selected node on the right — in
+full, including the content of a remembered file, rendered as an image when it
+is one.
+
+The middle pane is Mermaid, as the run report is, and shares the pinned CDN URL
+with it so the two cannot drift. Above 300 drawn nodes it declines and asks for
+a filter instead, because a Mermaid diagram that large is not a picture of
+anything. The diagram is fitted to its pane and re-fitted when the pane
+resizes, until the first manual zoom or pan — after which the view belongs to
+the reader and the page stops moving it.
+
+One file and no server is what makes it mailable: it attaches to a bug. The
+only network it does is the Mermaid fetch, and without it the page degrades to
+a working list and detail view.
+
+Escaping follows the run report exactly, because the content is no less
+hostile — node text and remembered files are model output. Data reaches the
+document only inside an inert `application/json` block and leaves it only
+through `textContent`.
+
+### 10.2 Forgetting
+
+`forget` asks before it removes, and refuses outright when there is no terminal
+to ask at; `--yes` is the only way through a script. It then delegates to the
+library's own `MemoryIndex.forget`, so that a node, its vector row and its file
+bytes going together has exactly one implementation and cannot drift from what
+the agent-facing tool does.
+
+It is deliberately not the usual correction. The agents' way to fix a wrong
+memory is to commit the corrected node and supersede the old one, which keeps
+the record of having been wrong; `zen memory ls --stale` is how you read that
+back. `forget` is for what should never have been stored.
+
+## 11. Not here
 
 - **No daemon.** Nothing runs between commands. "Is a run live" is answered by a
   lockfile holding a pid, not by a service that has to be kept alive to answer.
