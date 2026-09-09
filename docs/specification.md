@@ -13,6 +13,44 @@ change to what the system does starts there and not in `agents.yaml`.
 that was just scaffolded, line for line, so you start from a specification and
 its implementation rather than from an empty heading list.
 
+## Getting to it
+
+```sh
+zen init my-project      # writes SPECIFICATION.md and the project implementing it
+zen open my-project      # opens that folder in your editor
+```
+
+`zen open` launches the editor you already use — the one this terminal belongs
+to, or `$ZENERA_EDITOR`, or the first of VS Code, Cursor, Windsurf, Zed, Sublime
+Text or IntelliJ it can find; `--editor <cmd>` names one outright. On the way in
+it rewrites `.vscode/settings.json` and the `.github/` tree, so the chat
+commands below are always the current ones.
+
+Then, in that window:
+
+1. **Edit `SPECIFICATION.md`.** What the system is for, which agents exist, what
+   each may reach for, and what _done_ means.
+2. **Open the chat panel and send `/sync-with-spec`.**
+3. **Read `SPECIFICATION-FEEDBACK.md`.** Answer its questions by editing
+   `SPECIFICATION.md` — never by editing a prompt — and send `/sync-with-spec`
+   again.
+
+Back in the terminal: `zen check`, `scripts/_setup.sh`, `zen run`.
+
+`zen init` installs four prompt files under `.github/prompts/`, which VS Code
+and its forks offer as chat slash-commands:
+
+| In chat           | Does                                                        |
+| ----------------- | ----------------------------------------------------------- |
+| `/sync-with-spec` | Makes every file match `SPECIFICATION.md`, both directions. |
+| `/review-project` | Reads the project as a reviewer would, and reports.         |
+| `/new-agent`      | Adds an agent — prompt, wiring and hand-offs.               |
+| `/new-skill`      | Adds a skill under `agents/skills/`.                        |
+
+In an editor with no support for prompt files, paste the contents of
+`.github/prompts/sync-with-spec.prompt.md` into its chat instead — it is only a
+prompt, and it says everything it needs about where to look.
+
 ## The loop
 
 ```
@@ -40,8 +78,9 @@ project whose specification is no longer true is a project with no specification
 ### `/sync-with-spec`
 
 `zen init` installs `.github/prompts/sync-with-spec.prompt.md`, so the command
-is available in your editor's chat from the first minute. It is a long prompt
-and worth reading once; in outline it:
+is available in your editor's chat from the first minute — type `/` in the chat
+panel and it is in the list. It is a long prompt and worth reading once; in
+outline it:
 
 1. **Reads everything before editing anything** — the specification, then
    `agents.yaml`, `INSTRUCTIONS.md`, every prompt, every skill, the assets, the

@@ -4,6 +4,7 @@
   <img src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-rag-light.svg" alt="ZENERA RAG" width="702">
 </picture>
 
+[![npm](https://img.shields.io/npm/v/@zenera/rag.svg)](https://www.npmjs.com/package/@zenera/rag)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/andreyryabov/ZeneraNeo/blob/main/LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
 

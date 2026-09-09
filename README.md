@@ -13,25 +13,26 @@
 
 # ZeneraNeo
 
-**Build specialized multi-agent systems from a specification you write -
-implemented, run and kept honest by the coding agent you already have open.**
+**Agent systems you keep.** Write what the system should do; the coding agent
+you already have open builds it; `zen` holds it to what you wrote, runs it, and
+records every token. What you are left with is a folder you commit and a command
+you call.
 
-`zen` is a command line for building and running multi-agent systems. An
-**agentic project is a folder**: prompts, agent wiring, skills and tool
-selections are Markdown and YAML files, not code buried inside an application.
-Commit it, review it in a pull request, hand it to a colleague - it runs the
-same everywhere, and it never carries your keys with it.
+Your coding agent writes software. Point it at `zen` and it writes agents. An
+**agentic project is a folder** - prompts, agent wiring, skills and tool
+selections as Markdown and YAML, not code buried inside an application - so an
+agent can maintain it, provided somebody says what it is supposed to do.
 
-Because it is all files, an agent can maintain it - provided somebody says what
-it is supposed to do. That is `SPECIFICATION.md`, and it is the first file
-`zen init` writes. **You write the specification; a coding agent writes the
-implementation; `zen` runs it and records what happened; you edit the
-specification again.**
+That is `SPECIFICATION.md`, the first file `zen init` writes, and it is the
+source rather than a note about the source: where it and the files disagree, it
+wins. `/sync-with-spec` reconciles the two in both directions, and `zen check`
+fails the project when they drift - naming the file, the code and the fix.
+**You write the specification; a coding agent writes the implementation; `zen`
+runs it and records what happened; you edit the specification again.**
 
-> **This is an open-source side project for experimentation and chore work.**
-> It is **not** the official Zenera AI Platform, and it carries no support or
-> stability promises. Use it to try ideas, to automate your own drudgery, and to
-> see how a multi-agent runtime is put together.
+Commit the folder, review it in a pull request, hand it to a colleague. It runs
+the same everywhere, on whichever models they prefer, and it never carries your
+keys with it.
 
 ---
 
@@ -50,8 +51,18 @@ cd my-project && zen run "introduce yourself"
 output so it can be piped into anything else. `zen run` with nothing to say
 opens a full-screen terminal interface - a TUI - instead.
 
-Then open `SPECIFICATION.md`, say what you actually want built, and run
-`/sync-with-spec` in your editor.
+Then `zen open my-project` to open it in your editor, edit `SPECIFICATION.md`
+to say what you actually want built, and send `/sync-with-spec` in the editor's
+chat.
+
+Sent a project by someone else? `zen init <dir>` on a folder that is already a
+project registers it without touching anything in it, and from then on its name
+is a command here too.
+
+> **This is an open-source side project for experimentation and chore work.**
+> It is **not** the official Zenera AI Platform, and it carries no support or
+> stability promises. Use it to try ideas, to automate your own drudgery, and to
+> see how a multi-agent runtime is put together.
 
 The rest of this page is the same thing, slowly.
 
@@ -148,6 +159,13 @@ repositories are shareable.**
 explains this runtime to whatever coding agent you have open in that folder,
 plus the prompts and skills it needs to do the work described next.
 
+`zen open` launches the editor you already use, and refreshes those files on the
+way in so they are never stale. It picks the first of: `--editor`,
+`$ZENERA_EDITOR`, the editor this terminal belongs to, `$VISUAL` or `$EDITOR`,
+then VS Code, Cursor, VS Code Insiders, Windsurf, Zed, Sublime Text or IntelliJ
+
+- found on `PATH` or installed - and finally the platform's own opener.
+
 ## 4 · Say what it should do
 
 `SPECIFICATION.md` is the intent; everything around it is the implementation.
@@ -174,17 +192,41 @@ nobody to hand work to, because there is no second job to hand on.
   not do.
 ```
 
-Rewrite it as what you are building, then in your editor:
+Rewrite it as what you are building. Concretely, in the window `zen open` just
+gave you:
 
-```
-/sync-with-spec
-```
+1. **Edit `SPECIFICATION.md`** - what the system is for, which agents exist,
+   what each may reach for, and what _done_ means.
+2. **Open the chat panel and send `/sync-with-spec`.**
+3. **Read `SPECIFICATION-FEEDBACK.md`.** Answer its questions by editing
+   `SPECIFICATION.md` - not by editing prompts - and send `/sync-with-spec`
+   again.
 
 That prompt - installed by `zen init` - reads the specification and every file
 that implements it, builds the difference in both directions, changes the
 smallest thing that closes each gap, and writes `SPECIFICATION-FEEDBACK.md` for
 everything it could not do without guessing. Read that file first: it is the
 shortest description of what your specification does not yet say.
+
+<details>
+<summary>The chat commands <code>zen init</code> installs</summary>
+
+They are prompt files under `.github/prompts/`, which VS Code and its forks
+offer as chat slash-commands. Both `zen init` and `zen open` write them fresh,
+so they never go stale - and edits to them do not survive.
+
+| In chat           | Does                                                        |
+| ----------------- | ----------------------------------------------------------- |
+| `/sync-with-spec` | Makes every file match `SPECIFICATION.md`, both directions. |
+| `/review-project` | Reads the project as a reviewer would, and reports.         |
+| `/new-agent`      | Adds an agent - prompt, wiring and hand-offs.               |
+| `/new-skill`      | Adds a skill under `agents/skills/`.                        |
+
+In an editor that does not support prompt files, paste the contents of
+`.github/prompts/sync-with-spec.prompt.md` into its chat instead - it is only a
+prompt.
+
+</details>
 
 ```
 edit SPECIFICATION.md → /sync-with-spec → zen check → scripts/_setup.sh
@@ -512,14 +554,31 @@ Details: [packages/faker/README.md](packages/faker/README.md) ·
 
 ## What people build with it
 
-- **Deep research agents** - a planner that forks into parallel branches, each
-  with its own tools and skills, joined back into one report.
-- **Coding agents shaped to your case** - file tools scoped to a workspace, a
-  container sandbox for commands, and house rules that are actually yours rather
-  than a vendor's defaults.
-- **Custom agentic systems for daily work** - triage, review, intake,
-  reconciliation: the recurring chores that are too specific for a product and
-  too tedious to keep doing by hand.
+Half a page of specification turns into a system, and the system becomes a name
+on your command line. None of these ship with the CLI - each is a folder
+somebody wrote once, and could send you.
+
+```sh
+zen run deep-research "what changed in EU battery regulation this year"
+zen run data-analyst  "why did signups drop in week 32"          # in a folder of CSVs
+zen run coder         "add pagination to the orders endpoint"    # in a repository
+zen run release-notes "everything since v2.3.0"
+zen run deployer      "promote v2.4.1 to staging, migrations included"
+zen run deck          "turn these notes into a ten-slide talk"
+```
+
+| Project           | The team inside it                                                                                                                                          |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **deep-research** | A planner that splits the question into branches, researchers that run in parallel with web search, an editor that joins them into one report with sources. |
+| **data-analyst**  | A profiler that reads whatever files are in the directory, an analyst that writes and runs Python in the sandbox, a reporter that explains the result.      |
+| **coder**         | A reader scoped to the repository, an implementer with a sandboxed shell, a reviewer that has to watch the tests pass before it agrees.                     |
+| **release-notes** | A reader that walks the diff since the last tag, a writer that groups it by what changed for a user, an editor that cuts it to a page.                      |
+| **deployer**      | A DevOps engineer that reads the manifests, plans the migration, applies it step by step, and stops the moment a check fails.                               |
+| **deck**          | An intake agent that reads a folder of raw notes and documents, an outliner that argues for a structure, a writer that emits the slides as Markdown.        |
+
+The common thread is the recurring, specific work that is too particular for a
+product and too tedious to keep doing by hand - triage, review, intake,
+reconciliation - shaped to your case rather than to a vendor's defaults.
 
 ## What is different about it
 

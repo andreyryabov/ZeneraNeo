@@ -1,11 +1,19 @@
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-neo-dark.svg">
+  <img src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-neo-light.svg" alt="ZENERA NEO" width="720">
+</picture>
+
+[![npm](https://img.shields.io/npm/v/@zenera/neo.svg)](https://www.npmjs.com/package/@zenera/neo)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/andreyryabov/ZeneraNeo/blob/main/LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
+
+</div>
+
 # @zenera/neo
 
 **A multi-agent runtime for Node.js: agents, models, tools, skills, memory and
 an append-only trajectory.**
-
-[![npm](https://img.shields.io/npm/v/@zenera/neo.svg)](https://www.npmjs.com/package/@zenera/neo)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
 
 > Part of [ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo). This is an
 > open-source side project for experimentation and chore work — **not** the

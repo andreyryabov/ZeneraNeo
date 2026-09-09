@@ -15,7 +15,6 @@ import {
     cyan,
     dim,
     green,
-    invalidError,
     json,
     note,
     progress,
@@ -137,6 +136,11 @@ export const init: Command = {
         'find it by name. Editor files (.vscode/settings.json and the .github/',
         'tree) are written alongside, replacing any already there.',
         '',
+        'A directory that is already a project is adopted rather than rebuilt:',
+        'it is registered under its own name, and nothing in it is touched.',
+        'That is how a project someone else wrote becomes a name on this',
+        'machine after a clone.',
+        '',
         'SPECIFICATION.md states what the project is for and what it may do,',
         'and describes the one that was just written. Say what you are building',
         'there, then run /sync-with-spec in your editor to make the rest match.',
@@ -164,7 +168,8 @@ export const init: Command = {
         const name = values.name ?? basename(dir);
 
         if (isProjectDir(dir)) {
-            throw invalidError(`${dir} is already a project`);
+            await adopt(dir, values, ctx.json);
+            return;
         }
         if (existsSync(dir) && readdirSync(dir).length > 0 && !values.force) {
             throw usageError(`${dir} is not empty`, 'pass --force to write into it anyway');
@@ -225,6 +230,50 @@ export const init: Command = {
         write(dir);
     },
 };
+
+/**
+ * Takes a directory that is already a project into the registry.
+ *
+ * The registry lives in `$HOME`, so a project that arrives by clone, copy or
+ * `mv` is a working project that no name resolves to — and the only thing
+ * missing is the entry. Scaffolding over it would be the wrong repair: the
+ * files are somebody's work, and this writes none of them.
+ *
+ * Idempotent, because the honest answer to `zen init` in a project that is
+ * already listed is "it is", not an error.
+ */
+async function adopt(dir: string, values: Flags, quiet: boolean): Promise<void> {
+    ensureHome();
+    const registry = await Registry.open();
+    const listed = registry.findPath(dir);
+    const name = values.name ?? listed?.name ?? basename(dir);
+    const renamed = listed !== undefined && listed.name !== name;
+    registry.add(name, dir);
+    registry.save();
+
+    const sandbox = await prepareSandbox(dir, quiet);
+
+    if (quiet) {
+        json({ name, path: dir, adopted: true, listed: listed !== undefined, sandbox });
+        return;
+    }
+    const what =
+        listed === undefined
+            ? green('registered')
+            : renamed
+              ? green('renamed')
+              : dim('already registered');
+    note(`${what} ${bold(name)} ${dim(dir)}`);
+    // Nothing here was scaffolded, so the flags that shape a scaffold did not apply.
+    if (values.model) {
+        note(
+            `${yellow('--model ignored')} ${dim('— the model this project uses is in agents.yaml')}`,
+        );
+    }
+    note();
+    note(`Next: ${cyan(`cd ${dir}`)} then ${cyan('zen check')}`);
+    write(dir);
+}
 
 /**
  * Builds the sandbox image the project was just given, here rather than on the
