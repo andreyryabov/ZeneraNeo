@@ -9,58 +9,63 @@ import { dim, note } from './term.ts';
 // terminal — a pipeline asking for the answer gets the answer, and a CI log is
 // not decorated with block letters.
 //
-// The font is here rather than pulled in as a dependency because it is a
-// kilobyte of constant and the whole CLI is otherwise Node's own. Two things
-// about its shape are deliberate: the stroke is **two cells wide**, because a
-// one-cell stem in a dotted fill reads as noise rather than as a letter, and
-// the ink is the dotted block (U+2592) rather than a solid one, which makes a
-// thick stroke a screen-print instead of a slab.
+// The font is here rather than pulled in as a dependency because it is a couple
+// of kilobytes of constant and the whole CLI is otherwise Node's own. It is the
+// shadowed block face: a solid stroke lit from the top left with a box-drawing
+// bevel down its right side and along its foot, so the letters read as raised
+// rather than as a texture. Glyphs are variable width and carry their own
+// spacing, so they abut directly — the gap belongs to the letter, not the join.
 //
 // A terminal too narrow for the art gets the wordmark on one line. A banner
 // that wraps is worse than no banner.
 // ---------------------------------------------------------------------------
 
-const HEIGHT = 5;
-const WIDTH = 6;
+const HEIGHT = 6;
+
+/** Between the two words. Wide enough that they read as two, not as one. */
+const GAP = 3;
+
+/** A left margin, so the art does not start against the edge of the screen. */
+const INDENT = 2;
 
 const FONT: Record<string, readonly string[]> = {
-    A: [' ▒▒▒▒ ', '▒▒  ▒▒', '▒▒▒▒▒▒', '▒▒  ▒▒', '▒▒  ▒▒'],
-    B: ['▒▒▒▒▒ ', '▒▒  ▒▒', '▒▒▒▒▒ ', '▒▒  ▒▒', '▒▒▒▒▒ '],
-    C: [' ▒▒▒▒▒', '▒▒    ', '▒▒    ', '▒▒    ', ' ▒▒▒▒▒'],
-    D: ['▒▒▒▒▒ ', '▒▒  ▒▒', '▒▒  ▒▒', '▒▒  ▒▒', '▒▒▒▒▒ '],
-    E: ['▒▒▒▒▒▒', '▒▒    ', '▒▒▒▒▒ ', '▒▒    ', '▒▒▒▒▒▒'],
-    F: ['▒▒▒▒▒▒', '▒▒    ', '▒▒▒▒▒ ', '▒▒    ', '▒▒    '],
-    G: [' ▒▒▒▒▒', '▒▒    ', '▒▒ ▒▒▒', '▒▒  ▒▒', ' ▒▒▒▒▒'],
-    H: ['▒▒  ▒▒', '▒▒  ▒▒', '▒▒▒▒▒▒', '▒▒  ▒▒', '▒▒  ▒▒'],
-    I: ['▒▒▒▒▒▒', '  ▒▒  ', '  ▒▒  ', '  ▒▒  ', '▒▒▒▒▒▒'],
-    J: ['▒▒▒▒▒▒', '   ▒▒ ', '   ▒▒ ', '▒▒ ▒▒ ', ' ▒▒▒  '],
-    K: ['▒▒  ▒▒', '▒▒ ▒▒ ', '▒▒▒▒  ', '▒▒ ▒▒ ', '▒▒  ▒▒'],
-    L: ['▒▒    ', '▒▒    ', '▒▒    ', '▒▒    ', '▒▒▒▒▒▒'],
-    M: ['▒▒  ▒▒', '▒▒▒▒▒▒', '▒▒▒▒▒▒', '▒▒  ▒▒', '▒▒  ▒▒'],
-    N: ['▒▒  ▒▒', '▒▒▒ ▒▒', '▒▒▒▒▒▒', '▒▒ ▒▒▒', '▒▒  ▒▒'],
-    O: [' ▒▒▒▒ ', '▒▒  ▒▒', '▒▒  ▒▒', '▒▒  ▒▒', ' ▒▒▒▒ '],
-    P: ['▒▒▒▒▒ ', '▒▒  ▒▒', '▒▒▒▒▒ ', '▒▒    ', '▒▒    '],
-    Q: [' ▒▒▒▒ ', '▒▒  ▒▒', '▒▒  ▒▒', '▒▒ ▒▒ ', ' ▒▒ ▒▒'],
-    R: ['▒▒▒▒▒ ', '▒▒  ▒▒', '▒▒▒▒▒ ', '▒▒ ▒▒ ', '▒▒  ▒▒'],
-    S: [' ▒▒▒▒▒', '▒▒    ', ' ▒▒▒▒ ', '    ▒▒', '▒▒▒▒▒ '],
-    T: ['▒▒▒▒▒▒', '  ▒▒  ', '  ▒▒  ', '  ▒▒  ', '  ▒▒  '],
-    U: ['▒▒  ▒▒', '▒▒  ▒▒', '▒▒  ▒▒', '▒▒  ▒▒', ' ▒▒▒▒ '],
-    V: ['▒▒  ▒▒', '▒▒  ▒▒', '▒▒  ▒▒', ' ▒▒▒▒ ', '  ▒▒  '],
-    W: ['▒▒  ▒▒', '▒▒  ▒▒', '▒▒▒▒▒▒', '▒▒▒▒▒▒', '▒▒  ▒▒'],
-    X: ['▒▒  ▒▒', ' ▒▒▒▒ ', '  ▒▒  ', ' ▒▒▒▒ ', '▒▒  ▒▒'],
-    Y: ['▒▒  ▒▒', ' ▒▒▒▒ ', '  ▒▒  ', '  ▒▒  ', '  ▒▒  '],
-    Z: ['▒▒▒▒▒▒', '   ▒▒ ', '  ▒▒  ', ' ▒▒   ', '▒▒▒▒▒▒'],
+    A: [' █████╗ ', '██╔══██╗', '███████║', '██╔══██║', '██║  ██║', '╚═╝  ╚═╝'],
+    B: ['██████╗ ', '██╔══██╗', '██████╔╝', '██╔══██╗', '██████╔╝', '╚═════╝ '],
+    C: [' ██████╗', '██╔════╝', '██║     ', '██║     ', '╚██████╗', ' ╚═════╝'],
+    D: ['██████╗ ', '██╔══██╗', '██║  ██║', '██║  ██║', '██████╔╝', '╚═════╝ '],
+    E: ['███████╗', '██╔════╝', '█████╗  ', '██╔══╝  ', '███████╗', '╚══════╝'],
+    F: ['███████╗', '██╔════╝', '█████╗  ', '██╔══╝  ', '██║     ', '╚═╝     '],
+    G: [' ██████╗ ', '██╔════╝ ', '██║  ███╗', '██║   ██║', '╚██████╔╝', ' ╚═════╝ '],
+    H: ['██╗  ██╗', '██║  ██║', '███████║', '██╔══██║', '██║  ██║', '╚═╝  ╚═╝'],
+    I: ['██╗', '██║', '██║', '██║', '██║', '╚═╝'],
+    J: ['     ██╗', '     ██║', '     ██║', '██   ██║', '╚█████╔╝', ' ╚════╝ '],
+    K: ['██╗  ██╗', '██║ ██╔╝', '█████╔╝ ', '██╔═██╗ ', '██║  ██╗', '╚═╝  ╚═╝'],
+    L: ['██╗     ', '██║     ', '██║     ', '██║     ', '███████╗', '╚══════╝'],
+    M: ['███╗   ███╗', '████╗ ████║', '██╔████╔██║', '██║╚██╔╝██║', '██║ ╚═╝ ██║', '╚═╝     ╚═╝'],
+    N: ['███╗   ██╗', '████╗  ██║', '██╔██╗ ██║', '██║╚██╗██║', '██║ ╚████║', '╚═╝  ╚═══╝'],
+    O: [' ██████╗ ', '██╔═══██╗', '██║   ██║', '██║   ██║', '╚██████╔╝', ' ╚═════╝ '],
+    P: ['██████╗ ', '██╔══██╗', '██████╔╝', '██╔═══╝ ', '██║     ', '╚═╝     '],
+    Q: [' ██████╗ ', '██╔═══██╗', '██║   ██║', '██║▄▄ ██║', '╚██████╔╝', ' ╚══▀▀═╝ '],
+    R: ['██████╗ ', '██╔══██╗', '██████╔╝', '██╔══██╗', '██║  ██║', '╚═╝  ╚═╝'],
+    S: ['███████╗', '██╔════╝', '███████╗', '╚════██║', '███████║', '╚══════╝'],
+    T: ['████████╗', '╚══██╔══╝', '   ██║   ', '   ██║   ', '   ██║   ', '   ╚═╝   '],
+    U: ['██╗   ██╗', '██║   ██║', '██║   ██║', '██║   ██║', '╚██████╔╝', ' ╚═════╝ '],
+    V: ['██╗   ██╗', '██║   ██║', '██║   ██║', '╚██╗ ██╔╝', ' ╚████╔╝ ', '  ╚═══╝  '],
+    W: ['██╗    ██╗', '██║    ██║', '██║ █╗ ██║', '██║███╗██║', '╚███╔███╔╝', ' ╚══╝╚══╝ '],
+    X: ['██╗  ██╗', '╚██╗██╔╝', ' ╚███╔╝ ', ' ██╔██╗ ', '██╔╝ ██╗', '╚═╝  ╚═╝'],
+    Y: ['██╗   ██╗', '╚██╗ ██╔╝', ' ╚████╔╝ ', '  ╚██╔╝  ', '   ██║   ', '   ╚═╝   '],
+    Z: ['███████╗', '╚══███╔╝', '  ███╔╝ ', ' ███╔╝  ', '███████╗', '╚══════╝'],
 };
 
-const BLANK = ' '.repeat(WIDTH);
+const BLANK = ['    ', '    ', '    ', '    ', '    ', '    '];
 
-/** One word as five rows of equal length — so two words line up when joined. */
+/** One word as six rows of equal length — so two words line up when joined. */
 function big(word: string): string[] {
     const rows = new Array<string>(HEIGHT).fill('');
     for (const ch of word.toUpperCase()) {
-        const glyph = FONT[ch];
+        const glyph = FONT[ch] ?? BLANK;
         for (let r = 0; r < HEIGHT; r++) {
-            rows[r] += `${glyph?.[r] ?? BLANK} `;
+            rows[r] += glyph[r];
         }
     }
     return rows;
@@ -69,11 +74,36 @@ function big(word: string): string[] {
 /** A wordmark rather than a sentence, so the letters are set apart. */
 const spaced = (s: string): string => [...s.toUpperCase()].join(' ');
 
-/** The name, in the brightest thing the terminal has. */
-const bright = (s: string): string => styleText(['bold', 'whiteBright'], s);
+/** Whether anything should be coloured at all — `styleText`'s own answer. */
+const styling = (): boolean => styleText('dim', '.') !== '.';
 
-/** The half that carries the colour. */
-const neon = (s: string): string => styleText(['bold', 'magentaBright'], s);
+const RESET = '\u001b[0m';
+
+/** A stroke and the bevel that shades it, one step darker in the same hue. */
+interface Tone {
+    face: string;
+    shade: string;
+}
+
+const HEAD: Tone = { face: '\u001b[1;38;5;231m', shade: '\u001b[0;38;5;244m' };
+const ACCENT: Tone = { face: '\u001b[1;38;5;208m', shade: '\u001b[0;38;5;130m' };
+
+/** Runs of stroke and runs of bevel, alternating; spaces stay unstyled. */
+const RUNS = /[█▀▄]+|[^█▀▄ ]+/g;
+const isStroke = (run: string): boolean => /[█▀▄]/.test(run);
+
+/**
+ * Two tones per word — without the darker bevel the letter is a flat outline
+ * and the shadow reads as part of the stroke.
+ */
+const paint = (text: string, tone: Tone): string =>
+    styling()
+        ? text.replace(RUNS, (run) => `${isStroke(run) ? tone.face : tone.shade}${run}${RESET}`)
+        : text;
+
+/** The wordmark has no bevel to shade, so it is all face. */
+const flat = (text: string, tone: Tone): string =>
+    styling() ? `${tone.face}${text}${RESET}` : text;
 
 export interface BannerText {
     /** drawn white */
@@ -95,19 +125,27 @@ export function bannerLines(text: BannerText, columns = process.stderr.columns |
     // Trimmed: the widest accent row is the banner's right edge, and a pad left
     // inside a styled string cannot be trimmed away later.
     const accent = big(text.accent).map((row) => row.trimEnd());
-    const width = 2 + head[0].length + Math.max(...accent.map((row) => row.length));
-    const foot = `  ${dim(spaced(text.subtitle))}`;
+    const margin = ' '.repeat(INDENT);
+    const width = INDENT + head[0].length + GAP + Math.max(...accent.map((row) => row.length));
 
     if (width > columns) {
-        return [` ${bright(text.head.toUpperCase())} ${neon(text.accent.toUpperCase())}`, foot];
+        return [
+            `${margin}${flat(text.head.toUpperCase(), HEAD)} ${flat(text.accent.toUpperCase(), ACCENT)}`,
+            `${margin}${dim(spaced(text.subtitle))}`,
+        ];
     }
 
     const lines: string[] = [];
     for (let r = 0; r < HEIGHT; r++) {
-        lines.push(` ${bright(head[r])} ${neon(accent[r])}`);
+        lines.push(`${margin}${paint(head[r], HEAD)}${' '.repeat(GAP)}${paint(accent[r], ACCENT)}`);
     }
+    // Rules on both sides, centred under the art: the subtitle is a caption,
+    // and without them a short line of spaced capitals floats.
+    const caption = `───  ${spaced(text.subtitle)}  ───`;
     lines.push('');
-    lines.push(foot);
+    lines.push(
+        `${' '.repeat(Math.max(INDENT, Math.round((width - caption.length) / 2)))}${dim(caption)}`,
+    );
     return lines;
 }
 
