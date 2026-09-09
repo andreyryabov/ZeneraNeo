@@ -12,43 +12,41 @@
 
 # @zenera/cli
 
-**`zen` — build a specialist team of AI agents for the work you keep doing, then
-call it from the command line like any other tool.**
+**`zen` — build specialist agents. Share them. Run them from the command line.**
 
-Not one general assistant that is passable at everything. You describe a
-particular job — which specialists it needs, what each may reach for, what
-_done_ means — and get back a system built for that job and nothing else. It
-lives in a folder you own, so it can be committed, reviewed, improved, and
-handed to a colleague who runs it with one command.
-
-Once built, running it _is_ a command:
+Not one general assistant that is passable at everything — a team built for the
+work you actually keep doing, under a name you can type:
 
 ```sh
-zen run deep-research "what changed in EU battery regulation this year"
-zen run data-analyst  "why did signups drop in week 32"          # in a folder of CSVs
-zen run coder         "add pagination to the orders endpoint"    # in a repository
-zen run release-notes "everything since v2.3.0"
-zen run deployer      "promote v2.4.1 to staging, migrations included"
-zen run deck          "turn these notes into a ten-slide talk"
+zen run accountant "Q3 — match the receipts drawer to the ledger, then update the return"
+zen run accountant "this MSA against our playbook — redlines, and what I must not sign"
+zen run analyst    "why churn doubled in the EU accounts — the exports are in this folder"
+zen run analyst    "what changed in EU battery regulation this year, with sources"
+zen run devops     "this week's advisories — which of them actually reach our code"
+zen run devops     "the 03:12 outage — timeline, contributing factors, owners"
 ```
 
-Each name is a project that you, or someone who sent you the folder, built once.
-The directory you are standing in is the workspace, so these read and write real
-files, run real commands in a container, and search the web when they have to —
-and every run is recorded in full.
+Three agents there, six things asked of them: an agent you have built is not a
+script with one job, it is a specialist you keep going back to. And it is work
+that comes back — every quarter, every sprint, every deal — which is exactly the
+work nobody has shipped you a product for.
 
-Getting there is always the same three beats:
+Once the agent exists it is a command: it works on the files you are standing
+in, runs real commands in a container, searches the web when it has to, and
+records every token it spent doing it.
+
+Getting there is three beats:
 
 1. **Describe it.** You write `SPECIFICATION.md` — what the system is for,
-   which specialists it needs, what _done_ means. A coding agent turns that into
-   the agents, prompts and tools that implement it.
+   which specialists it needs, what each may reach for, what _done_ means. The
+   rest of the folder is built to implement it.
 2. **Test it.** `zen check` validates the project and every file it names,
    `zen run` exercises it for real, `zen inspect` opens the record of what it
-   actually did. When it comes out wrong you fix the specification rather than
-   the prompts, and go round again.
-3. **Use it.** The project is registered the moment it is created, so from then
-   on its name is a command — callable from any directory, against whatever
-   files you are standing in.
+   actually did. When it comes out wrong you fix the specification, not the
+   prompts, and go round again.
+3. **Share it.** It is a folder — commit it, review it in a pull request, send
+   it. One `zen init <dir>` on a project that arrived by clone registers it
+   without touching a thing, and it is their command now too.
 
 > Part of [ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo). This is an
 > open-source side project for experimentation and chore work — **not** the
@@ -59,14 +57,11 @@ Getting there is always the same three beats:
 Half a page of specification turns into a system like one of these. Nothing here
 ships with the CLI — each is a folder somebody wrote, and could send you.
 
-| Project           | The team inside it                                                                                                                                          |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **deep-research** | A planner that splits the question into branches, researchers that run in parallel with web search, an editor that joins them into one report with sources. |
-| **data-analyst**  | A profiler that reads whatever files are in the directory, an analyst that writes and runs Python in the sandbox, a reporter that explains the result.      |
-| **coder**         | A reader scoped to the repository, an implementer with a sandboxed shell, a reviewer that has to watch the tests pass before it agrees.                     |
-| **release-notes** | A reader that walks the diff since the last tag, a writer that groups it by what changed for a user, an editor that cuts it to a page.                      |
-| **deployer**      | A DevOps engineer that reads the manifests, plans the migration, applies it step by step, and stops the moment a check fails.                               |
-| **deck**          | An intake agent that reads a folder of raw notes and documents, an outliner that argues for a structure, a writer that emits the slides as Markdown.        |
+| Project        | The team inside it                                                                                                                                                                                                                                                                                                              |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **accountant** | A bookkeeper that reads and classifies every receipt, statement, invoice and agreement in the folder; a reconciler that holds each against a ledger line or a playbook position and lists what has no pair; a preparer that fills the return or drafts the redlines; a checker that refuses anything no document substantiates. |
+| **analyst**    | A planner that splits the question into branches; researchers that run in parallel over your files and the web; a statistician that writes and runs Python in the sandbox; an editor that joins it into one answer where every claim carries its source.                                                                        |
+| **devops**     | A gatherer that pulls advisories, logs, alerts and deploys into one picture; a tracer that works out whether a vulnerable path is reachable at all, or which change actually broke it; an engineer that plans the fix, applies it a step at a time, and stops the moment a check fails.                                         |
 
 Build one, commit it, and it runs the same on anyone else's machine — on
 whichever models they prefer, and without carrying your keys.
@@ -119,25 +114,29 @@ Four commands, from nothing to an answer:
 npm i -g @zenera/cli         # every vendor SDK comes with it
 zen key add openai           # asks for the key without showing it; stored in ~/.zenera
 zen init my-project          # scaffolds a project and registers it
-cd my-project && zen run "introduce yourself"
+zen run my-project "introduce yourself"
 ```
 
-Then, day to day:
-
-```sh
-zen run                         # no prompt given: opens a full-screen terminal app (a TUI)
-zen check                       # validate the project and every file it names
-zen inspect                     # open the last run's report.html
-zen list --sessions             # every project, its sessions and last run
-echo "triage this" | zen run --quiet | jq
-```
-
-You can also ask a question from any directory and get the answer back:
+The name works from anywhere after that, and the directory you are standing in
+is what it works on:
 
 ```sh
 cd ~/code/some-repo
 zen run my-project "summarise this repo and write NOTES.md"
 ```
+
+Then, day to day:
+
+```sh
+zen run my-project              # no prompt given: opens a full-screen terminal app (a TUI)
+zen check my-project            # validate the project and every file it names
+zen inspect                     # open the last run's report.html
+zen list --sessions             # every project, its sessions and last run
+echo "triage this" | zen run my-project --quiet | jq
+```
+
+Standing inside the project, the name is optional: a bare `zen run`, `zen check`
+or `zen inspect` means the one you are in.
 
 Giving a prompt on the command line skips every question: it starts a fresh
 session and uses the current directory as the workspace, with write access.

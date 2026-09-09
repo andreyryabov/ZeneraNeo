@@ -13,26 +13,42 @@
 
 # ZeneraNeo
 
-**Agent systems you keep.** Write what the system should do; the coding agent
-you already have open builds it; `zen` holds it to what you wrote, runs it, and
-records every token. What you are left with is a folder you commit and a command
-you call.
+**Build specialist agents. Share them. Run them from the command line.**
 
-Your coding agent writes software. Point it at `zen` and it writes agents. An
-**agentic project is a folder** - prompts, agent wiring, skills and tool
-selections as Markdown and YAML, not code buried inside an application - so an
-agent can maintain it, provided somebody says what it is supposed to do.
+Not one assistant that is vaguely good at everything - a team built for the work
+you actually keep doing, under a name you can type:
 
-That is `SPECIFICATION.md`, the first file `zen init` writes, and it is the
-source rather than a note about the source: where it and the files disagree, it
-wins. `/sync-with-spec` reconciles the two in both directions, and `zen check`
-fails the project when they drift - naming the file, the code and the fix.
-**You write the specification; a coding agent writes the implementation; `zen`
-runs it and records what happened; you edit the specification again.**
+```sh
+zen run accountant "Q3 - match the receipts drawer to the ledger, then update the return"
+zen run accountant "this MSA against our playbook - redlines, and what I must not sign"
+zen run analyst    "why churn doubled in the EU accounts - the exports are in this folder"
+zen run analyst    "what changed in EU battery regulation this year, with sources"
+zen run devops     "this week's advisories - which of them actually reach our code"
+zen run devops     "the 03:12 outage - timeline, contributing factors, owners"
+```
 
-Commit the folder, review it in a pull request, hand it to a colleague. It runs
-the same everywhere, on whichever models they prefer, and it never carries your
-keys with it.
+Three agents there, six things asked of them: an agent you have built is not a
+script with one job, it is a specialist you keep going back to. And it is work
+that comes back - every quarter, every sprint, every deal - which is exactly the
+work nobody has shipped you a product for.
+
+Once the agent exists it is a command: it works on the files you are standing
+in, runs real commands in a container, searches the web when it has to, and
+records every token it spent doing it.
+
+You build one by **writing down what it should do**. `SPECIFICATION.md` is the
+first file `zen init` writes: what the system is for, which specialists it
+needs, what each of them may reach for, and what _done_ means. Everything else
+in the folder implements that, and `zen check` fails the project when the two
+drift apart - so the document stays true instead of becoming a story about the
+code.
+
+And because the whole thing is a folder - Markdown and YAML, no application to
+build, no glue code to maintain - you can **commit it, review it in a pull
+request, and hand it to somebody else**. One `zen init <dir>` on a project that
+arrived by clone registers it without touching a thing, and it is their command
+now too. It runs the same everywhere, on whichever models they prefer, and it
+never carries your keys with it.
 
 ---
 
@@ -44,12 +60,14 @@ Four commands, from nothing to an answer:
 npm i -g @zenera/cli         # every vendor SDK comes with it
 zen key add openai           # asks for the key without showing it; stored in ~/.zenera
 zen init my-project          # a specification, and the project that implements it
-cd my-project && zen run "introduce yourself"
+zen run my-project "introduce yourself"
 ```
 
-`zen run` with a prompt answers once and exits, printing the answer to standard
-output so it can be piped into anything else. `zen run` with nothing to say
-opens a full-screen terminal interface - a TUI - instead.
+The name works from anywhere after that - `zen run my-project "..."` in any
+directory, and that directory is what it works on. `zen run` with a prompt
+answers once and exits, printing to standard output so it can be piped into
+anything else; with nothing to say it opens a full-screen terminal interface - a
+TUI - instead.
 
 Then `zen open my-project` to open it in your editor, edit `SPECIFICATION.md`
 to say what you actually want built, and send `/sync-with-spec` in the editor's
@@ -558,23 +576,11 @@ Half a page of specification turns into a system, and the system becomes a name
 on your command line. None of these ship with the CLI - each is a folder
 somebody wrote once, and could send you.
 
-```sh
-zen run deep-research "what changed in EU battery regulation this year"
-zen run data-analyst  "why did signups drop in week 32"          # in a folder of CSVs
-zen run coder         "add pagination to the orders endpoint"    # in a repository
-zen run release-notes "everything since v2.3.0"
-zen run deployer      "promote v2.4.1 to staging, migrations included"
-zen run deck          "turn these notes into a ten-slide talk"
-```
-
-| Project           | The team inside it                                                                                                                                          |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **deep-research** | A planner that splits the question into branches, researchers that run in parallel with web search, an editor that joins them into one report with sources. |
-| **data-analyst**  | A profiler that reads whatever files are in the directory, an analyst that writes and runs Python in the sandbox, a reporter that explains the result.      |
-| **coder**         | A reader scoped to the repository, an implementer with a sandboxed shell, a reviewer that has to watch the tests pass before it agrees.                     |
-| **release-notes** | A reader that walks the diff since the last tag, a writer that groups it by what changed for a user, an editor that cuts it to a page.                      |
-| **deployer**      | A DevOps engineer that reads the manifests, plans the migration, applies it step by step, and stops the moment a check fails.                               |
-| **deck**          | An intake agent that reads a folder of raw notes and documents, an outliner that argues for a structure, a writer that emits the slides as Markdown.        |
+| Project        | The team inside it                                                                                                                                                                                                                                                                                                              |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **accountant** | A bookkeeper that reads and classifies every receipt, statement, invoice and agreement in the folder; a reconciler that holds each against a ledger line or a playbook position and lists what has no pair; a preparer that fills the return or drafts the redlines; a checker that refuses anything no document substantiates. |
+| **analyst**    | A planner that splits the question into branches; researchers that run in parallel over your files and the web; a statistician that writes and runs Python in the sandbox; an editor that joins it into one answer where every claim carries its source.                                                                        |
+| **devops**     | A gatherer that pulls advisories, logs, alerts and deploys into one picture; a tracer that works out whether a vulnerable path is reachable at all, or which change actually broke it; an engineer that plans the fix, applies it a step at a time, and stops the moment a check fails.                                         |
 
 The common thread is the recurring, specific work that is too particular for a
 product and too tedious to keep doing by hand - triage, review, intake,
