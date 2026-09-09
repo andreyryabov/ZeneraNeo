@@ -5,13 +5,15 @@ construct in TypeScript — agents, prompts, models, skills — serialised to fi
 that a non-programmer can edit. The loader introduces no runtime concept of its
 own: everything it does is assembly.
 
-See [agents-yaml.md](agents-yaml.md) for the configuration reference, and
+See [agents-yaml.md](agents-yaml.md) for the configuration reference,
+[specification.md](specification.md) for the loop that maintains all of it, and
 `examples/project.ts` for a runnable version of everything below.
 
 ## Layout
 
 ```
 my-project/
+    SPECIFICATION.md                 what this project is for — the intent
     INSTRUCTIONS.md                  house rules, prepended to every agent
     agents.yaml                      who exists, what they may reach for
     agents/
@@ -25,9 +27,12 @@ my-project/
                 SKILL.md
                 scripts/calculate.py
     assets/                          reference material, read-only at /assets
+    scripts/_setup.sh                the one command that initialises it
 ```
 
 Only `agents.yaml` is required, and only `agents:` is required inside it.
+`SPECIFICATION.md` and `scripts/_setup.sh` are conventions the tooling knows
+about rather than files the loader reads.
 
 The config file is found by looking for these names, in order:
 

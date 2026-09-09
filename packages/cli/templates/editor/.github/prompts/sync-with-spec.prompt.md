@@ -98,16 +98,19 @@ not a paragraph of instructions for a human.
 - `scripts/_setup.sh` is the **only** entry point — the leading underscore is
   what separates the runner from the steps it runs. It runs the steps in the
   order they depend on each other and is the single command that initialises the
-  project. Consolidate any setup script that lives elsewhere into this shape,
-  including one left at the project root.
+  project. `zen init` writes it; adding a step is adding `scripts/<name>.sh` and
+  its name to the `STEPS` list at the top of it. Consolidate any setup script
+  that lives elsewhere into this shape, including one left at the project root.
 - Every script starts `set -eu`, works from any working directory
   (`cd "$(dirname "$0")/.."` first), needs no arguments, and exits non-zero on
   failure so `scripts/_setup.sh` stops rather than continuing on a broken step.
 - **Re-entrancy is required.** Running `scripts/_setup.sh` a second time must be
   safe. A step whose output is present and newer than its inputs prints that it
-  is up to date and returns 0; otherwise it redoes the work idempotently, writing
+  is up to date and exits **3**, which is how the runner tells `skipped` from
+  `ok`; otherwise it redoes the work idempotently, writing
   to a temporary path and moving it into place so an interrupted run never leaves
-  a half-built artefact behind. `scripts/_setup.sh --force` redoes everything.
+  a half-built artefact behind. `scripts/_setup.sh --force` redoes everything,
+  and reaches each step as `$FORCE=1`.
 - **It must be watchable.** `scripts/_setup.sh` tees each step's output to
   `.tmp/logs/setup-<step>.log`, prints a heartbeat line while a long step runs,
   and finishes with one line per step: `ok`, `skipped`, or `failed`.

@@ -134,16 +134,26 @@ Credentials live in `$HOME`, so the project never contains a secret.
 
 ```
 my-project/
+    SPECIFICATION.md             what this is for — the intent
     INSTRUCTIONS.md              house rules, prepended to every agent
     agents.yaml                  who exists, what they may reach for
     agents/
         prompts/<name>.md        each agent's own brief
         skills/<name>/           knowledge loaded on demand, not always-on
+    assets/                      reference material, read-only at /assets
+    sandbox/Dockerfile           the container commands run in
+    scripts/_setup.sh            the one command that initialises the project
     sessions/                    one workspace, memory and trajectory each
         <id>/
             workspace/           what the agents can read and write
             runs/<id>/           input, output, state, report.html, meta
 ```
+
+`SPECIFICATION.md` comes first because the rest implements it. The one `zen init`
+writes is a true specification of the project it just scaffolded; replace it with
+what you are building, then run `/sync-with-spec` in your editor to make the
+files match. See
+[docs/specification.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/specification.md).
 
 `zen init` also writes `.github/copilot-instructions.md` — a standing brief that
 explains this runtime to whatever coding agent you have open in that folder, so
@@ -460,10 +470,19 @@ terminal:
 
 ## Documentation
 
+[docs/specification.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/specification.md)
+— writing the specification the project implements ·
 [docs/projects.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/projects.md)
 — the folder a project is ·
 [docs/agents-yaml.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/agents-yaml.md)
 — every key in the configuration file.
+
+[docs/knowledge.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/knowledge.md)
+— a searchable document index ·
+[docs/integrations.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/integrations.md)
+— an API description, searchable and mockable ·
+[docs/memory.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/memory.md)
+— what agents keep between sessions.
 
 ## License
 

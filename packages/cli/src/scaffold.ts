@@ -1,4 +1,11 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+    chmodSync,
+    existsSync,
+    mkdirSync,
+    readdirSync,
+    readFileSync,
+    writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -23,6 +30,12 @@ import { fileURLToPath } from 'node:url';
 // What is there is deliberately close to empty: a template full of
 // commented-out options is a template nobody reads and everybody deletes. The
 // one agent works as written, and every other knob is in `docs/`.
+//
+// `SPECIFICATION.md` is the exception, and is written out in full. It states
+// what the project that was just scaffolded is for and what it may do, and it
+// is *true as written* — so the first thing anyone sees is a specification
+// standing next to the files that implement it, which is the shape every
+// change to the project is then made in.
 // ---------------------------------------------------------------------------
 
 const TEMPLATES = fileURLToPath(new URL('../templates', import.meta.url));
@@ -49,6 +62,11 @@ type Vars = Record<string, string>;
  * it — which is how an optional block leaves nothing behind. Anywhere else it
  * takes a word. A name nothing supplies throws, so a typo in a template is a
  * failing test rather than a `{{provider}}` sitting in somebody's agents.yaml.
+ *
+ * Only the value is trimmed at the end, never the start, so a fragment that has
+ * to be a paragraph of its own carries its own blank line as its first line.
+ * That way the template needs no blank line around the placeholder, and dropping
+ * the fragment leaves the surrounding paragraphs exactly as they were.
  */
 function render(text: string, vars: Vars): string {
     const value = (name: string): string => {
@@ -141,6 +159,10 @@ function copyTree(from: string, dir: string, rel: string, opts: CopyOptions): st
             ? render(readFileSync(source, 'utf8'), opts.vars ?? {})
             : readFileSync(source);
         writeFileSync(join(dir, child), body);
+        // The bytes are copied, not the file, so a script arrives unrunnable.
+        if (child.endsWith('.sh')) {
+            chmodSync(join(dir, child), 0o755);
+        }
         written.push(child);
     }
     return written;
@@ -214,7 +236,13 @@ export function scaffold(opts: ScaffoldOptions): Scaffolded {
         keep: true,
         vars: {
             model: modelSection(opts.model, opts.modelOptions),
+            modelRef: opts.model,
             exa: opts.web ? part('exa.yaml') : '',
+            // The same capability stated three times, because the grant, the
+            // specification of it and the instruction to use it are read by
+            // different readers — and a tool nothing says to use is not one.
+            web: opts.web ? part('exa.spec.md') : '',
+            webPrompt: opts.web ? part('exa.prompt.md') : '',
             version: ownVersion(),
         },
     });
