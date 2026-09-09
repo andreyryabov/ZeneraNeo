@@ -81,11 +81,7 @@ export const RELATION_HELP: Readonly<Record<Relation, string>> = {
  * supply context. Recall walks these first when spending its budget, and the
  * renderer prefers them when a node has more than one branch it could hang from.
  */
-export const SPINE_RELATIONS: ReadonlySet<string> = new Set([
-    'PRODUCED',
-    'CALLS',
-    'SUPERSEDES',
-]);
+export const SPINE_RELATIONS: ReadonlySet<string> = new Set(['PRODUCED', 'CALLS', 'SUPERSEDES']);
 
 /** An audience label every agent holds implicitly. */
 export const ALL_AGENTS = '*';

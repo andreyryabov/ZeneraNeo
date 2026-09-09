@@ -234,10 +234,17 @@ and two projects quoting the same handbook pay for it once between them.
 
 ### 5.1 `zen init [dir]`
 
-Scaffolds the project — an empty `INSTRUCTIONS.md`, an empty
-`SPECIFICATION.md`, a minimal `agents.yaml` naming one `default` agent, and
-empty `agents/prompts/` and `agents/skills/` — and adds the path to
-`projects.json`.
+Scaffolds the project — a `SPECIFICATION.md`, a nearly empty
+`INSTRUCTIONS.md`, a minimal `agents.yaml` naming one `default` agent, empty
+`agents/prompts/` and `agents/skills/`, and a `scripts/_setup.sh` with no steps
+in it yet — and adds the path to `projects.json`.
+
+`SPECIFICATION.md` is the one file written out in full, and it specifies the
+project that was just scaffolded: every line of it is implemented by something
+next to it, and everything implemented is in it. It is there to be replaced,
+but until it is it is true, which is what makes it a template worth reading
+rather than a heading list. `/sync-with-spec` then works from the first edit
+onwards, because there is already a specification to diverge from.
 
 That agent gets `workspace:*` and `sandbox:*`: an agent that can read and write
 files but cannot run the test it just changed is a demo, not a project, and the

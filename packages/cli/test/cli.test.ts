@@ -1,4 +1,5 @@
 import type { Embedder, EmbeddingRequest, Model, ProcResult, runProcess } from '@zenera/neo';
+import { execFileSync } from 'node:child_process';
 import {
     existsSync,
     mkdirSync,
@@ -6,6 +7,7 @@ import {
     readdirSync,
     readFileSync,
     rmSync,
+    statSync,
     writeFileSync,
 } from 'node:fs';
 import { platform, tmpdir } from 'node:os';
@@ -983,9 +985,11 @@ describe('the project check', () => {
 // ---------------------------------------------------------------------------
 // What `zen init` writes
 //
-// One case, because there is only one thing worth asserting about a scaffold:
-// that the project it produces is one `zen check` passes. Everything else —
-// which files, in what order — is the scaffold's business and changes with it.
+// What is worth asserting about a scaffold is that the project it produces is
+// one `zen check` passes, that the specification it writes describes that
+// project and not a different one, and that what is meant to be run can be.
+// Everything else — which files, in what order — is the scaffold's business
+// and changes with it.
 // ---------------------------------------------------------------------------
 
 describe('the scaffold', () => {
@@ -1027,6 +1031,51 @@ describe('the scaffold', () => {
         scaffold({ dir, model: 'gpt-4o' });
 
         expect(readFileSync(join(dir, 'sandbox', 'Dockerfile'), 'utf8')).toBe('FROM mine\n');
+    });
+
+    /**
+     * The specification describes the project it was written next to, so what
+     * it says about tools has to follow the tools that were actually granted.
+     */
+    it('specifies the web only when the web is granted', () => {
+        const dry = join(root, 'dry');
+        mkdirSync(dry, { recursive: true });
+        scaffold({ dir: dry, model: 'gpt-4o' });
+        const withoutWeb = readFileSync(join(dry, 'SPECIFICATION.md'), 'utf8');
+
+        const wet = join(root, 'wet');
+        mkdirSync(wet, { recursive: true });
+        scaffold({ dir: wet, model: 'gpt-4o', web: true });
+        const withWeb = readFileSync(join(wet, 'SPECIFICATION.md'), 'utf8');
+
+        // Nothing is left holding a placeholder open in either of them.
+        expect(withoutWeb).not.toContain('{{');
+        expect(withWeb).not.toContain('{{');
+
+        expect(withoutWeb).not.toMatch(/web/i);
+        expect(withWeb).toMatch(/web/i);
+        // A granted tool no prompt mentions is a tool nothing uses.
+        expect(readFileSync(join(wet, 'agents.yaml'), 'utf8')).toContain('exa:*');
+        expect(readFileSync(join(wet, 'agents', 'prompts', 'default.md'), 'utf8')).toMatch(/web/i);
+    });
+
+    /**
+     * The setup script is copied rather than generated, which is how it loses
+     * its executable bit; and a script nobody can run is one nobody runs.
+     */
+    it('writes a setup script that runs, twice, from anywhere', () => {
+        const dir = join(root, 'setup');
+        mkdirSync(dir, { recursive: true });
+        const written = scaffold({ dir, model: 'gpt-4o' });
+        const script = join(dir, 'scripts', '_setup.sh');
+
+        expect(written.files).toContain(join('scripts', '_setup.sh'));
+        expect(statSync(script).mode & 0o777).toBe(0o755);
+
+        // It cd's to the project itself, so where it is called from is not a
+        // thing anyone has to know. Twice, because it has to stay safe to redo.
+        const run = (): string => execFileSync(script, { cwd: tmpdir(), encoding: 'utf8' });
+        expect(run()).toBe(run());
     });
 });
 

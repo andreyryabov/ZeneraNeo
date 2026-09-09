@@ -292,8 +292,9 @@ export class MemoryIndex {
             };
             const mine = vector.get(item.id);
             const twin = mine
-                ? this.store.vectors?.topK(mine, 1, eligible).find((h) => h.score >= DUPLICATE_SCORE)
-                      ?.id
+                ? this.store.vectors
+                      ?.topK(mine, 1, eligible)
+                      .find((h) => h.score >= DUPLICATE_SCORE)?.id
                 : this.graph
                       .nodes(sees)
                       .find((n) => eligible(n.id) && flatten(n.text) === flatten(text))?.id;

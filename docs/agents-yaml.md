@@ -884,7 +884,6 @@ and do survive:
 | Inside        | On the host                                              |
 | ------------- | -------------------------------------------------------- |
 | `/workspace`  | the session's workspace                                  |
-| `/home/agent` | `<session>/.data/sandbox/home`, and `$HOME` points at it |
 | `/assets`     | the project's `assets:`, read-only, if it has one        |
 | `/skills`     | the project's skill catalog, read-only, if it has one    |
 
