@@ -12,43 +12,77 @@
 
 # @zenera/rag
 
-**A corpus, indexed and searched by meaning — an OpenAPI description as a
-graph, a pile of markdown as quotable passages — for agents that have to work
-with something they have not read.**
+**Advanced indexing and retrieval for documents and API schemas, purpose-built
+for agentic RAG.
+Full-text, semantic, hybrid and graph search combine with
+precise inspection and filtering so agents can verify every answer.**
 
 > Part of [ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo). It ships no
 > binary of its own: installing it adds a `rag` **subcommand** to
 > [`zen`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md),
-> which is also where the credentials already are.
+> so indexing, retrieval and agent tools fit one developer workflow.
 
-## Two subjects
+## Complete retrieval for agentic systems
 
-A subject is a kind of corpus with its own index format, its own verbs and its
-own flags — not a variation on one command, because what `list` means to an API
-description is not what it means to a folder of notes.
+`@zenera/rag` is a complete retrieval layer for agents that work with technical
+knowledge. Index content once, then discover relevant context, narrow the scope,
+inspect exact source material and return only the representation the next step
+needs. The same workflow is available through CLI commands and agent tools.
 
-| Subject          | The corpus                | The answer                                     |
-| ---------------- | ------------------------- | ---------------------------------------------- |
-| `zen rag schema` | openapi/swagger documents | the connected piece of the API that matched    |
-| `zen rag docs`   | markdown and plain text   | the passages that matched, quoted with numbers |
+### Document indexing and search
 
-Both are built the same way — [LanceDB](https://lancedb.com) for hybrid vector
+- **Semantic, full-text and hybrid search** across Markdown and plain-text
+  collections, with hybrid retrieval as the default.
+- **Structure-aware indexing** for headings, sections, paragraphs, lists, code
+  blocks and tables instead of treating every document as undifferentiated text.
+- **Precise scoping** by file, section and content kind, with iterative exclusion
+  of passages an agent has already considered.
+- **Verbatim evidence** with source files, exact line ranges and configurable
+  surrounding context, ready for citation or follow-up reading.
+- **Deterministic inspection** through file, section and table listing, literal
+  or regular-expression search, and direct reads by section or line range.
+- **Multi-document indexing** with portable source-aware indexes, incremental
+  rebuilds and interactive or non-interactive search workflows.
 
-- full-text retrieval, a manifest that records which embedder made the vectors,
-  and exact commands beside the ranking ones that need no credential at all.
+### API schema indexing and search
 
-## Schema — an API description as a graph
+- **OpenAPI and Swagger indexing** across one specification, many services or
+  multiple API revisions in a single searchable index.
+- **Semantic, full-text and hybrid discovery** across operations, schemas,
+  properties, parameters, request bodies and responses.
+- **Graph retrieval** that follows schema relationships and returns the connected
+  API context around a match instead of isolated search results.
+- **Typed query controls** for methods, input and output types, properties,
+  direction, read-only or mutating operations, source and graph depth.
+- **Relationship tracing** from a field or schema to every operation that accepts
+  or returns it, even when the operation and field share no searchable terms.
+- **Multiple output formats** including readable trees, Mermaid diagrams,
+  self-contained TypeScript declarations and standalone OpenAPI documents.
+- **Deterministic inspection** through exact method, type and property listing,
+  literal or regular-expression search, node lookup and source filtering.
 
-A large specification does not fit in a prompt, and the parts of it that answer
-a question are scattered: the field is on a schema, the schema is on a request
-body, the request body belongs to one operation out of three hundred. Vector
-search finds the field. Only a graph gets from there to the call.
+### Agent-ready workflows
 
-So this keeps both — a [graphology](https://graphology.github.io) graph for
-structure and a [LanceDB](https://lancedb.com) table for hybrid vector +
-full-text retrieval — and answers with the connected piece of the API that
-matched, rendered as a tree, a Mermaid diagram, TypeScript declarations or a
-standalone OpenAPI document.
+- **Discovery and verification in one workflow.** Search finds relevant context;
+  exact operations establish whether something exists and retrieve it directly.
+- **Progressive narrowing.** Agents can refine by source, structure, direction,
+  type, path and previous results without rebuilding an index.
+- **Stable machine interfaces.** Structured queries and JSON output support
+  repeatable automation, while typed toolsets expose the same capabilities to
+  ZeneraNeo agents.
+- **Bounded context.** Result limits, graph depth, line ranges and output formats
+  keep retrieved context focused and suitable for model input.
+
+## From relevant to verified
+
+Search is how an agent starts with an incomplete question. Verification is how
+it finishes with evidence. `grep`, `list`, `trace` and `show` inspect the index
+directly, so an agent can confirm a field, identify the operations that carry
+it, read the surrounding source and refine the next query from what it found.
+
+That workflow avoids treating a similarity score as proof: retrieve a relevant
+starting point, inspect the exact material, then return an answer with the
+context needed for the next decision.
 
 ## Install
 
@@ -59,7 +93,33 @@ npm i -g @zenera/cli @zenera/rag
 zen key add openai          # the keyring `zen` already uses
 ```
 
-## Use
+Use the CLI to create and query indexes, or expose an opened index as tools to a
+ZeneraNeo agent.
+
+## API schemas — `zen rag schema`
+
+**OpenAPI 3.1, OpenAPI 3.0 and Swagger 2.0**, as `.json`, `.yaml` or `.yml`,
+one document or a whole folder of them. External references and multiple
+specification versions are indexed as one connected API surface, so a query can
+follow relationships across services, revisions and shared definitions.
+
+A large specification does not fit in a prompt, and the parts of it that answer
+a question are scattered: the field is on a schema, the schema is on a request
+body, the body belongs to one operation out of three hundred. Search finds the
+field. Only a graph gets from there to the call — so this keeps both, and
+answers with the connected piece of the API that matched, rendered as a tree, a
+Mermaid diagram, TypeScript declarations that compile on their own, or a
+standalone OpenAPI document.
+
+```
+zen rag schema index <spec...>   Read the documents and write a searchable index.
+zen rag schema search            Ask it something. --interactive for a prompt.
+zen rag schema list <what>       Every method, type or property. No ranking.
+zen rag schema grep <pattern>    Every literal match across the whole index.
+zen rag schema trace <what>      Up from a field to the calls that carry it.
+zen rag schema show [id...]      Print named nodes, with no search in between.
+zen rag schema stats             What is in an index, and what built it.
+```
 
 Index once, then ask:
 
@@ -68,47 +128,29 @@ zen rag schema index --embedding openai:text-embedding-3-small ./specs/*.yaml
 zen rag schema search --output-property "user billing history"
 zen rag schema search --input-property "password reset token" --format ts
 zen rag schema search --interactive
-zen rag schema stats                  # what is in the index, and what built it
 zen rag schema show Type:Invoice      # a named node, with no search in between
 ```
 
-Search ranks, which means it returns the top of a list — useful when the
-question is vague, and no use at all when the question is whether something
-exists. For that there is exact matching, which needs no embedder, no
-credential and no network:
+### Exact API inspection
+
+Search finds a starting point; exact inspection answers whether something is in
+the API and shows every matching result:
 
 ```sh
 zen rag schema list methods --path "*/users*"   # every route under /users
 zen rag schema list types --name "*Password*"   # every schema so named
 zen rag schema grep password                    # every literal occurrence
 zen rag schema grep "pass(word|phrase)" --regex
-zen rag schema trace city                       # which calls can reach the field
 zen rag schema show --method GetCurrentUserInfo --format openapi --exact
 ```
 
-Patterns are globs by default and regular expressions under `--regex`, on
-`list` as well as `grep`, which is the only way to say "one of these prefixes":
+Nothing matching exits 0 — an empty answer is an answer, and here it is a
+trustworthy one: if `grep` finds nothing, the word is not in the description.
 
-```sh
-zen rag schema list methods --regex --path "^/(users|teams)/"
-zen rag schema grep status --path "/invoices/*" --kind property
-```
-
-`grep` takes the same `--name` and `--path` constraints `list` takes, so a
-common word can be narrowed to one corner of the API instead of being read out
-of every document at once.
-
-When an index holds more than one document, `--show-source` names the one each
-row came from — `[source: billing_api_v2]` — on `list`, `grep`, `search` and
-`show` alike, so the document does not have to be recovered from `--json`.
-
-`list` and `grep` report `found` as the true total even when `--limit` cuts the
-printed rows, so a shortened answer still tells you how much there is. Nothing
-matching exits 0 — an empty answer is an answer, and here it is a trustworthy
-one: if `grep` finds nothing, the word is not in the description.
+### Which call carries this field
 
 Finding a field is half the job; the other half is which call can reach it, and
-that is a walk up the `$ref`s rather than a match on anything. `trace` does it:
+that is a walk up the `$ref`s rather than a match on anything:
 
 ```sh
 zen rag schema trace city
@@ -119,18 +161,125 @@ Property:Address.city
     GET /users/{userId}  getUser  output  PublicUserProfile.address → Address.city
 ```
 
-No search can be relied on for that — `search` stitches its seeds into one
-connected piece, but only between the nodes that ranked and only within
-`--max-hops`, and `getUser` and `city` share no word for either of them to rank
-on. `--direction` keeps just the calls that accept it or return it,
-`--kind` narrows what a bare pattern may start from, `--routes` and `--limit`
-cut the printed rows without lying about `found`, and `--ids-only` pipes the
-operations onward. A node nothing carries says so, which is worth knowing: it
-means no request in this document will ever carry it.
+No search can be relied on for this — `getUser` and `city` share no word for
+either of them to rank on. A node nothing carries says so, which is worth
+knowing: it means no request in this document will ever carry it.
 
-Non-interactive search is a machine interface: every field is a flag, the whole
-query can arrive as one JSON object, the `--json` output keeps the same
-structure from run to run, no terminal is required, and an empty result exits 0.
+<details>
+<summary>Every flag</summary>
+
+`zen rag help schema` prints the same table.
+
+**index**
+
+```
+--embedding <ref>          Which embedder makes the vectors. Omit it to be shown the choices.
+-o, --out <dir>            Where the index goes. Default schema-db, or $ZEN_SCHEMA_DB.
+--batch <n>                Texts per embedding request. Default: the model's own cap.
+--dimensions <n>           Narrower vectors, if the model allows it.
+--no-sources               Do not keep a copy of each document in the index.
+--no-cache                 Embed everything again, ignoring vectors this machine already has.
+--cache-dir <dir>          Keep the vectors somewhere other than the shared cache.
+```
+
+**search** — terms, one flag each, all repeatable
+
+```
+<text>                     A bare phrase, the same as --all.
+--all <q>                  Against everything, unfiltered.
+--method <q>               Operations.
+--type <q>                 Schemas, on the side --direction names.
+--input-type <q>           Schemas a call accepts.
+--output-type <q>          Schemas a call returns.
+--property <q>             Fields and parameters, per --direction.
+--input-property <q>       Fields and parameters a call accepts.
+--output-property <q>      Fields a call returns.
+--query <json|->           A whole query object; - reads stdin.
+```
+
+**search** — filters and shape
+
+```
+-d, --dir <dir>            Which index. Found from here if unset; see $ZEN_SCHEMA_DB.
+--embedding <ref>          Must be the one the index was built with.
+--direction <d>            input | output | any. Default any.
+--method-type <t>          read_only | read_write | any. Default any.
+--exclude-id <id>          Drop a node. Repeatable, as are the three below.
+--exclude-method <name>    Drop an operation by name.
+--exclude-type <name>      Drop a schema by name.
+--exclude-property <name>  Drop a field by name.
+--source <name>            Only this document, as stats names it. Repeatable.
+--limit <n>                Seeds kept per term. Default 5.
+--max-hops <n>             How far apart two hits may be. Default 3.
+--max-nodes <n>            Nodes per result. Default 200.
+--format <f>               text | mermaid | mermaid-flowchart | ts | openapi.
+--show-source              Name the document each operation and schema came from.
+--no-docs                  Leave the descriptions out.
+--interactive              Prompt, search, refine. Needs a terminal.
+--quiet                    No narration.
+```
+
+**list** and **grep**
+
+```
+list methods               Operations. Filter with --path and --name.
+list types                 Schemas. Filter with --name.
+list properties            Fields and parameters. Filter with --name and --path.
+grep <pattern>             Substring over every node; --regex for a regex.
+--regex                    Read every pattern as a regex, list and grep alike.
+--case-sensitive           Match the capitals too.
+--kind <k>                 grep: method | type | property. Repeatable.
+--name <p>                 Only nodes whose name matches. Repeatable.
+--path <p>                 Only what sits on a matching route.
+--ids-only                 grep: bare ids, to pipe into show.
+--source <name>            Only this document, as stats names it.
+--show-source              Print which document each row came from.
+--limit <n>                Keep at most n; the count still reports them all.
+```
+
+A pattern with `*` or `?` is a glob over the whole name; otherwise it is a
+substring, so `--name password` finds `ResetPasswordPayload`. Under `--regex` it
+is a regular expression either way — the only way to say "one of these
+prefixes". A `--path` selects on the route an operation sits on, and on the
+route a parameter's operation sits on; a schema belongs to no one route, so it
+never selects one.
+
+```sh
+zen rag schema list methods --regex --path "^/(users|teams)/"
+zen rag schema grep status --path "/invoices/*" --kind property
+
+# Everything that mentions a token, rendered as TypeScript.
+zen rag schema grep token --ids-only | xargs zen rag schema show --format ts
+```
+
+**trace**
+
+```
+<pattern|id...>            What to trace up from. A name, a glob, or a node id.
+--kind <k>                 method | type | property. Schemas and fields by default.
+--direction <d>            Keep only the calls that accept it, or return it.
+--max-hops <n>             How far up to walk. Default 8.
+--limit <n>                Trace at most n matching nodes.
+--routes <n>               Operations printed per node; the count still has them all.
+--ids-only                 Bare operation ids, one per line, for piping into show.
+--regex                    Read the pattern as a regex. --case-sensitive too.
+--source <name>            Only nodes from this document.
+```
+
+**show**
+
+```
+<id...>                    Node ids, e.g. Type:User or Property:User.email.
+--method <name>            An operation by name. * to take more. Repeatable.
+--type <name>              A schema by name. * to take more. Repeatable.
+--source <name>            A whole document, as it was indexed.
+--show-source              Name the document each node came from.
+--exact                    Only what was named, without the neighbours.
+```
+
+Search is also a machine interface: every field is a flag, a whole query can
+arrive as one JSON object, and `--json` returns a stable structure for
+automation.
 
 ```sh
 zen rag schema search --query - --format ts <<'JSON'
@@ -143,19 +292,31 @@ zen rag schema search --query - --format ts <<'JSON'
 JSON
 ```
 
-## Docs — markdown as quotable passages
+</details>
 
-The other subject. Point it at files, directories or globs; `.md`, `.markdown`,
-`.txt` and `.text` are read, hidden directories and `node_modules` are not.
+## Documents — `zen rag docs`
+
+**Markdown and plain text** — `.md`, `.markdown`, `.txt` and `.text` — named as
+files, directories or globs; hidden directories and `node_modules` are skipped.
+
+The answer is the documents themselves: the passages that matched, quoted
+verbatim with their line numbers, and a marker wherever something between two of
+them was left out. Nothing is paraphrased, so the next question can be phrased
+in line numbers and the file can be edited from the answer.
+
+```
+zen rag docs index <path...>     Read the documents and write a searchable index.
+zen rag docs search [text]       Ask it something. --interactive for a prompt.
+zen rag docs list <what>         Every document, section or table. No ranking.
+zen rag docs grep <pattern>      Every matching line, with the section it sits in.
+zen rag docs show <file>         A document, a section of one, or a line range.
+zen rag docs stats               What is in an index, and what built it.
+```
 
 ```sh
 zen rag docs index --embedding openai:text-embedding-3-small ./docs
 zen rag docs search "how are rate limits counted"
 ```
-
-The answer is the documents themselves — the passages that matched, quoted
-verbatim with their line numbers, and a marker wherever something between two
-of them was left out:
 
 ```
 ## acme_4.2.0/api/routing.md — 9 of 148 lines
@@ -168,9 +329,11 @@ of them was left out:
  27 | | /api/users | 250 | 1m |
 ```
 
-Nobody finds the paragraph they want on the first ask, so **narrowing is the
-interface**, not an afterthought. The second call is the same question inside
-one part of the tree:
+### Narrowing is the interface
+
+Nobody finds the paragraph they want on the first ask. The second call is the
+same question asked inside one part of the tree, one heading, or one kind of
+content:
 
 ```sh
 zen rag docs search --file "acme_4.2.*/api/**" "rate limit for the users route"
@@ -179,21 +342,12 @@ zen rag docs search --mode text "X-RateLimit-Remaining"   # exact wording only
 zen rag docs search --interactive                          # narrow by typing
 ```
 
-`--file` is a glob when it has `*` or `?` and a substring otherwise, matched
-against the document's **name**, which is its path relative to the common root
-of everything indexed. That is what keeps
-two releases of the same file apart. `--section` takes a heading title, and
-covers whatever nests inside it. `--kind` takes `paragraph`, `list`, `table`,
-`table_row`, `code`, `frontmatter` or `html`, for when the answer is a table
-and not the prose around it. `-B/-A` widen each passage, `--max-lines` caps the
-whole answer, `--exclude-id` moves on from what was already seen.
+Two releases of the same file stay apart, because a document is known by its
+path relative to the common root of everything indexed. Tables survive the trip
+whole: a row that matches still arrives with its column names attached, so a
+number is never quoted without the thing it measures.
 
-Tables are indexed twice over: once as a descriptor carrying the caption and
-the column names, and once per row, with the header row travelling alongside so
-the columns are still named wherever a row lands. A row too wide to be one
-chunk is cut into column groups, with the key column repeated in each.
-
-And beside all that, the exact half — no embedder, no credential, no network:
+### Exact document inspection
 
 ```sh
 zen rag docs list files                      # every document, and what it holds
@@ -204,90 +358,149 @@ zen rag docs show api/routing.md --section "Rate limits"
 zen rag docs show api/routing.md --lines 40-80
 ```
 
-`grep` reports `found` as the true total even when `--limit` cuts the rows, so
-unlike a search it can answer whether a string appears at all.
+`grep` counts every match, not the top of a list, so unlike a search it can
+answer whether a string appears at all.
 
-## Which index
+<details>
+<summary>Every flag</summary>
 
-Every reading command takes `-d, --dir`. Without one, `$ZEN_SCHEMA_DB` or
-`$ZEN_DOCS_DB` is used if it is set; without that, the nearest index to the
-working directory is found and named on stderr as it is used.
+`zen rag help docs` prints the same table.
 
-Nearest means what it says: this directory, then a short way down into it, then
-up a level and again, stopping at your home directory. What is looked for is a
-`manifest.json` — an index is self-describing, so nothing here searches for a
-directory called `schema-db`, and an index called anything else is found just
-the same. `schema-db` is only the name a new one is given.
-
-Two indexes the same distance away is a question, not a tie to break, and it is
-refused: the wrong index does not fail, it answers confidently about a
-different API. Name one with `--dir`, or set the environment variable.
-
-The search is scoped by kind, so a `docs` index and a `schema` index can sit in
-the same tree without either shadowing the other.
-
-## Commands
+**index**
 
 ```
-zen rag schema index <spec...>   Read the documents and write a searchable index.
-zen rag schema search            Ask it something. --interactive for a prompt.
-zen rag schema list <what>       Every method, type or property. No ranking.
-zen rag schema grep <pattern>    Every literal match across the whole index.
-zen rag schema trace <what>      Up from a field to the calls that carry it.
-zen rag schema show [id...]      Print named nodes, with no search in between.
-zen rag schema stats             What is in an index, and what built it.
+<path...>                  Files, directories or globs. .md, .markdown, .txt, .text.
+--embedding <ref>          Which embedder makes the vectors. Omit it to be shown the choices.
+-o, --out <dir>            Where the index goes. Default docs-db, or $ZEN_DOCS_DB.
+--batch <n>                Texts per embedding request. Default: the model's own cap.
+--dimensions <n>           Narrower vectors, if the model allows it.
+--chunk-tokens <n>         Target chunk size. Default 384.
+--no-cache                 Parse and embed everything again, ignoring what is already kept.
+--cache-dir <dir>          Keep the work somewhere other than the shared cache.
 ```
 
-Search terms are one flag each — `--all`, `--method`, `--type`, `--input-type`,
-`--output-type`, `--property`, `--input-property`, `--output-property` — shaped
-by `--direction`, `--method-type`, `--limit`, `--max-hops`, `--max-nodes`,
-`--source` and the four `--exclude-*` filters, and rendered by `--format text | mermaid |
-mermaid-flowchart | ts | openapi`. `zen help rag` prints the full table.
+**search**
 
-`list` and `grep` share `--name`, `--path`, `--regex`, `--case-sensitive`,
-`--source`, `--show-source` and `--limit`; `grep` adds `--kind` and
-`--ids-only`. A pattern with `*` or `?` in it is a glob matched against the
-whole name; a plain word is a substring, so `--name password` finds
-`ResetPasswordPayload` rather than nothing; under `--regex` it is a regular
-expression either way. `--path` selects on the route an operation sits on, and
-on the route a parameter's operation sits on — a schema belongs to no one
-route, so `--path` never selects one. `show` takes ids, or `--method` and
-`--type` by name, or `--source` for a whole document, and `--exact` to print
-only what was named instead of its neighbourhood.
+```
+<text>                     What to look for. One question, not a list of terms.
+-d, --dir <dir>            Which index. Found from here if unset; see $ZEN_DOCS_DB.
+--embedding <ref>          Must be the one the index was built with.
+-f, --file <pattern>       Only these documents. Repeatable.
+--exclude-file <pattern>   Drop these documents. Repeatable.
+-s, --section <name>       Only under this heading, and what nests in it.
+--kind <k>                 paragraph | list | table | table_row | code | frontmatter | html.
+--mode <m>                 hybrid | vector | text. Default hybrid.
+--exclude-id <id>          Drop a passage already seen. Repeatable.
+--limit <n>                Passages kept. Default 8.
+-B, --before <n>           Extra lines quoted before each passage.
+-A, --after <n>            Extra lines quoted after each passage.
+--max-lines <n>            A ceiling on the whole answer. Default 400.
+--no-numbers               Quote the lines without their numbers.
+--hits                     One line per passage instead of the text.
+--interactive              Prompt, search, narrow, search again. Needs a terminal.
+--quiet                    No narration.
+```
+
+**list**, **grep** and **show**
+
+```
+list files                 Every document, with its size and what it holds.
+list sections              Every heading. --depth to stop at a level.
+list tables                Every table, with its columns and row count.
+grep <pattern>             Every matching line. --regex for a regex.
+show <file>                A document name, as list files prints it.
+--file <pattern>           Narrow to documents. Repeatable, as everywhere.
+--section <name>           Narrow to a heading and what nests in it.
+--lines <from-to>          show: just those lines, e.g. --lines 40-80.
+--regex                    Read every pattern as a regex.
+--case-sensitive           Match the capitals too.
+--no-numbers               show: without the line-number gutter.
+--limit <n>                Keep at most n; the count still reports them all.
+```
+
+A `--file` pattern is a glob when it has `*` or `?` and a substring otherwise,
+matched against the document's name relative to what was indexed — so
+`--file "acme_4.2*/api/**"` is one release and `--file routing` is a word.
+`--section` takes a heading title and covers whatever nests inside it. `--kind`
+is for when the answer is a table and not the prose around it.
+
+</details>
+
+## Which index gets read
+
+Indexes are discovered from the working directory, so commands and agents use
+the relevant project index without repeating its path. Use `-d, --dir` to choose
+one explicitly; `$ZEN_SCHEMA_DB` and `$ZEN_DOCS_DB` set a project-wide default.
+
+When more than one index could apply, the command asks for an explicit choice
+rather than searching the wrong project.
+
+<details>
+<summary>Index discovery</summary>
+
+Document and schema indexes are discovered independently, so both can sit in a
+project tree. A new index defaults to `docs-db` or `schema-db`, but any directory
+can be used with `--out`.
+
+</details>
+
+## Portable, source-faithful indexes
+
+An index is a self-contained project asset. It can be moved, committed or
+supplied to an agent environment without depending on the paths from which it
+was built. Schema indexes preserve the connected API surface across external
+references; document indexes preserve the source material used for retrieval.
+
+For documents, search results are always grounded in the original text, with
+source names and line ranges available for inspection and follow-up work.
+
+<details>
+<summary>Built for project workflows</summary>
+
+Indexes report their contents and build progress, prevent conflicting builds,
+and can be inspected with `stats`. Use `--no-sources` for schema indexes when
+you do not need to retain the source material alongside the index.
+
+</details>
+
+## Configure semantic retrieval
+
+Choose an embedding provider with `--embedding <ref>` when creating an index.
+Run `index` without the flag to see the providers available in your environment.
 
 ```sh
-# Everything that mentions a token, rendered as TypeScript.
-zen rag schema grep token --ids-only | xargs zen rag schema show --format ts
+zen rag docs index --embedding openai:text-embedding-3-small ./docs
+zen rag schema index --embedding openai:text-embedding-3-small ./specs
 ```
 
-And for documents:
+The selected provider stays associated with the index, ensuring search uses a
+compatible representation of its content.
 
-```
-zen rag docs index <path...>     Read the documents and write a searchable index.
-zen rag docs search [text]       Ask it something. --interactive for a prompt.
-zen rag docs list <what>         Every document, section or table. No ranking.
-zen rag docs grep <pattern>      Every matching line, with the section it sits in.
-zen rag docs show <file>         A document, a section of one, or a line range.
-zen rag docs stats               What is in an index, and what built it.
-```
+### Efficient rebuilds
 
-Search takes the question as a bare phrase, narrowed by `--file`,
-`--exclude-file`, `--section`, `--kind` and `--mode`, shaped by `--limit`,
-`-B/--before`, `-A/--after` and `--max-lines`, and moved along by
-`--exclude-id`. `list` and `grep` share `--file`, `--section`, `--regex`,
-`--case-sensitive` and `--limit`.
+Rebuild an index as content changes without repeating work for unchanged files
+or passages. Interrupted builds resume, and shared content is reused across
+indexes to keep large documentation and schema collections practical to update.
 
-## From an agent
+Use [`zen cache`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)
+to inspect and manage reusable indexing data when needed.
+
+## From code — an index is a toolset
+
+Open an index in process to expose the same retrieval capabilities as tools an
+agent can call:
 
 ```ts
 import { createEmbedder, loadProject } from '@zenera/neo';
-import { SchemaIndex, schemaTools } from '@zenera/rag';
+import { docs, SchemaIndex, schemaTools } from '@zenera/rag';
 
-const index = await SchemaIndex.open(
-    './schema-db',
-    createEmbedder('openai:text-embedding-3-small'),
-);
-const project = await loadProject('./my-project', { tools: schemaTools(index) });
+const embedder = createEmbedder('openai:text-embedding-3-small');
+const api = await SchemaIndex.open('./schema-db', embedder);
+const handbook = await docs.DocsIndex.open('./docs-db', embedder);
+
+const project = await loadProject('./my-project', {
+    tools: [...schemaTools(api), ...docs.docsTools(handbook)],
+});
 ```
 
 Six tools in the group `schema`, selectable as `schema:*`:
@@ -301,24 +514,13 @@ Six tools in the group `schema`, selectable as `schema:*`:
 | `grep_api`                 | every literal occurrence of a string — no search        |
 | `trace_api`                | the operations that carry a given field or schema       |
 
-Only the first of those ranks anything. The rest are exact, because a model
-told "no results" by a vector search has learned nothing: a ranking returns the
-top of a list, so an empty answer and an absent thing look identical.
-`find_types_with_property` is the one for the repair loop — when `tsc` says
-`'password' does not exist in type 'PublicUserProfile'`, the model does not
-need the word explained again, it needs the list of types that have one.
-`grep_api` is the same instinct widened to the whole description, and
-`trace_api` is the step after both: a field is of no use until the call that
-carries it is known.
+Only the first ranks. `find_types_with_property` is the one for the repair loop
+— when `tsc` says `'password' does not exist in type 'PublicUserProfile'`, the
+model does not need the word explained again, it needs the list of types that
+have one. `grep_api` is the same instinct widened to the whole description, and
+`trace_api` is the step after both.
 
-Documents come with four, in the group `docs`, selectable as `docs:*`:
-
-```ts
-import { docs } from '@zenera/rag';
-
-const index = await docs.DocsIndex.open('./docs-db', embedder);
-const project = await loadProject('./my-project', { tools: docs.docsTools(index) });
-```
+Four tools in the group `docs`, selectable as `docs:*`:
 
 | Tool          | For                                                          |
 | ------------- | ------------------------------------------------------------ |
@@ -327,124 +529,10 @@ const project = await loadProject('./my-project', { tools: docs.docsTools(index)
 | `grep_docs`   | every matching line, counted in full — no search             |
 | `read_docs`   | a section or a line range, verbatim and with nothing omitted |
 
-Same division, same reason. `search_docs` is the way in when the question is
-vague; `grep_docs` is how "it is not in here" can actually be concluded. Every
-answer carries line numbers and `read_docs` takes them, which is the loop the
-subject exists for: find the passage, read around it, then edit the file the
-passage came from.
-
-## What an index is
-
-```
-schema-db/
-├── README.md         what this index holds — a live progress report while it builds
-├── manifest.json     written last — its absence means "not indexed"
-├── graph.json        topology and light attributes, read whole
-├── schemas.json      the raw schemas, read the first time one is needed in full
-├── operations.json   likewise, for the OpenAPI subset
-├── sources/          the documents themselves, bundled, exactly as indexed
-└── lance/            one table: a row per node, one text column, one vector
-```
-
-The manifest records which embedder made the vectors, and a search with a
-different one is refused rather than answered with noise.
-
-A document index is the same idea with a different middle:
-
-```
-docs-db/
-├── README.md         what this index holds — a live progress report while it builds
-├── manifest.json     written last — its absence means "not indexed"
-├── outline.json      every heading and table, with the lines they cover
-├── sources/          the documents themselves, verbatim — where the quotes come from
-└── lance/            one table: a row per chunk, two texts, one vector
-```
-
-There the copies are not a record but the answer: a search returns line ranges
-and the lines are read back out of `sources/`, so what is quoted is the document
-rather than a reconstruction of it.
-
-Indexing a large document is minutes of silence, so the directory says what is
-happening to it. `README.md` appears first as a progress report — the documents,
-the embedder, the step, how many entities have been embedded of how many, and
-how long it has been going — rewritten at most every five seconds, and replaced
-on completion by a description of what the index turned out to hold. A build
-that dies leaves it saying so. While one runs, `.lock` names the process; a
-second build of the same directory is refused, unless the lock is stale.
-
-**An index is one portable thing.** Nothing in it names a path outside itself:
-a document is known by a short name taken from its filename, and the document
-itself is copied into `sources/` as it was indexed — bundled, so every external
-`$ref` is already resolved and the copy stands alone. The directory can be moved,
-committed or shipped whole and still says what it is made of. This matters
-because a project's `assets/` is mounted at `/assets` inside an agent's sandbox,
-so an index built here is read under a name this machine never sees. `--no-sources`
-leaves the copies out, for an index that will never travel.
-
-The copies are a record, not an input: rebuilding reads the files you name, not
-the ones in `sources/`. A **document** index has no `--no-sources`, because
-there the copies are what every quoted line is read from.
-
-**Vectors are paid for once.** Embedding is the whole cost of a build — the
-reading and the writing are milliseconds, the round trips are minutes, and they
-are the only part anyone is billed for. Almost none of it is new work: editing
-one paragraph re-embeds every other one unchanged, and a build killed at 90%
-starts again from nothing. So the vectors are kept in this machine's shared
-cache, `~/.zenera/neo/cache/vectors/`, keyed by a hash of the exact text that
-produced them together with the model that made them. Re-indexing an unchanged
-corpus embeds nothing; re-indexing after an edit pays for the chunks that
-changed.
-
-The store is the machine's rather than the index's, which is the point: the same
-corpus indexed into a second directory costs nothing the second time, and two
-projects that quote the same handbook pay for it once between them.
-
-The key is the text, never the chunk's position — inserting a sentence at the
-top of a document shifts every later chunk's ordinal without changing a word of
-it. Two documents that share a paragraph share its vector. Vectors another model
-made are not evicted, they are simply never asked for, because the model is part
-of the key. It is a cache, so every failure in it is a miss and nothing more.
-`--no-cache` ignores it; `--cache-dir <dir>` keeps the work somewhere else.
-
-Nothing is ever evicted by a build: what a corpus stops referring to is still
-work somebody paid for. Getting rid of it is [`zen cache`](../cli/README.md)'s
-job — `zen cache ls` to see what is there, `zen cache prune --older-than 30d` to
-drop what has gone unread.
-
-**Parsing is spread across cores, and also cached.** With the vectors cached,
-parsing is what is left: reading a document, cutting it into chunks, and
-recording its shape. It is CPU-bound and every document is independent of every
-other, so a **document** index does it on a pool of worker threads — one per
-core, less the one running the build. The pool is skipped for a handful of
-documents, where starting the threads costs more than it saves.
-
-The result is cached the same way the vectors are, under
-`~/.zenera/neo/cache/docs-parse/`. The key covers the file's bytes, the name
-stamped on its chunks, and every setting that decides where a chunk ends, so
-changing `--chunk-tokens` misses on all of it and editing one file misses on one
-file. Both caches are governed by the same `--no-cache` and the same
-`--cache-dir`, and both fall back to doing the work when anything about them
-looks wrong.
-
-## Notes
-
-- Documents are **bundled, not dereferenced**: `#/components/schemas/User` is
-  an edge and `User` is a node id. Swagger 2.0, OpenAPI 3.0 and 3.1 are
-  converted to 2020-12 on the way in, `discriminator` included — it is what
-  turns a `oneOf` into a TypeScript tagged union the compiler can narrow.
-- A **query parameter is a property**, like any field in a body. Nobody should
-  have to know in advance which one `page_size` is.
-- Every type carries a **direction** — `input`, `output` or `both` — worked out
-  by propagating from the operations through composition, so a type used on both
-  sides is honestly both rather than whichever side was read last.
-- Filters reaching the store are **closed enums only**. Exclusion lists are
-  applied in JavaScript afterwards, so nothing a model wrote ever reaches a SQL
-  predicate.
-- A document chunk knows **exactly which lines** of the original it stands for,
-  headings and table headers included. That is what makes an answer quotable,
-  and what lets the next question be phrased in line numbers.
-- Plain text is read as paragraphs and given **no invented headings**: a `.txt`
-  file has one section, which is the document.
+`search_docs` is the way in when the question is vague; `grep_docs` is how "it
+is not in here" can actually be concluded. Every answer carries line numbers and
+`read_docs` takes them, which is the loop the subject exists for: find the
+passage, read around it, then edit the file the passage came from.
 
 ## The rest of the family
 
