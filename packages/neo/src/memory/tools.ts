@@ -160,19 +160,37 @@ export function memoryTools<TCtx>(opts: MemoryToolsOptions): AnyTool<TCtx>[] {
                 additionalProperties: false,
             },
             execute: async (args, tc) => {
+                const opId = memoryOpId(tc.state.runId, tc.callId);
                 const loaded = await index.load(args.ids, binding.sees, tc.services.clock);
-                return loaded.map((l) => ({
-                    id: l.node.id,
-                    kind: l.node.kind,
-                    text: l.node.text,
-                    created: l.node.createdAt,
-                    revision: l.node.revision,
-                    metadata: l.node.metadata,
-                    file: l.node.file
-                        ? { path: l.node.file.path, bytes: l.node.file.bytes }
-                        : undefined,
-                    content: l.content,
-                }));
+                // Recorded because this is the only path that puts a whole body
+                // in the context: a recall block carries a clipped line.
+                const spec: MemoryOpSpec = {
+                    kind: 'op',
+                    op: 'load',
+                    opId,
+                    nodes: loaded.map((l) => ({
+                        id: l.node.id,
+                        kind: l.node.kind,
+                        revision: l.node.revision,
+                    })),
+                    edges: [],
+                    files: loaded.filter((l) => l.content !== undefined).length,
+                };
+                return withEffects(
+                    loaded.map((l) => ({
+                        id: l.node.id,
+                        kind: l.node.kind,
+                        text: l.node.text,
+                        created: l.node.createdAt,
+                        revision: l.node.revision,
+                        metadata: l.node.metadata,
+                        file: l.node.file
+                            ? { path: l.node.file.path, bytes: l.node.file.bytes }
+                            : undefined,
+                        content: l.content,
+                    })),
+                    { kind: 'memory_op', spec },
+                );
             },
         }),
     ];
@@ -349,6 +367,13 @@ export function memoryTools<TCtx>(opts: MemoryToolsOptions): AnyTool<TCtx>[] {
                     const node = index.graph.get(id);
                     return node ? [{ id, kind: node.kind, revision: node.revision }] : [];
                 });
+                // Taken before the delete: afterwards nothing can say what this
+                // node hung from, and a report would draw it floating.
+                const links = new Map(
+                    args.ids
+                        .flatMap((id) => index.graph.neighbors(id, binding.sees))
+                        .map((e) => [`${e.source}|${e.relation}|${e.target}`, e]),
+                );
                 try {
                     await index.forget(args.ids, binding.sees);
                 } catch (err) {
@@ -356,7 +381,14 @@ export function memoryTools<TCtx>(opts: MemoryToolsOptions): AnyTool<TCtx>[] {
                 }
                 return withEffects(`${MEMORY_FORGET_TOOL} ${before.length} nodes`, {
                     kind: 'memory_op',
-                    spec: { kind: 'op', op: 'forget', opId, nodes: before, edges: [], files: 0 },
+                    spec: {
+                        kind: 'op',
+                        op: 'forget',
+                        opId,
+                        nodes: before,
+                        edges: [...links.values()],
+                        files: 0,
+                    },
                 });
             },
         }),

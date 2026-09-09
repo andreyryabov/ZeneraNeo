@@ -71,7 +71,7 @@ export interface MemoryRecallNode extends NodeBase {
 
 export interface MemoryOpNode extends NodeBase {
     type: 'memory_op';
-    op: 'commit' | 'forget';
+    op: 'commit' | 'forget' | 'load';
     /** sha256(runId, callId) — deterministic, so a replay is deduplicated */
     opId: string;
     nodes: { id: string; kind: string; revision: number }[];

@@ -1,6 +1,10 @@
 import type { Architecture } from '../architecture.ts';
+import { buildMemorySlice, type ReportNode } from '../memory/report.ts';
+import type { MemoryStore } from '../memory/store.ts';
+import type { MemoryEdge } from '../memory/types.ts';
 import { collectPayloads, type Payload, type PayloadResolver } from '../payload.ts';
 import type { AgentState } from '../state.ts';
+import type { TrajectoryNode } from '../trajectory.ts';
 
 // ---------------------------------------------------------------------------
 // Run inspector — a single HTML file that explains a run
@@ -17,6 +21,10 @@ import type { AgentState } from '../state.ts';
 export const MAX_BLOB_BYTES = 512 * 1024;
 
 export const MERMAID_URL = 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+
+/** Deliberately meaner than the memory page's own cap: this file already holds
+ *  a whole run, and one remembered artifact should not decide whether it opens. */
+export const MAX_MEMORY_FILE_BYTES = 64 * 1024;
 
 export interface ReportOptions {
     title?: string;
@@ -35,6 +43,14 @@ export interface ReportOptions {
      * strictly smaller picture but never a wrong one.
      */
     architecture?: Architecture;
+    /**
+     * The memory to resolve recalled and committed nodes against. A trajectory
+     * records ids, kinds and edges but no bodies, so without this the memory
+     * view can draw the shape of what was read and not a word of it.
+     */
+    memory?: MemoryStore;
+    /** ceiling on an inlined remembered file; 0 to inline none */
+    maxMemoryFileBytes?: number;
 }
 
 /** Everything the page needs, and nothing that needs a store to interpret. */
@@ -58,6 +74,18 @@ export interface RunReport {
     media: string[];
     /** the declared wiring, when the caller had a runner to ask */
     architecture?: Architecture;
+    /**
+     * The memory nodes this run read or wrote, as the graph holds them *now* —
+     * which is later than the run. The page says so where it matters: a node
+     * can have moved on a revision since, or be gone from the graph entirely.
+     */
+    memory?: RunMemory;
+}
+
+export interface RunMemory {
+    dir: string;
+    nodes: ReportNode[];
+    edges: MemoryEdge[];
 }
 
 /** Base64 data uris only: the charset ends at the closing JSON quote. */
@@ -110,5 +138,51 @@ export async function buildRunReport(
         truncated,
         media,
         architecture: opts.architecture,
+        memory: opts.memory ? await remembered(opts.memory, state, media, opts) : undefined,
+    };
+}
+
+/** Every memory node the run touched, branches included. */
+function memoryIds(nodes: readonly TrajectoryNode[], into: Set<string>): Set<string> {
+    for (const node of nodes) {
+        if (node.type === 'memory_recall' || node.type === 'memory_op') {
+            for (const n of node.nodes) {
+                into.add(n.id);
+            }
+        } else if (node.type === 'join') {
+            for (const branch of node.branches) {
+                memoryIds(branch.nodes, into);
+            }
+        }
+    }
+    return into;
+}
+
+async function remembered(
+    store: MemoryStore,
+    state: AgentState,
+    media: string[],
+    opts: ReportOptions,
+): Promise<RunMemory | undefined> {
+    const ids = memoryIds(state.trajectory, new Set());
+    if (!ids.size) {
+        return undefined;
+    }
+    let slice;
+    try {
+        slice = await buildMemorySlice(store, [...ids], {
+            maxContentBytes: opts.maxMemoryFileBytes ?? MAX_MEMORY_FILE_BYTES,
+        });
+    } catch {
+        // A memory that cannot be read is a view the page does without; it is
+        // not a reason to lose the record of the run.
+        return undefined;
+    }
+    return {
+        dir: store.dir,
+        // Remembered images go through the same table as the run's own, so a
+        // picture the agent both saw and filed is carried once.
+        nodes: slice.nodes.map((n) => (n.image ? { ...n, image: hoistMedia(n.image, media) } : n)),
+        edges: slice.edges,
     };
 }

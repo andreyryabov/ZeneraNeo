@@ -291,14 +291,22 @@ describe('smoke', () => {
     it('remembers a subgraph and recalls it on a later run', async () => {
         const dir = mkdtempSync(join(tmpdir(), 'neo-smoke-mem-'));
         const memory = new MemoryIndex({ store: await MemoryStore.open(dir) });
+        let recalled = '';
+        let dropped = '';
         const model = new RuleModel(
+            (req) =>
+                hasToolResult(req, 'memory_forget') ? say('I remember you like trains') : undefined,
+            (req) =>
+                hasToolResult(req, 'memory_load')
+                    ? callTool('memory_forget', { ids: [dropped] })
+                    : undefined,
             (req) => (hasToolResult(req, 'memory_commit') ? say('noted') : undefined),
             // Messages only: the system prompt now names the tag when it
             // explains the format, so matching on the whole request would fire
             // before anything had been recalled.
             (req) =>
                 JSON.stringify(req.messages).includes('memory-recollection')
-                    ? say('I remember you like trains')
+                    ? callTool('memory_load', { ids: [recalled] })
                     : undefined,
             () =>
                 callTool('memory_commit', {
@@ -314,7 +322,7 @@ describe('smoke', () => {
             name: 'assistant',
             instructions: 'ASSIST',
             memory: {
-                access: 'read-write',
+                access: 'full',
                 autoRecall: { query: 'last_user_input', limit: 3 },
             },
         });
@@ -325,6 +333,8 @@ describe('smoke', () => {
             const op = findNode(first.state, 'memory_op');
             expect(op.op).toBe('commit');
             expect(op.nodes).toHaveLength(2);
+            recalled = op.nodes[0]!.id;
+            dropped = op.nodes[1]!.id;
 
             // The graph outlives the run, which is the whole point.
             expect(memory.graph.order).toBe(2);
@@ -335,6 +345,25 @@ describe('smoke', () => {
             // The link is pulled in even though only one node matched.
             expect(recall.nodes).toHaveLength(2);
             expect(second.output).toBe('I remember you like trains');
+
+            // A recall shows a clipped line; only a load puts the whole text in
+            // the context, and the report reads the difference off this node.
+            const load = findNode(second.state, 'memory_op');
+            expect(load.op).toBe('load');
+            expect(load.nodes).toEqual([
+                { id: recalled, kind: 'fact', revision: expect.any(Number) },
+            ]);
+
+            // Taken before the delete, or the report would draw the node it
+            // dropped with nothing around it.
+            const forget = second.state.trajectory.filter(
+                (n) => n.type === 'memory_op' && n.op === 'forget',
+            );
+            expect(forget).toHaveLength(1);
+            expect(forget[0]).toMatchObject({
+                nodes: [{ id: dropped }],
+                edges: [{ source: dropped, target: recalled, relation: 'INFORMED' }],
+            });
         } finally {
             memory.store.release();
             rmSync(dir, { recursive: true, force: true });

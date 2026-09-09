@@ -1,16 +1,19 @@
-import { spawn } from 'node:child_process';
-import { createReadStream, existsSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:http';
-import { extname, normalize, resolve, sep } from 'node:path';
 import {
     assertState,
     buildRunReport,
     FilePayloadStore,
+    memoryDir,
+    MemoryStore,
     PayloadResolver,
+    readProjectConfig,
     renderReportHtml,
     type AgentState,
 } from '@zenera/neo';
+import { spawn } from 'node:child_process';
+import { createReadStream, existsSync } from 'node:fs';
+import { readFile, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { extname, join, normalize, resolve, sep } from 'node:path';
 import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { project as resolveProject } from '../resolve.ts';
@@ -62,7 +65,7 @@ export const inspect: Command = {
         const run = pickRun(session, positionals[0]);
 
         if (values.rebuild || !existsSync(run.report)) {
-            await rebuild(session, run);
+            await rebuild(session, run, await memory(dir));
         }
 
         if (ctx.json) {
@@ -117,7 +120,7 @@ function pickRun(session: SessionPaths, asked?: string): RunPaths {
  * state — which is what makes `--rebuild` safe and what makes an old run
  * readable by a newer renderer.
  */
-async function rebuild(session: SessionPaths, run: RunPaths): Promise<void> {
+async function rebuild(session: SessionPaths, run: RunPaths, store?: MemoryStore): Promise<void> {
     if (!existsSync(run.state)) {
         throw invalidError(`run ${run.id} has no state to rebuild from`);
     }
@@ -128,8 +131,26 @@ async function rebuild(session: SessionPaths, run: RunPaths): Promise<void> {
         throw invalidError(`${run.state}: ${err instanceof Error ? err.message : String(err)}`);
     }
     const payloads = new PayloadResolver(new FilePayloadStore({ dir: session.blobs, id: 'file' }));
-    const report = await buildRunReport(state, payloads, { title: run.id });
+    const report = await buildRunReport(state, payloads, { title: run.id, memory: store });
     await writeFile(run.report, renderReportHtml(report), 'utf8');
+}
+
+/**
+ * The project's memory, unlocked, when it has one. Without it the memory view
+ * has the shape of what the run recalled but not a word of it; a run that
+ * never touched memory pays nothing, because the report asks for no node.
+ */
+async function memory(dir: string): Promise<MemoryStore | undefined> {
+    const { config } = readProjectConfig(dir);
+    const at = memoryDir(dir, config);
+    if (!at || !existsSync(join(at, 'manifest.json'))) {
+        return undefined;
+    }
+    try {
+        return await MemoryStore.open(at, { lock: false });
+    } catch {
+        return undefined;
+    }
 }
 
 // ---------------------------------------------------------------------------

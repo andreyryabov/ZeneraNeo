@@ -88,6 +88,55 @@ table.st tfoot td:first-child { color: var(--dim); text-transform: uppercase;
 .gtools button:hover { border-color: var(--accent); }
 .gtools .hint:first-of-type { margin-left: 8px; }
 .gtools .lvl { margin-left: auto; font-family: var(--mono); }
+.gtools label.check { display: flex; align-items: center; gap: 5px; margin-left: 8px;
+  color: var(--dim); font-size: 12px; cursor: pointer; user-select: none; }
+/* The memory view reads left to right: the graph is the index, the panel is
+   the page. Putting the body under a tab of its own would mean losing the
+   picture every time you asked what a node actually says. */
+#memory .split { display: flex; flex: 1; overflow: hidden; }
+#mdetail { width: 380px; flex: none; padding: 16px; overflow: auto;
+  border-right: none; border-left: 1px solid var(--line); }
+#mdetail .dt { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 10px; }
+#mdetail .idrow { display: flex; gap: 8px; align-items: center; margin: 0 0 14px; }
+#mdetail .idrow code { flex: 1; min-width: 0; font: 12px var(--mono); color: var(--fg);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  padding: 4px 8px; word-break: break-all; }
+#mdetail .idrow button { flex: 0 0 auto; background: var(--bg); border: 1px solid var(--line);
+  color: var(--dim); border-radius: 6px; padding: 4px 9px; font: 11px var(--mono);
+  cursor: pointer; }
+#mdetail .idrow button:hover { border-color: var(--accent); color: var(--fg); }
+#mdetail dl.props { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 14px;
+  margin: 0 0 14px; font: 12px var(--mono); }
+#mdetail dl.props dt { color: var(--dim); }
+#mdetail dl.props dd { margin: 0; word-break: break-word; }
+/* A block that shares the panel's own background has no edges to show. */
+#mdetail section.blk { background: var(--bg); }
+#mdetail ul.links { list-style: none; margin: 0; padding: 0; }
+#mdetail ul.links li { display: grid; grid-template-columns: 96px auto minmax(0, 1fr);
+  gap: 8px; align-items: baseline; padding: 6px 12px; }
+#mdetail ul.links li + li { border-top: 1px solid var(--line); }
+#mdetail ul.links .rel { font: 11px var(--mono); color: var(--warn); white-space: nowrap; }
+#mdetail button.link { font: 12px/1.4 system-ui, sans-serif; padding: 0; text-align: left;
+  overflow-wrap: anywhere; }
+#mdetail button.link:hover { text-decoration: underline; }
+#mcount .ok { color: var(--ok); }
+#mcount .bad { color: var(--err); }
+/* The kind palette is the memory page's, so a node reads the same in both. */
+.kind { font-size: 11px; letter-spacing: .04em; text-transform: uppercase;
+  padding: 1px 6px; border-radius: 4px; background: #232a38; color: var(--dim); }
+.kind.task { background: #1e3357; color: #9dc1ff; }
+.kind.plan { background: #3a2450; color: #d1a6ff; }
+.kind.fact { background: #14392c; color: #8ee0c2; }
+.kind.snippet { background: #1e3d33; color: #8ee0c2; }
+.kind.file { background: #40331a; color: #f0dfb4; }
+.kind.operation { background: #3d2a1b; color: #f2d9c2; }
+.kind.preference { background: #3d1f2c; color: #f5b8cd; }
+/* Selection is a class rather than attributes written onto the shapes: the
+   previous pick has to lose its outline without a redraw. White, because the
+   accent already means "the recall matched this one". */
+#memory .node.picked rect, #memory .node.picked polygon,
+#memory .node.picked path, #memory .node.picked circle {
+  stroke: var(--fg) !important; stroke-width: 4px !important; }
 /* The canvas is transformed, not scrolled: panning has to work past the edges
    of the diagram, which overflow:auto would forbid. */
 .viewport { flex: 1; overflow: hidden; position: relative; cursor: grab; touch-action: none;

@@ -804,11 +804,15 @@ const PANES = {};
 function show(view) {
   document.getElementById('graph').hidden = view !== 'graph';
   document.getElementById('agents').hidden = view !== 'agents';
+  document.getElementById('memory').hidden = view !== 'memory';
   detailEl.hidden = view !== 'detail';
   statsEl.hidden = view !== 'stats';
   Array.prototype.forEach.call(document.getElementById('viewtabs').children, function (b) {
     b.classList.toggle('on', b.dataset.view === view);
   });
+  // The memory graph is the one view that costs a render nobody asked for, so
+  // it waits until somebody asks.
+  if (view === 'memory' && !memDrawn) { memDrawn = true; drawMemory(); }
   if (PANES[view]) PANES[view].refit();
 }
 Array.prototype.forEach.call(document.getElementById('viewtabs').children, function (b) {
@@ -925,6 +929,7 @@ function panZoom(paneId) {
 
 PANES.graph = panZoom('graph');
 PANES.agents = panZoom('agents');
+PANES.memory = panZoom('memory');
 
 // --- diagram --------------------------------------------------------------
 
@@ -1166,7 +1171,7 @@ function observedArchitecture() {
       // A run shows that an agent reached the memory, never how wide its mask
       // was: nothing it did not read leaves a trace to read the mask off.
       if (!a.memory) a.memory = { access: 'read', sees: [], writes: [] };
-      if (n.type === 'memory_op') a.memory.access = 'read-write';
+      if (n.type === 'memory_op' && n.op !== 'load') a.memory.access = 'read-write';
     } else if (n.type === 'fork') {
       if (!a.fork) a.fork = { agents: [] };
       n.branches.forEach(function (b) {
@@ -1334,6 +1339,399 @@ async function drawArch() {
     if (!key) return;
     g.addEventListener('click', function () { if (!PANES.agents.moved()) select(key, true); });
   });
+}
+
+// --- memory ---------------------------------------------------------------
+//
+// Two questions in one picture: what the run took out of the memory, and what
+// it put back. The trajectory records ids, kinds and edges but no bodies, so
+// the text comes from the graph as the report was built — which is later than
+// the run, and the panel says so where it matters: a node can have moved on a
+// revision since, or be gone from the memory entirely.
+
+const MEM = new Map();
+const MEM_EDGES = [];
+const MEM_EDGE_SEEN = new Set();
+
+function memOf(m) {
+  let x = MEM.get(m.id);
+  if (!x) {
+    x = { id: m.id, kind: m.kind, read: false, added: false, gone: false, full: false,
+      seed: false, score: null, revision: null, where: [] };
+    MEM.set(m.id, x);
+  }
+  return x;
+}
+
+// The same edge comes back with every recall that crossed it; drawing it once
+// is the difference between a graph and a bundle of parallel arrows.
+function memEdge(e) {
+  const k = e.source + '|' + e.relation + '|' + e.target;
+  if (MEM_EDGE_SEEN.has(k)) return;
+  MEM_EDGE_SEEN.add(k);
+  MEM_EDGES.push(e);
+}
+
+ENTRIES.forEach(function (entry) {
+  const n = entry.node;
+  if (n.type !== 'memory_recall' && n.type !== 'memory_op') return;
+  n.nodes.forEach(function (m) {
+    const x = memOf(m);
+    if (x.where.indexOf(entry.key) < 0) x.where.push(entry.key);
+    if (n.type === 'memory_recall') {
+      x.read = true;
+      if (n.seeds.indexOf(m.id) >= 0) {
+        x.seed = true;
+        if (x.score === null || m.score > x.score) x.score = m.score;
+      }
+      return;
+    }
+    x.revision = m.revision;
+    if (n.op === 'commit') x.added = true;
+    else if (n.op === 'forget') x.gone = true;
+    else x.full = true;
+  });
+  (n.edges || []).forEach(memEdge);
+});
+
+const MEM_SNAP = new Map();
+((DATA.memory && DATA.memory.nodes) || []).forEach(function (n) { MEM_SNAP.set(n.id, n); });
+// The graph knows joins the run never travelled — the edge between a task it
+// read and the artifact it then wrote is exactly the one worth seeing.
+((DATA.memory && DATA.memory.edges) || []).forEach(memEdge);
+
+const MEM_ADJ = new Map();
+function memLink(id, other, rel, out) {
+  if (!MEM_ADJ.has(id)) MEM_ADJ.set(id, []);
+  MEM_ADJ.get(id).push({ other: other, rel: rel, out: out });
+}
+MEM_EDGES.forEach(function (e) {
+  memLink(e.source, e.target, e.relation, true);
+  memLink(e.target, e.source, e.relation, false);
+});
+
+// --- the memory diagram ---------------------------------------------------
+
+const MEM_MAX = 300;
+const MEM_SHAPES = { file: ['[/', '/]'], plan: ['{{', '}}'], operation: ['([', '])'] };
+const MEM_PAINTED = new Set(
+  ['task', 'plan', 'fact', 'snippet', 'file', 'operation', 'preference']);
+const MEM_KEY = new Map();
+const MEM_ID = new Map();
+
+function shortId(id) {
+  return id.length > 12 ? id.slice(0, 4) + '\\u2026' + id.slice(-4) : id;
+}
+
+function clipText(text, n) {
+  const flat = String(text === undefined || text === null ? '' : text).replace(/\\s+/g, ' ').trim();
+  return flat.length > n ? flat.slice(0, n - 1) + '...' : flat;
+}
+
+/**
+ * Text as at most 'max' lines of roughly 'width' characters. Mermaid will not
+ * break a label, so a node is otherwise as wide as its sentence and the graph
+ * is unreadable at any zoom that fits.
+ */
+function memWrap(text, width, max) {
+  const words = String(text === undefined || text === null ? '' : text)
+    .replace(/\\s+/g, ' ').trim().split(' ');
+  const out = [];
+  let cur = '';
+  let i = 0;
+  for (; i < words.length; i++) {
+    const w = words[i].length > width ? words[i].slice(0, width - 1) + '...' : words[i];
+    if (!w) continue;
+    if (!cur) cur = w;
+    else if (cur.length + 1 + w.length <= width) cur += ' ' + w;
+    else if (out.length + 1 < max) { out.push(cur); cur = w; }
+    else break;
+  }
+  if (cur) out.push(cur);
+  const last = out.length - 1;
+  if (i < words.length && last >= 0 && out[last].slice(-3) !== '...') out[last] += '...';
+  return out;
+}
+
+// Built from a closed-vocabulary kind, an id and a clip of text put through the
+// same sanitizer the run graph uses: nothing a model wrote reaches Mermaid.
+// Shaped like the memory page's labels — what it is on the first line, what it
+// says underneath — because run together there is no telling the three apart.
+function memLabel(x) {
+  const snap = MEM_SNAP.get(x.id);
+  const head = safe(x.kind || 'node') + ' \\u00b7 ' + shortId(safe(x.id));
+  // Drawing the stored text under a node the model never opened would read as
+  // context it had.
+  if (memSaw(x) === 'id') return [head, '(id only)'].join('<br/>');
+  return [head].concat(snap ? memWrap(snap.text, 28, 3).map(safe) : []).join('<br/>');
+}
+
+// How much of the node reached the model: a recall block carries one clipped
+// line each, memory_load returns whole bodies, and what the run wrote it wrote
+// in its own words. A node it only forgot was named by id and nothing more.
+function memSaw(x) {
+  if (x.full || x.added) return 'full';
+  if (x.read) return 'summary';
+  return 'id';
+}
+
+const MEM_SAW = {
+  full: 'the whole text',
+  summary: 'a clipped line, in the recall block',
+  id: 'the id only \\u2014 never the content'
+};
+
+// Fill says what the node IS, outline says what the run DID with it. Painting
+// the fill by role instead made the whole graph one colour: nearly every node
+// in a run was read.
+function memRole(x, withAdded) {
+  if (x.gone) return 'gone';
+  if (x.added && withAdded) return 'added';
+  return x.seed ? 'seed' : '';
+}
+
+/** A node the run only wrote is not part of "what it read", so it waits. */
+function memShown(withAdded) {
+  const out = [];
+  MEM.forEach(function (x) {
+    if (!withAdded && x.added && !x.read && !x.gone) return;
+    out.push(x);
+  });
+  return out;
+}
+
+function memDiagram(shown, withAdded) {
+  const lines = ['flowchart LR'];
+  lines.push('  classDef task fill:#1e3357,stroke:#3d5f9e,color:#cfe0ff;');
+  lines.push('  classDef plan fill:#3a2450,stroke:#6b4b90,color:#e6d3ff;');
+  lines.push('  classDef fact fill:#14392c,stroke:#2f7a5c,color:#c6f5e0;');
+  lines.push('  classDef snippet fill:#1e3d33,stroke:#3d7a66,color:#c8f0e2;');
+  lines.push('  classDef file fill:#40331a,stroke:#7a6535,color:#f0dfb4;');
+  lines.push('  classDef operation fill:#3d2a1b,stroke:#7a5535,color:#f2d9c2;');
+  lines.push('  classDef preference fill:#3d1f2c,stroke:#7a3b56,color:#f5b8cd;');
+  // Defined last so the outline wins over the kind's own stroke.
+  lines.push('  classDef seed stroke:#6ea8fe,stroke-width:3px;');
+  lines.push('  classDef added stroke:#4ec9a0,stroke-width:3px;');
+  lines.push('  classDef gone stroke:#f0776c,stroke-width:2px,stroke-dasharray:4 3,opacity:0.6;');
+  MEM_KEY.clear();
+  MEM_ID.clear();
+  shown.forEach(function (x, i) {
+    const key = 'm' + i;
+    MEM_KEY.set(x.id, key);
+    MEM_ID.set(key, x.id);
+    const shape = MEM_SHAPES[x.kind] || ['(', ')'];
+    lines.push('  ' + key + shape[0] + '"' + memLabel(x) + '"' + shape[1]);
+    // Kinds are configurable, so naming a class that was never defined would
+    // fail the whole render.
+    if (MEM_PAINTED.has(x.kind)) lines.push('  class ' + key + ' ' + x.kind + ';');
+    const role = memRole(x, withAdded);
+    if (role) lines.push('  class ' + key + ' ' + role + ';');
+  });
+  MEM_EDGES.forEach(function (e) {
+    const a = MEM_KEY.get(e.source), b = MEM_KEY.get(e.target);
+    if (a && b) lines.push('  ' + a + ' -->|' + safe(e.relation.toLowerCase()) + '| ' + b);
+  });
+  return lines.join('\\n');
+}
+
+// The two counts that have an outline colour in the graph wear it here too.
+function memLegend(drawn) {
+  let read = 0, added = 0, gone = 0;
+  MEM.forEach(function (x) {
+    if (x.read) read++;
+    if (x.added) added++;
+    if (x.gone) gone++;
+  });
+  const dot = ' \\u00b7 ';
+  const out = [el('span', null, read + ' read'), document.createTextNode(dot),
+    el('span', 'ok', added + ' written'), document.createTextNode(dot),
+    el('span', 'bad', gone + ' forgotten')];
+  if (drawn < MEM.size) out.push(document.createTextNode(dot + drawn + ' drawn'));
+  if (!DATA.memory) out.push(document.createTextNode(dot + 'no memory attached: ids only'));
+  return out;
+}
+
+const memAddedEl = document.getElementById('madded');
+const mdetailEl = document.getElementById('mdetail');
+const memTab = document.querySelector('#viewtabs button[data-view="memory"]');
+let memDrawn = false;
+let memSeq = 0;
+let memSel = null;
+
+if (MEM.size) memTab.hidden = false;
+memAddedEl.addEventListener('change', function () { drawMemory(); });
+
+function memKeyOf(g) {
+  const m = /-(m\\d+)-\\d+$/.exec(g.id || '');
+  return m ? m[1] : null;
+}
+
+function memMark() {
+  const key = memSel === null ? null : MEM_KEY.get(memSel);
+  PANES.memory.canvas.querySelectorAll('.node').forEach(function (g) {
+    g.classList.toggle('picked', Boolean(key) && memKeyOf(g) === key);
+  });
+}
+
+async function drawMemory() {
+  const withAdded = memAddedEl.checked;
+  const shown = memShown(withAdded).slice(0, MEM_MAX);
+  const count = document.getElementById('mcount');
+  count.replaceChildren.apply(count, memLegend(shown.length));
+  if (!shown.length) {
+    PANES.memory.canvas.replaceChildren(el('div', 'hint pad',
+      'This run neither read nor wrote memory.'));
+    return;
+  }
+  // A fresh render id each time: the checkbox redraws this pane, and Mermaid
+  // keeps the element it was given.
+  await draw(PANES.memory, 'mem-graph-' + (++memSeq), memDiagram(shown, withAdded), function (g) {
+    const id = MEM_ID.get(memKeyOf(g));
+    if (!id) return;
+    g.addEventListener('click', function () { if (!PANES.memory.moved()) memSelect(id); });
+  });
+  memMark();
+}
+
+// --- the memory panel -----------------------------------------------------
+
+function memProp(dl, key, value) {
+  if (value === undefined || value === null || value === '') return;
+  dl.appendChild(el('dt', null, key));
+  dl.appendChild(el('dd', null, value));
+}
+
+const MEM_EXCUSE = {
+  'too-big': 'too big to inline \\u2014 read it from the memory directory',
+  binary: 'binary, so there is nothing to show',
+  missing: 'the graph records this file but it is not on disk',
+  unreadable: 'on disk but could not be read'
+};
+
+function memSelect(id) {
+  memSel = id;
+  mdetailEl.replaceChildren(memDetail(id));
+  mdetailEl.scrollTop = 0;
+  memMark();
+}
+
+function memDetail(id) {
+  const x = MEM.get(id) || { id: id, kind: '', where: [], score: null, revision: null };
+  const snap = MEM_SNAP.get(id);
+  const out = document.createDocumentFragment();
+
+  const h = el('div', 'dt');
+  const kind = x.kind || (snap && snap.kind) || '';
+  h.appendChild(el('span', 'kind ' + kind, kind || 'node'));
+  if (x.read) h.appendChild(el('span', 'badge', 'read'));
+  if (x.full) h.appendChild(el('span', 'badge', 'loaded'));
+  if (x.added) h.appendChild(el('span', 'badge ok', 'written'));
+  if (x.gone) h.appendChild(el('span', 'badge bad', 'forgotten'));
+  if (snap && snap.stale) h.appendChild(el('span', 'badge', 'superseded'));
+  out.appendChild(h);
+
+  // The id is what you carry to 'zen memory show', so it is whole and takeable.
+  const idrow = el('div', 'idrow');
+  idrow.appendChild(el('code', null, id));
+  const copy = el('button', null, 'copy');
+  copy.addEventListener('click', function () {
+    navigator.clipboard.writeText(id).then(function () {
+      copy.textContent = 'copied';
+      setTimeout(function () { copy.textContent = 'copy'; }, 1200);
+    }, function () { copy.textContent = 'blocked'; });
+  });
+  idrow.appendChild(copy);
+  out.appendChild(idrow);
+
+  const props = el('dl', 'props');
+  memProp(props, 'model saw', MEM_SAW[memSaw(x)]);
+  if (x.score !== null) memProp(props, 'score', x.score.toFixed(3) + (x.seed ? '  match' : ''));
+  else if (x.read) memProp(props, 'reached', 'stitched in, not matched');
+  if (snap) {
+    memProp(props, 'audience', snap.audience.join(', ') || '\\u2014');
+    // The run's revision and the current one are the same number until
+    // something wrote this node again after the run.
+    memProp(props, 'revision', x.revision !== null && x.revision !== snap.revision
+      ? x.revision + ' then, ' + snap.revision + ' now' : String(snap.revision));
+    memProp(props, 'recalled', snap.useCount + 'x \\u00b7 last ' + snap.lastUsedAt);
+    memProp(props, 'created', snap.createdAt);
+    if (snap.updatedAt !== snap.createdAt) memProp(props, 'updated', snap.updatedAt);
+  } else if (x.revision !== null) {
+    memProp(props, 'revision', String(x.revision));
+  }
+  out.appendChild(props);
+
+  if (snap) {
+    out.appendChild(textBlock('Text', snap.text));
+    if (snap.metadata) {
+      out.appendChild(textBlock('Metadata', JSON.stringify(snap.metadata, null, 2)));
+    }
+    if (snap.file) out.appendChild(memFile(snap));
+  } else {
+    const s = block('Text', DATA.memory ? 'gone' : 'not attached');
+    s.appendChild(el('div', 'empty', DATA.memory
+      ? 'no longer in the memory graph \\u2014 the run recorded its id, kind and edges, not its text'
+      : 'this report carries no memory, so only what the run itself recorded is here'));
+    out.appendChild(s);
+  }
+
+  const links = MEM_ADJ.get(id) || [];
+  const ls = block('Links', String(links.length));
+  if (!links.length) {
+    ls.appendChild(el('div', 'empty', 'nothing points here and it points nowhere'));
+  } else {
+    const ul = el('ul', 'links');
+    // Outgoing first: PRODUCED read forwards is the story of the node.
+    links.slice().sort(function (a, b) { return (a.out ? 0 : 1) - (b.out ? 0 : 1); })
+      .forEach(function (l) {
+        const other = MEM_SNAP.get(l.other);
+        const li = el('li');
+        li.appendChild(el('span', 'rel', (l.out ? '\\u2192 ' : '\\u2190 ') + l.rel));
+        li.appendChild(el('span', 'kind ' + (other ? other.kind : ''), other ? other.kind : '?'));
+        const b = el('button', 'link',
+          (other && clipText(other.text, 60)) || shortId(l.other));
+        b.title = l.other;
+        b.addEventListener('click', function () { memSelect(l.other); });
+        li.appendChild(b);
+        ul.appendChild(li);
+      });
+    ls.appendChild(ul);
+  }
+  out.appendChild(ls);
+
+  // The way back to the trace: which turn reached for this, and what it did.
+  const ws = block('In this run', x.where.length + ' node(s)');
+  const line = el('div', 'empty', '');
+  x.where.forEach(function (key) {
+    const hit = BY_KEY.get(key);
+    if (!hit) return;
+    const b = el('button', 'link', label(hit.node));
+    b.addEventListener('click', function () { select(key, true); });
+    line.appendChild(b);
+  });
+  ws.appendChild(line);
+  out.appendChild(ws);
+  return out;
+}
+
+function memFile(snap) {
+  const tag = snap.file.path + ' \\u00b7 ' + snap.file.bytes + ' B';
+  const src = snap.image ? imageSrc({ type: 'image', url: snap.image }) : null;
+  if (src) {
+    const s = block('File', tag);
+    const img = el('img', 'media');
+    img.src = src;
+    img.alt = snap.file.path;
+    img.loading = 'lazy';
+    s.appendChild(img);
+    return s;
+  }
+  if (snap.content !== undefined && snap.content !== null) {
+    return textBlock('File', snap.content, tag);
+  }
+  const s = block('File', tag);
+  s.appendChild(el('div', 'empty', MEM_EXCUSE[snap.omitted] || 'not shown'));
+  return s;
 }
 
 drawGraph().then(drawArch);

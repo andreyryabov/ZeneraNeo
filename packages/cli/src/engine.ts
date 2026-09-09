@@ -287,6 +287,7 @@ async function record(
         const built = await buildRunReport(result.state, engine.runner.services.payloads, {
             title: `${engine.name} · ${run.id}`,
             architecture: await engine.runner.describe(),
+            memory: engine.runner.services.memory?.store,
         });
         await writeFile(run.report, renderReportHtml(built), 'utf8');
         report = run.report;

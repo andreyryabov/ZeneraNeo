@@ -80,6 +80,38 @@ export interface MemoryReportOptions {
     now?: () => string;
 }
 
+/** Part of a memory, for a caller that already knows which part it wants. */
+export interface MemorySlice {
+    nodes: ReportNode[];
+    /** only the edges with both ends inside the slice */
+    edges: MemoryEdge[];
+}
+
+/**
+ * The nodes named, built exactly as the whole graph is — same inlining, same
+ * excuses, same degree, which is counted over every edge rather than over the
+ * slice: a node's degree is a fact about the memory, not about the cut.
+ */
+export async function buildMemorySlice(
+    store: MemoryStore,
+    ids: readonly string[],
+    opts: Pick<MemoryReportOptions, 'maxContentBytes'> = {},
+): Promise<MemorySlice> {
+    const graph = store.graph;
+    const all = graph.edges();
+    const wanted = new Set(ids);
+    return {
+        nodes: await inline(
+            store,
+            graph.nodes().filter((n) => wanted.has(n.id)),
+            degrees(all),
+            graph.superseded(),
+            opts.maxContentBytes ?? MAX_CONTENT_BYTES,
+        ),
+        edges: all.filter((e) => wanted.has(e.source) && wanted.has(e.target)),
+    };
+}
+
 export async function buildMemoryReport(
     store: MemoryStore,
     opts: MemoryReportOptions = {},
@@ -87,25 +119,9 @@ export async function buildMemoryReport(
     const graph = store.graph;
     const nodes = graph.nodes();
     const edges = graph.edges();
-    const stale = graph.superseded();
     const limit = opts.maxContentBytes ?? MAX_CONTENT_BYTES;
 
-    const degree = new Map<string, number>();
-    for (const e of edges) {
-        degree.set(e.source, (degree.get(e.source) ?? 0) + 1);
-        degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
-    }
-
-    // Files are read in parallel: one memory can hold hundreds, and they are
-    // independent.
-    const built = await Promise.all(
-        nodes.map(async (n) => ({
-            ...plain(n),
-            stale: stale.has(n.id),
-            degree: degree.get(n.id) ?? 0,
-            ...(n.file ? await body(store.dir, n.file, limit) : {}),
-        })),
-    );
+    const built = await inline(store, nodes, degrees(edges), graph.superseded(), limit);
 
     const vectors = store.vectors;
     return {
@@ -121,6 +137,33 @@ export async function buildMemoryReport(
         kinds: [...new Set(nodes.map((n) => n.kind))].sort(),
         audiences: [...new Set(nodes.flatMap((n) => n.audience))].sort(),
     };
+}
+
+function degrees(edges: readonly MemoryEdge[]): Map<string, number> {
+    const degree = new Map<string, number>();
+    for (const e of edges) {
+        degree.set(e.source, (degree.get(e.source) ?? 0) + 1);
+        degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
+    }
+    return degree;
+}
+
+/** Files are read in parallel: one memory can hold hundreds, independently. */
+async function inline(
+    store: MemoryStore,
+    nodes: readonly MemoryNode[],
+    degree: Map<string, number>,
+    stale: Set<string>,
+    limit: number,
+): Promise<ReportNode[]> {
+    return Promise.all(
+        nodes.map(async (n) => ({
+            ...plain(n),
+            stale: stale.has(n.id),
+            degree: degree.get(n.id) ?? 0,
+            ...(n.file ? await body(store.dir, n.file, limit) : {}),
+        })),
+    );
 }
 
 /** The node's own fields, without the graph attributes graphology adds. */

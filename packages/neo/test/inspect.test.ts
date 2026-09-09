@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { CLIENT } from '../src/inspect/client.ts';
 import { buildRunReport, renderReportHtml, renderRunReport } from '../src/inspect/index.ts';
+import { MemoryStore } from '../src/memory/store.ts';
 import type { Model, ModelRequest, ModelResponse } from '../src/model.ts';
 import { InMemoryPayloadStore } from '../src/payload-stores/in-memory.ts';
 import { PayloadResolver } from '../src/payload.ts';
@@ -156,5 +161,132 @@ describe('run inspector', () => {
         expect(embedded).not.toContain('</script><img');
         expect(embedded).not.toContain('\u2028');
         expect(html).toContain('\\u003c/script\\u003e');
+    });
+
+    // The page's whole brain is a string, which no type checker reads. Parsing
+    // it here is the difference between a typo and a blank report.
+    it('embeds a client a browser can parse', () => {
+        expect(() => new Function('MERMAID_URL', CLIENT)).not.toThrow();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// The memory view
+// ---------------------------------------------------------------------------
+
+const dirs: string[] = [];
+
+afterEach(() => {
+    for (const d of dirs.splice(0)) {
+        rmSync(d, { recursive: true, force: true });
+    }
+});
+
+const AT = '2026-01-01T00:00:00.000Z';
+
+async function memory(noteText = 'written by this run'): Promise<MemoryStore> {
+    const dir = mkdtempSync(join(tmpdir(), 'zn-runmem-'));
+    dirs.push(dir);
+    const store = await MemoryStore.open(dir, { lock: false });
+    const all = ['*'];
+    store.graph.add({ id: 'task', kind: 'task', text: 'reconcile the ledger', audience: all }, AT);
+    store.graph.add({ id: 'plan', kind: 'plan', text: 'diff, then explain', audience: all }, AT);
+    store.graph.add({ id: 'note', kind: 'fact', text: noteText, audience: all }, AT);
+    store.graph.add({ id: 'other', kind: 'fact', text: 'not this run', audience: all }, AT);
+    store.graph.link('task', 'plan', 'PRODUCED', AT);
+    store.graph.link('plan', 'other', 'INFORMED', AT);
+    return store;
+}
+
+/** A run that recalled two nodes and committed a third. */
+function touched(): AgentState {
+    return {
+        runId: 'r',
+        trajectory: [
+            {
+                type: 'memory_recall',
+                id: 'n1',
+                agent: 'worker',
+                ts: AT,
+                query: { text: 'ledger' },
+                seeds: ['task'],
+                nodes: [
+                    { id: 'task', kind: 'task', score: 0.82 },
+                    { id: 'plan', kind: 'plan', score: 0 },
+                ],
+                edges: [{ source: 'task', target: 'plan', relation: 'PRODUCED' }],
+            },
+            {
+                type: 'memory_op',
+                id: 'n2',
+                agent: 'worker',
+                ts: AT,
+                op: 'commit',
+                opId: 'o1',
+                nodes: [{ id: 'note', kind: 'fact', revision: 1 }],
+                edges: [],
+                files: 0,
+            },
+        ],
+    } as unknown as AgentState;
+}
+
+describe('the run report memory view', () => {
+    it('carries the nodes the run touched, and no others', async () => {
+        const payloads = new PayloadResolver(new InMemoryPayloadStore());
+        const report = await buildRunReport(touched(), payloads, { memory: await memory() });
+
+        expect(report.memory?.nodes.map((n) => n.id).sort()).toEqual(['note', 'plan', 'task']);
+        expect(report.memory?.nodes.find((n) => n.id === 'task')?.text).toBe(
+            'reconcile the ledger',
+        );
+        // An edge with one end outside the run is not an edge this page can draw.
+        expect(report.memory?.edges).toEqual([
+            { source: 'task', target: 'plan', relation: 'PRODUCED' },
+        ]);
+        // Degree is a fact about the memory, not about the cut.
+        expect(report.memory?.nodes.find((n) => n.id === 'plan')?.degree).toBe(2);
+    });
+
+    it('finds the memory a branch touched too', async () => {
+        const payloads = new PayloadResolver(new InMemoryPayloadStore());
+        const state = {
+            runId: 'r',
+            trajectory: [
+                {
+                    type: 'join',
+                    id: 'j',
+                    agent: 'worker',
+                    ts: AT,
+                    branches: [{ name: 'b', agent: 'worker', nodes: touched().trajectory }],
+                },
+            ],
+        } as unknown as AgentState;
+
+        const report = await buildRunReport(state, payloads, { memory: await memory() });
+        expect(report.memory?.nodes.map((n) => n.id).sort()).toEqual(['note', 'plan', 'task']);
+    });
+
+    it('says nothing when there is no memory to say it about', async () => {
+        const payloads = new PayloadResolver(new InMemoryPayloadStore());
+        const state = { runId: 'r', trajectory: [] } as unknown as AgentState;
+
+        expect((await buildRunReport(touched(), payloads)).memory).toBeUndefined();
+        expect(
+            (await buildRunReport(state, payloads, { memory: await memory() })).memory,
+        ).toBeUndefined();
+    });
+
+    it('renders the tab, and hides node text behind the same escaping', async () => {
+        const payloads = new PayloadResolver(new InMemoryPayloadStore());
+        const html = renderReportHtml(
+            await buildRunReport(touched(), payloads, {
+                memory: await memory('</script><img src=x>'),
+            }),
+        );
+
+        expect(html).toContain('data-view="memory"');
+        expect(html).toContain('id="mdetail"');
+        expect(html).not.toContain('</script><img');
     });
 });

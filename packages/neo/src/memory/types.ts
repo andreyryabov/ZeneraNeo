@@ -240,10 +240,11 @@ export interface MemoryRecallSpec {
 
 export interface MemoryOpSpec {
     kind: 'op';
-    op: 'commit' | 'forget';
+    /** `load` is here rather than under recall: it hands the model whole bodies, and it writes. */
+    op: 'commit' | 'forget' | 'load';
     /** sha256(runId, callId) — deterministic, so a replay is deduplicated */
     opId: string;
-    /** nodes this op created, changed or removed */
+    /** nodes this op created, changed, removed or read in full */
     nodes: { id: string; kind: string; revision: number }[];
     edges: MemoryEdge[];
     /** remembered files copied in, or bytes dropped */

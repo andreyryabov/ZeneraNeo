@@ -32,6 +32,7 @@ export function page(report: RunReport, mermaidUrl: string): string {
       <button data-view="detail">Detail</button>
       <button data-view="stats">Stats</button>
       <button data-view="agents">Agents</button>
+      <button data-view="memory" hidden>Memory</button>
     </div>
     <div id="graph" class="pane">
       <div class="gtools">
@@ -56,6 +57,21 @@ export function page(report: RunReport, mermaidUrl: string): string {
         <span class="hint lvl">100%</span>
       </div>
       <div class="viewport"><div class="canvas"><div class="hint pad">rendering…</div></div></div>
+    </div>
+    <div id="memory" class="pane" hidden>
+      <div class="gtools">
+        <button data-zoom="out" title="zoom out">−</button>
+        <button data-zoom="in" title="zoom in">+</button>
+        <button data-zoom="fit" title="fit to window (double-click the canvas)">fit</button>
+        <button data-zoom="reset" title="actual size">1:1</button>
+        <label class="check"><input type="checkbox" id="madded"> show what it wrote</label>
+        <span class="hint" id="mcount"></span>
+        <span class="hint lvl">100%</span>
+      </div>
+      <div class="split">
+        <div class="viewport"><div class="canvas"><div class="hint pad">rendering…</div></div></div>
+        <aside id="mdetail"><div class="hint pad">Pick a node.</div></aside>
+      </div>
     </div>
   </section>
 </main>
