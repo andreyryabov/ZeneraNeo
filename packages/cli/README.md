@@ -68,28 +68,28 @@ whichever models they prefer, and without carrying your keys.
 
 ## What makes it different
 
-A coding agent with custom instructions can already play several roles, and a
-framework can already wire agents together. What neither gives you:
+Most tools give you one agent, or a framework and an empty file. This is a
+factory: it designs the system for you, then keeps it honest.
 
-- **A system that outlives the session.** Custom instructions and subagents live
-  in a chat that ends. Here the system is a directory — versioned, reviewable,
-  diffable, sendable. Improving it is a commit, not a paste.
-- **A specification that is enforced, not decorative.** `SPECIFICATION.md` is
-  the source; where it and the files disagree, it wins. `/sync-with-spec`
-  reconciles the two in both directions and `zen check` fails the project when
-  they drift — with a code, a location and a fix per finding. A prose document
-  nobody checks is a README; this one is checked.
-- **No application to build.** Frameworks hand you a library and leave you
-  owning a program: graph code, state plumbing, retries, transport. Here an
-  agent is an instruction, a model, tools, skills, who it may hand work to, and
-  how it fans out. That is the whole list, and it is YAML. There is no glue code
-  to maintain because there is no glue.
-- **A complete record, by default.** Every run writes its input, output and
-  state, plus a self-contained `report.html` — the graph, every request, every
-  token, every cost. Not a tracing vendor you sign up for; a file in the folder.
-- **Your keys stay yours.** They live in `~/.zenera`, never in the project. What
-  you share is the system; the recipient runs it on their own credentials and
-  their own choice of vendor.
+- **You state the problem; a meta-agent designs the system.** Specialists,
+  prompts, tool grants, hand-offs, where it fans out — all of it drawn from what
+  you wrote, and checked before it ever runs.
+- **A self-improving loop, not a one-off build.** Build, run, read the record,
+  change what was wrong, run again — and the system can drive that loop on
+  itself. Failures come back as findings with a cause and a fix, so the next
+  version is written rather than debugged.
+- **It watches itself work.** Every run is recorded against the architecture it
+  declared — the agent nobody called, the skill that never fired, where the
+  tokens went. Nothing to instrument, nothing to sign up for.
+- **Customisable all the way down.** Live in the specification and never look
+  lower. Or set the model, tools and memory of a single agent. Or take the
+  kernel itself and manage the trajectory turn by turn. No layer is sealed.
+- **Your documents, searchable.** Hybrid retrieval over your files and your API
+  descriptions, plus a memory that is a graph rather than a bucket of rows — so
+  what an agent learned in March is still there in September.
+- **Integrations it writes itself.** No MCP server to find, no connector to wait
+  for. If it has to reach your ERP, your database or a twenty-year-old SOAP
+  endpoint, it writes the call and runs it in a sandbox.
 
 ## Install
 
@@ -221,23 +221,30 @@ that explains this runtime to whatever agent is reading, and
 
 </details>
 
-### The loop
+### The self-improving loop
 
 ```
-edit SPECIFICATION.md → /sync-with-spec → zen check → scripts/_setup.sh
-        ↑                                                        ↓
-        └──────────────── read the report ←──────── zen run ─────┘
+edit SPECIFICATION.md → /sync-with-spec → zen check → zen run
+        ↑                                                  ↓
+        └───── refine the spec <-──── zen inspect <-───────┘
 ```
 
-The last turn is the one that matters. When a run comes out wrong, the fix is
-the sentence that was missing from the specification; the prompt edit follows
+Every step is a command, and everything each one reads or writes is a plain
+file: the specification, the findings `zen check` prints with a code, a location
+and a fix, the record `zen inspect` renders of what the run actually did. So the
+loop does not need you standing in it. Hand the whole cycle to the agent in your
+editor and it runs on the system it just built — test it, read the failure,
+change the sentence in the specification that caused it, rebuild, run again.
+"Fix my project" is one instruction. (The first time round, `scripts/_setup.sh`
+prepares the container the tools run in.)
+
+The last turn is the one that matters. When a run comes out wrong the fix is the
+sentence that was missing from the specification, and the prompt edit follows
 from that. Prompts patched directly drift away from the document meant to
 describe them, and a project whose specification is no longer true is a project
 with no specification.
 
-You are not expected to hand-author any of this. `zen check` is written to be
-read by a model as much as by a person — every finding carries a code, a
-location and its fix — so "fix my project" is one instruction. Full guide:
+Full guide:
 [docs/specification.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/specification.md).
 
 ## A worked example

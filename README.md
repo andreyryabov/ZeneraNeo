@@ -308,14 +308,26 @@ regardless of who is answering.
 Full reference: [docs/agents-yaml.md](docs/agents-yaml.md) ·
 [docs/projects.md](docs/projects.md).
 
-### AI creates AI, in a loop, verified by AI
+### The self-improving loop
 
-You are not expected to hand-author any of it. `zen check` is written to be read
-by a model as much as by a person: every finding carries a code, a location and
-the fix for it, so "fix my project" is a single instruction. Tools, skills and
-agents are generated, run, inspected and corrected by AI - and the artefacts
-stay human-readable prose the whole way through, which is what keeps the loop
-reviewable rather than opaque.
+```
+edit SPECIFICATION.md → /sync-with-spec → zen check → zen run
+        ↑                                                  ↓
+        └───── refine the spec <-──── zen inspect <-───────┘
+```
+
+You are not expected to hand-author any of it. Every step is a command, and
+everything each one reads or writes is a plain file: the specification, the
+findings `zen check` prints with a code, a location and a fix, the record
+`zen inspect` renders of what the run actually did. So the loop does not need
+you standing in it - hand the whole cycle to the agent in your editor and it
+runs on the system it just built: test it, read the failure, change the sentence
+in the specification that caused it, rebuild, run again. "Fix my project" is a
+single instruction.
+
+Tools, skills and agents are generated, run, inspected and corrected this way,
+and the artefacts stay human-readable prose the whole way through - which is
+what keeps the loop reviewable rather than opaque.
 
 ## 6 · Run them
 
@@ -588,20 +600,28 @@ reconciliation - shaped to your case rather than to a vendor's defaults.
 
 ## What is different about it
 
-- **The specification is the source.** What the system does is written down in
-  prose, in the folder, next to what implements it - so a change of behaviour is
-  a change to a document, and an agent can make the rest follow.
-- **The project is the artefact.** Not a script that happens to call a model -
-  a directory with sessions and recorded runs, safe to commit.
-- **Nothing is hidden.** No orchestration layer, no framework magic: an agent is
-  an instruction, a model, tools, skills, who it may hand the work to, and how
-  it splits into parallel branches. That is the list.
-- **Everything is recorded.** Every run writes its input, output, state and a
-  self-contained `report.html` - the graph, every request, every token.
-- **Two runtime dependencies.** The library needs `yaml` and `zod`. The vendor
-  SDKs are optional peer dependencies, installed and loaded only when you
-  actually talk to that vendor - the CLI ships all four so that `zen` works out
-  of the box.
+Most tools give you one agent, or a framework and an empty file. This is a
+factory: it designs the system for you, then keeps it honest.
+
+- **You state the problem; a meta-agent designs the system.** Specialists,
+  prompts, tool grants, hand-offs, where it fans out - all of it drawn from what
+  you wrote, and checked before it ever runs.
+- **A self-improving loop, not a one-off build.** Build, run, read the record,
+  change what was wrong, run again - and the system can drive that loop on
+  itself. Failures come back as findings with a cause and a fix, so the next
+  version is written rather than debugged.
+- **It watches itself work.** Every run is recorded against the architecture it
+  declared - the agent nobody called, the skill that never fired, where the
+  tokens went. Nothing to instrument, nothing to sign up for.
+- **Customisable all the way down.** Live in the specification and never look
+  lower. Or set the model, tools and memory of a single agent. Or take the
+  kernel itself and manage the trajectory turn by turn. No layer is sealed.
+- **Your documents, searchable.** Hybrid retrieval over your files and your API
+  descriptions, plus a memory that is a graph rather than a bucket of rows - so
+  what an agent learned in March is still there in September.
+- **Integrations it writes itself.** No MCP server to find, no connector to wait
+  for. If it has to reach your ERP, your database or a twenty-year-old SOAP
+  endpoint, it writes the call and runs it in a sandbox.
 
 ---
 
