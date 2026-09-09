@@ -216,11 +216,23 @@ export class RateLimiter {
             return;
         }
         this.#pausedUntil = until;
+        this.#arm();
+    }
+
+    /**
+     * Node may run a timer a millisecond before its deadline, and a pump that
+     * finds the pause still in force grants nothing — so the wake-up re-arms
+     * itself rather than leaving the queue with nothing left to wake it.
+     */
+    #arm(): void {
         clearTimeout(this.#timer);
-        this.#timer = setTimeout(() => {
-            this.#timer = undefined;
+        this.#timer = undefined;
+        const remaining = this.#pausedUntil - Date.now();
+        if (remaining <= 0) {
             this.#pump();
-        }, until - Date.now());
+            return;
+        }
+        this.#timer = setTimeout(() => this.#arm(), remaining);
         this.#timer.unref?.();
     }
 }
