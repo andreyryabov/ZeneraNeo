@@ -3,7 +3,7 @@ import { readdirSync, statSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
 import type { ResolvedBuild } from './image.ts';
-import { CliError, confirm, dim, EXIT, isInteractive, note } from './term.ts';
+import { CliError, confirm, dim, EXIT, isInteractive, note, progress } from './term.ts';
 
 // ---------------------------------------------------------------------------
 // The pre-flight lifecycle manager
@@ -136,7 +136,7 @@ async function preflight(opts: PodmanOptions): Promise<void> {
         const present = await call(['image', 'exists', opts.image], 30_000);
         if (present.code !== 0) {
             note(dim(`pulling ${opts.image} — this happens once`));
-            const pulled = await stream(engine, ['pull', opts.image], run);
+            const pulled = await stream(engine, ['pull', opts.image], run, 'pulling');
             if (pulled.code !== 0) {
                 throw sandboxError(
                     `could not pull ${opts.image}`,
@@ -170,7 +170,7 @@ async function install(engine: string, opts: PodmanOptions, run: typeof runProce
     }
 
     note(dim('installing podman — this takes a few minutes'));
-    const done = await stream('brew', ['install', 'podman'], run);
+    const done = await stream('brew', ['install', 'podman'], run, 'installing podman');
     if (done.code !== 0) {
         throw sandboxError('could not install podman', first(done) || how);
     }
@@ -211,6 +211,7 @@ async function machine(
             engine,
             ['machine', 'init', '--cpus', cpus, '--memory', memory],
             run,
+            'initialising the machine',
         );
         if (created.code !== 0) {
             throw sandboxError('could not create the podman machine', first(created));
@@ -229,7 +230,7 @@ async function machine(
         args.push(chosen.Name);
     }
     note(dim('starting the podman machine'));
-    const started = await stream(engine, args, run, SLOW_MS);
+    const started = await stream(engine, args, run, 'starting the machine', SLOW_MS);
     if (started.code !== 0 && !/already running/i.test(started.stderr)) {
         throw sandboxError('could not start the podman machine', first(started));
     }
@@ -291,11 +292,12 @@ async function build(
 
     note(dim(`${force ? 'rebuilding' : 'building'} the sandbox image from ${spec.dockerfile}`));
     note(dim('  the agent runs its commands inside a container, so the image is needed first'));
-    note(dim('  this takes a few minutes; later runs reuse it until the Dockerfile changes'));
+    note(dim('  this takes a few minutes; later runs reuse it'));
     const built = await stream(
         engine,
         ['build', '--tag', spec.tag, '--file', spec.dockerfile, spec.context],
         run,
+        'building the sandbox image',
         BUILD_MS,
     );
     if (built.code !== 0) {
@@ -574,24 +576,61 @@ function children(dir: string): string[] {
 
 // ---------------------------------------------------------------------------
 
+const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const;
+const FRAME_MS = 100;
+
 /**
  * Long steps print as they go. A five-minute pull with no output is
  * indistinguishable from a hang, and the one thing worse than waiting is not
  * knowing whether you are waiting.
+ *
+ * The engine's own output is buffered until it exits, so while the step runs
+ * the only honest thing to show is that it is still running: a spinner and a
+ * clock, both of which have to move without any event to move them. Off
+ * without a terminal — a CI log wants one line per fact, not ten a second.
  */
 async function stream(
     bin: string,
     args: string[],
     run: typeof runProcess,
+    label: string,
     timeoutMs = SLOW_MS,
 ): Promise<ProcResult> {
-    const res = await run(bin, args, { timeoutMs });
+    const res = await ticking(label, run(bin, args, { timeoutMs }));
     for (const line of res.stderr.split('\n').slice(-3)) {
         if (line.trim()) {
             note(dim(`  ${line.trim()}`));
         }
     }
     return res;
+}
+
+async function ticking<T>(label: string, work: Promise<T>): Promise<T> {
+    if (!process.stderr.isTTY) {
+        return work;
+    }
+    const bar = progress();
+    const startedAt = Date.now();
+    let frame = 0;
+    const timer = setInterval(() => {
+        const spin = SPINNER[frame++ % SPINNER.length] as string;
+        bar.update(dim(`  ${spin} ${label}  ${elapsed(Date.now() - startedAt)}`));
+    }, FRAME_MS);
+    timer.unref();
+    try {
+        return await work;
+    } finally {
+        clearInterval(timer);
+        bar.done();
+    }
+}
+
+function elapsed(ms: number): string {
+    const total = Math.floor(ms / 1000);
+    const seconds = total % 60;
+    return total < 60
+        ? `${seconds}s`
+        : `${Math.floor(total / 60)}m ${String(seconds).padStart(2, '0')}s`;
 }
 
 function first(res: ProcResult): string {
