@@ -17,6 +17,11 @@ Work the checklist in §9 of the copilot instructions. In particular:
   `INSTRUCTIONS.md` that is true of only one agent.
 - **Facts.** Any number, threshold, fee or date living in a prompt is in the
   wrong file. Name it and say which skill it belongs in.
+- **Paths.** Work the checklist in §2.5 over `INSTRUCTIONS.md`,
+  `agents/prompts/*.md` and `agents/skills/*/SKILL.md`. Every absolute path must
+  be under `/workspace`, `/assets`, `/skills` or `/memory`; nothing may name a
+  project file the agent cannot open, and nothing may assume the workspace is
+  this directory.
 - **Skill descriptions.** Each one a condition, not a title; no two overlapping.
 - **Tools.** Every grant justified by the agent's job; nothing mutating held by
   an agent that only reads; every granted tool mentioned by the prompt.

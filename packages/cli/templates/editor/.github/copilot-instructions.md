@@ -225,6 +225,81 @@ agents do, for the same reason — it is a prefix somebody pays for:
 hand, so **edits inside `.github/` do not survive**. Project-specific conventions
 belong in `INSTRUCTIONS.md` and the agent prompts, which are never overwritten.
 
+### 2.5 What a running agent can actually see
+
+The tree in §2.1 is the **author's** view. A running agent sees almost none of
+it. Its entire world is the tools it was granted (§3.5) and four paths:
+
+| Path         | Is                                        | Access                                              |
+| ------------ | ----------------------------------------- | --------------------------------------------------- |
+| `/workspace` | the session's workspace — the work itself | read/write; `zen run --read-only` withholds the writes |
+| `/assets`    | `assets/`, reference material — §3.11     | read-only                                           |
+| `/skills`    | the whole skill catalog — §3.4.1          | read-only                                           |
+| `/memory`    | files carried by remembered nodes — §5.3  | read-only, and only when `memory:` is configured    |
+
+Commands run inside the container `sandbox:` describes (§3.7): the same
+`/workspace`, and whatever the image ships.
+
+Everything else in the project directory is **invisible at run time** —
+`agents.yaml`, `INSTRUCTIONS.md`, `agents/prompts/`, `agents/skills/` under that
+name, `sandbox/Dockerfile`, `.env`, `.github/`, `sessions/`, and the project
+root itself. `zen` reads them to build the run; they are never a path an agent
+can open.
+
+Two consequences:
+
+- **The workspace is not the project.** It defaults to the session's own empty
+  folder, and is usually some other repository entirely — `--workspace`, or the
+  directory the user was standing in. A prompt saying "read `agents.yaml`" or
+  "the rules are in `agents/skills/`" names a file that is not there.
+- **Write the mount path, never the repository path.**
+  `/skills/refund_policy/rates.csv`, not
+  `agents/skills/refund_policy/rates.csv`; `/assets/handbook.md`, not
+  `assets/handbook.md`. A relative path resolves against `/workspace`, which is
+  the one place the file is not.
+
+An agent that must know something about its own configuration is **told it in
+prose**, in the prompt — never sent to read the file that configured it.
+
+#### Checklist — no path an agent cannot open
+
+Run this over `INSTRUCTIONS.md`, every `agents/prompts/*.md` and every
+`agents/skills/*/SKILL.md` after editing any of them. Every path-shaped token in
+those files is read by a model as an instruction to open something:
+
+- [ ] Every absolute path begins `/workspace`, `/assets`, `/skills` or
+      `/memory`. Nothing else exists.
+- [ ] No project file is named: `agents.yaml`, `INSTRUCTIONS.md`,
+      `agents/prompts/…`, `agents/skills/…`, `sandbox/Dockerfile`, `.env`,
+      `.github/…`, `sessions/…`, `SPECIFICATION.md`, `README.md`, `docs/…`.
+- [ ] Nothing escapes a mount: no `../`, no `~`, no host path (`/Users/…`,
+      `/home/<someone>`), no `/etc`, `/var` or `/tmp` expected to hold anything
+      the project put there.
+- [ ] Each `/assets/…` and `/skills/<name>/…` path names a file that is actually
+      committed there — `zen check` lists what every skill folder ships (§3.4.1).
+- [ ] A skill referring to its own sibling file writes the full
+      `/skills/<name>/` prefix, not `./rates.csv`: the body is rendered into a
+      prompt, not executed from its folder.
+- [ ] `/memory` is named only in prompts for agents that have `memory:` (§5.3),
+      and `/assets` only where an `assets/` directory exists.
+- [ ] The agent holding the prompt has the tool the path implies — `read_file`
+      to open one, `sandbox:*` to run one (§3.4.1).
+- [ ] Every instruction that opens a file states what to do when it is not there
+      (§4.2, rule 6). Workspaces differ between runs; absence is normal.
+- [ ] Relative paths appear only where `/workspace`-relative is what was meant.
+
+Finding the candidates, from the project root — every path-shaped token in the
+three trees, minus the ones under a mount:
+
+```sh
+grep -Eohr '[~.]?/?[A-Za-z0-9_.-]*/[A-Za-z0-9_.*-]+' \
+     INSTRUCTIONS.md agents/prompts agents/skills \
+  | sort -u | grep -Ev '^/(workspace|assets|skills|memory)(/|$)'
+```
+
+Everything it prints is either a false positive (a url, a `path/to` in a
+sentence, `and/or`) or a path the agent cannot open. There is no third case.
+
 ---
 
 ## 3. File formats
@@ -1647,6 +1722,16 @@ Before finishing any change here:
 - [ ] No facts, rates or figures embedded in a prompt
 - [ ] No hedging, no meta-talk about the runtime
 
+**Paths (§2.5 — run its checklist over the three trees)**
+
+- [ ] Every absolute path in `INSTRUCTIONS.md`, `agents/prompts/*.md` and
+      `agents/skills/*/SKILL.md` is under `/workspace`, `/assets`, `/skills` or
+      `/memory`
+- [ ] No prompt or skill names a project file — `agents.yaml`, a prompt path, a
+      skill's repository path, `sandbox/Dockerfile`, `.env`, `sessions/`
+- [ ] No `../`, `~`, or host path; nothing assumes the workspace is the project
+- [ ] Every `/assets/…` and `/skills/<name>/…` path names a committed file
+
 **Skills**
 
 - [ ] Every skill is `<name>/SKILL.md` — no bare `<name>.md` in the catalog
@@ -1701,6 +1786,8 @@ Before finishing any change here:
 | Invents a number                           | A skill holding the figure, or a script that computes it — §3.4.1   |
 | A skill in the catalog is never offered    | It is a bare `<name>.md`; move it to `<name>/SKILL.md` — §3.4       |
 | Cannot find a file its own skill names     | Absolute `/skills/<name>/…` path, and `sandbox:*` — §3.4.1          |
+| Tries to open `agents.yaml` or its own prompt | The prompt names a file no agent can see — §2.5                  |
+| Says a file is missing that is in the project | The workspace is not the project directory — §2.5                |
 | Rewrites a whole file to change one line   | A prompt line preferring `apply_patch` — §3.6                       |
 | Edits files it should only be reading      | Subtract the mutating tools, or `zen run --read-only`               |
 | Cannot run the build or the tests          | Grant `sandbox:*`; add the toolchain to `sandbox/Dockerfile`        |
@@ -1732,6 +1819,10 @@ Before finishing any change here:
   versioned, cannot be shared, and is paid for on every call.
 - **The bare skill file.** `agents/skills/<name>.md` instead of a folder. It can
   never grow the table or script the next revision of the rule will want — §3.4.
+- **Pointing an agent at the project.** A prompt or skill naming `agents.yaml`,
+  `INSTRUCTIONS.md`, `agents/skills/<name>/…` or `sandbox/Dockerfile`. None of
+  them are on any path the agent can open, so the instruction fails on the turn
+  that follows it — §2.5.
 - **Arithmetic in prose.** A skill that walks the model through a calculation it
   will get wrong, in a folder that could have held the script — §3.4.1.
 - **Politeness padding.** "Please try your best to be helpful." Costs tokens,
