@@ -1,7 +1,7 @@
 # Giving agents knowledge
 
 A pile of documents nobody can search is a pile of documents. `zen rag docs`
-turns one into an index an agent can ask questions of — and, just as
+turns one into an index an agent can ask questions of - and, just as
 importantly, one it can grep, list and read exactly, without a model in the way.
 
 This is the answer when the knowledge is **prose that already exists**: product
@@ -9,7 +9,7 @@ manuals, runbooks, release notes, an internal handbook, a folder of RFCs. For an
 API description see [integrations.md](integrations.md); for things the agents
 learn as they go see [memory.md](memory.md).
 
-`zen rag` ships in `@zenera/rag`, which has no binary of its own — installing it
+`zen rag` ships in `@zenera/rag`, which has no binary of its own - installing it
 adds the `rag` subcommand to `zen`, where the credentials already are.
 
 ```sh
@@ -24,7 +24,7 @@ zen rag docs index ./assets/docs --embedding openai:text-embedding-3-small -o as
 
 Point it at a file, a directory or a glob. `.md`, `.markdown`, `.txt` and
 `.text` are read and nothing else is. Chunking follows the markdown rather than
-a character count — a paragraph, a list, a fenced block — and every chunk knows
+a character count - a paragraph, a list, a fenced block - and every chunk knows
 the heading it sits under, which is what makes searching within a section a
 filter rather than a hope. Tables are indexed twice over, once as a descriptor
 and once per row, because a limits table is a hundred facts and not one
@@ -56,14 +56,14 @@ read and nothing can corrupt is exactly what reference material should be.
 Nothing searches for a directory _name_: an index is self-describing, so what is
 looked for is a `manifest.json` saying `"kind": "docs"`. The order is:
 
-1. `--dir`, taken as written — naming a directory that turns out not to hold an
+1. `--dir`, taken as written - naming a directory that turns out not to hold an
    index is an error, because quietly using a different one is a worse answer
 2. `$ZEN_DOCS_DB`, likewise
 3. the nearest document index at or above the working directory
 4. `./docs-db`
 
 Two indexes equally close is an ambiguity, and it is reported as one rather than
-broken by a coin toss — the wrong index does not error, it answers confidently
+broken by a coin toss - the wrong index does not error, it answers confidently
 about another corpus.
 
 ## Search it yourself first
@@ -74,7 +74,7 @@ zen rag docs search "rate limits" --file "acme_4.2*/api/**" --kind table_row
 ```
 
 `list`, `grep` and `show` are the other half, and they are deliberately not
-searches — no embedder, no credential, no ranking:
+searches - no embedder, no credential, no ranking:
 
 ```sh
 zen rag docs list files          # every document, with what it holds
@@ -85,7 +85,7 @@ zen rag docs show guide.md --section "Rate limits"
 
 Reach for those whenever the question is whether something is there at all. A
 ranking can only hand back the top of a list, so it cannot answer "does the word
-`deprecated` appear anywhere" — the honest answer is every match or none.
+`deprecated` appear anywhere" - the honest answer is every match or none.
 
 Run `zen rag help docs` for the full flag list.
 
@@ -93,7 +93,7 @@ Run `zen rag help docs` for the full flag list.
 
 There are two ways in, and which one you get depends on how the project runs.
 
-### From the agent's sandbox — what a `zen` project uses
+### From the agent's sandbox - what a `zen` project uses
 
 The scaffolded image installs `zen` and `@zenera/rag`, and model credentials are
 forwarded into the container by default, so an agent with `sandbox:*` can search
@@ -111,10 +111,10 @@ ENV ZEN_DOCS_DB=/assets/docs-db
 ```
 
 It has to be set there and not in `sandbox: env:`, because that key is a
-name-only allow-list — it forwards the _host's_ value, which would be a host
+name-only allow-list - it forwards the _host's_ value, which would be a host
 path that does not exist inside the container.
 
-### As tools — what the library uses
+### As tools - what the library uses
 
 `@zenera/rag` exports the same engine as four tools in the group `docs`, which
 an agent takes with `docs:*`:
@@ -133,15 +133,15 @@ const project = await loadProject('./my-project', { tools: docs.docsTools(index)
 | Tool          | For                                                          |
 | ------------- | ------------------------------------------------------------ |
 | `search_docs` | the passages that match, quoted with their line numbers      |
-| `list_docs`   | the documents, their headings, or their tables — no search   |
-| `grep_docs`   | every matching line, counted in full — no search             |
+| `list_docs`   | the documents, their headings, or their tables - no search   |
+| `grep_docs`   | every matching line, counted in full - no search             |
 | `read_docs`   | a section or a line range, verbatim and with nothing omitted |
 
 Only `search_docs` ranks. Every answer carries line numbers and `read_docs`
 takes them, which is the loop the whole subject exists for: **find the passage,
 read around it, then edit the file the passage came from.**
 
-## Whichever way in — write the project a skill
+## Whichever way in - write the project a skill
 
 **An index used by a project needs a skill in that project.** This is not
 optional and it is not the same thing as wiring the tools in.
@@ -151,7 +151,7 @@ description says what `grep_docs` does; it cannot say that this index holds the
 4.1 and 4.2 manuals side by side, that every answer must be pinned to a release,
 that the reference lives under `*/api/**` and the guides under `*/guides/**`, or
 that the numbers anybody actually wants are in tables. That is project
-knowledge, and it belongs in a skill — loaded when the model is working on this
+knowledge, and it belongs in a skill - loaded when the model is working on this
 corpus, rather than sitting in the system prompt of every run.
 
 ```
@@ -164,7 +164,7 @@ corpus, rather than sitting in the system prompt of every run.
 | where the index is | an agent cannot guess a path                                                                                                      |
 | the document names | every `--file` pattern is matched against them, and a model guessing at them narrows to nothing and concludes the corpus is empty |
 | which command      | meaning → `search`; presence or a count → `grep`; what it says → `show`                                                           |
-| never the shell    | say it outright — `grep`/`cat` over the tree is the reflex                                                                        |
+| never the shell    | say it outright - `grep`/`cat` over the tree is the reflex                                                                        |
 
 Tell the agent to list the documents once before its first search.
 
@@ -192,7 +192,7 @@ never leaves a half-built index where a whole one should be. Nothing watches the
 corpus: rebuild when the documents change.
 
 Say in `SPECIFICATION.md` that the project has a document index, what is in it,
-and which agents may read it — then `/sync-with-spec` maintains the skill, the
+and which agents may read it - then `/sync-with-spec` maintains the skill, the
 tool grant and the setup step for you. See
 [specification.md](specification.md).
 
@@ -200,5 +200,5 @@ tool grant and the setup step for you. See
 
 - Your editor has a `zen-rag-docs` skill installed by `zen init`, with the full
   command surface and the failure modes.
-- [`packages/rag`](../packages/rag/README.md) — the package, and its library API
-- [agents-yaml.md](agents-yaml.md) — the `assets:` and `sandbox:` reference
+- [`packages/rag`](../packages/rag/README.md) - the package, and its library API
+- [agents-yaml.md](agents-yaml.md) - the `assets:` and `sandbox:` reference

@@ -48,7 +48,7 @@ Progress, banners, warnings and the spinner go to stderr. So
 
 `--json` applies to every command and prints one machine-readable document on
 stdout in place of the rendered form. Under `--json` nothing is asked
-interactively — the questions a run would ask are taken as answered.
+interactively - the questions a run would ask are taken as answered.
 
 The banner is drawn only when stderr is a terminal, so a piped invocation never
 sees it.
@@ -60,13 +60,13 @@ sees it.
 | 0    | ok          | It worked                                                  |
 | 1    | failed      | It ran and did not succeed                                 |
 | 2    | usage       | The command line was wrong                                 |
-| 3    | invalid     | The project is not valid — bad `agents.yaml`, missing file |
+| 3    | invalid     | The project is not valid - bad `agents.yaml`, missing file |
 | 4    | credentials | No usable credential for what was asked                    |
 | 5    | sandbox     | No container engine, or the image could not be prepared    |
 
 A wrong invocation and a wrong answer are deliberately not the same code, which
 is what a script needs. Failure messages name the offending key or file; a load
-error names the exact path, as in `agents.yaml: agents[1].skills.discovery — …`.
+error names the exact path, as in `agents.yaml: agents[1].skills.discovery - …`.
 Read it rather than guessing: the loader is strict on purpose and an unknown key
 is an error, not a value quietly ignored.
 
@@ -74,7 +74,7 @@ is an error, not a value quietly ignored.
 
 Most commands operate on a project directory, resolved in this order:
 
-1. `--project <name|dir>` — a registry name or a path.
+1. `--project <name|dir>` - a registry name or a path.
 2. The working directory, if it is a project (or is inside one).
 3. For `zen run`, a bare first word that names a registered project.
 
@@ -92,7 +92,7 @@ unregistered directory can still be validated.
 | `ZENERA_DEBUG`     | Print a stack trace when something unexpected escapes |
 | `VISUAL`, `EDITOR` | Consulted by `zen open` after `ZENERA_EDITOR`         |
 | `COLORFGBG`        | Read as a hint when the palette is being detected     |
-| Provider keys      | `OPENAI_API_KEY` and friends — see [keys.md](keys.md) |
+| Provider keys      | `OPENAI_API_KEY` and friends - see [keys.md](keys.md) |
 
 A real environment variable always beats the keyring.
 
@@ -112,7 +112,7 @@ A real environment variable always beats the keyring.
     agents/prompts/       one .md per agent
     agents/skills/        one directory per skill, each with SKILL.md
     sandbox/Dockerfile    the image commands run in, when the project builds one
-    sessions/             run state, memory, blobs, reports — never committed
+    sessions/             run state, memory, blobs, reports - never committed
 ```
 
 Credential files are refused if anyone but the owner can read them, the way

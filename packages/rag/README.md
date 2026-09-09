@@ -96,7 +96,7 @@ zen key add openai          # the keyring `zen` already uses
 Use the CLI to create and query indexes, or expose an opened index as tools to a
 ZeneraNeo agent.
 
-## API schemas — `zen rag schema`
+## API schemas - `zen rag schema`
 
 **OpenAPI 3.1, OpenAPI 3.0 and Swagger 2.0**, as `.json`, `.yaml` or `.yml`,
 one document or a whole folder of them. External references and multiple
@@ -106,7 +106,7 @@ follow relationships across services, revisions and shared definitions.
 A large specification does not fit in a prompt, and the parts of it that answer
 a question are scattered: the field is on a schema, the schema is on a request
 body, the body belongs to one operation out of three hundred. Search finds the
-field. Only a graph gets from there to the call — so this keeps both, and
+field. Only a graph gets from there to the call - so this keeps both, and
 answers with the connected piece of the API that matched, rendered as a tree, a
 Mermaid diagram, TypeScript declarations that compile on their own, or a
 standalone OpenAPI document.
@@ -144,7 +144,7 @@ zen rag schema grep "pass(word|phrase)" --regex
 zen rag schema show --method GetCurrentUserInfo --format openapi --exact
 ```
 
-Nothing matching exits 0 — an empty answer is an answer, and here it is a
+Nothing matching exits 0 - an empty answer is an answer, and here it is a
 trustworthy one: if `grep` finds nothing, the word is not in the description.
 
 ### Which call carries this field
@@ -161,7 +161,7 @@ Property:Address.city
     GET /users/{userId}  getUser  output  PublicUserProfile.address → Address.city
 ```
 
-No search can be relied on for this — `getUser` and `city` share no word for
+No search can be relied on for this - `getUser` and `city` share no word for
 either of them to rank on. A node nothing carries says so, which is worth
 knowing: it means no request in this document will ever carry it.
 
@@ -182,7 +182,7 @@ knowing: it means no request in this document will ever carry it.
 --cache-dir <dir>          Keep the vectors somewhere other than the shared cache.
 ```
 
-**search** — terms, one flag each, all repeatable
+**search** - terms, one flag each, all repeatable
 
 ```
 <text>                     A bare phrase, the same as --all.
@@ -197,7 +197,7 @@ knowing: it means no request in this document will ever carry it.
 --query <json|->           A whole query object; - reads stdin.
 ```
 
-**search** — filters and shape
+**search** - filters and shape
 
 ```
 -d, --dir <dir>            Which index. Found from here if unset; see $ZEN_SCHEMA_DB.
@@ -239,7 +239,7 @@ grep <pattern>             Substring over every node; --regex for a regex.
 
 A pattern with `*` or `?` is a glob over the whole name; otherwise it is a
 substring, so `--name password` finds `ResetPasswordPayload`. Under `--regex` it
-is a regular expression either way — the only way to say "one of these
+is a regular expression either way - the only way to say "one of these
 prefixes". A `--path` selects on the route an operation sits on, and on the
 route a parameter's operation sits on; a schema belongs to no one route, so it
 never selects one.
@@ -294,9 +294,9 @@ JSON
 
 </details>
 
-## Documents — `zen rag docs`
+## Documents - `zen rag docs`
 
-**Markdown and plain text** — `.md`, `.markdown`, `.txt` and `.text` — named as
+**Markdown and plain text** - `.md`, `.markdown`, `.txt` and `.text` - named as
 files, directories or globs; hidden directories and `node_modules` are skipped.
 
 The answer is the documents themselves: the passages that matched, quoted
@@ -319,7 +319,7 @@ zen rag docs search "how are rate limits counted"
 ```
 
 ```
-## acme_4.2.0/api/routing.md — 9 of 148 lines
+## acme_4.2.0/api/routing.md - 9 of 148 lines
 
   5 | ## Rate limits
   7 | Requests are counted per tenant and rejected past the limit.
@@ -419,7 +419,7 @@ show <file>                A document name, as list files prints it.
 ```
 
 A `--file` pattern is a glob when it has `*` or `?` and a substring otherwise,
-matched against the document's name relative to what was indexed — so
+matched against the document's name relative to what was indexed - so
 `--file "acme_4.2*/api/**"` is one release and `--file routing` is a word.
 `--section` takes a heading title and covers whatever nests inside it. `--kind`
 is for when the answer is a table and not the prose around it.
@@ -485,7 +485,7 @@ indexes to keep large documentation and schema collections practical to update.
 Use [`zen cache`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)
 to inspect and manage reusable indexing data when needed.
 
-## From code — an index is a toolset
+## From code - an index is a toolset
 
 Open an index in process to expose the same retrieval capabilities as tools an
 agent can call:
@@ -509,24 +509,25 @@ Six tools in the group `schema`, selectable as `schema:*`:
 | -------------------------- | ------------------------------------------------------- |
 | `search_api`               | the connected piece of the API that matches an intent   |
 | `describe_types`           | named schemas as declarations that compile on their own |
-| `find_types_with_property` | which types have a field of this name — no search       |
+| `find_types_with_property` | which types have a field of this name - no search       |
 | `list_api`                 | the shape of the API: methods, types or fields          |
-| `grep_api`                 | every literal occurrence of a string — no search        |
+| `grep_api`                 | every literal occurrence of a string - no search        |
 | `trace_api`                | the operations that carry a given field or schema       |
 
 Only the first ranks. `find_types_with_property` is the one for the repair loop
-— when `tsc` says `'password' does not exist in type 'PublicUserProfile'`, the
-model does not need the word explained again, it needs the list of types that
-have one. `grep_api` is the same instinct widened to the whole description, and
-`trace_api` is the step after both.
+
+- when `tsc` says `'password' does not exist in type 'PublicUserProfile'`, the
+  model does not need the word explained again, it needs the list of types that
+  have one. `grep_api` is the same instinct widened to the whole description, and
+  `trace_api` is the step after both.
 
 Four tools in the group `docs`, selectable as `docs:*`:
 
 | Tool          | For                                                          |
 | ------------- | ------------------------------------------------------------ |
 | `search_docs` | the passages that match, quoted with their line numbers      |
-| `list_docs`   | the documents, their headings, or their tables — no search   |
-| `grep_docs`   | every matching line, counted in full — no search             |
+| `list_docs`   | the documents, their headings, or their tables - no search   |
+| `grep_docs`   | every matching line, counted in full - no search             |
 | `read_docs`   | a section or a line range, verbatim and with nothing omitted |
 
 `search_docs` is the way in when the question is vague; `grep_docs` is how "it
@@ -538,9 +539,9 @@ passage, read around it, then edit the file the passage came from.
 
 | Package                                                                                         | What it is                                              |
 | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| [`@zenera/cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` — agent projects on the command line              |
-| [`@zenera/neo`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md)     | the runtime — agents, models, tools, skills, memory     |
-| [`@zenera/faker`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` — a mock API from the same kind of document |
+| [`@zenera/cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` - agent projects on the command line              |
+| [`@zenera/neo`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md)     | the runtime - agents, models, tools, skills, memory     |
+| [`@zenera/faker`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` - a mock API from the same kind of document |
 
 ## License
 

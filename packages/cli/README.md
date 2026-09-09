@@ -12,23 +12,23 @@
 
 # @zenera/cli
 
-**`zen` — build specialist agents. Share them. Run them from the command line.**
+**`zen` - build specialist agents. Share them. Run them from the command line.**
 
-Not one general assistant that is passable at everything — a team built for the
+Not one general assistant that is passable at everything - a team built for the
 work you actually keep doing, under a name you can type:
 
 ```sh
-zen run accountant "Q3 — match the receipts drawer to the ledger, then update the return"
-zen run accountant "this MSA against our playbook — redlines, and what I must not sign"
-zen run analyst    "why churn doubled in the EU accounts — the exports are in this folder"
+zen run accountant "Q3 - match the receipts drawer to the ledger, then update the return"
+zen run accountant "this MSA against our playbook - redlines, and what I must not sign"
+zen run analyst    "why churn doubled in the EU accounts - the exports are in this folder"
 zen run analyst    "what changed in EU battery regulation this year, with sources"
-zen run devops     "this week's advisories — which of them actually reach our code"
-zen run devops     "the 03:12 outage — timeline, contributing factors, owners"
+zen run devops     "this week's advisories - which of them actually reach our code"
+zen run devops     "the 03:12 outage - timeline, contributing factors, owners"
 ```
 
 Three agents there, six things asked of them: an agent you have built is not a
 script with one job, it is a specialist you keep going back to. And it is work
-that comes back — every quarter, every sprint, every deal — which is exactly the
+that comes back - every quarter, every sprint, every deal - which is exactly the
 work nobody has shipped you a product for.
 
 Once the agent exists it is a command: it works on the files you are standing
@@ -37,25 +37,25 @@ records every token it spent doing it.
 
 Getting there is three beats:
 
-1. **Describe it.** You write `SPECIFICATION.md` — what the system is for,
+1. **Describe it.** You write `SPECIFICATION.md` - what the system is for,
    which specialists it needs, what each may reach for, what _done_ means. The
    rest of the folder is built to implement it.
 2. **Test it.** `zen check` validates the project and every file it names,
    `zen run` exercises it for real, `zen inspect` opens the record of what it
    actually did. When it comes out wrong you fix the specification, not the
    prompts, and go round again.
-3. **Share it.** It is a folder — commit it, review it in a pull request, send
+3. **Share it.** It is a folder - commit it, review it in a pull request, send
    it. One `zen init <dir>` on a project that arrived by clone registers it
    without touching a thing, and it is their command now too.
 
 > Part of [ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo). This is an
-> open-source side project for experimentation and chore work — **not** the
+> open-source side project for experimentation and chore work - **not** the
 > official Zenera AI Platform. It carries no support or stability promises.
 
 ## What you build
 
 Half a page of specification turns into a system like one of these. Nothing here
-ships with the CLI — each is a folder somebody wrote, and could send you.
+ships with the CLI - each is a folder somebody wrote, and could send you.
 
 | Project        | The team inside it                                                                                                                                                                                                                                                                                                              |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -63,7 +63,7 @@ ships with the CLI — each is a folder somebody wrote, and could send you.
 | **analyst**    | A planner that splits the question into branches; researchers that run in parallel over your files and the web; a statistician that writes and runs Python in the sandbox; an editor that joins it into one answer where every claim carries its source.                                                                        |
 | **devops**     | A gatherer that pulls advisories, logs, alerts and deploys into one picture; a tracer that works out whether a vulnerable path is reachable at all, or which change actually broke it; an engineer that plans the fix, applies it a step at a time, and stops the moment a check fails.                                         |
 
-Build one, commit it, and it runs the same on anyone else's machine — on
+Build one, commit it, and it runs the same on anyone else's machine - on
 whichever models they prefer, and without carrying your keys.
 
 ## What makes it different
@@ -72,20 +72,20 @@ Most tools give you one agent, or a framework and an empty file. This is a
 factory: it designs the system for you, then keeps it honest.
 
 - **You state the problem; a meta-agent designs the system.** Specialists,
-  prompts, tool grants, hand-offs, where it fans out — all of it drawn from what
+  prompts, tool grants, hand-offs, where it fans out - all of it drawn from what
   you wrote, and checked before it ever runs.
 - **A self-improving loop, not a one-off build.** Build, run, read the record,
-  change what was wrong, run again — and the system can drive that loop on
+  change what was wrong, run again - and the system can drive that loop on
   itself. Failures come back as findings with a cause and a fix, so the next
   version is written rather than debugged.
 - **It watches itself work.** Every run is recorded against the architecture it
-  declared — the agent nobody called, the skill that never fired, where the
+  declared - the agent nobody called, the skill that never fired, where the
   tokens went. Nothing to instrument, nothing to sign up for.
 - **Customisable all the way down.** Live in the specification and never look
   lower. Or set the model, tools and memory of a single agent. Or take the
   kernel itself and manage the trajectory turn by turn. No layer is sealed.
 - **Your documents, searchable.** Hybrid retrieval over your files and your API
-  descriptions, plus a memory that is a graph rather than a bucket of rows — so
+  descriptions, plus a memory that is a graph rather than a bucket of rows - so
   what an agent learned in March is still there in September.
 - **Integrations it writes itself.** No MCP server to find, no connector to wait
   for. If it has to reach your ERP, your database or a twenty-year-old SOAP
@@ -93,7 +93,7 @@ factory: it designs the system for you, then keeps it honest.
 
 ## Install
 
-Node.js 24+. One command — the OpenAI, Anthropic, Google and OpenRouter SDKs
+Node.js 24+. One command - the OpenAI, Anthropic, Google and OpenRouter SDKs
 all ship with the CLI, so any provider works out of the box.
 
 ```sh
@@ -152,7 +152,7 @@ send `/sync-with-spec` in the editor's chat. That is the next section.
 implements it. Where the two disagree the specification wins, so a change to
 what the system does starts there and not in `agents.yaml`.
 
-The one `zen init` writes is not a heading list — it is a true specification of
+The one `zen init` writes is not a heading list - it is a true specification of
 the project just scaffolded, so you can read it against the files beside it
 before changing a word:
 
@@ -166,7 +166,7 @@ nobody to hand work to, because there is no second job to hand on.
 
 - The change asked for is in the workspace, or the question is answered from
   what is actually in it.
-- Everything the agent claims a command did, that command actually did — it was
+- Everything the agent claims a command did, that command actually did - it was
   run, and its output was read.
 - The reply names what changed, file by file, and says what it deliberately did
   not do.
@@ -174,7 +174,7 @@ nobody to hand work to, because there is no second job to hand on.
 
 ### How you actually edit it
 
-`SPECIFICATION.md` is ordinary Markdown, so any editor will do — but the loop is
+`SPECIFICATION.md` is ordinary Markdown, so any editor will do - but the loop is
 meant to be driven from a coding agent's chat, and `zen init` installs the
 prompts that make each step a single command:
 
@@ -188,14 +188,14 @@ or IntelliJ it can find. `--editor <cmd>` names one outright.
 
 In the window that opens:
 
-1. **Edit `SPECIFICATION.md`** — what the system is for, which agents exist,
+1. **Edit `SPECIFICATION.md`** - what the system is for, which agents exist,
    what each may reach for, and what _done_ means.
 2. **Open the chat panel and send `/sync-with-spec`.** It reads the
    specification and every file implementing it, works out the difference in
    both directions, and changes the smallest thing that closes each gap.
 3. **Read `SPECIFICATION-FEEDBACK.md`**, which it writes for anything it could
    not do without guessing. Answer its questions by editing `SPECIFICATION.md`
-   — not by editing prompts — and send `/sync-with-spec` again.
+    - not by editing prompts - and send `/sync-with-spec` again.
 
 Back in the terminal: `zen check`, then `zen run`.
 
@@ -204,17 +204,17 @@ Back in the terminal: `zen check`, then `zen run`.
 
 They are prompt files under `.github/prompts/`, which VS Code and its forks
 offer as chat slash-commands. Both `zen init` and `zen open` write them fresh,
-so they never go stale — and edits to them do not survive.
+so they never go stale - and edits to them do not survive.
 
 | In chat           | Does                                                        |
 | ----------------- | ----------------------------------------------------------- |
 | `/sync-with-spec` | Makes every file match `SPECIFICATION.md`, both directions. |
 | `/review-project` | Reads the project as a reviewer would, and reports.         |
-| `/new-agent`      | Adds an agent — prompt, wiring and hand-offs.               |
+| `/new-agent`      | Adds an agent - prompt, wiring and hand-offs.               |
 | `/new-skill`      | Adds a skill under `agents/skills/`.                        |
 
 In an editor that does not support prompt files, paste the contents of
-`.github/prompts/sync-with-spec.prompt.md` into its chat instead — it is only a
+`.github/prompts/sync-with-spec.prompt.md` into its chat instead - it is only a
 prompt. Alongside them, `.github/copilot-instructions.md` is the standing brief
 that explains this runtime to whatever agent is reading, and
 `.github/skills/zen-cli/` is the CLI's own reference for it.
@@ -233,7 +233,7 @@ Every step is a command, and everything each one reads or writes is a plain
 file: the specification, the findings `zen check` prints with a code, a location
 and a fix, the record `zen inspect` renders of what the run actually did. So the
 loop does not need you standing in it. Hand the whole cycle to the agent in your
-editor and it runs on the system it just built — test it, read the failure,
+editor and it runs on the system it just built - test it, read the failure,
 change the sentence in the specification that caused it, rebuild, run again.
 "Fix my project" is one instruction. (The first time round, `scripts/_setup.sh`
 prepares the container the tools run in.)
@@ -256,7 +256,7 @@ zen init repo-notes && cd repo-notes
 zen open                      # opens this folder in your editor
 ```
 
-Replace `SPECIFICATION.md` with what you want. This is the whole input — no
+Replace `SPECIFICATION.md` with what you want. This is the whole input - no
 YAML, no prompt files:
 
 ```markdown
@@ -268,9 +268,9 @@ Read a codebase and leave a short written note about it in the workspace.
 
 ## Agents
 
-- `reader` — explores the workspace and forms a picture of it. May read files
+- `reader` - explores the workspace and forms a picture of it. May read files
   and list directories, and nothing else. Hands off to `writer`.
-- `writer` — turns that picture into `NOTES.md`. May write to the workspace.
+- `writer` - turns that picture into `NOTES.md`. May write to the workspace.
 
 ## Done means
 
@@ -278,7 +278,7 @@ Read a codebase and leave a short written note about it in the workspace.
 - Every claim in it comes from a file that was actually read.
 ```
 
-Send `/sync-with-spec` in the editor's chat. It writes `agents.yaml` — who
+Send `/sync-with-spec` in the editor's chat. It writes `agents.yaml` - who
 exists, and what each may reach for:
 
 ```yaml
@@ -299,7 +299,7 @@ agents:
       handoffs: [reader] # a hand-off does not return by itself; give it a way back
 ```
 
-— and one prompt file per agent.
+- and one prompt file per agent.
 
 <details>
 <summary>The prompt files it writes</summary>
@@ -327,15 +327,15 @@ lines. Then say where you put it and stop.
 | Key           | Is                                                                    |
 | ------------- | --------------------------------------------------------------------- |
 | `name`        | how everything else refers to this agent                              |
-| `description` | what it is for — read by the _other_ agents when deciding to hand off |
+| `description` | what it is for - read by the _other_ agents when deciding to hand off |
 | `system`      | its own brief, in prose, at `agents/prompts/<name>.md`                |
 | `model`       | this agent's model; the top-level one otherwise                       |
-| `tools`       | what it may reach for — `workspace:*`, `sandbox:*`, a named tool      |
+| `tools`       | what it may reach for - `workspace:*`, `sandbox:*`, a named tool      |
 | `handoffs`    | who it may pass the work to                                           |
 | `skills`      | knowledge pulled in mid-run instead of carried in every prompt        |
 
 The file is validated strictly at load: an unknown tool, a handoff to nobody, a
-missing prompt file — each fails immediately, naming the offending key, rather
+missing prompt file - each fails immediately, naming the offending key, rather
 than surfacing three turns into a run as a confused model. Full reference:
 [docs/agents-yaml.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/agents-yaml.md).
 
@@ -352,21 +352,21 @@ zen inspect --project repo-notes --open    # what it actually did
 
 That is the end of it: `repo-notes` is now a command like any other, in any
 directory, for as long as the folder exists. Commit the folder and whoever
-clones it types `zen init repo-notes` once — a directory that is already a
-project is registered, not rebuilt, and nothing in it is touched — and the name
+clones it types `zen init repo-notes` once - a directory that is already a
+project is registered, not rebuilt, and nothing in it is touched - and the name
 is a command on their machine too.
 
 ## A project is a folder
 
-Prompts, agent wiring, skills and tool selections are all files — Markdown and
-YAML — rather than code buried inside an application. So the folder can be
+Prompts, agent wiring, skills and tool selections are all files - Markdown and
+YAML - rather than code buried inside an application. So the folder can be
 committed, copied to another machine, reviewed in a pull request, and handed to
 someone else who runs it with one command. Credentials live in `$HOME`, never in
 the project, so there is no secret to strip before sharing it.
 
 ```
 my-project/
-    SPECIFICATION.md             what this is for — the intent
+    SPECIFICATION.md             what this is for - the intent
     INSTRUCTIONS.md              house rules, prepended to every agent
     agents.yaml                  who exists, what they may reach for
     agents/
@@ -386,26 +386,26 @@ happened when it ran. Nothing here is tied to the machine it was written on,
 which is the point of the CLI: it makes agentic systems shareable the way
 repositories are shareable.
 
-`zen init` also writes `.vscode/` and a `.github/` tree — a standing brief that
+`zen init` also writes `.vscode/` and a `.github/` tree - a standing brief that
 explains this runtime to whatever coding agent you open the folder with, plus
 the prompts and skills it needs to keep the project matching its specification.
 
 ## Concepts
 
-- **Project** — a named directory holding a complete agent definition and the
+- **Project** - a named directory holding a complete agent definition and the
   sessions that have run against it. It is self-describing: `agents.yaml` is
   what makes a directory a project, so moving or cloning it loses nothing.
-- **Session** — a context that persists across runs: one workspace, one memory,
+- **Session** - a context that persists across runs: one workspace, one memory,
   one store for large files, and a record of everything that happened, added to
   as it goes. Resumable.
-- **Run** — one prompt in, one answer out, inside a session. Recorded in full,
+- **Run** - one prompt in, one answer out, inside a session. Recorded in full,
   whether or not you were watching.
-- **Workspace** — the directory the agents may read and write. A prompt given on
+- **Workspace** - the directory the agents may read and write. A prompt given on
   the command line uses the current directory; the TUI offers the session's own
   empty folder instead, and asks before using anything outside it.
-- **Keyring** — `~/.zenera/neo`, readable only by you. See
+- **Keyring** - `~/.zenera/neo`, readable only by you. See
   [Credentials](#credentials).
-- **Cache** — `~/.zenera/neo/cache`, one place for work already done: vectors,
+- **Cache** - `~/.zenera/neo/cache`, one place for work already done: vectors,
   parses, model listings, generated mocks. Shared by every project on the
   machine, and never emptied by anything but you. See [Cache](#cache--work-you-have-already-paid-for).
 
@@ -416,11 +416,11 @@ the prompts and skills it needs to keep the project matching its specification.
 | `init`    | Creates a project here, or in `<dir>`, and registers it.             |
 | `list`    | Every known project: sessions, last run, whether one is live.        |
 | `open`    | Opens a project in your editor.                                      |
-| `key`     | The credential keyring — add, check, switch, remove.                 |
-| `models`  | What this machine can use — list, search, test, pick.                |
-| `run`     | Runs the project — the TUI on a terminal, a single answer otherwise. |
+| `key`     | The credential keyring - add, check, switch, remove.                 |
+| `models`  | What this machine can use - list, search, test, pick.                |
+| `run`     | Runs the project - the TUI on a terminal, a single answer otherwise. |
 | `inspect` | Opens or rebuilds a run's `report.html`.                             |
-| `memory`  | What the agents remember — size, listing, one node, or a whole page. |
+| `memory`  | What the agents remember - size, listing, one node, or a whole page. |
 | `check`   | Validates the project and every file it names, and asks the models.  |
 | `sandbox` | Checks and prepares the container that command-line tools run in.    |
 | `cache`   | What work has been kept, and getting rid of it.                      |
@@ -462,7 +462,7 @@ The binary is installed under three names: `zen`, `zn` and `zenera`.
 Global flags: `-h/--help`, `-v/--version`, `--json`, `-C <dir>`.
 
 `stdout` carries the answer and `stderr` carries the narration, and `--json`
-works on every command — so `zen run … | jq` is a supported way to use this, not
+works on every command - so `zen run … | jq` is a supported way to use this, not
 an accident.
 
 | Exit code | Meaning              |
@@ -486,7 +486,7 @@ zen key add <provider> < key.txt    # or pipe it in
 
 The value is never passed as an argument. A command line is visible to anyone
 listing running processes, is saved in your shell history and is captured in CI
-logs — so the hidden prompt and piping it in are the only two ways.
+logs - so the hidden prompt and piping it in are the only two ways.
 
 Entries live in `~/.zenera/neo/keys.json`, in a file only you can read. They are
 copied into the environment just before a run, which has two consequences worth
@@ -497,14 +497,14 @@ checked out on a machine without `zen` still runs.
 | ------------ | ------------------------------------- | -------------------------------- |
 | `openai`     | a secret                              | `OPENAI_API_KEY`                 |
 | `anthropic`  | a secret                              | `ANTHROPIC_API_KEY`              |
-| `google`     | a secret — AI Studio                  | `GEMINI_API_KEY`                 |
+| `google`     | a secret - AI Studio                  | `GEMINI_API_KEY`                 |
 | `vertex`     | a path to a service-account JSON file | `GOOGLE_APPLICATION_CREDENTIALS` |
 | `openrouter` | a secret                              | `OPENROUTER_API_KEY`             |
-| `exa`        | a secret — for the search tool        | `EXA_API_KEY`                    |
+| `exa`        | a secret - for the search tool        | `EXA_API_KEY`                    |
 
 `zen key add` verifies the credential against the provider before it finishes,
-but stores it either way: a key that cannot be checked right now — offline,
-behind a proxy — is not a key that is wrong. `--no-check` skips the call.
+but stores it either way: a key that cannot be checked right now - offline,
+behind a proxy - is not a key that is wrong. `--no-check` skips the call.
 
 ### Which key a model uses
 
@@ -540,12 +540,12 @@ been one does a short built-in list stand in.
 `zen models test` separates three kinds of failure, because each calls for a
 different action:
 
-- **refused** — the provider rejected the credential. Fix or replace the key.
-- **blocked** — the credential was accepted and the account then said no: an API
+- **refused** - the provider rejected the credential. Fix or replace the key.
+- **blocked** - the credential was accepted and the account then said no: an API
   switched off, an empty balance, a model this key was never granted. The key is
   fine; the account needs changing, and the command that changes it is printed
   with the error.
-- **unknown** — the question never arrived (offline, proxy, timeout). Nothing is
+- **unknown** - the question never arrived (offline, proxy, timeout). Nothing is
   wrong with the key; try again.
 
 ```
@@ -566,11 +566,11 @@ zen rag schema index --embedding "$(zen models pick --embedding)" ./specs/*.yaml
 
 ### Setting up each provider
 
-The shape is the same everywhere — `zen key add <provider>`, then answer the
+The shape is the same everywhere - `zen key add <provider>`, then answer the
 prompt. Open the one you need for its specifics.
 
 <details>
-<summary><strong>OpenAI</strong> — one secret, exported as <code>OPENAI_API_KEY</code></summary>
+<summary><strong>OpenAI</strong> - one secret, exported as <code>OPENAI_API_KEY</code></summary>
 
 ```sh
 zen key add openai
@@ -582,7 +582,7 @@ zen key add openai
 </details>
 
 <details>
-<summary><strong>Anthropic</strong> — one secret, exported as <code>ANTHROPIC_API_KEY</code></summary>
+<summary><strong>Anthropic</strong> - one secret, exported as <code>ANTHROPIC_API_KEY</code></summary>
 
 ```sh
 zen key add anthropic
@@ -592,7 +592,7 @@ zen run --model anthropic:claude-sonnet-4-5 "summarise this repo"
 </details>
 
 <details>
-<summary><strong>OpenRouter</strong> — one secret, exported as <code>OPENROUTER_API_KEY</code></summary>
+<summary><strong>OpenRouter</strong> - one secret, exported as <code>OPENROUTER_API_KEY</code></summary>
 
 One credential for many vendors' models. The model id keeps its own vendor
 prefix, after the `openrouter:` one:
@@ -606,7 +606,7 @@ zen run --model openrouter:anthropic/claude-haiku-4.5 "summarise this repo"
 </details>
 
 <details>
-<summary><strong>Google AI Studio</strong> — one secret, exported as <code>GEMINI_API_KEY</code></summary>
+<summary><strong>Google AI Studio</strong> - one secret, exported as <code>GEMINI_API_KEY</code></summary>
 
 One key and nothing else to configure: the shortest way to a working Gemini
 model.
@@ -617,7 +617,7 @@ zen check                         # google:gemini-3.5-flash now resolves
 ```
 
 The same Gemini models are also served by Vertex AI, under a different
-credential. Both can be configured at once — they are separate entries for
+credential. Both can be configured at once - they are separate entries for
 separate services, and the prefix on the model reference decides which is used:
 
 ```sh
@@ -628,12 +628,12 @@ zen run --model vertex:gemini-3.5-flash "summarise this repo"
 </details>
 
 <details>
-<summary><strong>Vertex AI</strong> — a service-account file, or an express-mode key</summary>
+<summary><strong>Vertex AI</strong> - a service-account file, or an express-mode key</summary>
 
 Vertex accepts two kinds of credential, and you never declare which one you are
 giving: if the value is a path to a file that exists it is treated as a
 service-account key, otherwise as an API key. The name you give the entry has no
-bearing on this — `vertex/express` is just an entry called `express`, exactly as
+bearing on this - `vertex/express` is just an entry called `express`, exactly as
 `vertex/prod` is one called `prod`, and either name can hold either kind.
 
 **A service-account JSON file** is the usual one, and what production normally
@@ -645,7 +645,7 @@ zen key add vertex --gcp-location us-central1
 # Paste the key, or a path to the file: /Users/you/keys/vertex-sa.json
 ```
 
-The prompt is read by `zen`, not by your shell, so give a full path there — `~`
+The prompt is read by `zen`, not by your shell, so give a full path there - `~`
 is not expanded. In a script, pipe the path in instead:
 
 ```sh
@@ -664,7 +664,7 @@ moving or cleaning up the original later cannot break it.
 - Which models a location serves varies per model and is not guessable. In one
   project, `gemini-embedding-2` answered at `us` but 404'd at `us-central1`,
   while `gemini-2.5-flash` did the opposite. New models often reach `global`,
-  `us` and `eu` first. `zen models test vertex:<model>` is what settles it —
+  `us` and `eu` first. `zen models test vertex:<model>` is what settles it -
   `zen key add` only establishes that the credential itself works.
 - `--gcp-project <id>` is only needed when the `project_id` inside the file is
   not the project you want to bill:
@@ -693,7 +693,7 @@ keyring, so it is always visible which credential a run will actually use.
 </details>
 
 <details>
-<summary><strong>Exa</strong> — one secret, exported as <code>EXA_API_KEY</code></summary>
+<summary><strong>Exa</strong> - one secret, exported as <code>EXA_API_KEY</code></summary>
 
 Not a model provider: this is what backs the search tool an agent reaches for
 when it has to look something up on the web.
@@ -713,7 +713,7 @@ Entries are named, so a provider can hold several, one of which is active:
 zen key add openai/work         # a second entry
 zen key use openai/work         # the one that runs will use
 zen key ls --check              # everything stored, and whether it still works
-zen key show vertex/default     # masked — --reveal prints the secret
+zen key show vertex/default     # masked - --reveal prints the secret
 zen key env openai              # shell exports, for other tools
 zen key rm openai/work
 ```
@@ -729,12 +729,12 @@ zen key use vertex/dev          # which one the next run uses
 ```
 
 `zen key ls` marks the active entry with `*`, and anything it found outside the
-keyring — in your environment, or in a `gcloud` login — with `~`, so it is always
+keyring - in your environment, or in a `gcloud` login - with `~`, so it is always
 clear where a working provider actually comes from.
 
 </details>
 
-## Cache — work you have already paid for
+## Cache - work you have already paid for
 
 Embedding a paragraph, parsing a document, asking a provider what it serves: all
 of these are slow or costly, and all of them give the same answer every time. So
@@ -763,7 +763,7 @@ time.
 ## The library underneath
 
 This is a shell over
-[`@zenera/neo`](https://www.npmjs.com/package/@zenera/neo) — agents, models,
+[`@zenera/neo`](https://www.npmjs.com/package/@zenera/neo) - agents, models,
 tools, skills, memory and a running record of everything that happened. Use it
 directly when you want the runtime inside your own application rather than on a
 terminal:
@@ -772,19 +772,19 @@ terminal:
 ## Documentation
 
 - [docs/specification.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/specification.md)
-  — writing the specification the project implements.
+    - writing the specification the project implements.
 - [docs/projects.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/projects.md)
-  — what the project folder contains, file by file.
+    - what the project folder contains, file by file.
 - [docs/agents-yaml.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/agents-yaml.md)
-  — every key in the configuration file.
+    - every key in the configuration file.
 - [docs/knowledge.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/knowledge.md)
-  — building a searchable document index.
+    - building a searchable document index.
 - [docs/integrations.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/integrations.md)
-  — making an API description searchable and mockable.
+    - making an API description searchable and mockable.
 - [docs/memory.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/memory.md)
-  — what agents keep between sessions.
+    - what agents keep between sessions.
 
 ## License
 
-Early days and moving fast — issues, questions and pull requests are welcome.
+Early days and moving fast - issues, questions and pull requests are welcome.
 [MIT](LICENSE).

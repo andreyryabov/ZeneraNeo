@@ -1,7 +1,7 @@
 # Specification-driven projects
 
 A Zenera project is a folder of files an agent can read and change: prompts,
-skills, `agents.yaml`, a Dockerfile, a few scripts. That makes it a rare thing —
+skills, `agents.yaml`, a Dockerfile, a few scripts. That makes it a rare thing -
 a system whose implementation an agent can actually maintain, provided somebody
 says what it is supposed to do.
 
@@ -20,7 +20,7 @@ zen init my-project      # writes SPECIFICATION.md and the project implementing 
 zen open my-project      # opens that folder in your editor
 ```
 
-`zen open` launches the editor you already use — the one this terminal belongs
+`zen open` launches the editor you already use - the one this terminal belongs
 to, or `$ZENERA_EDITOR`, or the first of VS Code, Cursor, Windsurf, Zed, Sublime
 Text or IntelliJ it can find; `--editor <cmd>` names one outright. On the way in
 it rewrites `.vscode/settings.json` and the `.github/` tree, so the chat
@@ -32,7 +32,7 @@ Then, in that window:
    each may reach for, and what _done_ means.
 2. **Open the chat panel and send `/sync-with-spec`.**
 3. **Read `SPECIFICATION-FEEDBACK.md`.** Answer its questions by editing
-   `SPECIFICATION.md` — never by editing a prompt — and send `/sync-with-spec`
+   `SPECIFICATION.md` - never by editing a prompt - and send `/sync-with-spec`
    again.
 
 Back in the terminal: `zen check`, `scripts/_setup.sh`, `zen run`.
@@ -44,11 +44,11 @@ and its forks offer as chat slash-commands:
 | ----------------- | ----------------------------------------------------------- |
 | `/sync-with-spec` | Makes every file match `SPECIFICATION.md`, both directions. |
 | `/review-project` | Reads the project as a reviewer would, and reports.         |
-| `/new-agent`      | Adds an agent — prompt, wiring and hand-offs.               |
+| `/new-agent`      | Adds an agent - prompt, wiring and hand-offs.               |
 | `/new-skill`      | Adds a skill under `agents/skills/`.                        |
 
 In an editor with no support for prompt files, paste the contents of
-`.github/prompts/sync-with-spec.prompt.md` into its chat instead — it is only a
+`.github/prompts/sync-with-spec.prompt.md` into its chat instead - it is only a
 prompt, and it says everything it needs about where to look.
 
 ## The loop
@@ -70,7 +70,7 @@ edit SPECIFICATION.md    ← the report goes back into the spec, not into a prom
 ```
 
 The turn that matters is the last one. When a run comes out wrong, the fix is
-not a sentence bolted onto a prompt — it is the sentence that was missing from
+not a sentence bolted onto a prompt - it is the sentence that was missing from
 the specification, after which the prompt edit follows from it. Prompts patched
 directly drift away from the document that is supposed to describe them, and a
 project whose specification is no longer true is a project with no specification.
@@ -78,25 +78,25 @@ project whose specification is no longer true is a project with no specification
 ### `/sync-with-spec`
 
 `zen init` installs `.github/prompts/sync-with-spec.prompt.md`, so the command
-is available in your editor's chat from the first minute — type `/` in the chat
+is available in your editor's chat from the first minute - type `/` in the chat
 panel and it is in the list. It is a long prompt and worth reading once; in
 outline it:
 
-1. **Reads everything before editing anything** — the specification, then
+1. **Reads everything before editing anything** - the specification, then
    `agents.yaml`, `INSTRUCTIONS.md`, every prompt, every skill, the assets, the
    Dockerfile and the scripts. Then runs `zen check`.
 2. **Builds a difference list both ways.** Forwards: for each item in the
    specification, is it present, missing, divergent or unclear. Backwards: for
-   each line of each prompt and skill, which specification item does it serve —
+   each line of each prompt and skill, which specification item does it serve -
    a line serving none is an **extra**, and that is how prompts stop growing
    sediment.
-3. **Changes the smallest thing that closes the gap** — a prompt edit over a new
+3. **Changes the smallest thing that closes the gap** - a prompt edit over a new
    skill, a new skill over a new agent, a tool grant over asking the model to
    remember. A capability gap is a `tools:` grant _plus_ the prompt line that
    says when to use it, because a granted tool no prompt mentions is not
    implemented.
 4. **Never invents a value you did not state.** A model id, a limit, a retry
-   count, a path — an unstated value becomes a question, not a guess.
+   count, a path - an unstated value becomes a question, not a guess.
 5. **Writes `SPECIFICATION-FEEDBACK.md`** for everything it could not settle,
    grouped under 🛑 blocking, ❓ ambiguous, ⚡ contradictions, ✏️ errors, ➕ out
    of scope. Each entry quotes the specification, says why it could not be
@@ -137,7 +137,7 @@ not doing is cheaper than removing it later.
 
 An ambiguity here becomes a guess three files away, and a value nobody stated
 becomes one somebody invented. Say the model. Say the limit. Say what happens
-when the answer is not knowable — because if you do not, something will be
+when the answer is not knowable - because if you do not, something will be
 written down that sounds right.
 
 | Instead of                  | Write                                                                   |
@@ -156,8 +156,8 @@ wrong file.
 
 ## Setup steps are scripts
 
-Anything that has to be done before the project can run — an index built, a
-document fetched, a file generated — is a script under `scripts/`, and
+Anything that has to be done before the project can run - an index built, a
+document fetched, a file generated - is a script under `scripts/`, and
 `scripts/_setup.sh` is the only entry point. Not a paragraph in a README that a
 person is supposed to follow, because the thing following it is usually an
 agent.
@@ -173,7 +173,7 @@ The runner `zen init` writes holds a `STEPS` list at the top and runs
 is adding a file and a name.
 
 Each step exits **0** when it did the work, **3** when there was nothing to do,
-and non-zero when it failed — which is how a second run can report `skipped` and
+and non-zero when it failed - which is how a second run can report `skipped` and
 prove itself re-entrant. A step writes into `.tmp/` and moves the result into
 place, so an interrupted build never leaves half an artefact behind, and reads
 `$FORCE` to know whether `--force` was passed.
@@ -183,7 +183,7 @@ leave the project runnable and `scripts/_setup.sh` re-runnable.
 
 ## `zen check`
 
-`zen check` validates the project — that it loads, that every model reference
+`zen check` validates the project - that it loads, that every model reference
 resolves, that every agent's tools and handoffs exist, that the sandbox is
 buildable. It says nothing about whether the prose is any good, which is what
 the review pass in `/sync-with-spec` is for. Run it before the setup script and
@@ -191,8 +191,8 @@ again after the changes.
 
 ## Further
 
-- [projects.md](projects.md) — what a project directory is, and how it loads
-- [agents-yaml.md](agents-yaml.md) — the configuration reference
-- [knowledge.md](knowledge.md) — giving agents a corpus to search
-- [integrations.md](integrations.md) — giving agents an API to work against
-- [memory.md](memory.md) — carrying something from one session to the next
+- [projects.md](projects.md) - what a project directory is, and how it loads
+- [agents-yaml.md](agents-yaml.md) - the configuration reference
+- [knowledge.md](knowledge.md) - giving agents a corpus to search
+- [integrations.md](integrations.md) - giving agents an API to work against
+- [memory.md](memory.md) - carrying something from one session to the next

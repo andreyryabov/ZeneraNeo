@@ -1,6 +1,6 @@
 ---
 name: zen-cli
-description: How to drive this project from the terminal with `zen` — running it, validating it, credentials, the sandbox, run reports, and the `faker` and `rag` modules.
+description: How to drive this project from the terminal with `zen` - running it, validating it, credentials, the sandbox, run reports, and the `faker` and `rag` modules.
 ---
 
 # The `zen` command line
@@ -36,7 +36,7 @@ zen rag      docs <index|search|list|grep|show|stats> [path...]
 ## Read the reference before answering
 
 The full reference lives next to this file, one document per part of the command
-line. **Read the one that covers the question before answering it** — do not
+line. **Read the one that covers the question before answering it** - do not
 guess a flag, and do not read them all.
 
 | The question is about                                               | Read                                    |
@@ -50,8 +50,8 @@ guess a flag, and do not read them all.
 | The container shell commands run in, images, `persist`              | [sandbox.md](./references/sandbox.md)   |
 | Run reports, trajectories, what a session directory holds           | [inspect.md](./references/inspect.md)   |
 | What the agents remember, why something was recalled, forgetting    | [memory.md](./references/memory.md)     |
-| `zen faker` — a mock API from an OpenAPI/Swagger document           | [faker.md](./references/faker.md)       |
-| `zen rag` — searching an API description, or a pile of markdown     | [rag.md](./references/rag.md)           |
+| `zen faker` - a mock API from an OpenAPI/Swagger document           | [faker.md](./references/faker.md)       |
+| `zen rag` - searching an API description, or a pile of markdown     | [rag.md](./references/rag.md)           |
 
 ## The short version
 
@@ -75,7 +75,7 @@ When behaviour is wrong and the prompt looks right, open the run report. It
 shows what the model was actually given, which is rarely what you assumed.
 
 Flags always beat the file: the repository states intent, the invocation
-overrides it. Failure messages name the offending key or file — a load error
-names the exact path, as in `agents.yaml: agents[1].skills.discovery — …` — so
+overrides it. Failure messages name the offending key or file - a load error
+names the exact path, as in `agents.yaml: agents[1].skills.discovery - …` - so
 read it rather than guessing. The loader is strict on purpose, and an unknown
 key is an error rather than a value quietly ignored.

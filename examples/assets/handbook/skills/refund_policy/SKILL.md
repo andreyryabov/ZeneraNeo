@@ -16,7 +16,7 @@ Refunds are decided by how long ago the order was delivered.
 
 Faulty goods ignore the table: they are always a full refund, at any age.
 
-Call `refund_quote` to compute the amount. Do not do the arithmetic yourself —
+Call `refund_quote` to compute the amount. Do not do the arithmetic yourself -
 the tool is the system of record and its number is the one the customer gets.
 
 Refunds above 500 EUR need a supervisor. Say so instead of confirming them.

@@ -1,4 +1,4 @@
-# Memory — `zen memory`
+# Memory - `zen memory`
 
 ```
 zen memory [stats|ls|show|export|forget] [args] [options]
@@ -45,7 +45,7 @@ is masked, ranked and truncated as well, so what an agent gets is never the
 whole picture.
 
 This command ignores all of that. When the mask is the thing that is wrong, the
-part that was hidden is exactly the part you need — and this is a person at a
+part that was hidden is exactly the part you need - and this is a person at a
 terminal in the project directory, not an agent inside a run.
 
 It also contacts no model. The store is opened without an embedder, so
@@ -60,12 +60,12 @@ zen memory export --open
 
 One self-contained HTML file, three panes:
 
-- **left** — every node, with a search box and filters for kind, audience,
+- **left** - every node, with a search box and filters for kind, audience,
   files, superseded and unlinked
-- **middle** — the graph as a Mermaid diagram, coloured by kind, with pan,
+- **middle** - the graph as a Mermaid diagram, coloured by kind, with pan,
   zoom, and a hop-focus selector for following one node's neighbourhood
-- **right** — whatever you clicked, in full: the text, the metadata, the links,
-  and **the remembered file's actual content** — rendered as an image when it is
+- **right** - whatever you clicked, in full: the text, the metadata, the links,
+  and **the remembered file's actual content** - rendered as an image when it is
   one, and as text otherwise
 
 Clicking a node in either the list or the diagram selects it in both. Above 300
@@ -83,15 +83,15 @@ zen memory forget 01M1YPN0C8QRQS5BCZ03ABQ1G0
 ```
 
 Asks first, unless `--yes`, and refuses outright when there is no terminal to
-ask at. A node, its vector row and its remembered file bytes go together —
+ask at. A node, its vector row and its remembered file bytes go together -
 there is one implementation of that, shared with the agent-facing tool, so the
 three cannot drift apart.
 
 **Forgetting is rarely the right correction.** The agents' own way to fix a
 wrong memory is to commit the corrected node and supersede the old one, which
 keeps the record of having been wrong. `zen memory ls --stale` lists what has
-been superseded that way. Use `forget` for what should never have been stored —
-a secret, a mistake, a pile of noise — not for what merely became untrue.
+been superseded that way. Use `forget` for what should never have been stored -
+a secret, a mistake, a pile of noise - not for what merely became untrue.
 
 ## Reading `stats`
 
@@ -100,8 +100,8 @@ nodes       7
 edges       6
 superseded  1
 files       1 · 640 B
-embedding   none — recall falls back to term overlap
-vectors     —
+embedding   none - recall falls back to term overlap
+vectors     -
 ```
 
 `embedding none` is worth noticing: without an embedder, recall matches on

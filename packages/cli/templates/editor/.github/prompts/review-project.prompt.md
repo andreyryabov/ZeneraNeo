@@ -28,7 +28,7 @@ Work the checklist in §9 of the copilot instructions. In particular:
 - **Routing.** Handoff targets have descriptions written for the model. No
   ping-pong edges. No router that answers.
 - **Models.** Each agent on the cheapest tier that is right, not the safest.
-- **Cache.** Nothing volatile — dates, ids, counts — in the stable prefix.
+- **Cache.** Nothing volatile - dates, ids, counts - in the stable prefix.
 - **Secrets.** No key inlined anywhere; `.env` ignored, `sessions/` ignored.
 
 Report as a list of findings, each naming the file and the line, ordered by how

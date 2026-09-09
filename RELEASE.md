@@ -15,7 +15,7 @@ Nothing lists those four by hand: [scripts/release.mjs](scripts/release.mjs) tak
 directory under `packages/` whose `package.json` is not `private`, and sorts them so a
 package comes after the siblings it depends on. `node scripts/release.mjs workspaces`
 prints that list as `-w` flags (`--paths` for bare directories), and the pack and publish
-commands use it. To publish a new package, drop `"private": true` from it — and publish its
+commands use it. To publish a new package, drop `"private": true` from it - and publish its
 first version by hand, because CI's credential does not exist until the package does.
 
 ## The strategy in one paragraph
@@ -33,7 +33,7 @@ Two rules the tooling exists to enforce:
   `@zenera/cli`, then the subcommand packages that depend on both. Out of order, a package
   ships asking for a sibling version that does not exist yet.
 - **The dependency ranges.** When the version moves, every internal `"@zenera/*": "^x.y.z"`
-  must move with it. `npm version --workspaces` does _not_ do this — it bumps each
+  must move with it. `npm version --workspaces` does _not_ do this - it bumps each
   workspace and leaves every dependent pointing at the old version. That is the whole
   reason [scripts/release.mjs](scripts/release.mjs) exists.
 
@@ -49,7 +49,7 @@ git push --follow-tags
 **One tag at a time.** `--follow-tags` pushes every unpushed tag, so bumping twice before
 pushing starts two workflow runs at once; they race to write the same packument and the
 registry answers `409 Failed to save packument`, leaving a release half published. The
-workflow now has a `concurrency: release` group, but do not rely on it — push the tag you
+workflow now has a `concurrency: release` group, but do not rely on it - push the tag you
 meant to cut.
 
 `npm run release -- patch`:
@@ -72,7 +72,7 @@ Pushing the tag is what publishes. Until then nothing has left the machine.
 [.github/workflows/release.yml](.github/workflows/release.yml) runs on any `v*.*.*` tag
 (and on `workflow_dispatch` with a tag name, to re-run a failed release):
 
-1. `node scripts/release.mjs verify <tag>` — the tag must name the version in every
+1. `node scripts/release.mjs verify <tag>` - the tag must name the version in every
    package, and each internal `@zenera/*` range must match it. A mismatched tag fails
    here, before anything is published.
 2. `format:check`, `typecheck`, `vitest run --exclude '**/live-*'`.
@@ -80,24 +80,24 @@ Pushing the tag is what publishes. Until then nothing has left the machine.
    missing key cannot pass as green.
 3. `npm pack --dry-run` for every package.
 4. one `npm publish -w <dir> --access public` per package, in dependency order,
-   **skipping any `name@version` the registry already has** — so re-running a partially
+   **skipping any `name@version` the registry already has** - so re-running a partially
    failed release finishes it instead of dying on the first already-published package.
 5. `gh release create <tag> --generate-notes`.
 
 > **CI has no npm token.** `NPM_TOKEN` is unset; the workflow authenticates with npm
 > **trusted publishing** (OIDC, `id-token: write` + npm >= 11.5.1), which also signs a
-> provenance statement automatically — the repository is public, so npm accepts it.
+> provenance statement automatically - the repository is public, so npm accepts it.
 >
 > **A package npm has never seen has no trusted publisher, so its first version cannot be
 > published by CI.** The run fails with `npm error code ENEEDAUTH … You need to authorize
 this machine using npm login`, exactly where the new package's turn comes up. Publish
-> that first version by hand (below), then add the trusted publisher on npmjs.com —
+> that first version by hand (below), then add the trusted publisher on npmjs.com -
 > _package → Settings → Trusted Publisher → GitHub Actions_, repository
-> `andreyryabov/ZeneraNeo`, workflow `release.yml`, environment `npm` — and every later
+> `andreyryabov/ZeneraNeo`, workflow `release.yml`, environment `npm` - and every later
 > release goes through CI like the rest.
 
 Every package has a `prepack: tsc -b`, so a stale or missing `dist` cannot be published.
-None ships `src`, and the `.js.map` / `.d.ts.map` files are excluded with it — their
+None ships `src`, and the `.js.map` / `.d.ts.map` files are excluded with it - their
 `../src/*.ts` references would not resolve inside the tarball. Maps are still emitted into
 `dist` for local work; they are only kept out of the published files.
 
@@ -112,7 +112,7 @@ npm run release:check
 npm run release:publish                      # or: npm publish -w packages/<new> --access public
 ```
 
-- A bare `npm publish` at the root fails — the root is private. Always name a workspace.
+- A bare `npm publish` at the root fails - the root is private. Always name a workspace.
 - Publish in dependency order; `release.mjs workspaces` already emits it.
 - The version must be the one the tag names, or the tree is no longer in lockstep.
 - In the VS Code terminal sandbox `npm pack`/`npm publish` fail with `EPERM` on
@@ -120,7 +120,7 @@ npm run release:publish                      # or: npm publish -w packages/<new>
 
 ## Fixing a bad release
 
-npm packages are immutable — a published version is never replaced.
+npm packages are immutable - a published version is never replaced.
 
 - **The workflow failed before publishing:** fix, then re-run the workflow from the
   Actions tab with the same tag. Nothing was published, the tag is still good.
@@ -142,6 +142,6 @@ Never move a tag that CI has already consumed.
 - [ ] breaking changes → `major`; new surface → `minor`; fixes → `patch`
 - [ ] `npm run release:check` passes
 - [ ] `npm run release -- <bump>`
-- [ ] `git push --follow-tags` — exactly one new tag
+- [ ] `git push --follow-tags` - exactly one new tag
 - [ ] the `Release` workflow is green and every version appears on npmjs.com
 - [ ] `npm i -g @zenera/cli@latest && zn --version` from outside the repo

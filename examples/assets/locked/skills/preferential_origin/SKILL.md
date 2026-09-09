@@ -16,6 +16,6 @@ The claim must be supported at the time of declaration:
 - the importer's own knowledge, documented.
 
 Without one of those, the shipment falls back to the standard third-country
-rate — the claim is not something to assume on the customer's behalf.
+rate - the claim is not something to assume on the customer's behalf.
 
 Call `duty_quote` with `regime: "preferential"` once the evidence is in hand.

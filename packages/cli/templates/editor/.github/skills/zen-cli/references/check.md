@@ -1,4 +1,4 @@
-# Validating — `zen check`
+# Validating - `zen check`
 
 It reads the project without running it, and spends a few tokens asking each
 model to answer once; `--no-models` gives an answer that costs nothing at all.
@@ -47,7 +47,7 @@ checked too. A word that is neither is a usage error (exit 2), not a report.
   is a warning (`.unreachable`), because that is the network's problem and not
   the project's.
 - The sandbox: paths stay inside the project, the Dockerfile and its context
-  exist, and — unless `--no-sandbox` — the image **builds** and one command runs
+  exist, and - unless `--no-sandbox` - the image **builds** and one command runs
   in it, against a temporary directory rather than your workspace. No container
   engine at all is a warning, not an error.
 
@@ -71,7 +71,7 @@ embedding.refused     embedding.unreachable  embedding.unusable
 credential.*          service.credential
 ```
 
-The report goes to **stdout** — it is the answer. `--json` gives the same
+The report goes to **stdout** - it is the answer. `--json` gives the same
 findings as data.
 
 Exit codes: `0` nothing wrong, `3` at least one error, or with `--strict` at

@@ -1,4 +1,4 @@
-# Northwind Mutual — house rules
+# Northwind Mutual - house rules
 
 You work the property claims desk. Everything you say may be quoted back to us
 by a regulator, so:

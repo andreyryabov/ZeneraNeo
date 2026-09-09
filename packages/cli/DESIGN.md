@@ -1,4 +1,4 @@
-# zenera CLI — Design
+# zenera CLI - Design
 
 Status: draft
 Scope: `packages/cli`
@@ -39,10 +39,10 @@ nothing but the convenience of being listed.
 
 ```
 ~/.zenera/neo/
-    projects.json      index of known projects — a cache, never the truth
+    projects.json      index of known projects - a cache, never the truth
     keys.json          credential index, mode 0600
     keys/              file-shaped credentials (Google ADC), mode 0700
-    faker/             the mock server's container workspace — scratch
+    faker/             the mock server's container workspace - scratch
     cache/             work already done (§4.2), one file per object
 ```
 
@@ -51,7 +51,7 @@ and what CI uses to get an empty one.
 
 `projects.json` is derived: every entry can be rebuilt by pointing `zen` at the
 directory again. It exists so `zen list` and `zen open` do not have to search the
-filesystem, and it is allowed to be wrong — an entry whose path has vanished is
+filesystem, and it is allowed to be wrong - an entry whose path has vanished is
 reported as stale, not treated as an error.
 
 ### 3.2 A project
@@ -84,11 +84,11 @@ sessions that ran against it.
 ```
 
 `agents.yaml` is the marker, and there is no second one. A directory the loader
-can read is a project — by path, from anywhere, on a machine that has never seen
+can read is a project - by path, from anywhere, on a machine that has never seen
 it. Being _named_ is the registry's business, and a name the directory already
 has is not worth a file of its own to hold.
 
-Two `state.json` files, deliberately. The one under `.data/` is mutable — it is
+Two `state.json` files, deliberately. The one under `.data/` is mutable - it is
 what `zen run` resumes from. The one under `runs/<id>/` is a snapshot taken when
 that run finished and is never written again; it is what `report.html` was built
 from, and what makes a run reproducible after the session has moved on.
@@ -97,7 +97,7 @@ from, and what makes a run reproducible after the session has moved on.
 
 A **session** is a context that persists: one workspace, one memory, one blob
 store, one accumulating trajectory. A **run** is one `AgentRunner.run()` inside
-it — one prompt in, one answer out.
+it - one prompt in, one answer out.
 
 This maps onto the library without inventing anything: the session directory is
 just the arguments to `FilePayloadStore` and `FileMemoryStore`, and the session
@@ -120,7 +120,7 @@ two.
 | `open`    | Opens a project in your editor.                                            |
 | `key`     | The credential store (§6).                                                 |
 | `models`  | What this machine can use: list, search, test, pick (§6.5).                |
-| `run`     | Runs the project — the TUI on a terminal, one shot otherwise (§7).         |
+| `run`     | Runs the project - the TUI on a terminal, one shot otherwise (§7).         |
 | `inspect` | Opens or rebuilds a run's `report.html`.                                   |
 | `memory`  | The memory graph from outside the agents (§9.3).                           |
 | `check`   | Reports on the project in full: files, wiring, credentials, models (§9.2). |
@@ -144,21 +144,21 @@ point, and a flag says that better than a command does.
 
 ### 4.1 Commands from another package
 
-A sibling package — `@zenera/faker`, and whatever follows it — adds a command to
+A sibling package - `@zenera/faker`, and whatever follows it - adds a command to
 `zen` instead of installing a binary of its own. One thing to install, one
 keyring, one name to remember, and the alternative was a family of programs
 that share their whole vocabulary and differ only in what they do with it.
 
 It implements `Command`, the same interface as everything in `src/commands/`,
 and exports it as `<package>/command`. `zen` finds it through `EXTERNAL` in
-[src/commands/index.ts](packages/cli/src/commands/index.ts) — name, package,
+[src/commands/index.ts](packages/cli/src/commands/index.ts) - name, package,
 summary, usage, install line, and an optional banner.
 
 Two properties are what the design is for, and both are easy to lose:
 
 **Help never loads anything.** `EXTERNAL` is data, held by `zen`, so
 `zen --help` lists a command whether or not its package is present and pays
-nothing either way. Nothing on the path of `zen list` may import a sibling —
+nothing either way. Nothing on the path of `zen list` may import a sibling -
 `zen` starts fast because it depends on almost nothing, and one static import of
 a mock server would end that. `src/external.ts` builds the specifier rather than
 writing it, which is also what keeps the dependency acyclic: the sibling depends
@@ -173,12 +173,12 @@ vendor SDK.
 It is a known list rather than a scan of `node_modules`. These packages are
 released in lockstep by one author, so discovery would buy nothing and cost a
 manifest format, an API version, and a public contract with strangers. When
-there are strangers, that is the moment to build it — not before.
+there are strangers, that is the moment to build it - not before.
 
 A command that keeps running is not a special case. `run` returns a promise, and
 a server's simply does not settle until a signal arrives.
 
-### 4.2 One place for work already done — `zen cache`
+### 4.2 One place for work already done - `zen cache`
 
 Embedding a paragraph, parsing a document, asking a provider what models it
 serves, having a model write a mock generator: all expensive, all perfectly
@@ -187,7 +187,7 @@ a different directory. There is now one store,
 `~/.zenera/neo/cache/<kind>/<ab>/<sha256>.json`, one JSON file per object,
 sharded two hex characters deep so no directory grows huge.
 
-The API is four methods — `get`, `put`, `delete`, `commit` — and
+The API is four methods - `get`, `put`, `delete`, `commit` - and
 `cacheKey(...parts)` to build a key out of everything that produced the value.
 Three rules hold it up.
 
@@ -205,8 +205,8 @@ evicted, they are never found.
 
 **The key is written into the entry and checked on the way out.** The path is
 only a hash of it. Reading it back proves the file is the one that was asked for
-rather than trusting sha256 to be injective, and — far more likely to actually
-happen — catches a key derivation that changed shape without anyone bumping a
+rather than trusting sha256 to be injective, and - far more likely to actually
+happen - catches a key derivation that changed shape without anyone bumping a
 version.
 
 One file per object rather than an append log, which is what three of the four
@@ -219,7 +219,7 @@ atomically.
 **Nothing evicts on its own.** A store that quietly deletes things is only ever
 noticed when it has deleted the wrong one, so retention is a decision someone
 makes out loud: `zen cache prune --older-than 30d`, `--max-size 2GB`, or
-`zen cache clear`. `prune` with no filter is a usage error — deleting everything
+`zen cache clear`. `prune` with no filter is a usage error - deleting everything
 is what `clear` is for and it should have to be typed.
 
 Age is when an entry was last _used_. `commit` is what makes that true: entries
@@ -234,10 +234,10 @@ and two projects quoting the same handbook pay for it once between them.
 
 ### 5.1 `zen init [dir]`
 
-Scaffolds the project — a `SPECIFICATION.md`, a nearly empty
+Scaffolds the project - a `SPECIFICATION.md`, a nearly empty
 `INSTRUCTIONS.md`, a minimal `agents.yaml` naming one `default` agent, empty
 `agents/prompts/` and `agents/skills/`, and a `scripts/_setup.sh` with no steps
-in it yet — and adds the path to `projects.json`.
+in it yet - and adds the path to `projects.json`.
 
 `SPECIFICATION.md` is the one file written out in full, and it specifies the
 project that was just scaffolded: every line of it is implemented by something
@@ -250,8 +250,8 @@ That agent gets `workspace:*` and `sandbox:*`: an agent that can read and write
 files but cannot run the test it just changed is a demo, not a project, and the
 shell is a container over the workspace rather than the machine.
 
-Without `--model`, the model is chosen by asking. Stored keys are probed —
-one authenticated call each, no tokens — and the first provider that answers
+Without `--model`, the model is chosen by asking. Stored keys are probed -
+one authenticated call each, no tokens - and the first provider that answers
 decides the default; an environment variable is taken at its word. `dead` is a
 verdict and `unknown` is not, so a flaky network still scaffolds. When nothing
 is reachable the project is still written, with the missing key said once, here,
@@ -260,15 +260,15 @@ instead of by the first run.
 The probes go together rather than in turn. They are independent questions to
 different vendors, each worth a round trip and a fifteen-second deadline, so in
 sequence a keyring of five spends all five before writing a file. The one
-exception is a credential the SDK can only be handed through the environment —
-the Vertex service-account file — since two of those in flight would each read
+exception is a credential the SDK can only be handed through the environment -
+the Vertex service-account file - since two of those in flight would each read
 the other's path; those go one at a time, after the rest.
 
 The sandbox image is then built, here rather than on the first run. It has to
 happen once either way, and the two moments are not equally good: minutes spent
 during a command that is visibly setting a project up read as setup, while the
 same minutes in the middle of a question somebody asked read as a hung model.
-A machine with no container engine is told so and `init` still succeeds — the
+A machine with no container engine is told so and `init` still succeeds - the
 project is fine, its agent just cannot start a shell yet.
 
 Refuses a non-empty directory unless `--force`, because the alternative is
@@ -276,8 +276,8 @@ silently merging into someone's source tree. The project name defaults to the
 directory's, and `--name` overrides it; a name already in the registry pointing
 somewhere else is a usage error, not a silent overwrite.
 
-The files it lists are the project's own. The editor's — `.vscode/settings.json`
-and the `.github/` tree — are written too but not printed: they are plumbing for
+The files it lists are the project's own. The editor's - `.vscode/settings.json`
+and the `.github/` tree - are written too but not printed: they are plumbing for
 a tool that may not even be installed, and there are more of them than there are
 of the project, so listing them buries what was actually made.
 
@@ -292,7 +292,7 @@ It also writes `.vscode/settings.json`:
 The project's house rules live in `INSTRUCTIONS.md`, deliberately not
 `AGENTS.md`. Every coding assistant now reads that name out of the root of an
 open folder and feeds it to itself as always-on instructions, and `zen open`
-opens exactly this directory — so a project that used it would have its rules,
+opens exactly this directory - so a project that used it would have its rules,
 addressed to _its_ agents about _their_ tools and workspace, confused with the
 editor's own every single time. A name nobody else claims settles that without a
 setting.
@@ -301,7 +301,7 @@ setting.
 but it is opt-in globally, and this is a directory the agent itself writes into;
 someone who turned it on would otherwise have the editor pick up whatever
 `AGENTS.md` a run left behind. It is a _restricted_ setting, so it applies only
-in a trusted workspace, which is the right way round — an untrusted folder is not
+in a trusted workspace, which is the right way round - an untrusted folder is not
 one to be running agents in either.
 
 It is written over whatever was there. Unlike the rest of the project, this
@@ -315,7 +315,7 @@ not store: session count, the newest run, and whether any `sessions/*/.lock`
 holds a live pid. A lock whose process is gone is reported as stale and cleaned
 on the next run, which is the only reason it records a pid at all.
 
-Stale entries — path missing — are listed dimmed, and `zen list --prune` drops
+Stale entries - path missing - are listed dimmed, and `zen list --prune` drops
 them.
 
 ### 5.3 `zen open [project]`
@@ -328,7 +328,7 @@ The editor is the first of: `--editor`, `$ZENERA_EDITOR`, **the editor whose
 integrated terminal this is**, `$VISUAL`, `$EDITOR`, the first of
 `code`/`cursor`/`code-insiders`/`windsurf`/`zed`/`subl`/`idea` found on `PATH`,
 the first of those found installed in `/Applications`, and finally the platform
-opener. `$EDITOR` may carry arguments — `code -n`, `emacsclient -c` — which are
+opener. `$EDITOR` may carry arguments - `code -n`, `emacsclient -c` - which are
 split on whitespace and passed as arguments; **no shell is involved**, so
 nothing in the path is ever interpreted.
 
@@ -337,7 +337,7 @@ bad place to look for a GUI editor.
 
 VS Code and its forks export `VSCODE_GIT_ASKPASS_MAIN` into their integrated
 terminal, pointing inside the running installation. Four directories up is the
-app root, and `product.json` there names the CLI and the product — so the
+app root, and `product.json` there names the CLI and the product - so the
 lookup is exact rather than a guess: it picks Cursor when you are in Cursor, and
 it works when the `code` shell command was never installed, which on macOS is
 the default. That is checked **before** `$EDITOR`, deliberately: `$EDITOR` names
@@ -348,11 +348,11 @@ to say otherwise.
 Failing that, macOS keeps applications where they can be found. A bundle in
 `/Applications` or `~/Applications` is opened through LaunchServices with `open
 -a`, which needs nothing installed. Only when no editor is found at all does the
-directory go to the platform opener — and on macOS that is Finder, which is the
+directory go to the platform opener - and on macOS that is Finder, which is the
 symptom this design is arranged to avoid.
 
-Before the window opens, the editor files from `init` — `.vscode/settings.json`
-and the `.github/` tree — are written into the directory being opened. An editor
+Before the window opens, the editor files from `init` - `.vscode/settings.json`
+and the `.github/` tree - are written into the directory being opened. An editor
 reads only the folder it was opened on, and a project may predate either of them
 or the version of it this `zen` ships, so the moment it is about to be read is
 the moment to put the current one there. Every file is named in the narration,
@@ -363,12 +363,12 @@ this terminal. `$VISUAL` and `$EDITOR` name one that does by convention, so they
 are run with inherited stdio and waited for, and are an error off a TTY.
 Everything else is detached and unreferenced, because a window that dies when
 `zen` returns is not an editor. `--wait` forces the attached form and passes the
-editor's own wait flag — `--wait`, `-w`, or `open -W`.
+editor's own wait flag - `--wait`, `-w`, or `open -W`.
 
 A named editor that is not on `PATH` is resolved and rejected _before_ anything
-is spawned — an ENOENT on a detached child is a failure nobody would ever see.
+is spawned - an ENOENT on a detached child is a failure nobody would ever see.
 
-## 6. Credentials — `zen key`
+## 6. Credentials - `zen key`
 
 ### 6.1 The shape of it
 
@@ -409,7 +409,7 @@ zen key env [--export]               # eval-able lines, for scripts
 visible in `ps` and lands in shell history. `zen key add openai < key.txt` and the
 prompt are the documented paths; the help text says so.
 
-A value that names an existing readable file is treated as a file — that is how
+A value that names an existing readable file is treated as a file - that is how
 Google service-account JSON gets in. The file is _copied_ into `keys/<id>.json`
 so the credential survives the original being moved, and the entry records that
 it is file-shaped so the CLI knows to export `GOOGLE_APPLICATION_CREDENTIALS`
@@ -417,15 +417,15 @@ rather than an API key.
 
 Vertex is the one provider where that sniff decides something: anything that is
 _not_ a path is an express-mode key, stored as an ordinary secret under
-`VERTEX_API_KEY`. The two are alternatives — express mode addresses no project,
-and sending a key and a project together is a `403` — so the shape is recorded
+`VERTEX_API_KEY`. The two are alternatives - express mode addresses no project,
+and sending a key and a project together is a `403` - so the shape is recorded
 per entry, and `--gcp-project` / `--gcp-location` are accepted only alongside a
 file. They carry the prefix because every other command's `--project` names a
 Zenera project, and one word cannot mean both.
 
 `add` verifies before it stores, unless `--no-check`. A key that fails
-verification is still stored — refusing would be wrong when the network is
-down — but it is stored marked `dead` and `zen key ls` says so.
+verification is still stored - refusing would be wrong when the network is
+down - but it is stored marked `dead` and `zen key ls` says so.
 
 ### 6.3 Liveness
 
@@ -436,8 +436,8 @@ verdict with its age and never calls out on its own, because a list command that
 makes three network round trips is a list command nobody runs. `zen key check`
 is the one that goes to the network, and it does so concurrently.
 
-The distinction that matters in the output is _dead_ (the provider said no —
-your key is wrong) versus _unknown_ (we could not ask — your network is wrong).
+The distinction that matters in the output is _dead_ (the provider said no -
+your key is wrong) versus _unknown_ (we could not ask - your network is wrong).
 Collapsing them into one red mark is the classic way to send someone hunting for
 the wrong bug.
 
@@ -445,7 +445,7 @@ There is a third, and it earns its place the same way. _blocked_ is the
 credential authenticating and the **account** then refusing: an API switched off
 in the project, an empty balance, a model this key was never granted. All of
 those arrive as a 403, alongside genuine rejections, and all of them are made
-worse by rotating the key. A `blocked` check carries a `fix` — for the
+worse by rotating the key. A `blocked` check carries a `fix` - for the
 `SERVICE_DISABLED` case the exact `gcloud services enable <api> --project <id>`,
 dug out of the console URL the vendor buried it in.
 
@@ -455,12 +455,12 @@ dug out of the console URL the vendor buried it in.
   created that way rather than fixed afterwards.
 - Looser permissions are refused with an instruction, the way `ssh` does. A
   world-readable key file is not a warning-level event.
-- Secrets are masked everywhere — first four and last four characters — and
+- Secrets are masked everywhere - first four and last four characters - and
   `--reveal` is the only path to plaintext, on a TTY only, never through `--json`.
 - Nothing is ever written into the project. Credentials live in `$HOME`, so a
   project directory is safe to commit by construction.
 
-### 6.5 Models — `zen models`
+### 6.5 Models - `zen models`
 
 `zen check` answers _does my project work_. `zen models` answers _what can I
 use_, needs no project, and is the other half of the same question.
@@ -475,7 +475,7 @@ use_, needs no project, and is the other half of the same question.
 | `zen models pick`          | `--chat` or `--embedding`: the first ref that answers.       |
 
 `zen models <provider>` is short for `ls <provider>`, because it is what people
-type. Safe only because no provider is named after a subcommand — a collision
+type. Safe only because no provider is named after a subcommand - a collision
 would have to be resolved in favour of the subcommand, and silently.
 
 **Listings come from the vendors.** Four adapters, each given the client
@@ -495,21 +495,21 @@ They are dropped.
 **The cache is the shared store's `catalog` kind (§4.2), one day old at most,**
 `0644` because it is public data and someone will want to look at it. The order
 when it is cold is: fresh cache, the provider, a _stale_ cache, then a short
-built-in table. Stale-before-built-in is the part worth defending — yesterday's
+built-in table. Stale-before-built-in is the part worth defending - yesterday's
 real answer from this account beats today's guess about accounts in general, and
 a listing that failed because the wifi dropped must not silently shrink the list
 to four rows. Every row carries its own `source`, so a guess is never mistaken
 for the vendor's word.
 
 The day is applied by `loadCatalog` rather than by the store, which has no notion
-of expiry — it hands back the entry and the time it was written, and freshness is
+of expiry - it hands back the entry and the time it was written, and freshness is
 the caller's question. It has to be: `stale` is a distinct answer here, and a
 store that had already discarded the entry could not give it.
 
 **`pick` is the recovery path**, and the reason the command exists. It walks a
 short ordered candidate list, cheapest and fastest first, probing one at a time
 and stopping at the first that answers. Sequential on purpose: the goal is _one_
-working ref, and firing eight billable calls to find it is the wrong trade —
+working ref, and firing eight billable calls to find it is the wrong trade -
 particularly for the caller most likely to be running it, which is an agent that
 has just been refused. The ref goes to stdout alone and unstyled, so
 `$(zen models pick --embedding)` is the ref and nothing else.
@@ -524,11 +524,11 @@ zen models pick --embedding          → openai:text-embedding-3-small
 There is no `test --all`. A matrix sweep across every model on the machine is a
 bill, not a diagnostic.
 
-## 7. Running — `zen run`
+## 7. Running - `zen run`
 
 ### 7.1 Resolution
 
-Three questions, each answered from flags, then from context, then by asking —
+Three questions, each answered from flags, then from context, then by asking -
 and on a non-terminal the asking step is an error instead, so a script never
 hangs on a prompt.
 
@@ -542,7 +542,7 @@ The workspace is what the agent can read and write. For a new session the
 default is the session's own empty `workspace/`; `--workspace .` points it at
 wherever `zen run` was started, which is the useful case and the dangerous one.
 Anything outside the session directory is confirmed once, explicitly, naming the
-path — and `--yes` is required to skip that in a script. An agent with file tools
+path - and `--yes` is required to skip that in a script. An agent with file tools
 pointed at `$HOME` is a mistake that should take more than one keystroke.
 
 Once chosen, the workspace is recorded in the session, so resuming never
@@ -550,7 +550,7 @@ re-asks and never silently moves.
 
 A prompt on the command line answers all three questions by itself: `zen run
 acme "what changed?"` starts a **fresh** session with the **current directory**
-as the workspace, writable, and asks nothing — the point of typing a question
+as the workspace, writable, and asks nothing - the point of typing a question
 where you are is to have it answered about what is there. The path is still
 named on stderr, and `--session`, `--workspace` and `--read-only` override it.
 The TUI, where there is someone to ask, still asks.
@@ -566,25 +566,25 @@ already keys off the same TTY check that decides colour and progress; making the
 user pick the noun as well would be asking them to say what the terminal has
 already said.
 
-Every run, either way, writes `runs/<id>/` in full — input, output, state,
+Every run, either way, writes `runs/<id>/` in full - input, output, state,
 report, meta. The TUI is a view, not a mode: nothing is recorded only when you
 are watching.
 
 ### 7.3 What the TUI shows
 
 The drawing mode is the only thing in the CLI that repaints rather than prints.
-It renders the event stream live — thinking, tool calls, handoffs, usage — which
+It renders the event stream live - thinking, tool calls, handoffs, usage - which
 `console.log` cannot do.
 
 **Ink** (React for the terminal) is the intended renderer, behind a dynamic
 import in this command alone: it is the one dependency the CLI takes, and no
 other command pays for its startup. Everything it draws comes from `RunStream`
-events and the `Architecture` projection — the TUI holds no state the trajectory
+events and the `Architecture` projection - the TUI holds no state the trajectory
 does not already have, which is what keeps it a view and makes `report.html`
 and the TUI two renderings of one thing.
 
 The screen is in two halves and the split is not cosmetic. Everything that is
-finished — the banner, each turn, each tool call — goes through `Static`, which
+finished - the banner, each turn, each tool call - goes through `Static`, which
 prints once and is never touched again, so it scrolls into real terminal
 scrollback. Everything else is the **repainting frame**, and the frame must
 never be taller than the terminal: Ink erases the previous one by moving the
@@ -593,12 +593,12 @@ outgrows the viewport scrolls its own top away, the erase falls short, and every
 repaint strands another copy of its first line in the scrollback.
 
 The unit that decides "taller" is the row the terminal draws, not the line the
-model wrote — a reasoning stream is one enormous paragraph, so counting `\n`
+model wrote - a reasoning stream is one enormous paragraph, so counting `\n`
 says six lines while the terminal draws sixty. So the two unbounded things, the
 reasoning stream and the answer as it arrives, are wrapped by
 [tui/wrap.ts](packages/cli/src/tui/wrap.ts) to a known width, windowed onto
 their last N rows, and then given that same N again as an explicit `height`
-with `overflow="hidden"` — a miscount clips rather than corrupts. Nothing is
+with `overflow="hidden"` - a miscount clips rather than corrupts. Nothing is
 lost: the finished answer lands in `Static` whole, and the full reasoning chain
 is in the trajectory.
 
@@ -616,7 +616,7 @@ the terminal asked directly (OSC 11, before Ink takes stdin), then `COLORFGBG`,
 then dark. The override comes first because detection can be wrong and nobody
 should have to argue with a terminal about what colour it is.
 
-## 8. Distribution — the `zen` binary
+## 8. Distribution - the `zen` binary
 
 The command name is a `bin` entry in [package.json](packages/cli/package.json),
 nothing more. npm creates the shim on install: a symlink in `node_modules/.bin`
@@ -633,7 +633,7 @@ locally, one in the npm prefix's `bin` directory globally.
 `zen` is the name, and the only one the help, the errors and this document ever
 use. `zn` is an abbreviation for people who type it fifty times a day, and
 `zenera` the unambiguous long form for when a two-letter command has collided
-with something. All three point at the same file — the CLI never branches on
+with something. All three point at the same file - the CLI never branches on
 `argv[0]`, so there is no behaviour to keep in step between them, and nothing to
 choose between when reading someone else's script.
 
@@ -643,7 +643,7 @@ Three things have to hold or the shim is broken, and all three do:
   npm sets the exec bit at install time; on Windows it writes `.cmd`/`.ps1`
   shims instead, so the bit does not matter there.
 - `dist` is in `files`, so the target exists in the published tarball.
-- `engines.node` is `>=24` — the source ships as ESM with top-level `await`.
+- `engines.node` is `>=24` - the source ships as ESM with top-level `await`.
 
 How it becomes available:
 
@@ -661,7 +661,7 @@ itself, the workspace link below beats reinstalling.
 ### 8.1 Developing against the workspace
 
 `npm run cli:link` builds and then `npm link -w packages/cli`, which puts a
-symlink — not a copy — in the global prefix:
+symlink - not a copy - in the global prefix:
 
 ```
 <prefix>/lib/node_modules/@zenera/cli  ->  packages/cli
@@ -671,20 +671,20 @@ symlink — not a copy — in the global prefix:
 So `zen` picks up every rebuild with no reinstall, and `@zenera/neo` resolves
 through the workspace: Node takes the realpath of the shim's target before
 walking up for `node_modules`, so the lookup starts inside the repo and finds
-the workspace symlink — the published library is never fetched.
+the workspace symlink - the published library is never fetched.
 
-`npm i -g ./packages/cli` is the wrong tool here — it copies the directory out of
+`npm i -g ./packages/cli` is the wrong tool here - it copies the directory out of
 the workspace, so `@zenera/neo` comes from the registry and your local edits to
 the library are invisible.
 
 `npm run cli:unlink` removes it.
 
-## 9. The sandbox — `zen sandbox`
+## 9. The sandbox - `zen sandbox`
 
 Command-line tools run in a container, and containers are native on Linux and a
 background virtual machine everywhere else. "Is the engine ready" is therefore
-four questions, not one — is the binary installed, does the machine exist, is it
-running, is the image pulled — and asked late each of them surfaces as a
+four questions, not one - is the binary installed, does the machine exist, is it
+running, is the image pulled - and asked late each of them surfaces as a
 different opaque failure in the middle of a turn the user is already paying for.
 
 So they are asked first, in that order, by
@@ -692,13 +692,13 @@ So they are asked first, in that order, by
 without a decision is fixed without asking: the machine is created at the
 project's `cpus`/`memory`, started, and the image pulled with progress on
 stderr. Installing Podman itself _is_ a decision, so it is the one step that
-prompts — Homebrew on macOS, on a terminal, once. Off a terminal, or under
+prompts - Homebrew on macOS, on a terminal, once. Off a terminal, or under
 `--json` or `--yes`, it fails with exit code `5` and the exact command to run,
 because a CLI that hangs in CI is worse than one that fails in CI.
 
 The pre-flight runs only when it is needed. After the project loads, the CLI
-looks at the _resolved_ tool lists — not at the config's selectors, since
-`sandbox:*`, `'*'` and a bare tool name all mean the same thing by then — and a
+looks at the _resolved_ tool lists - not at the config's selectors, since
+`sandbox:*`, `'*'` and a bare tool name all mean the same thing by then - and a
 project whose agents cannot reach a shell never asks any of it. The container
 itself is lazier still: it is created on the first `run_command`, so a session
 that only asks a question leaves nothing behind at all.
@@ -717,7 +717,7 @@ model call:
 
 Two directories are bind-mounted into every container: the session's workspace
 at `/workspace`, and `sessions/<id>/.data/sandbox/home` as `$HOME`. The second
-is what makes a session self-contained the way the rest of it already is — a
+is what makes a session self-contained the way the rest of it already is - a
 `pip install --user` is still there when the session is reopened, and travels
 with the directory when it is copied. Everything outside the two mounts is
 thrown away when the session closes, unless `sandbox.persist` says otherwise.
@@ -732,22 +732,22 @@ sandbox:
         dockerfile: sandbox/Dockerfile
 ```
 
-Building is a host concern, so none of it is in the library — `@zenera/neo`
+Building is a host concern, so none of it is in the library - `@zenera/neo`
 gains the schema and nothing else, and a `SandboxSpec` still only ever holds an
 image reference. [image.ts](packages/cli/src/image.ts) resolves the block to a
 tag before a container is ever named, and the pre-flight builds it where it
 would otherwise pull.
 
-The tag has to be **content-addressed** — `localhost/zenera-sandbox:<digest>`,
-over the Dockerfile and every file in its context — because the container's
+The tag has to be **content-addressed** - `localhost/zenera-sandbox:<digest>`,
+over the Dockerfile and every file in its context - because the container's
 name is a hash of its spec, and a stable tag over changed content would leave a
 `persist: true` container running a rootfs the project no longer describes.
 Hashing is a synchronous read, so the pool is still built in one shot; only the
 `podman build` is deferred to the pre-flight.
 
 It builds only when that tag is not already on disk. Skipping is safe here in a
-way it would not be for an ordinary tag — the image existing _means_ the content
-is unchanged — so a warm `zen run` costs one `image exists` call. A moved base
+way it would not be for an ordinary tag - the image existing _means_ the content
+is unchanged - so a warm `zen run` costs one `image exists` call. A moved base
 image is the gap that leaves, since `podman build` defaults to `--pull=missing`;
 `zen sandbox pull` forces the build.
 
@@ -756,7 +756,7 @@ image is the gap that leaves, since `podman build` defaults to `--pull=missing`;
 `zen check` is otherwise a reading of files, and says so. The sandbox is one of
 two exceptions: a Dockerfile that does not build is a broken project, and
 nothing short of building it says so. So the check builds the image and runs one
-command in it — against a temporary directory, never the workspace, with no
+command in it - against a temporary directory, never the workspace, with no
 host environment forwarded and `persist` off, so nothing survives it.
 
 It is skipped when no agent can reach a shell, skipped by `--no-sandbox`, and a
@@ -766,7 +766,7 @@ and fails is the one case that fails the check.
 
 The other exception is the models. A credential that authenticates says nothing
 about the id it is spent on, so the check asks each model that has one to answer
-a single word — a few tokens apiece, and the only reading that catches a misspelt,
+a single word - a few tokens apiece, and the only reading that catches a misspelt,
 retired or ungranted model. It runs after everything the files alone can say, so
 an interrupted check is still a useful one; a refusal is an **error** because
 every run will meet the same answer, and silence is a **warning** because that is
@@ -777,7 +777,7 @@ the network's fault and not the project's. `--no-models` skips it.
 A container is per _session_, not per project, so a project worked on for a
 week has a container per session it ran and `persist: true` keeps every one of
 them stopped rather than removed. The count surprises people, so `zen sandbox
-status` lists them with an age and says where they came from — the ones _this_
+status` lists them with an age and says where they came from - the ones _this_
 project made, since a container carries the session id that made it and a
 session id is a directory name under a project. Outside every project it falls
 back to all of them, which is then the only honest answer.
@@ -790,10 +790,10 @@ does not depend on the answer.
 `zen sandbox disk` answers the question that follows. It has to keep two disks
 apart, because only one of them is reclaimed by removing a container:
 
-- **In podman** — images and container layers, inside the machine's disk image
+- **In podman** - images and container layers, inside the machine's disk image
   on the platforms that have one. Read from `system df` and `ps --size`, which
   is asked for by name because podman works a size out by diffing the layer.
-- **On disk** — the project directory itself: workspaces, blobs, memory, every
+- **On disk** - the project directory itself: workspaces, blobs, memory, every
   session that was ever opened. Measured in allocated blocks, not bytes, so a
   sparse file costs what it was given.
 
@@ -810,7 +810,7 @@ something trims them. `machine inspect` no longer carries the path, so the
 documented default location is checked and the line is simply absent when the
 file is not there.
 
-## 10. Memory — `zen memory`
+## 10. Memory - `zen memory`
 
 A project can give its agents a memory: a graph of what they were asked, what
 they planned, what they learned, and the files they kept. It is `@zenera/neo`
@@ -819,7 +819,7 @@ that owns it. What the CLI owes it is a way to look.
 The question that makes the command necessary is **why did it recall that?**,
 and it cannot be answered from inside a run. Recall is masked per agent, ranked
 and truncated before an agent ever sees it, so what reached the prompt is a
-selection — and when the selection is wrong, the evidence is in the part that
+selection - and when the selection is wrong, the evidence is in the part that
 was left out.
 
 So **every subcommand reads the graph unmasked**. That is not a hole in the
@@ -828,7 +828,7 @@ in the project directory, who already owns the files. Withholding a node from
 them would protect nothing and hide the bug.
 
 **Nothing here contacts a model.** The store is opened with no embedder, so
-inspection is free, offline, and cannot fail on a missing credential — which is
+inspection is free, offline, and cannot fail on a missing credential - which is
 precisely the state a project is in when someone starts debugging it. The price
 is that `ls` filters on text rather than on meaning, and that is the right way
 round for a tool whose job is to show what is there rather than to find what is
@@ -839,11 +839,11 @@ model and read every prompt file in order to inspect a graph that needs none of
 them, and would fail on a project whose credentials are missing. It reads the
 config and opens the directory, and that is all.
 
-### 10.1 `export` — the whole graph as one page
+### 10.1 `export` - the whole graph as one page
 
 `zen memory export` writes a single self-contained HTML file, and it is the
 subcommand the others exist around. Three panes: the node list with its filters
-on the left, the graph in the middle, and the selected node on the right — in
+on the left, the graph in the middle, and the selected node on the right - in
 full, including the content of a remembered file, rendered as an image when it
 is one.
 
@@ -851,7 +851,7 @@ The middle pane is Mermaid, as the run report is, and shares the pinned CDN URL
 with it so the two cannot drift. Above 300 drawn nodes it declines and asks for
 a filter instead, because a Mermaid diagram that large is not a picture of
 anything. The diagram is fitted to its pane and re-fitted when the pane
-resizes, until the first manual zoom or pan — after which the view belongs to
+resizes, until the first manual zoom or pan - after which the view belongs to
 the reader and the page stops moving it.
 
 One file and no server is what makes it mailable: it attaches to a bug. The
@@ -859,7 +859,7 @@ only network it does is the Mermaid fetch, and without it the page degrades to
 a working list and detail view.
 
 Escaping follows the run report exactly, because the content is no less
-hostile — node text and remembered files are model output. Data reaches the
+hostile - node text and remembered files are model output. Data reaches the
 document only inside an inert `application/json` block and leaves it only
 through `textContent`.
 

@@ -1,10 +1,10 @@
-# Mock APIs — `zen faker`
+# Mock APIs - `zen faker`
 
 ```
 zen faker <serve|build|cache> [spec...]
 ```
 
-Alias: `zen mock`. Provided by `@zenera/faker` — `npm i -g @zenera/faker` if
+Alias: `zen mock`. Provided by `@zenera/faker` - `npm i -g @zenera/faker` if
 `zen faker` says it is not installed.
 
 Serves a mock API from one or more OpenAPI/Swagger documents. For each
@@ -39,16 +39,16 @@ front and exits non-zero, with a table, if any could not be written.
 | `--model <ref>`     | project default       | Which model writes the generators               |
 | `--image <ref>`     | a baked image         | Skip the baked image and use this one           |
 | `--cache <dir>`     | `~/.zenera/neo/faker` | Where generators live                           |
-| `--seed <n>`        | —                     | Answer the same request the same way every time |
+| `--seed <n>`        | -                     | Answer the same request the same way every time |
 | `--attempts <n>`    | `3`                   | Tries per generator before giving up            |
 | `--concurrency <n>` | `4`                   | Generators written at once                      |
 | `--timeout <s>`     | `30`                  | Seconds one generator may take                  |
 | `--max-body <n>`    | 1 MB                  | Largest request body accepted, in bytes         |
-| `--rebuild`         | —                     | Ignore what is cached and write it again        |
-| `--no-cache`        | —                     | Do not record what is written                   |
-| `--quiet`           | —                     | No narration                                    |
+| `--rebuild`         | -                     | Ignore what is cached and write it again        |
+| `--no-cache`        | -                     | Do not record what is written                   |
+| `--quiet`           | -                     | No narration                                    |
 
-Credentials come from the `zen` keyring — see [keys.md](keys.md).
+Credentials come from the `zen` keyring - see [keys.md](keys.md).
 
 ## Serving
 
@@ -66,19 +66,19 @@ Response headers:
 | Header              | Meaning                                               |
 | ------------------- | ----------------------------------------------------- |
 | `x-faker-operation` | The `operationId` that answered                       |
-| `x-faker-cache`     | `hit` or `miss` — whether this call cost a model turn |
+| `x-faker-cache`     | `hit` or `miss` - whether this call cost a model turn |
 
 Incoming headers are filtered: `authorization`, `cookie` and anything matching
 `key|token|secret|password|credential` never reach a generator.
 
 `--seed` makes each request's seed a hash of the seed, the operation and the
-parameters, so the same request answers identically across restarts — which is
+parameters, so the same request answers identically across restarts - which is
 what makes a mock usable in a test.
 
 ## What "correct" means here
 
 A generator is judged on two synthetic probes: the body validates against the
-response schema, **and** it obeys the **echo rule** — a value given in the path
+response schema, **and** it obeys the **echo rule** - a value given in the path
 comes back in the answer. `GET /users/12324` must return `user_id: 12324`. A body
 can validate perfectly and still be about the wrong entity, which is exactly the
 mock that wastes an afternoon.
@@ -87,16 +87,16 @@ Query parameters are deliberately not enforced: `?source=realtime`, `?page_size`
 and `?cursor` are controls, and their names collide with unrelated response
 fields.
 
-Probes are synthetic on purpose — real request bodies never reach a prompt.
+Probes are synthetic on purpose - real request bodies never reach a prompt.
 
 ## The cache
 
 Generators live in the machine's shared cache, `~/.zenera/neo/cache/faker-generator/`,
-keyed by the operation's shape — so the same spec served from two directories is
+keyed by the operation's shape - so the same spec served from two directories is
 written once, and a spec edit produces a new key rather than a stale answer. A
 generator that a model gave up on is remembered for the life of the process, so
-a hopeless operation is not re-asked on every request; a _transient_ failure — a
-429, a dropped socket — is not, because it is about this minute rather than this
+a hopeless operation is not re-asked on every request; a _transient_ failure - a
+429, a dropped socket - is not, because it is about this minute rather than this
 operation.
 
 `~/.zenera/neo/faker/` is the container's workspace, and scratch: a cache hit is

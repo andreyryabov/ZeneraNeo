@@ -4,7 +4,7 @@ The one file a project must have. It says who exists, what they may reach for,
 and which model answers for them.
 
 The schema is **strict**: an unknown key is an error, not a value silently
-ignored. Failures are reported as `agents.yaml: agents[1].skills.discovery — …`,
+ignored. Failures are reported as `agents.yaml: agents[1].skills.discovery - …`,
 naming the path rather than dumping a JSON blob.
 
 See [projects.md](projects.md) for the folder around this file.
@@ -70,7 +70,7 @@ they should be unambiguous in both.
 
 A provider is a **connection**, not a model: where requests go, and what
 credentials sign them. Splitting it out is what lets one project hold two keys
-for the same vendor — the key is declared once, under a name, and models point
+for the same vendor - the key is declared once, under a name, and models point
 at the name. One client is built per name and shared, so five agents on one key
 open one connection pool.
 
@@ -100,8 +100,8 @@ providers:
 | `apiKeyEnv`   | Env var holding the key; defaults to the kind's conventional name                                            |
 | `baseURL`     | Literal url or `${VAR}`, for gateways and compatible endpoints                                               |
 | `baseURLEnv`  | Env var holding the base url                                                                                 |
-| `project`     | **vertex only** — GCP project id                                                                             |
-| `location`    | **vertex only** — a region, or `global`                                                                      |
+| `project`     | **vertex only** - GCP project id                                                                             |
+| `location`    | **vertex only** - a region, or `global`                                                                      |
 | `headers`     | Sent on every request: gateway routing, attribution, api versions                                            |
 | `timeoutMs`   | Per-request timeout                                                                                          |
 | `maxRetries`  | Retry count; defaults to `4`, `0` disables                                                                   |
@@ -111,7 +111,7 @@ providers:
 
 Every kind retries the same way, whichever SDK is behind it: up to `maxRetries`
 extra attempts on a rate limit (`429`), a request timeout (`408`) or a `5xx`,
-waiting 1s, then 2s, 4s, 8s — doubling up to a minute — and honouring a
+waiting 1s, then 2s, 4s, 8s - doubling up to a minute - and honouring a
 `Retry-After` header when the provider sends one. A 429 is the provider asking
 to be called again shortly, so it costs a few seconds rather than the run.
 
@@ -147,10 +147,10 @@ Each vendor's own SDK is used rather than its OpenAI-compatible endpoint,
 because those endpoints are porting aids and drop exactly what this runtime is
 built on: Google's loses thinking budgets, thought signatures and cached-content
 accounting; Anthropic's loses cache accounting and extended thinking.
-`openai-compatible` is the shim kind — vLLM, a self-hosted gateway — where the
+`openai-compatible` is the shim kind - vLLM, a self-hosted gateway - where the
 OpenAI client is exactly right. `openrouter` used to be that shim with its base
 url and key env filled in; it now has its own SDK, for the same reason as the
-others — provider routing, fallback chains and per-call cost have nowhere to go
+others - provider routing, fallback chains and per-call cost have nowhere to go
 in a chat-completions request.
 
 ### OpenRouter
@@ -180,7 +180,7 @@ outright.
 
 #### Model ids
 
-Ids are `vendor/model`, and may carry a **variant suffix** after a colon —
+Ids are `vendor/model`, and may carry a **variant suffix** after a colon -
 `:free`, `:nitro` (throughput-routed), `:floor` (price-routed), `:online` (web
 search). Both survive the shorthand, because only the _first_ colon separates:
 
@@ -201,7 +201,7 @@ This kind speaks one protocol, its own, so `api:` names nothing:
 provider "openrouter" (openrouter) has one api, so "responses" means nothing here
 ```
 
-That is raised when the model is _built_, not when the ref is parsed — so it
+That is raised when the model is _built_, not when the ref is parsed - so it
 surfaces from `zen check` rather than at the first request.
 The same error covers the shorthand form, `openrouter/responses:…`.
 
@@ -211,7 +211,7 @@ Reasoning arrives on the message as `reasoning`, which the adapter reads into
 #### Attribution
 
 OpenRouter credits apps by two headers, and `headers:` already carries anything
-that belongs on every request — there is no dedicated field, and does not need
+that belongs on every request - there is no dedicated field, and does not need
 to be one:
 
 ```yaml
@@ -246,14 +246,14 @@ models:
 `routing` is OpenRouter's `provider` field, renamed because `provider:` already
 means the connection here; `fallbacks` is its `models` field, named for which
 of the two lists it is. It belongs to a model rather than to a `providers:`
-entry — the choice is made per request, and the provider schema is strict, so
+entry - the choice is made per request, and the provider schema is strict, so
 writing it there is a load error.
 
 | Key                 | Value                                                                        |
 | ------------------- | ---------------------------------------------------------------------------- |
-| `order`             | Providers to try first — a _preference_, not a restriction                   |
+| `order`             | Providers to try first - a _preference_, not a restriction                   |
 | `only` / `ignore`   | Restrict serving to, or away from, these                                     |
-| `allowFallbacks`    | May OpenRouter go beyond `order` — on unless set `false`                     |
+| `allowFallbacks`    | May OpenRouter go beyond `order` - on unless set `false`                     |
 | `sort`              | `price`, `throughput`, `latency`, `exacto`                                   |
 | `requireParameters` | Skip a provider that would drop a parameter rather than serve it             |
 | `dataCollection`    | `allow` \| `deny`                                                            |
@@ -267,7 +267,7 @@ accepted alongside `routing`, not inside it.
 support a parameter may serve the request having quietly dropped it.
 
 Provider names and `sort` are plain strings here, so a typo in `order` is not
-rejected locally — and because `allowFallbacks` is on by default, it is not
+rejected locally - and because `allowFallbacks` is on by default, it is not
 rejected remotely either: the unknown name is skipped and something else serves
 the request. Values the gateway does check, it checks at request time rather
 than at load, naming the field:
@@ -340,14 +340,14 @@ environment before a project loads, so `${OPENROUTER_API_KEY}` in a config keeps
 working either way.
 
 `zen key check` authenticates against `/api/v1/key` rather than listing models,
-because the model catalog answers `200` to a request carrying no key at all —
+because the model catalog answers `200` to a request carrying no key at all -
 listing it would report every credential live, including a revoked one.
 
 ### Built-in names
 
 `openai`, `google`, `vertex`, `anthropic`, `openrouter` and `openai-compatible`
 are usable as provider _names_ with no declaration at all. A `providers:` entry
-is only needed when it says something the default does not — a second key, a
+is only needed when it says something the default does not - a second key, a
 region, a base url. A project can have no `providers:` block and still name
 `vertex`.
 
@@ -378,7 +378,7 @@ providers:
 ### Environment references
 
 `${VAR}` reads the environment; `${VAR:-fallback}` supplies a default. It
-composes inside a longer value — `https://${GATEWAY}/v1` — which a whole-value
+composes inside a longer value - `https://${GATEWAY}/v1` - which a whole-value
 token could not, and no literal secret contains `${`, so there is no rule to
 remember about which strings are magic.
 
@@ -419,17 +419,17 @@ models:
 
 `gpt-4o` · `openai:gpt-4o` · `openai/responses:o3` · `vertex:gemini-3.5-flash`
 
-Only the **first** colon separates, so a fine-tuned id keeps its own — it just
+Only the **first** colon separates, so a fine-tuned id keeps its own - it just
 has to name its provider: `openai:ft:gpt-4o:acme::a1b2`.
 
 **Always write the prefix.** The first segment is a provider _name_, not a vendor
-hint — nothing reads `gemini-3.5-flash` and infers Google. An unprefixed id goes
+hint - nothing reads `gemini-3.5-flash` and infers Google. An unprefixed id goes
 to the default provider, which is `openai` unless a top-level `provider:` says
 otherwise, so a bare `gemini-3.5-flash` asks OpenAI for a Google model and fails
 with `OPENAI_API_KEY is not set`.
 
 Anything the shorthand cannot express (keys, base urls, reasoning knobs) needs
-the object form — which does **not** re-parse a shorthand: its `model:` is the
+the object form - which does **not** re-parse a shorthand: its `model:` is the
 bare id, with `provider:` beside it.
 
 ### Object fields
@@ -438,10 +438,10 @@ bare id, with `provider:` beside it.
 | ------------------------ | ----------------------------- | ------------------------------------------------------------------------------- |
 | `model`                  | all                           | **Required.** The vendor's model id                                             |
 | `provider`               | all                           | A `providers:` name, or a built-in kind                                         |
-| `api`                    | openai                        | `chat` or `responses`. Reasoning needs `responses` — see note below             |
+| `api`                    | openai                        | `chat` or `responses`. Reasoning needs `responses` - see note below             |
 | `apiKey` / `apiKeyEnv`   | all                           | One-off credentials; opts out of the shared client                              |
 | `baseURL` / `baseURLEnv` | all                           | Same                                                                            |
-| `reasoningEffort`        | openai, openrouter            | Free string — see note below                                                    |
+| `reasoningEffort`        | openai, openrouter            | Free string - see note below                                                    |
 | `reasoningSummary`       | openai, openrouter            | `auto` \| `concise` \| `detailed`                                               |
 | `store`                  | openai                        | Whether the provider retains the response                                       |
 | `maxTokens`              | anthropic, gemini, openrouter | Output cap. Anthropic requires one (default 8192) and bills thinking against it |
@@ -453,7 +453,7 @@ bare id, with `provider:` beside it.
 | `fallbacks`              | openrouter                    | Models to try when none of them can                                             |
 | `serviceTier`            | openrouter                    | `auto` \| `default` \| `fast` \| `flex` \| `priority` \| `scale`                |
 
-Knobs that do not apply to the chosen vendor are ignored rather than rejected —
+Knobs that do not apply to the chosen vendor are ignored rather than rejected -
 vendor differences live in the provider, so there is nothing here to
 discriminate on.
 
@@ -466,14 +466,14 @@ accepts failing to load.
 exposes no reasoning summary and rejects `reasoningEffort` outright when the
 request also carries function tools: `400 Function tools with reasoning_effort
 are not supported for <model> in /v1/chat/completions`. Nothing catches this at
-load — the API is the one to say no.
+load - the API is the one to say no.
 
 ### Resolution order
 
 A `model:` value anywhere is resolved as:
 
-1. `ProjectOptions.models[ref]` — the host's alias table
-2. `models[ref]` — this file's alias table
+1. `ProjectOptions.models[ref]` - the host's alias table
+2. `models[ref]` - this file's alias table
 3. The shorthand parser
 
 Results are memoized, so two agents naming `fast` share one model over one
@@ -509,22 +509,22 @@ embedding: main # what `embedder()` returns when asked for none
 
 Deliberately smaller than a model entry: an embedding call has no conversation,
 no tools and no reasoning, so a connection, an id and a width is all there is to
-say. There is **no `api:`** — `/v1/responses` has no embeddings endpoint, and
+say. There is **no `api:`** - `/v1/responses` has no embeddings endpoint, and
 naming one is an error. There is no `taskType` either: that describes the text
 rather than the model, so it belongs to the call.
 
 ### Batching and back-pressure
 
 `embed()` takes as many texts as you have. It splits them to whatever the model
-accepts — 2048 per request for `text-embedding-3-*`, one for
-`gemini-embedding-*` — and issues those requests in parallel. There is no wave:
+accepts - 2048 per request for `text-embedding-3-*`, one for
+`gemini-embedding-*` - and issues those requests in parallel. There is no wave:
 a slot is granted the moment one frees, so a single slow request does not idle
 the others.
 
 How many run at once is not configured, because the honest number depends on the
 account, the model and whatever else is spending the same quota right now. It
 starts at 4, gains a slot every 8 consecutive successes, and halves the moment
-the provider answers `429` — once per overload, not once per refusal, so sixteen
+the provider answers `429` - once per overload, not once per refusal, so sixteen
 simultaneous rejections cost one halving rather than dropping to a single
 request in flight. A `Retry-After` pauses every request on that connection, not
 just the one that was refused.
@@ -532,7 +532,7 @@ just the one that was refused.
 `concurrency:` on the _provider_ caps how high that may climb, which is what to
 reach for when a key is shared with something else. `maxBatch` and
 `maxBatchTokens` are for a gateway whose limits are not its vendor's. Both
-default to the model's, and both are ceilings — nothing here makes requests
+default to the model's, and both are ceilings - nothing here makes requests
 larger than the model allows.
 
 Progress is reported per text through `onProgress`, since a large corpus is
@@ -540,7 +540,7 @@ minutes inside one `await`.
 
 This is **not a per-agent key**. Nothing in the runtime consumes an embedder on
 an agent's behalf yet, and a key nothing honours is worse than a key that is not
-there. What reads it is a host, through `AgentProject.embedder(name?)` — with no
+there. What reads it is a host, through `AgentProject.embedder(name?)` - with no
 argument, the project's `embedding:`, and `undefined` when it declares none.
 Only `embedding:` resolves at load; a named one resolves when it is asked for.
 
@@ -571,10 +571,10 @@ agents/skills/pdf_forms/scripts/fill.py
 ```
 
 A bare `agents/skills/pdf_forms.md` is indexed by the provider but is not a
-project layout — `zen check` reports it as `skill.flat`, because a skill with no
+project layout - `zen check` reports it as `skill.flat`, because a skill with no
 directory of its own cannot ship anything but prose.
 
-The catalog is also mounted into the run, read-only, at `/skills` — one
+The catalog is also mounted into the run, read-only, at `/skills` - one
 directory becomes `/skills`, several become `/skills/<folder name>` each. That
 is what lets a skill ship a script instead of describing one: a skill's
 instructions are rendered with the line "This skill's files are at
@@ -585,7 +585,7 @@ from its directory, and the working directory is `/workspace`. The interpreter
 has to be in the `sandbox:` image already, and anything the script produces has
 to be written under `/workspace`, since the mount refuses writes.
 
-The whole catalog is mounted, for every agent, before anything is loaded — a
+The whole catalog is mounted, for every agent, before anything is loaded - a
 container's mounts are fixed when it is created, so a folder cannot appear at
 the moment `skill_load` asks for it. An agent's `allow:` therefore decides what
 it can _load_, not what it can _read_: a determined model that already knows a
@@ -602,7 +602,7 @@ assets: handbook
 ```
 
 If the key is absent and an `assets/` directory exists next to `agents.yaml`,
-it is used — the folder is the whole configuration for most projects. The key
+it is used - the folder is the whole configuration for most projects. The key
 exists for material kept elsewhere in the tree; like every other path here it
 is relative to the project root and may not escape it, and naming a directory
 that is not there fails the load.
@@ -611,15 +611,15 @@ It is mounted at `/assets`, always read-only, for every agent:
 
 - `read_file`, `list_dir` and `find_files` reach it under that name, and
   `find_files` with no `path` searches it along with the workspace.
-- `list_dir` with no path (or `/`) lists the trees themselves — `/workspace`
-  and `/assets` — since with more than one in reach there is a level above
+- `list_dir` with no path (or `/`) lists the trees themselves - `/workspace`
+  and `/assets` - since with more than one in reach there is a level above
   both.
 - `write_file`, `apply_patch`, `move_file` and `delete_file` refuse it. A
   patch that touches one file under `/assets` writes none of its files.
 - `run_command` sees the same directory at the same path, bind-mounted `:ro`.
 
 There is no per-agent `assets:`. An agent that may see only part of the
-material is a different project, not a different key — and since the mount is
+material is a different project, not a different key - and since the mount is
 fixed when the container starts, it could not be varied per hand-off anyway.
 
 What belongs here is what agents consult: handbooks, specifications, schemas,
@@ -630,15 +630,15 @@ reading it.
 
 > Adding or removing a mount changes the container's name, exactly as a
 > `sandbox:` field does. With `persist: true` that abandons the old container
-> and whatever was installed in it — see below.
+> and whatever was installed in it - see below.
 
 ---
 
 ## `memory:`
 
 What agents remember between runs, and from each other. Memory is a **graph**,
-not a list: a node is one thing worth keeping — a task, a plan, a fact, a
-snippet, a file, an API call — and an edge says how one led to another. Recall
+not a list: a node is one thing worth keeping - a task, a plan, a fact, a
+snippet, a file, an API call - and an edge says how one led to another. Recall
 returns the connected piece, so an agent that finds the right answer also gets
 the reasoning that produced it and the script that ran it.
 
@@ -674,7 +674,7 @@ no store and creates no directory.
 **Relations** are `PRODUCED`, `INFORMED`, `CALLS`, `SUPERSEDES`. Both are closed
 sets, offered to the model as enums, which is what keeps a graph built by a
 language model queryable a month later. Override them only if the defaults
-genuinely do not fit the domain — a wider vocabulary is a vaguer one.
+genuinely do not fit the domain - a wider vocabulary is a vaguer one.
 
 `kinds` _replaces_ the default set rather than extending it, with one exception:
 `preference` is always available, because the engine itself reads that kind to
@@ -696,13 +696,13 @@ directly:
 run_command  python3 /memory/01JD9Q7X8N2K4M6P8R0T2V4W6Y.py
 ```
 
-The graph holds the provenance around it — what asked for it, what plan it came
-from, what it called — and that subgraph is what comes back on recall. Files are
+The graph holds the provenance around it - what asked for it, what plan it came
+from, what it called - and that subgraph is what comes back on recall. Files are
 capped at 2 MiB, and one under 32 KiB is returned inline rather than as a path.
 
 ### Standing preferences
 
-A memory of kind `preference` is a standing instruction from the user — "always
+A memory of kind `preference` is a standing instruction from the user - "always
 report findings as a table", "use ISO dates". These are not recalled by
 similarity, because they are not _about_ the request in front of the agent: an
 instruction on how to report is nowhere near a question about gateway rules in
@@ -724,7 +724,7 @@ than in the conversation, it costs once per run rather than once per turn, and
 the id is what lets the model replace a preference with `SUPERSEDES` instead of
 quietly ignoring it.
 
-Preferences are deliberately left out of ordinary recall results — they are in
+Preferences are deliberately left out of ordinary recall results - they are in
 the prompt already, and repeating them would state the same instruction twice in
 two framings. `memory_search` with `kinds: [preference]` still finds them, which
 is how an agent checks for a duplicate before committing another.
@@ -756,22 +756,22 @@ agents:
 | `read-write` | the above, plus `memory_commit` |
 | `full`       | the above, plus `memory_forget` |
 
-**One memory, masked — not one memory each.** Every node carries an audience,
+**One memory, masked - not one memory each.** Every node carries an audience,
 and `sees` is the set of audiences an agent reads. `*` is the public slice and
 is always included, so a binding can only ever widen what an agent sees, never
 hide the common ground. Two agents with `sees: []` share everything public; give
 one `sees: [audit]` and it also reads what was committed under `audit`, which
-nothing else can see at all — an invisible node is indistinguishable from a
+nothing else can see at all - an invisible node is indistinguishable from a
 missing one, deliberately, so that a mask cannot be probed by id.
 
 `writes` is the other half: an agent can only commit under a label it was given,
 so an agent that reads a private slice need not be able to add to it. When
 `writes` names exactly one label the tool schema omits the field entirely and
-applies it — there is nothing to choose, and nothing for the model to get wrong.
+applies it - there is nothing to choose, and nothing for the model to get wrong.
 
 **Auto-recall is on by default** because an agent that has to remember to go
 looking mostly does not. It costs one embedding call and a small prompt section
-on turns that follow new user input, and it is off for everything else — a turn
+on turns that follow new user input, and it is off for everything else - a turn
 after a tool result does not re-recall. `autoRecall: false` turns it off without
 giving up the tools, which is the right setting for an agent that should decide
 for itself when to search.
@@ -779,7 +779,7 @@ for itself when to search.
 **Correction is a new node, not an edit.** A memory that turns out to be wrong
 gets superseded by one that is right, joined by a `SUPERSEDES` edge, and recall
 follows the edge forward. The old node stays because the reason a thing changed
-is often the useful part. `memory_forget` — `access: full` — is for the case
+is often the useful part. `memory_forget` - `access: full` - is for the case
 where something should never have been written down at all: it removes the node,
 its vector, and its file bytes together.
 
@@ -813,7 +813,7 @@ sandbox:
 | `workdir` | absolute path          | `/workspace`                                  | Where the workspace is mounted, and the default cwd |
 | `timeout` | integer, seconds       | `120`                                         | Per command, unless a call asks for less            |
 | `user`    | string                 | the image's                                   | uid, name, or `uid:gid`                             |
-| `persist` | boolean                | `false` — **recommended `true`**              | Keep the container between runs of a session        |
+| `persist` | boolean                | `false` - **recommended `true`**              | Keep the container between runs of a session        |
 | `env`     | string[]               | none                                          | Host variables to forward, **by name**              |
 | `keys`    | boolean                | `true`                                        | Whether the model credentials reach the container   |
 
@@ -826,8 +826,8 @@ Linux there is no machine and they only cap the container.
 
 ### `build:`, for what the project always needs
 
-A published image is the right answer when one exists. When it does not — a
-project that needs Python _and_ Node, or a pinned toolchain — the alternative
+A published image is the right answer when one exists. When it does not - a
+project that needs Python _and_ Node, or a pinned toolchain - the alternative
 is an agent installing it at the start of every run, which is slow, silently
 version-drifting, and thrown away with the container.
 
@@ -847,21 +847,21 @@ Both must resolve inside the project; a path that escapes the root is refused
 at load, as everywhere else in this file.
 
 `zen init` writes a `sandbox/Dockerfile` with Python and Node in it and points
-this at it. It is the project's file from then on — edit it, commit it, and
+this at it. It is the project's file from then on - edit it, commit it, and
 `zen init` will not touch it again.
 
 **The tag is a hash of the content.** The image is tagged
 `localhost/zenera-sandbox:<digest>`, where the digest covers the Dockerfile and
 every file in the context. Editing either produces a different tag, and
-therefore a different container name — which is what you want, and is also the
+therefore a different container name - which is what you want, and is also the
 cost noted under `persist: true` below: the old container is abandoned, along
 with whatever was installed in it.
 
 The build is **skipped once the tag is on disk**, which is the point of hashing
 the content: the image existing means the Dockerfile and its context are
 unchanged, so an ordinary `zen run` costs one `podman image exists` and nothing
-else. What that does not catch is a base image that moved — `podman build`
-reuses whatever `FROM node:24` resolved to last time — so `zen sandbox pull`
+else. What that does not catch is a base image that moved - `podman build`
+reuses whatever `FROM node:24` resolved to last time - so `zen sandbox pull`
 forces the build when you want a fresh one.
 
 A `.dockerignore` is honoured by the engine but **not** by the digest, so a
@@ -869,7 +869,7 @@ file the build ignores can still change the tag. That direction is wasteful and
 never wrong; the other direction would hand you a stale image.
 
 `zen check` builds the image and runs one command in it, against a temporary
-directory rather than your workspace — a Dockerfile that does not build is a
+directory rather than your workspace - a Dockerfile that does not build is a
 broken project, and nothing short of building it says so. `zen check
 --no-sandbox` skips that. A machine with no container engine gets a warning
 rather than an error, since that is the machine most likely to be running the
@@ -889,7 +889,7 @@ and do survive:
 
 `/workspace` is the same directory the file tools work in, and they are told so:
 `read_file`, `apply_patch` and the rest accept `/workspace/src/a.ts` as well as
-`src/a.ts`, and they answer with the mounted name — one vocabulary on both
+`src/a.ts`, and they answer with the mounted name - one vocabulary on both
 sides. A path copied out of a compiler error, a `find` listing or a stack trace
 can be handed straight to a file tool, and a path a file tool reported can be
 handed straight to `run_command`, without the model having to translate either
@@ -903,7 +903,7 @@ and they travel with the session directory when it is copied.
 
 What the two mounts do **not** cover is the ordinary case. An agent that runs
 `pip install duckdb` or `apt-get install` is root in its container, so the
-package lands in the image's system paths — not under `$HOME` — and the next
+package lands in the image's system paths - not under `$HOME` - and the next
 `zen run` starts from a fresh rootfs without it. The agent reinstalls on every
 run, and its own transcript from last time claims the install succeeded, so it
 usually does not notice.
@@ -920,9 +920,9 @@ things; `zen sandbox status` lists what is left behind and `zen sandbox clean`
 removes it.
 
 A container is per **session**, not per project, so a project used for a week
-accumulates one per session it ran. They are cheap — a stopped container costs
+accumulates one per session it ran. They are cheap - a stopped container costs
 disk and nothing else, and the writable layer is usually tens of kilobytes,
-because everything worth keeping is already in the two mounts — but they are
+because everything worth keeping is already in the two mounts - but they are
 not free, and `zen sandbox disk` shows what they and every project directory
 add up to.
 
@@ -932,15 +932,15 @@ the wrong contents. Adding or removing an `assets:` directory or a skill
 directory does the same, since the mounts are part of what a container is. That
 is also the cost of `persist: true`: a config change abandons the old container
 along with whatever was installed in it, so anything the project always needs
-still belongs in `image:` — or in `build:` — rather than in an accumulated
+still belongs in `image:` - or in `build:` - rather than in an accumulated
 rootfs.
 
 ### `env:` names, never values
 
 A value in this file would be a secret in the repository, so only names are
 accepted and the host's environment supplies the value. Names that read like a
-credential — anything containing `KEY`, `TOKEN`, `SECRET`, `PASSWORD` or
-`CREDENTIAL` — are refused at load. Not because credentials never belong in the
+credential - anything containing `KEY`, `TOKEN`, `SECRET`, `PASSWORD` or
+`CREDENTIAL` - are refused at load. Not because credentials never belong in the
 sandbox, but because `env:` is the wrong door for them: they go through `keys:`,
 which forwards a known set and can be turned off in one place, where a
 hand-written `env: [OPENAI_API_KEY]` would be a second, silent way in.
@@ -966,8 +966,8 @@ sandbox:
 
 What is forwarded, when it is on: the API key of every provider the run has a
 credential for, plus `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`. A
-Vertex service-account file is bind-mounted read-only — that one file, not the
-directory it sits in — under `/run/zenera/keys`, and
+Vertex service-account file is bind-mounted read-only - that one file, not the
+directory it sits in - under `/run/zenera/keys`, and
 `GOOGLE_APPLICATION_CREDENTIALS` points there instead.
 
 Secrets are handed to podman **by name**, never as `NAME=value`, so a key does
@@ -1000,7 +1000,7 @@ The fields are the same, merged over the top-level block. Two agents that
 resolve to the same configuration still share one container.
 
 An agent that sets `image` displaces a project-level `build`, and an agent that
-sets `build` displaces a project-level `image` — the two are exclusive after
+sets `build` displaces a project-level `image` - the two are exclusive after
 the merge as well as before it.
 
 ---
@@ -1030,11 +1030,11 @@ agents:
 | `description` | What a sibling agent's `transfer_to_<name>` tool tells the model. Write it for the model             |
 | `system`      | Path to a markdown file, relative to the root. Defaults to `agents/prompts/<name>.md` if that exists |
 | `model`       | A `models:` name or a shorthand. Falls back to the top-level `model:`                                |
-| `tools`       | Tool selectors resolved against `ProjectOptions.tools` — code cannot live in yaml                    |
+| `tools`       | Tool selectors resolved against `ProjectOptions.tools` - code cannot live in yaml                    |
 | `handoffs`    | Agent names this one may transfer to                                                                 |
 | `skills`      | Skill binding; see below                                                                             |
-| `memory`      | `true`, or a binding — opt-in to the shared memory; see below                                        |
-| `fork`        | `true`, or a binding — opt-in to parallel branches; see below                                        |
+| `memory`      | `true`, or a binding - opt-in to the shared memory; see below                                        |
+| `fork`        | `true`, or a binding - opt-in to parallel branches; see below                                        |
 | `sandbox`     | Overrides on the top-level `sandbox:`; see below                                                     |
 | `default`     | `true` marks the entry point, if no top-level `default:`                                             |
 
@@ -1047,7 +1047,7 @@ B back to A; indirect counts, so `B → C → A` is a way home, and the rule amo
 to saying every edge lies on a cycle. The reason is that a hand-off is a one-way
 door: control moves to the other agent and stays there, and nothing hands it
 back. An agent reached by a dead-end edge therefore owns the conversation for the
-rest of the session — the next question, whatever it is about, is answered by
+rest of the session - the next question, whatever it is about, is answered by
 whoever the router last transferred to.
 
 This is not a load error, because the project runs; it just cannot come back.
@@ -1055,13 +1055,13 @@ This is not a load error, because the project runs; it just cannot come back.
 ways out of it.
 
 `fork:` is the exception, and usually the fix. A branch runs, answers, and
-control returns to the agent that forked it, so a fork needs no return edge — the
+control returns to the agent that forked it, so a fork needs no return edge - the
 return is the mechanism. An agent that wants an _answer_ rather than to give up
 the conversation should fork; an agent that wants the other one to take over
 should hand off, and something on the far side has to lead back.
 
 **The return is condensed.** `A → fork → B` rejoins as a single tool result
-holding B's answer, so A never sees the steps B took to reach it — not the tool
+holding B's answer, so A never sees the steps B took to reach it - not the tool
 calls, not the files read, not the intermediate reasoning. That is what makes
 fanning out cheap (N branches cost A `N × answer`, not `N × transcript`), and it
 is also the thing to design around: whatever A will need has to be _in_ the
@@ -1076,7 +1076,7 @@ An entry is a tool name, or a selector:
 | --------------------- | ----------------------------------------------------------- |
 | `read_file`           | that one tool                                               |
 | `workspace:read_file` | the same tool, written out in full                          |
-| `group:*`             | every tool in a group — `workspace:*` is all the file tools |
+| `group:*`             | every tool in a group - `workspace:*` is all the file tools |
 | `'*'`                 | everything the host passed to `loadProject`                 |
 | `-<any>`              | removes what it matches from the selection so far           |
 
@@ -1092,7 +1092,7 @@ tools: [workspace:*, -delete_file, -move_file, policy_lookup]
 
 Groups come from the tool, not from config: `workspaceTools()` tags its seven
 with `workspace`, `sandboxTools()` tags its four with `sandbox`, and a host's
-own tools can carry any `group` they like. The model never sees a group — it
+own tools can carry any `group` they like. The model never sees a group - it
 gets the same flat list of names either way.
 
 The same grammar resolves a skill's `tools:` frontmatter against the tools
@@ -1115,16 +1115,16 @@ Naming `sandbox:*` is what makes a project need a container engine. See
 | `provider`        | the sole provider | Which catalog to draw on                                      |
 | `discovery`       | `index`           | `index` \| `search` \| `none`                                 |
 | `allow`           | all               | Restricts the catalog this agent sees                         |
-| `preload`         | —                 | Activated before the first call of every turn this agent owns |
-| `maxIndexEntries` | —                 | Caps the rendered index                                       |
+| `preload`         | -                 | Activated before the first call of every turn this agent owns |
+| `maxIndexEntries` | -                 | Caps the rendered index                                       |
 
 `discovery` controls how the agent finds out what exists:
 
-- **`index`** — names and descriptions are rendered into the system prompt, so
+- **`index`** - names and descriptions are rendered into the system prompt, so
   the model can see the catalog and pull what the case needs.
-- **`search`** — no index; only a `skill_search` tool. For catalogs too large to
+- **`search`** - no index; only a `skill_search` tool. For catalogs too large to
   render.
-- **`none`** — preloads only.
+- **`none`** - preloads only.
 
 `preload` is for content there is no case for the model to decline: house tone,
 a formatting contract. Making it choose would be a wasted round trip. Preloaded
@@ -1152,7 +1152,7 @@ narrows it.
       maxBranches: 4
 ```
 
-`agents` may include the forking agent itself — one role fanned out over ten
+`agents` may include the forking agent itself - one role fanned out over ten
 regions is the common shape, and unlike `handoffs` that is not an error. The
 list reaches the model as an `enum` on each branch's `agent` field, so a name
 outside it cannot be decoded rather than merely being told off afterwards.
@@ -1180,7 +1180,7 @@ field), so a fan-out cannot recurse without bound.
 
 The loader stops at the first of these. `zen check` does not: it reports every
 one it can reach, each with the key it is about and the fix, and adds the checks
-that are not load errors — a hand-off with no path back, an agent with no prompt
+that are not load errors - a hand-off with no path back, an agent with no prompt
 at all, a skill with no description, a folder in the catalog with no `SKILL.md`,
 a model with no credential on this machine. Nothing is called; `--json` for the
 same report

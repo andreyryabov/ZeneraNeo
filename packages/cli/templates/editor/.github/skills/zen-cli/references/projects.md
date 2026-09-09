@@ -1,4 +1,4 @@
-# Projects — `init`, `list`, `open`, `version`
+# Projects - `init`, `list`, `open`, `version`
 
 ## `zen init`
 
@@ -31,7 +31,7 @@ sessions/                       empty
 .github/                        copilot instructions, prompts, this skill
 ```
 
-The project's own files are never overwritten — `--force` is what allows
+The project's own files are never overwritten - `--force` is what allows
 writing into an occupied directory, and the files already there stay. The
 editor files are the exception: `.vscode/settings.json` and the `.github/` tree
 are ours and are replaced on every `init` and every `zen open`, so edits to them
@@ -40,7 +40,7 @@ do not survive.
 The default agent gets the file tools and a sandboxed shell, plus `exa:*` when
 the keyring holds an Exa key.
 
-**Choosing the model.** Without `--model`, the keyring is asked — not counted.
+**Choosing the model.** Without `--model`, the keyring is asked - not counted.
 Stored credentials are probed, because holding a key is not the same as holding
 a working one, and the model is picked from a provider that answers. A key from
 the environment is taken at its word. Each provider has its own scaffolded

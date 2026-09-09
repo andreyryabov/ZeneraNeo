@@ -1,12 +1,12 @@
 ---
 name: zen-rag-docs
-description: What a document index is, how to build one from a folder of `.md` files with `zen rag docs index` (or `npx @zenera/cli`), and how to ask it something — searching by meaning and narrowing to a release, a heading or a table, listing and grepping it exactly instead of reaching for shell `grep`/`rg`, reading a section back verbatim, giving it to an agent as tools, and writing the project skill that a wired-in index requires. For an OpenAPI description instead of prose, see `zen-rag-schema`.
+description: What a document index is, how to build one from a folder of `.md` files with `zen rag docs index` (or `npx @zenera/cli`), and how to ask it something - searching by meaning and narrowing to a release, a heading or a table, listing and grepping it exactly instead of reaching for shell `grep`/`rg`, reading a section back verbatim, giving it to an agent as tools, and writing the project skill that a wired-in index requires. For an OpenAPI description instead of prose, see `zen-rag-schema`.
 ---
 
 # The document index
 
 A document index is a pile of markdown turned into something that can be
-**asked a question**. It is built once, on disk, and answered from — and what
+**asked a question**. It is built once, on disk, and answered from - and what
 comes back is not a summary but the documents themselves: the passages that
 matched, quoted verbatim, with their line numbers.
 
@@ -31,7 +31,7 @@ zen rag docs <index|search|list|grep|show|stats> [path...]
 | `show`   | _print this section, verbatim_             | no        | instant |
 | `stats`  | _what is in this index?_                   | no        | instant |
 
-Only `search` ranks, and only `search` costs a network round trip — it embeds
+Only `search` ranks, and only `search` costs a network round trip - it embeds
 the query before it can compare anything. The other four read `outline.json`
 and the copies in `sources/` off the disk and answer in milliseconds. Reach for
 `search` when the question is vague and for `list`/`grep`/`show` when it is
@@ -62,10 +62,10 @@ Three things, and the third is the point.
 
 ```
 docs-db/
-├── README.md       what this index holds — a live progress report while it builds
-├── manifest.json   written LAST — its absence means "not indexed"
+├── README.md       what this index holds - a live progress report while it builds
+├── manifest.json   written LAST - its absence means "not indexed"
 ├── outline.json    headings and tables, read whole
-├── sources/        the documents, verbatim — where every quoted line comes from
+├── sources/        the documents, verbatim - where every quoted line comes from
 └── lance/          the chunks
 ```
 
@@ -86,7 +86,7 @@ Chunking follows the markdown rather than a character count: a paragraph, a
 list, a fenced code block, the frontmatter. Every chunk knows the heading it
 sits under, which is what makes `--section` a filter and not a hope.
 
-Tables are indexed **twice over** — once as a descriptor carrying the caption
+Tables are indexed **twice over** - once as a descriptor carrying the caption
 and the column names, and once per row, with the header row travelling
 alongside so the columns are still named wherever a row lands. A row too wide
 to be one chunk is cut into column groups with the key column repeated. That is
@@ -99,7 +99,7 @@ Every chunk gets a `kind`: `paragraph`, `list`, `table`, `table_row`, `code`,
 ## Installing
 
 `zen rag` ships in `@zenera/rag`, a sibling of the CLI. It has no binary of its
-own — installing it adds the `rag` subcommand to `zen`, which is also where the
+own - installing it adds the `rag` subcommand to `zen`, which is also where the
 credentials already live.
 
 ```sh
@@ -138,7 +138,7 @@ That is the whole thing: point it at a directory and it walks it.
 
 `.md`, `.markdown`, `.txt` and `.text` are read; `.txt` and `.text` are treated
 as prose with no headings. Anything else is not a document and is not indexed.
-Hidden directories and `node_modules` are skipped — a file nobody can see is
+Hidden directories and `node_modules` are skipped - a file nobody can see is
 not one anybody meant to index. A file over 16 MB is skipped as a data dump and
 said so on stderr, next to the per-document table.
 
@@ -166,13 +166,13 @@ would land on the same name are deduped rather than merged.
 
 | Flag                 | Default     | Meaning                                                      |
 | -------------------- | ----------- | ------------------------------------------------------------ |
-| `--embedding <ref>`  | —           | Which embedder makes the vectors. Omit it to see the choices |
+| `--embedding <ref>`  | -           | Which embedder makes the vectors. Omit it to see the choices |
 | `-o`, `--out <dir>`  | `./docs-db` | Where the index goes; `$ZEN_DOCS_DB` if that is set          |
 | `--batch <n>`        | `96`        | Texts per embedding request, and how often progress prints   |
 | `--chunk-tokens <n>` | `384`       | Target chunk size. Leave it alone unless you have a reason   |
-| `--quiet`            | —           | No narration                                                 |
+| `--quiet`            | -           | No narration                                                 |
 
-The embedding reference names a provider first — `openai:text-embedding-3-small`,
+The embedding reference names a provider first - `openai:text-embedding-3-small`,
 not a bare model id. Credentials come from the `zen` keyring (`zen key ls`), and
 a real environment variable always wins.
 
@@ -184,14 +184,14 @@ the output directory and nothing else**, so `DIR=$(zen rag docs index …)` work
 everything else is stderr.
 
 This is the one command here that spends money and time: it embeds every chunk.
-While it runs, the output directory narrates itself — `README.md` is a live
+While it runs, the output directory narrates itself - `README.md` is a live
 progress report, rewritten at most every five seconds, replaced on completion by
 a description of what the index turned out to hold, and left saying so if the
 build dies. A `.lock` names the process, so a second build of the same directory
 is refused unless the lock is stale.
 
 Rebuild the index when the documents change. Nothing watches them, and a stale
-index is a confident wrong answer — worse here than anywhere, because the quoted
+index is a confident wrong answer - worse here than anywhere, because the quoted
 lines will look exactly as authoritative as they did when they were true.
 
 ## Which index gets read
@@ -199,7 +199,7 @@ lines will look exactly as authoritative as they did when they were true.
 Every reading command takes `-d`, `--dir`. Without one:
 
 1. `$ZEN_DOCS_DB`, if it is set. **Set this once** instead of typing `-d` on
-   every command — `export ZEN_DOCS_DB=/assets/docs-db`.
+   every command - `export ZEN_DOCS_DB=/assets/docs-db`.
 2. Otherwise the **nearest index** to the working directory: here, then a short
    way down into it, then up a level and again, stopping at your home
    directory. The one chosen is named on stderr as it is used, so an answer is
@@ -207,7 +207,7 @@ Every reading command takes `-d`, `--dir`. Without one:
 3. Otherwise `./docs-db`, which is only so the error names the directory you
    were expecting.
 
-What is looked for is a `manifest.json`, and the search is **scoped by kind** —
+What is looked for is a `manifest.json`, and the search is **scoped by kind** -
 a `docs` index and a `schema` index can sit in the same tree without either
 shadowing the other, and nothing searches for a directory literally called
 `docs-db`. That is just the name a new one is given.
@@ -229,7 +229,7 @@ zen rag docs search "how are rate limits counted"
 The answer is the corpus quoting itself:
 
 ```
-## acme_4.2.0/api/routing.md — 9 of 148 lines
+## acme_4.2.0/api/routing.md - 9 of 148 lines
 
   5 | ## Rate limits
   7 | Requests are counted per tenant and rejected past the limit.
@@ -247,7 +247,7 @@ with. The numbers are what `show` and `read_docs` take.
 
 Nobody finds the paragraph they want on the first ask. They search, see it is
 the wrong release, and search again inside one. So the second call is the same
-question with a narrowing on it — not a different command.
+question with a narrowing on it - not a different command.
 
 | Flag                     | Narrows to                                                                           |
 | ------------------------ | ------------------------------------------------------------------------------------ |
@@ -273,8 +273,8 @@ earlier answer printed. A title that appears in four documents becomes four
 scopes, not a guess at one.
 
 **`--mode text` is the one to remember.** `hybrid` blends meaning and wording,
-which is right for a question; when what you have is an exact string — an error
-message, a header name, a flag — `text` is exact wording only, and meaning can
+which is right for a question; when what you have is an exact string - an error
+message, a header name, a flag - `text` is exact wording only, and meaning can
 only dilute it.
 
 The narrowings are resolved against the manifest and the outline **before** the
@@ -285,16 +285,16 @@ quietly searching everything.
 
 | Flag                 | Default | Meaning                                   |
 | -------------------- | ------- | ----------------------------------------- |
-| `-d`, `--dir <dir>`  | found   | Which index — see "Which index gets read" |
+| `-d`, `--dir <dir>`  | found   | Which index - see "Which index gets read" |
 | `--embedding <ref>`  | index's | Must be the one the index was built with  |
 | `--limit <n>`        | `8`     | Passages kept                             |
 | `-B`, `--before <n>` | `0`     | Extra lines quoted before each passage    |
 | `-A`, `--after <n>`  | `0`     | Extra lines quoted after each passage     |
 | `--max-lines <n>`    | `400`   | A ceiling on the whole answer             |
-| `--no-numbers`       | —       | Quote the lines without their numbers     |
-| `--hits`             | —       | One row per passage instead of the text   |
-| `--interactive`      | —       | Prompt, search, narrow. Needs a terminal  |
-| `--quiet`            | —       | No narration                              |
+| `--no-numbers`       | -       | Quote the lines without their numbers     |
+| `--hits`             | -       | One row per passage instead of the text   |
+| `--interactive`      | -       | Prompt, search, narrow. Needs a terminal  |
+| `--quiet`            | -       | No narration                              |
 
 `--hits` is the fast triage: it prints where the passages are without spending
 the lines on them, and you follow up with `show`.
@@ -302,7 +302,7 @@ the lines on them, and you follow up with `show`.
 ### As a machine interface
 
 Non-interactive search is a tool, not an afterthought. `--json` is a stable
-shape — `{matches, files, scope, mode, considered, truncated}` — no terminal is
+shape - `{matches, files, scope, mode, considered, truncated}` - no terminal is
 needed, and **an empty result exits 0**: a caller must never have to tell
 "nothing matched" from "the index is missing" by parsing stderr.
 
@@ -330,7 +330,7 @@ quit
 
 ## Reading it without searching
 
-None of these need an embedder or a credential — they are plain reads of the
+None of these need an embedder or a credential - they are plain reads of the
 outline and the copies on disk.
 
 ```
@@ -365,7 +365,7 @@ zen rag docs stats
 ```
 
 `list files` reports the name, title, format, and how many lines, sections,
-tables and chunks each document holds — which is also the fastest way to learn
+tables and chunks each document holds - which is also the fastest way to learn
 the names your `--file` patterns will be matched against. `list sections` is a
 table of contents with line spans; `list tables` names every table's caption,
 columns and row count, which is how you find the limits table without reading
@@ -374,14 +374,14 @@ the prose around it.
 `grep` reports `found` as the **true total** even when `--limit` cuts the rows,
 so unlike a search it can answer whether a string appears at all. Every hit
 carries the innermost heading it sits under, so a match has a place. Nothing
-matching exits 0 with empty stdout — and that emptiness is trustworthy, which is
+matching exits 0 with empty stdout - and that emptiness is trustworthy, which is
 the whole point of it.
 
 `show` prints a document, a named section, or a line range, verbatim, with a
 line-number gutter (`--no-numbers` to drop it). It is the natural follow-up to
 every search: find the passage, then read what is actually around it.
 
-`stats` says what is in an index and what built it — the documents, the counts,
+`stats` says what is in an index and what built it - the documents, the counts,
 the embedding model. It is the fastest way to answer "is this index the one I
 think it is?".
 
@@ -390,7 +390,7 @@ think it is?".
 | The question                                      | The command                                     |
 | ------------------------------------------------- | ----------------------------------------------- |
 | "how does this thing handle retries?"             | `search "how are retries handled"`              |
-| _anything you would have run `grep` for_          | `grep` / `list` — never the shell               |
+| _anything you would have run `grep` for_          | `grep` / `list` - never the shell               |
 | "does `X-Request-Id` appear anywhere?"            | `grep X-Request-Id`                             |
 | "what does the rate-limits section actually say?" | `show <file> --section "Rate limits"`           |
 | "which documents are even in here?"               | `list files`                                    |
@@ -415,7 +415,7 @@ Add `-d <dir>` when the index is not the nearest one, or name it once with
 | `grep -rn "Retry-After" docs/`      | `zen rag docs grep "Retry-After"`                     |
 | `rg -i retry --glob 'api/**'`       | `zen rag docs grep retry --file "api/**"`             |
 | `grep -E "X-RateLimit-\w+"`         | `zen rag docs grep "X-RateLimit-\w+" --regex`         |
-| `grep -c` / `wc -l`                 | `--json`, and read `found` — it counts past `--limit` |
+| `grep -c` / `wc -l`                 | `--json`, and read `found` - it counts past `--limit` |
 | `find docs -name '*.md'`            | `zen rag docs list files`                             |
 | `grep '^#' file.md`                 | `zen rag docs list sections --file file.md`           |
 | `sed -n '40,80p' file.md`           | `zen rag docs show file.md --lines 40-80`             |
@@ -429,7 +429,7 @@ zen rag docs list sections --file "api/**" --depth 3
 ```
 
 If none of these fits the question, the question is about meaning, and the
-answer is `search` — still not the shell.
+answer is `search` - still not the shell.
 
 ## Giving it to an agent
 
@@ -450,12 +450,12 @@ const project = await loadProject('./my-project', { tools: docs.docsTools(index)
 | Tool          | For                                                          |
 | ------------- | ------------------------------------------------------------ |
 | `search_docs` | the passages that match, quoted with their line numbers      |
-| `list_docs`   | the documents, their headings, or their tables — no search   |
-| `grep_docs`   | every matching line, counted in full — no search             |
+| `list_docs`   | the documents, their headings, or their tables - no search   |
+| `grep_docs`   | every matching line, counted in full - no search             |
 | `read_docs`   | a section or a line range, verbatim and with nothing omitted |
 
 Only `search_docs` ranks; the other three are exact, because a model told "no
-results" by a vector search has learned nothing — a ranking returns the top of a
+results" by a vector search has learned nothing - a ranking returns the top of a
 list, so an empty answer and an absent thing look identical. `grep_docs` is how
 "it is not written down anywhere" can actually be concluded.
 
@@ -470,14 +470,14 @@ Every answer carries line numbers and `read_docs` takes them. That is the loop
 the whole subject exists for: **find the passage, read around it, then edit the
 file the passage came from.**
 
-Tell the agent in its prompt to call `list_docs` once before its first search —
+Tell the agent in its prompt to call `list_docs` once before its first search -
 the document names are what every `files` pattern is matched against, and a
 model guessing at them narrows to nothing and concludes the corpus is empty.
 
 ## Wiring it into a project means writing the project a skill
 
-**Whenever an index is used by a Zenera project — as `docs:*` tools, or as
-`zen rag` reachable from the agent's sandbox — write a skill for it in that
+**Whenever an index is used by a Zenera project - as `docs:*` tools, or as
+`zen rag` reachable from the agent's sandbox - write a skill for it in that
 project.** Not optional, and not the same thing as passing the tools in.
 
 Wiring alone leaves the model to infer everything that matters. A tool
@@ -486,7 +486,7 @@ ACME 4.1 and 4.2 manuals side by side, that every answer must be pinned to a
 release with `files`, that the API reference lives under `*/api/**` and the
 task guides under `*/guides/**`, or that the numbers anybody actually wants are
 in tables and so `kind: ["table_row"]` is the right first move. That is project
-knowledge, and project knowledge belongs in a skill — where it is loaded only
+knowledge, and project knowledge belongs in a skill - where it is loaded only
 when the model is working on this corpus, instead of sitting in the system
 prompt of every run.
 
@@ -504,7 +504,7 @@ what unlocks them.
 | Section            | Because                                                                             |
 | ------------------ | ----------------------------------------------------------------------------------- |
 | Which corpus       | What it is, which version(s), and when it was indexed                               |
-| Where the index    | `ZEN_DOCS_DB`, or the `-d` to pass — an agent cannot guess a path                   |
+| Where the index    | `ZEN_DOCS_DB`, or the `-d` to pass - an agent cannot guess a path                   |
 | The document names | The shape `--file`/`files` patterns match, with two real examples                   |
 | Which command      | Meaning → `search`; presence or a count → `grep`; what it says → `show`/`read_docs` |
 | Never the shell    | State it outright. `grep`/`rg`/`cat` on the tree is the default reflex              |
@@ -522,7 +522,7 @@ Best practice, in order of how often it is got wrong:
 3. **Name the narrowing that matters here.** Two releases in one index is the
    common case, and an unpinned search silently mixes them.
 4. **Keep it short.** A skill is prompt. One screen of routing rules beats a
-   transcription of this document — link to `zen rag docs --help` for the flags.
+   transcription of this document - link to `zen rag docs --help` for the flags.
 5. **Re-index, then re-read the skill.** Both go stale against the same change,
    and a skill quoting headings that no longer exist is worse than none.
 6. **One skill per corpus**, named after it. Two corpora in one skill and the
@@ -531,7 +531,7 @@ Best practice, in order of how often it is got wrong:
 ```md
 ---
 name: acme-docs
-description: How to find an answer in the ACME 4.1 and 4.2 manuals — which document says it,
+description: How to find an answer in the ACME 4.1 and 4.2 manuals - which document says it,
     what it says verbatim, and which release it is true of. Use before answering anything
     about ACME behaviour, limits or API routes.
 ---
@@ -550,7 +550,7 @@ reference and `guides/` for the task documentation.
 - Limits and defaults are in tables → add `kind: ["table_row"]`.
 - Then `read_docs` the lines around the hit before answering. Never answer from
   the excerpt alone.
-- Never `grep`/`rg`/`cat` the tree — the tools above are local and exact.
+- Never `grep`/`rg`/`cat` the tree - the tools above are local and exact.
 
 Worked: per-route rate limits are the table under "Rate limits" in
 `acme_4.2.0/api/routing.md` (lines 24-31); the retry envelope is described two
@@ -561,13 +561,13 @@ sections down. Cite the document name and the line numbers.
 
 | Symptom                                          | Cause                                                                                 |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------- |
-| "not installed"                                  | `@zenera/rag` is not resolvable — install it, or use the two-`--package` npx form     |
+| "not installed"                                  | `@zenera/rag` is not resolvable - install it, or use the two-`--package` npx form     |
 | `nothing to index`                               | No `.md`/`.markdown`/`.txt`/`.text` under those paths, or they are all hidden         |
-| A document you expected is missing               | Hidden directory, `node_modules`, an unlisted extension, or over 16 MB — check stderr |
+| A document you expected is missing               | Hidden directory, `node_modules`, an unlisted extension, or over 16 MB - check stderr |
 | Refused for a different embedding                | The index records the model that built it; re-index or pass the right `--embedding`   |
 | No manifest / not an index                       | A build that did not finish. `manifest.json` is written last on purpose               |
-| A build is refused                               | `.lock` — another build is running. It is taken over when the process is gone         |
-| `provider "openai": no api key`                  | `zen key ls` — the keyring, or a real environment variable                            |
+| A build is refused                               | `.lock` - another build is running. It is taken over when the process is gone         |
+| `provider "openai": no api key`                  | `zen key ls` - the keyring, or a real environment variable                            |
 | A usage error before any credential is asked for | Deliberate: everything about the invocation is checked first, so a typo is a typo     |
 | `no document matched --file`                     | The pattern is matched against the document **name**; `list files` prints them        |
 | Nothing matched                                  | Exit 0 with an empty answer. Try fewer words, or `--mode text` for an exact string    |

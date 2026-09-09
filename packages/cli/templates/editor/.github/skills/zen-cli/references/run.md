@@ -1,4 +1,4 @@
-# Running — `zen run`
+# Running - `zen run`
 
 ```
 zen run [project] [prompt] [options]
@@ -49,8 +49,8 @@ git diff | zen run --quiet "summarise this diff"
 
 A prompt is a request for an answer, not a conversation to pick up, so it
 answers the three questions itself: **a fresh session**, **the directory you are
-in** as the workspace, and **no confirmation**. Every flag still wins —
-`--session`, `--workspace` and `--read-only` override it — and the TUI, where
+in** as the workspace, and **no confirmation**. Every flag still wins -
+`--session`, `--workspace` and `--read-only` override it - and the TUI, where
 there is someone to ask, still asks.
 
 There is no `resume`. A session continues itself, because its state is what it

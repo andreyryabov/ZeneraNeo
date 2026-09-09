@@ -1,4 +1,4 @@
-# Agent Runtime v2 — Design Specification
+# Agent Runtime v2 - Design Specification
 
 Status: draft
 Scope: `experiments/src.js/agent/agent.ts` rewrite
@@ -8,17 +8,17 @@ Scope: `experiments/src.js/agent/agent.ts` rewrite
 1. **No turn budget.** Remove `maxTurns` everywhere; the loop ends only on a final
    answer, an abort signal, or an unrecoverable error.
 2. **Two-tier event model.**
-    - _Stream events_ — ephemeral, fine-grained progress (thinking deltas, text
+    - _Stream events_ - ephemeral, fine-grained progress (thinking deltas, text
       deltas, partial tool-argument JSON with the tool name). Never required for
       correctness; safe to drop.
-    - _Checkpoint events_ — coarse-grained state transitions emitted **before
+    - _Checkpoint events_ - coarse-grained state transitions emitted **before
       every LLM call** and **before every tool call** (and after each, and on
       handoff / finish). Each carries the full serializable state so the run can
       be persisted and resumed from exactly that point (Temporal-ready).
 3. **Explicit state creation.** Starting a run is a separate, explicit step that
    produces an `AgentState`; the loop only ever _advances_ an existing state.
 4. **Typed result.** The caller passes a **Zod** schema and receives a parsed,
-   validated `z.infer<typeof schema>` as `RunResult<T>.output` — the TypeScript
+   validated `z.infer<typeof schema>` as `RunResult<T>.output` - the TypeScript
    type comes from the same declaration that drives validation.
 5. **Trajectory instead of raw messages.** The state stores a typed, append-only
    log of everything that happened (`UserInput`, `SystemPrompt`, `LoadSkills`,
@@ -26,13 +26,13 @@ Scope: `experiments/src.js/agent/agent.ts` rewrite
    for the provider are a _projection_ of the trajectory, computed on demand.
 6. **Large-value offloading.** Every non-trivial string (system prompts,
    thinking chains, tool outputs, skill content) lives behind a `Payload`
-   reference — uniformly, never inline — so the state has a small, predictable
+   reference - uniformly, never inline - so the state has a small, predictable
    size regardless of how much data flowed through the run.
 7. **Full accounting.** Every LLM call node records the model id and token usage
    (input / cached-input / output / reasoning), so total consumption is exactly
    reconstructable from the trajectory alone.
 8. **Trajectory as the context-manipulation tool.** Compaction, handoff-time
-   noise stripping and branch summarizing are all one operation — select nodes,
+   noise stripping and branch summarizing are all one operation - select nodes,
    summarize them, append a node that _covers_ them for projection purposes
    while the originals stay for audit and replay.
 9. **Pluggable memory.** Agents search, write, update and delete long-lived
@@ -43,7 +43,7 @@ Scope: `experiments/src.js/agent/agent.ts` rewrite
 11. **Fork / join.** An agent can split into parallel branches that really run
     concurrently (LLM and tool calls alike) and rejoin into one result. Each
     branch's history is nested inside the join that reports it, so nothing is
-    lost — while the parent's own log stays linear, as if the work had been
+    lost - while the parent's own log stays linear, as if the work had been
     sequential.
 
 ## 2. Non-goals
@@ -71,7 +71,7 @@ Temporal workflow:
 └──────────────┬─────────────────────────────────────────────┘
                │ calls (pure w.r.t. state, no I/O)
 ┌──────────────▼─────────────────────────────────────────────┐
-│ kernel.ts (deterministic state machine — plain functions)   │
+│ kernel.ts (deterministic state machine - plain functions)   │
 │   createState()      – explicit initial context            │
 │   nextAction(state)  – llm | tools | fork | done           │
 │   buildRequest(state)– trajectory → ModelRequest           │
@@ -82,9 +82,9 @@ Temporal workflow:
 └──────────────┬─────────────────────────────────────────────┘
                │ resolved by the driver, never by the kernel
 ┌──────────────▼─────────────────────────────────────────────┐
-│ PayloadStore  (InMemory | S3 | …)            — §4          │
-│ MemoryStore   (InMemory | pgvector | …)      — §8          │
-│ SkillProvider (fs | static | vector-backed)  — §9          │
+│ PayloadStore  (InMemory | S3 | …)            - §4          │
+│ MemoryStore   (InMemory | pgvector | …)      - §8          │
+│ SkillProvider (fs | static | vector-backed)  - §9          │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -96,13 +96,13 @@ Temporal workflow:
 
 ## 4. Payloads and the PayloadStore
 
-Every string in the trajectory that is not a short identifier is a `Payload` —
+Every string in the trajectory that is not a short identifier is a `Payload` -
 always a **reference**, never an inline value:
 
 ```ts
 export interface Payload {
     store: string; // store id, e.g. 's3://bucket' or 'mem'
-    sha256: string; // content address — also the key
+    sha256: string; // content address - also the key
     size: number; // bytes, for budgeting without fetching
     preview?: string; // first ~200 chars, for logs, UIs and debugging
 }
@@ -121,14 +121,14 @@ export interface PayloadStore {
 An `inline | ref` union was considered and rejected:
 
 - **Predictable state size.** With inline values, a long run of many
-  individually-small tool results grows the state without bound — and that state
+  individually-small tool results grows the state without bound - and that state
   is re-serialized at _every_ checkpoint, making write amplification quadratic in
   trajectory length. Temporal would reject it outright (payload limits ~2 MB).
   With uniform refs the state is O(number of nodes), full stop.
 - **One code path.** No discriminant to switch on, no "is it here or not"
   question at every use site, no threshold to tune per deployment.
 - **Free deduplication.** The key _is_ the content hash, so an identical value
-  is stored once no matter how often it recurs — system prompts repeated after
+  is stored once no matter how often it recurs - system prompts repeated after
   each handoff, inherited fork context shared by N branches, identical tool
   results from retries. With a size threshold, dedup silently stopped applying
   below the threshold.
@@ -138,9 +138,9 @@ An `inline | ref` union was considered and rejected:
 
 The two things inline bought us are recovered explicitly:
 
-- _Locality_ — the default `InMemoryStore` resolves from a `Map`, so a local run
+- _Locality_ - the default `InMemoryStore` resolves from a `Map`, so a local run
   does zero I/O. Refs are not synonymous with network.
-- _Self-containment_ — `exportRun(state, stores)` produces
+- _Self-containment_ - `exportRun(state, stores)` produces
   `{ state, blobs: Record<sha256, string> }`, a single portable artifact for
   tests, bug reports and archival; `importRun(bundle, store)` writes the blobs
   into any `PayloadStore`. This is better than inline was: it is explicit, it is deduped, and it
@@ -150,8 +150,8 @@ The two things inline bought us are recovered explicitly:
 
 - The kernel never dereferences payloads except in `buildRequest`, where the
   projection needs actual text. `buildRequest` is therefore `async`, and it is
-  the **only** place that resolves. Everything else — appending nodes,
-  `nextAction`, compaction covering, usage summation — works on refs alone.
+  the **only** place that resolves. Everything else - appending nodes,
+  `nextAction`, compaction covering, usage summation - works on refs alone.
 - Resolution goes through `getMany`, so a projection costs one batched round
   trip; a resolver-level LRU cache makes repeated projections of a growing
   trajectory cheap (the prefix is unchanged and content-addressed, so cache hits
@@ -173,13 +173,13 @@ The two things inline bought us are recovered explicitly:
 
 ## 5. Trajectory
 
-Append-only ordered log — the run's single source of truth. Nodes are never
+Append-only ordered log - the run's single source of truth. Nodes are never
 removed, rewritten or reordered; **position is order**, so there is no index
 field to keep dense. Every node:
 
 ```ts
 export interface NodeBase {
-    id: string; // ulid — unique within the trajectory
+    id: string; // ulid - unique within the trajectory
     ts: string; // ISO timestamp (informational, not used for logic)
     agent: string; // active agent when the node was created
 }
@@ -191,22 +191,22 @@ Node types (`type` is the discriminant):
 export type TrajectoryNode =
     | UserInputNode // { type:'user_input',  content: PayloadPart[] }
     | SystemPromptNode // { type:'system_prompt', prompt: Payload }
-    | LoadSkillsNode // §9.3 — skill activation (content + unlocked tools)
-    | MemoryRecallNode // §8.4 — memories injected before an LLM call
-    | MemoryOpNode // §8.4 — memory write/update/delete effect record
+    | LoadSkillsNode // §9.3 - skill activation (content + unlocked tools)
+    | MemoryRecallNode // §8.4 - memories injected before an LLM call
+    | MemoryOpNode // §8.4 - memory write/update/delete effect record
     | LlmCallNode // see below
     | ToolCallNode // { type:'tool_call', callId, name, args: Payload }
     | ToolResultNode // { type:'tool_result', callId, name, result: Payload,
     //   isError: boolean, durationMs?: number }
     | HandoffNode // { type:'handoff', from, to, reason?: string }
-    | ForkNode // §10.2 — the branch plan
-    | JoinNode // §10.2 — per-branch outcomes
+    | ForkNode // §10.2 - the branch plan
+    | JoinNode // §10.2 - per-branch outcomes
     | CompactionNode // see below
     | FinalOutputNode; // { type:'final_output', output: Payload,
 //   parsed?: unknown /* when an output schema was set */ }
 ```
 
-### 5.1 LlmCallNode — the accounting record
+### 5.1 LlmCallNode - the accounting record
 
 ```ts
 export interface TokenUsage {
@@ -231,18 +231,18 @@ export interface LlmCallNode extends NodeBase {
 `sum(usage)` over every `llm_call` and `compaction` node reproduces total
 consumption exactly, including cache hits. Tokens spent inside a fork are
 reached by recursing into the branch histories nested in each `JoinNode`
-(§10.6) — the one place anything deliberately crosses the branch boundary. No
+(§10.6) - the one place anything deliberately crosses the branch boundary. No
 separate counters to keep in sync (a cached `usage` total on the state is
 allowed but derived).
 
-### 5.2 CompactionNode — covering, not deleting
+### 5.2 CompactionNode - covering, not deleting
 
 ```ts
 export interface CompactionNode extends NodeBase {
     type: 'compaction';
     /** the tool call id this compaction projects as */
     callId: string;
-    /** ids of the nodes this summary stands in for — any set, not a range */
+    /** ids of the nodes this summary stands in for - any set, not a range */
     covers: string[];
     /** what the model sees instead; may be empty */
     summary: Payload;
@@ -251,7 +251,7 @@ export interface CompactionNode extends NodeBase {
 }
 ```
 
-- Covered nodes stay in the trajectory untouched — audit and replay always see
+- Covered nodes stay in the trajectory untouched - audit and replay always see
   full history; only the projection skips them.
 - `covers` is a **set of ids**, not a range. Selection and summarization are one
   operation ("collapse"), and the selector is free to skip nodes it wants to
@@ -267,7 +267,7 @@ export interface CompactionNode extends NodeBase {
 
 A run's trajectory contains only that run's own nodes. Branch histories are
 nested inside the `JoinNode` that reports them (§10.2), so an ordinary walk of
-the array never encounters them — the fork scope is structural, not a convention
+the array never encounters them - the fork scope is structural, not a convention
 that every consumer has to remember to honour.
 
 That leaves exactly one filter between the log and the model:
@@ -283,7 +283,7 @@ export function projected(nodes: TrajectoryNode[]): TrajectoryNode[] {
 | view                                   | who reads it                                                                       |
 | -------------------------------------- | ---------------------------------------------------------------------------------- |
 | the array                              | `nextAction`, `turns`, `lastText`, `lastUserInput`, `HandoffPolicy.select`, export |
-| `projected(array)`                     | `projectMessages`, `activeSkills`, `applySystemPrompt` — the model's world         |
+| `projected(array)`                     | `projectMessages`, `activeSkills`, `applySystemPrompt` - the model's world         |
 | recursing into `join.branches[].nodes` | `totalUsage` only                                                                  |
 
 The nesting also settles compaction scope for free: a branch may compact the
@@ -306,7 +306,7 @@ Algorithm:
     - `system_prompt` → becomes the _current_ system prompt (last one wins;
       earlier ones are superseded, not emitted as messages).
     - `user_input` → `UserMessage`.
-    - `load_skills` → `UserMessage` (or system append — provider-dependent).
+    - `load_skills` → `UserMessage` (or system append - provider-dependent).
     - `llm_call` → `AssistantMessage` (text + toolCalls). Thinking is **not**
       projected (provider-specific; kept for audit only).
     - `tool_call` → folded into the owning `AssistantMessage` (they share the
@@ -326,14 +326,14 @@ Algorithm:
       something the _system_ did to the history, and putting it in the user
       channel invites the model to answer it.
     - `final_output` → `AssistantMessage`, unless it repeats the assistant
-      message just emitted. An untyped run records its answer twice — once as the
-      `llm_call`'s text, once as the `final_output` node that ends the turn — and
+      message just emitted. An untyped run records its answer twice - once as the
+      `llm_call`'s text, once as the `final_output` node that ends the turn - and
       without the check every later turn of the conversation re-reads it.
 3. Collect every payload referenced by the surviving nodes and resolve them in
    **one** `getMany` batch before assembling the messages.
 4. Run `repairToolCalls`: drop assistant tool calls whose result did not survive.
 
-Invariant: every projected `tool_call` id has a matching `tool` message — held by
+Invariant: every projected `tool_call` id has a matching `tool` message - held by
 the kernel during a run (a tool call without a recorded result blocks the next
 LLM call), and restored by step 4 after arbitrary covering.
 
@@ -360,7 +360,7 @@ export interface RunSpec {
     outputSchemaHash?: string;
     /** set on branch states created by a fork (§10) */
     parent?: { runId: string; forkId: string; branch: string };
-    /** where this run's own history begins — an inherited prefix sits before it */
+    /** where this run's own history begins - an inherited prefix sits before it */
     prefixLength?: number;
     forkDepth: number; // 0 for a root run
 }
@@ -369,7 +369,7 @@ export interface AgentState {
     version: 1; // schema version for forward migration
     runId: string;
     spec: RunSpec; // immutable config
-    agentName: string; // active agent (mutable — changes on handoff)
+    agentName: string; // active agent (mutable - changes on handoff)
     phase: RunPhase;
     trajectory: TrajectoryNode[];
     /** tool calls from the last llm_call still lacking a tool_result, by callId */
@@ -388,7 +388,7 @@ Properties:
 - **Plain JSON.** No class instances, no functions, no prototypes to restore.
   `JSON.parse(JSON.stringify(state))` is identity. Helpers (`lastText`,
   `totalUsage`) are free functions, not methods.
-- **Explicit creation** — the only way to obtain a state:
+- **Explicit creation** - the only way to obtain a state:
 
 ```ts
 import { z } from 'zod';
@@ -398,7 +398,7 @@ export interface CreateStateOptions<T = string> {
     runId?: string; // default: ulid()
     agent: string; // starting agent name
     input?: Input; // optional first user message
-    context?: unknown; // app context — must be serializable
+    context?: unknown; // app context - must be serializable
     output?: z.ZodType<T>; // typed-result request (see §6.1)
     systemPrompt?: string; // pre-rendered; else rendered on first step
 }
@@ -412,7 +412,7 @@ const state = Kernel.createState({
     }),
 });
 // state.phase === 'awaiting_llm' (or 'created' when there is no input yet)
-// state.spec.outputSchema === z.toJSONSchema(opts.output)   — plain JSON
+// state.spec.outputSchema === z.toJSONSchema(opts.output)   - plain JSON
 ```
 
 - `pendingToolCalls` is what makes mid-turn resume safe: after a crash between
@@ -420,18 +420,18 @@ const state = Kernel.createState({
 
 ### 6.1 Zod schemas vs. serializable state
 
-A Zod schema is a live object with functions — it cannot live inside a
+A Zod schema is a live object with functions - it cannot live inside a
 JSON-serializable state. The split:
 
 | Where                       | What                                                                                     |
 | --------------------------- | ---------------------------------------------------------------------------------------- |
-| `CreateStateOptions.output` | the Zod schema — source of both `T` and validation                                       |
-| `state.spec.outputSchema`   | `z.toJSONSchema(output, { target: 'draft-2020-12' })` — plain JSON, sent to the provider |
+| `CreateStateOptions.output` | the Zod schema - source of both `T` and validation                                       |
+| `state.spec.outputSchema`   | `z.toJSONSchema(output, { target: 'draft-2020-12' })` - plain JSON, sent to the provider |
 | Runner / kernel call site   | the Zod schema again, supplied at run/resume time                                        |
 
 Why the JSON Schema is stored at all instead of being a pure run argument:
 
-1. It is **part of the prompt** — it becomes the `final_output` tool's
+1. It is **part of the prompt** - it becomes the `final_output` tool's
    `parameters`. Without it a restarted process cannot rebuild the same
    request, and `LlmCallNode.requestDigest` checks would fail spuriously.
 2. A run stays a **single self-contained blob**: a generic "resume this run"
@@ -443,12 +443,12 @@ Rules:
 - `createState` derives and stores the JSON Schema once; the wire format is
   therefore stable across restarts even if application code changes.
 - Validation of the model's `final_output` arguments uses the **Zod** schema
-  (`schema.safeParse`), not the JSON Schema — one validator, no Ajv dependency,
+  (`schema.safeParse`), not the JSON Schema - one validator, no Ajv dependency,
   and Zod transforms/refinements/defaults apply.
 - On `resume(state)` the caller must pass the same Zod schema:
   `runner.resume(state, { output: TripSchema })`. The kernel compares
   `sha256(z.toJSONSchema(output))` with `state.spec.outputSchemaHash` and throws
-  on mismatch — a persisted run cannot silently change its contract.
+  on mismatch - a persisted run cannot silently change its contract.
 - If `resume` gets no `output` while `state.spec.outputSchema` is set, the run
   degrades to JSON-Schema-only validation (Ajv-free structural check) and
   `RunResult.output` is typed `unknown`. This keeps generic tooling (an admin
@@ -458,7 +458,7 @@ Rules:
 
 ## 7. Kernel API (deterministic core)
 
-The kernel is a module of **plain exported functions** — `kernel.ts`. It holds no
+The kernel is a module of **plain exported functions** - `kernel.ts`. It holds no
 state and no configuration, so there is nothing to instantiate; consumers do
 `import * as Kernel from './kernel.js'` and call `Kernel.applyLlmResponse(...)`.
 (No class, no singleton object: that would only add a wrapper that defeats
@@ -539,7 +539,7 @@ export function applyCompaction(
 ```
 
 - All `apply*` return a **new state object** (structural sharing of the
-  trajectory array via spread). Old snapshots stay valid — exactly what a
+  trajectory array via spread). Old snapshots stay valid - exactly what a
   checkpointing caller needs.
 - Async `apply*` only because writing large values through `PayloadStore.put`
   may be I/O.
@@ -547,7 +547,7 @@ export function applyCompaction(
   `IdClock` (`{ newId(): string; now(): string }`) so a Temporal workflow can
   supply `workflow.uuid4`/`workflow.now`. It is passed explicitly as the last
   argument of the functions that create nodes (defaulting to a ulid/`Date`
-  implementation), never read from module scope — module-level mutable config
+  implementation), never read from module scope - module-level mutable config
   would break determinism under concurrent runs.
 
 ## 8. Memory
@@ -598,7 +598,7 @@ Embedding generation is the store's business, not the kernel's: a pgvector
 implementation embeds inside `write`/`search`, an in-memory one may fall back to
 substring matching. The kernel never sees vectors.
 
-### 8.2 Scoping — private vs. shared
+### 8.2 Scoping - private vs. shared
 
 A **scope** is a namespace string. Agents that name the same scope share memory;
 agents with distinct scopes are isolated. Binding is per agent, and access is
@@ -621,12 +621,12 @@ export interface AgentOptions<TCtx> {
 
 Patterns this covers:
 
-- **Private**: omit `memory` (no memory) or bind `agent:<name>` — the default.
+- **Private**: omit `memory` (no memory) or bind `agent:<name>` - the default.
 - **Shared team memory**: several agents bind `scope: 'team:support'`.
 - **Read-only common knowledge**: bind `scope: 'org:policies'` with
   `access: 'read'`; a separate curator agent has `read-write`.
 - **Per-user memory**: scope built from run context, e.g.
-  `scope: \`user:${ctx.userId}\``— resolved at`buildRequest` time, and the
+  `scope: \`user:${ctx.userId}\``- resolved at`buildRequest` time, and the
   resolved value is recorded in the trajectory so a resumed run cannot drift to
   another user's space.
 
@@ -634,11 +634,11 @@ Patterns this covers:
 
 Two paths, both landing in the trajectory:
 
-1. **Explicit tools** — the kernel injects `memory_search`, `memory_write`,
+1. **Explicit tools** - the kernel injects `memory_search`, `memory_write`,
    `memory_update`, `memory_delete` for every writable binding (search-only for
    `read`). They are ordinary tools, so they already produce
    `ToolCallNode`/`ToolResultNode` and need no special loop handling.
-2. **Auto-recall** — when `autoRecall` is set, `buildRequest` runs a search
+2. **Auto-recall** - when `autoRecall` is set, `buildRequest` runs a search
    before the LLM call and appends a `MemoryRecallNode`, projected as a system
    or user block ("Relevant memories: …"). This is what makes memory work
    without the model having to remember to look.
@@ -660,7 +660,7 @@ export interface MemoryOpNode extends NodeBase {
     op: 'write' | 'update' | 'delete';
     store: string;
     scope: string;
-    opId: string; // sha256(runId, callId) — deterministic
+    opId: string; // sha256(runId, callId) - deterministic
     recordId: string;
     revision: number; // post-op revision, or the deleted one
     before?: Payload; // prior content, for audit/undo
@@ -682,12 +682,12 @@ Why a separate node when the tool call is already recorded:
 
 Memory mutations are the one place where the kernel is not side-effect free.
 They are therefore performed by the **runner/activity layer**, and the kernel
-only records the outcome — same split as tool execution.
+only records the outcome - same split as tool execution.
 
 ## 9. Skills
 
 A **skill** is curated, reusable instruction content (plus optional tools) that
-is loaded on demand instead of permanently occupying the system prompt —
+is loaded on demand instead of permanently occupying the system prompt -
 progressive disclosure. Structurally it is the read-only twin of memory: same
 search shape, different lifecycle (authored and versioned, not written by the
 agent).
@@ -697,13 +697,13 @@ agent).
 ```ts
 export interface SkillSummary {
     name: string;
-    description: string; // one line — this is what search/index sees
+    description: string; // one line - this is what search/index sees
     tags?: string[];
     version?: string;
 }
 
 export interface Skill extends SkillSummary {
-    content: Payload; // full instructions (offloadable — often large)
+    content: Payload; // full instructions (offloadable - often large)
     tools?: AnyTool<unknown>[]; // tools unlocked while the skill is active
     path?: string; // where the skill's own files are, if the host mounted them
 }
@@ -741,11 +741,11 @@ export interface AgentOptions<TCtx> {
 }
 ```
 
-- `discovery: 'index'` — names + descriptions are rendered into the system
+- `discovery: 'index'` - names + descriptions are rendered into the system
   prompt; the model calls `skill_load`. Best for small catalogs.
-- `discovery: 'search'` — only a `skill_search` tool is exposed; nothing is
+- `discovery: 'search'` - only a `skill_search` tool is exposed; nothing is
   pre-rendered. Best for large catalogs.
-- `preload` — loaded unconditionally; the equivalent of "always-on" instructions
+- `preload` - loaded unconditionally; the equivalent of "always-on" instructions
   but still recorded as a node, so it can be compacted or audited like anything
   else.
 
@@ -764,7 +764,7 @@ export interface LoadSkillsNode extends NodeBase {
 ```
 
 Consequence for resume: the tool list offered to the model is **not** a static
-property of the agent — it is
+property of the agent - it is
 
 ```
 tools(state) = agent.tools
@@ -777,7 +777,7 @@ tools(state) = agent.tools
 
 `buildRequest` computes this from the state, so a rehydrated run offers exactly
 the same tools it had before the crash. `toolNames` is stored in the node so the
-set is recoverable even if the provider's catalog changed since — a load whose
+set is recoverable even if the provider's catalog changed since - a load whose
 `contentHash` no longer matches the provider is a hard error, not a silent
 substitution.
 
@@ -789,14 +789,14 @@ how to use.
 The converse is the reason §10.3 filters skill loads by agent when seeding a
 branch: `activeSkills` scopes tools to the current agent, but `load_skills`
 projects as an ordinary message, so without the filter a branch would _read_
-another agent's skill text — "call `tool_y`" — while holding none of its tools.
+another agent's skill text - "call `tool_y`" - while holding none of its tools.
 
-## 10. Fork / join — parallel sub-agents
+## 10. Fork / join - parallel sub-agents
 
 The model asks for parallel work through a built-in `fork` tool; the run splits
 into N independent child runs, and rejoins into a single result. From the
 parent's message history the whole episode looks like **one tool call and one
-tool result** — sequential semantics, parallel execution.
+tool result** - sequential semantics, parallel execution.
 
 ### 10.1 The fork tool
 
@@ -821,9 +821,10 @@ Agent opt-in: `AgentOptions.fork?: { agents?: string[]; maxBranches?: number }`.
 ### 10.2 Data model
 
 **Fork is a scope.** A branch executes against a state of its own while it runs
-— that is what makes real parallelism possible — but when it finishes, its
-history is **nested inside the `JoinNode`** that reports it. The parent's array
-holds the parent's own nodes and nothing else:
+
+- that is what makes real parallelism possible - but when it finishes, its
+  history is **nested inside the `JoinNode`** that reports it. The parent's array
+  holds the parent's own nodes and nothing else:
 
 ```
 [ 1, 2, 3, fork, join, 4, 5 ]
@@ -835,14 +836,14 @@ never project, never activate skills, never count as turns, because no ordinary
 walk of the parent array can reach them.
 
 Two nodes rather than one, because they record two events at two times and the
-log is append-only. `ForkNode` is written _before_ the branches run — the record
+log is append-only. `ForkNode` is written _before_ the branches run - the record
 of intent, and the thing a crash-mid-fork resumes from. `JoinNode` is written
 after, and carries the outcomes.
 
 ```ts
 export interface ForkNode extends NodeBase {
     type: 'fork';
-    callId: string; // the fork tool call — the fork's identity
+    callId: string; // the fork tool call - the fork's identity
     contextMode: 'inherit' | 'compact' | 'none';
     branches: { name: string; agent: string; instructions: Payload; childRunId: string }[];
 }
@@ -860,7 +861,7 @@ export interface JoinNode extends NodeBase {
         usage: TokenUsage; // display only
         nodes: TrajectoryNode[]; // the branch's own history
     }[];
-    usage: TokenUsage; // sum over branches — display only
+    usage: TokenUsage; // sum over branches - display only
 }
 ```
 
@@ -869,7 +870,7 @@ branch `AgentState`s are pure execution scaffolding, discarded once the join
 lands. `collectPayloads` is a generic deep JSON walk, so `exportRun` descends
 into the nested nodes without knowing forks exist.
 
-Nested forks need no extra machinery either — a branch's `nodes` may contain its
+Nested forks need no extra machinery either - a branch's `nodes` may contain its
 own `JoinNode`, and the only traversal that crosses the boundary (`totalUsage`)
 is already recursive.
 
@@ -879,12 +880,12 @@ A branch starts from a **prefix of the parent's own nodes**, not from a frozen
 blob of messages. `branchPrefix` takes `projected(parent.trajectory)` up to the
 `ForkNode` and filters it by `contextMode`:
 
-- `inherit` — the prefix as-is, minus `load_skills` nodes belonging to a
+- `inherit` - the prefix as-is, minus `load_skills` nodes belonging to a
   different agent (§9).
-- `compact` — the same, additionally dropping `tool_call`, `tool_result` and
+- `compact` - the same, additionally dropping `tool_call`, `tool_result` and
   `memory_recall`: the branch inherits _what was decided_, not the raw tool
   noise that got there. The recommended default for wide fan-outs.
-- `none` — empty. The branch starts from its agent's system prompt plus its
+- `none` - empty. The branch starts from its agent's system prompt plus its
   instructions only. Cheapest; good for independent lookups.
 
 The branch state records `spec.prefixLength`, which is both where its own
@@ -895,23 +896,23 @@ past it is nested.
 Then the assignment, and how it arrives depends on whether there is a
 conversation to arrive in:
 
-- `inherit` / `compact` — a **`ToolResultNode` answering the `fork` call itself**.
+- `inherit` / `compact` - a **`ToolResultNode` answering the `fork` call itself**.
   The branch inherited the assistant turn that called `fork`, so its assignment
   is that call coming back: the model reads a result for a tool it can see
   itself calling, rather than a second user message appearing after its own
-  words. This is also what keeps the fork call in the prompt at all — unanswered,
+  words. This is also what keeps the fork call in the prompt at all - unanswered,
   `repairToolCalls` (§6) strips it, and the branch never learns it fanned out.
   The result restates which branch this run is, and names the siblings running
   beside it: the assignments themselves are already visible in the inherited
   call arguments, but _which one is mine_, _who has the rest_ and _what becomes
   of my answer_ exist nowhere else. Without them a branch re-derives work a
   sibling owns and writes an answer shaped for a user rather than for a merge.
-- `none` — a `UserInputNode` carrying the instructions, because there is no call
+- `none` - a `UserInputNode` carrying the instructions, because there is no call
   above to answer.
 
 From that point the branch is an ordinary run: it may call tools, hand off, use
 memory, and fork again (`spec.forkDepth` increments; an optional `maxForkDepth`
-guards runaway recursion — a structural bound, not a turn budget).
+guards runaway recursion - a structural bound, not a turn budget).
 
 **Fork erases the branch's memory; only its result survives.** Everything a
 branch inherits is a copy it may compact, hand off or discard freely, because
@@ -940,7 +941,7 @@ case 'fork':
     emit after_join(state)
 ```
 
-- Branches run truly concurrently — each has its own model client call and its
+- Branches run truly concurrently - each has its own model client call and its
   own tool executions. Nothing serializes them.
 - `applyJoin` nests branch histories in **declared branch order**, so the
   trajectory is identical regardless of completion order. This is what keeps
@@ -954,7 +955,7 @@ case 'fork':
 
 ### 10.5 Collapsing parallel history
 
-**Collapse = select + summarize**, and it is the same operation everywhere —
+**Collapse = select + summarize**, and it is the same operation everywhere -
 handoff noise, token budget, branch results. The parent's projection of a whole
 fork episode is exactly two messages: the `fork` assistant tool call, and one
 tool result listing the per-branch outputs. N parallel agents cost the parent
@@ -968,12 +969,12 @@ export interface JoinPolicy {
     onBranchError?: 'continue' | 'abort_siblings';
 }
 
-/** the selector half — pure, so it is trivially testable */
+/** the selector half - pure, so it is trivially testable */
 export interface HandoffPolicy {
     select(state: AgentState, handoff: HandoffNode): TrajectoryNode[] | null;
 }
 
-/** the summarizing half — the only half that needs I/O */
+/** the summarizing half - the only half that needs I/O */
 export interface Summarizer {
     summarize(nodes: TrajectoryNode[], reason: string, services: Services): Promise<Summary>;
 }
@@ -988,7 +989,7 @@ its own token usage so the compaction pays for itself in the accounting.
 `totalUsage` sums `llm_call` and `compaction` nodes and recurses into
 `join.branches[].nodes`, so one call covers the whole fork tree at any nesting
 depth. This is the **only** traversal in the system that crosses a branch
-boundary, and it says so explicitly — which is the point of nesting: the common
+boundary, and it says so explicitly - which is the point of nesting: the common
 case (stay in this run's scope) is free and the rare case is opt-in.
 `JoinNode.usage` and `branches[].usage` are display only; adding them would
 double-count the nodes they summarize.
@@ -1035,7 +1036,7 @@ res.output.totalCostEur; // number
 
 The same `z.ZodType` inference can later be reused for tool arguments
 (`tool({ parameters: z.object(...) })`), replacing the hand-written
-`JsonSchema` + explicit `TArgs` pair — out of scope here, but the schema
+`JsonSchema` + explicit `TArgs` pair - out of scope here, but the schema
 projection helper is shared.
 
 Runaway protection is the caller's job (wall-clock/token budget hooks can be
@@ -1043,7 +1044,7 @@ added later as policies, not as a hardcoded turn counter).
 
 ## 12. Events
 
-Every event — stream _and_ checkpoint — carries the same origin tag, so a
+Every event - stream _and_ checkpoint - carries the same origin tag, so a
 consumer can always tell which run in a fork tree produced it:
 
 ```ts
@@ -1063,7 +1064,7 @@ export interface EventBase {
 ```
 
 - `runId` is the primary key: an event belongs to exactly one `AgentState`.
-- `branch` is the _lineage_ of that run — present on nested forks too, where
+- `branch` is the _lineage_ of that run - present on nested forks too, where
   `depth > 1`. A UI groups by `branch.forkId` to build lanes, and by `runId` to
   attach the right state snapshot.
 - On the trunk, `branch` is `undefined` and `runId === state.runId` of the root.
@@ -1091,7 +1092,7 @@ export type StreamEvent = EventBase &
 ```
 
 Branch stream events interleave freely (the branches really do run at the same
-time) while the trajectories they write stay separate and ordered — `branch` is
+time) while the trajectories they write stay separate and ordered - `branch` is
 what lets a consumer demultiplex the interleaved feed back into lanes.
 
 `Model` gains an optional streaming entry point; non-streaming models keep
@@ -1140,11 +1141,11 @@ Tagging rules, which are what make persistence unambiguous:
 
 - `state` always belongs to the **emitting** run, i.e. the one named by
   `runId`/`branch`. A `before_llm_call` from a branch carries the _child's_
-  state — persist it under `branch.runId` and resume that branch alone.
+  state - persist it under `branch.runId` and resume that branch alone.
 - `before_fork` / `branch_started` / `branch_finished` / `after_join` are emitted
   by the **parent**, so their `branch` field describes the _parent's_ own lineage
   (absent on the trunk). The branch they talk about is the separate `child`
-  field — two different things that must not be conflated.
+  field - two different things that must not be conflated.
 - `branch_started`/`branch_finished` therefore carry two states: `state` (parent,
   telling you which branches are still pending) and `childState` (the branch
   snapshot).
@@ -1152,7 +1153,7 @@ Tagging rules, which are what make persistence unambiguous:
   its own `BranchRef`, so a whole fork tree is observable from a single stream
   and reconstructable by grouping on `runId`.
 
-Contract: the `state` in every checkpoint event is a **complete snapshot** —
+Contract: the `state` in every checkpoint event is a **complete snapshot** -
 persisting it and later calling `runner.resume(state)` continues the run with
 no loss (pending tool calls re-executed, LLM call re-issued). Because `apply*`
 returns fresh objects, the snapshot needs no defensive copy.
@@ -1237,7 +1238,7 @@ export interface HandoffPolicy {
 | Skill load             | activity `loadSkill(name, version) → Skill`                 |
 | Fork branch            | child workflow, one per branch                              |
 | Join                   | `Promise.all` over child workflow handles, then `applyJoin` |
-| checkpoint events      | implicit — every activity boundary is a checkpoint          |
+| checkpoint events      | implicit - every activity boundary is a checkpoint          |
 
 Because `buildRequest` needs payload resolution (I/O), Temporal deployments
 either (a) run projection inside the `llmGenerate` activity by passing the
@@ -1266,15 +1267,15 @@ changes) and fail loudly instead of silently diverging.
 | `state.turns`                                                 | derived: count of `llm_call` nodes                                                       |
 | `Message[]` as source of truth                                | projection output only (`projectMessages`)                                               |
 | untyped `RunResult.output: string`                            | `RunResult<T>` with `T = z.infer<schema>`                                                |
-| —                                                             | immutable `state.spec` (`RunSpec`) separated from mutable progress                       |
-| —                                                             | `MemoryStore` bindings + memory tools (§8)                                               |
-| —                                                             | `SkillProvider` bindings + skill tools (§9)                                              |
-| —                                                             | `fork`/join with child `AgentState`s (§10)                                               |
+| -                                                             | immutable `state.spec` (`RunSpec`) separated from mutable progress                       |
+| -                                                             | `MemoryStore` bindings + memory tools (§8)                                               |
+| -                                                             | `SkillProvider` bindings + skill tools (§9)                                              |
+| -                                                             | `fork`/join with child `AgentState`s (§10)                                               |
 | static per-agent tool list                                    | tool set derived from state (agent + handoffs + memory + skills + fork + `final_output`) |
 
 `Message`, `ContentPart`, `Tool`, `tool()`, `Agent`, `handoffTool`,
 `RunStream`, `runTool` survive with minimal changes (`ToolContext.state` is now
-the plain state; `Instructions<TCtx>` receives `(ctx, spec)` — narrowed from the
+the plain state; `Instructions<TCtx>` receives `(ctx, spec)` - narrowed from the
 full state, §17.2).
 
 ## 16. Open questions
@@ -1283,7 +1284,7 @@ full state, §17.2).
    message? Provider-dependent; start with user message.
 2. Payload GC: because every payload is content-addressed and reachable only
    through stored states, reclamation is a reference-counting or mark-and-sweep
-   problem over `sha256` — well-defined, but the retention policy (how long a
+   problem over `sha256` - well-defined, but the retention policy (how long a
    finished run stays replayable) is a deployment decision and is out of scope
    for v1.
 3. Should typed output use provider-native structured outputs
@@ -1292,8 +1293,8 @@ full state, §17.2).
    use in the same turn; native mode can be a `Model` capability flag later.
 4. Zod features with no JSON Schema equivalent (`z.transform`, `z.custom`,
    cross-field `superRefine`) serialize lossily: the model sees the looser
-   input shape and only `safeParse` enforces the rest. Acceptable — the repair
-   loop handles it — but `createState` should warn when
+   input shape and only `safeParse` enforces the rest. Acceptable - the repair
+   loop handles it - but `createState` should warn when
    `z.toJSONSchema` reports unrepresentable nodes (`io: 'input'` + `unrepresentable: 'any'`).
 5. Memory conflict resolution: `revision` gives optimistic concurrency, but the
    policy on conflict (retry, merge, surface to the model) is left to the store
@@ -1303,11 +1304,11 @@ full state, §17.2).
    "after user input and after handoff".
 7. Fork sharing: branches currently share nothing but the inherited snapshot.
    A shared scratch memory scope per fork (`scope: \`fork:${forkId}\``) would let
-   branches cooperate, at the cost of nondeterministic interleaving — deferred.
+   branches cooperate, at the cost of nondeterministic interleaving - deferred.
 8. Join policies beyond "collect all": first-success, quorum, and cancellation of
    siblings are natural extensions of `JoinPolicy` but are not specified here.
 
-## 17. System prompt composition — a prompt is a list of sources
+## 17. System prompt composition - a prompt is a list of sources
 
 A real system prompt is never one string: it is an agent-specific file, a shared
 `INSTRUCTIONS.md`, a house style block, a skill index, and a couple of runtime
@@ -1325,7 +1326,7 @@ and that is all this section adds.
 Everything else that could be recorded is either not editable or already known:
 
 - **Inline text** lives in the code that declared it. Recording it as a "part"
-  answers no question a reader can act on — there is no path to open — and the
+  answers no question a reader can act on - there is no path to open - and the
   bytes are already inside `prompt`.
 - **The skill index** is a rendering of the provider's catalog, not a document.
   What to edit is the skill file, which `SkillProvider` already knows
@@ -1359,14 +1360,14 @@ export type Instructions<TCtx> =
     string | ((ctx: TCtx, spec: RunSpec) => string) | PromptPart<TCtx>[];
 ```
 
-**A file is not a part kind — it is text plus a path.** An earlier draft had a
+**A file is not a part kind - it is text plus a path.** An earlier draft had a
 `{ file }` part that the composer resolved during the run, which meant the
 runtime needed a file-reader interface, the composer had to be async and
 I/O-doing, every part needed an `optional` flag for the missing-file case, and a
 typo in a path surfaced on the first LLM call in production. Reading at
 construction deletes all four: `promptFile` throws at startup with a stack trace
 pointing at the agent, `optional` has no reason to exist (do not include the
-part), and `path` becomes what it always was — metadata.
+part), and `path` becomes what it always was - metadata.
 
 It also makes the prompt genuinely constant for the life of the agent, which is
 what the provider's cache assumes anyway. A prompt that must change without a
@@ -1387,14 +1388,14 @@ because nothing refers back to it. Ordering is array order; the derived text
 (§17.5) is always appended after, which keeps the volatile part at the end
 without anyone having to remember to put it there.
 
-**The function form takes `RunSpec`, not `AgentState`** — narrowed from v1. The
+**The function form takes `RunSpec`, not `AgentState`** - narrowed from v1. The
 system prompt is the provider's cache prefix; a prompt that varies with mutable
 state invalidates that prefix on every single turn, and since a changed prompt
 appends a node (§17.4), it also writes one `system_prompt` node per turn. It is
 circular besides: the prompt is composed from a trajectory it is about to be
-appended to. `RunSpec` is fixed at `createState` (§6), so the useful cases —
+appended to. `RunSpec` is fixed at `createState` (§6), so the useful cases -
 `forkDepth` to tell a branch prompt from a trunk one, the run's output contract,
-anything derived from `ctx` — still work, while "prompt that grows with the
+anything derived from `ctx` - still work, while "prompt that grows with the
 conversation" stops being expressible. Per-turn content belongs where the
 projection already puts it: at the tail, as recalls, tool results and input.
 
@@ -1403,7 +1404,7 @@ projection already puts it: at the tail, as recalls, tool results and input.
 ```ts
 export interface SystemPromptNode extends NodeBase {
     type: 'system_prompt';
-    /** exactly what the provider received — unchanged field, unchanged meaning */
+    /** exactly what the provider received - unchanged field, unchanged meaning */
     prompt: Payload;
     /** file-backed contributors, in the order they were rendered */
     sources?: { path: string; content: Payload }[];
@@ -1414,7 +1415,7 @@ Two fields, and each earns its place:
 
 - `content` is a `Payload` because everything is (§4): `INSTRUCTIONS.md` shared by
   ten agents, by both sides of a handoff and by every fork branch is stored once,
-  and the content address doubles as the drift hash — no parallel hash field.
+  and the content address doubles as the drift hash - no parallel hash field.
 - Offsets into `prompt` are deliberately absent. They would be a third
   representation of the same bytes, invalidated by any change to an earlier
   part, and an inspector that wants to highlight a region can find it by content.
@@ -1422,7 +1423,7 @@ Two fields, and each earns its place:
 `projectMessages` is untouched: the projection still emits one system string,
 last-one-wins, and `sources` is metadata the model never sees.
 
-### 17.4 Idempotency — the bytes are the identity
+### 17.4 Idempotency - the bytes are the identity
 
 `applySystemPrompt` keeps comparing `prompt.sha256` against the freshly rendered
 string, exactly as it does today. There is no composition hash, because two
@@ -1438,14 +1439,14 @@ What follows from that:
 - a handoff renders the new agent's prompt, and the old node stays in the history
   where it belongs;
 - an agent rebuilt from edited files renders different bytes, so the next run
-  records the new revision — the change is dated in the log rather than inferred.
+  records the new revision - the change is dated in the log rather than inferred.
 
 A prompt file that cannot be read is an error at construction (§17.2), not a run
 that starts without it: silently dropping instructions would leave the model
 holding a prompt nobody wrote, the same reason a drifted skill hash is fatal
 (§9.3).
 
-### 17.5 Derived text — no more hidden appends
+### 17.5 Derived text - no more hidden appends
 
 `buildRequest` currently appends the skill index and the `final_output`
 instruction _after_ projection, so part of the system prompt exists in no node at
@@ -1453,7 +1454,7 @@ all. Both move into the composer, appended after the authored parts in a fixed
 order: the skill index (only when `discovery: 'index'`), then the runtime notes
 (today only `final_output`, for typed runs).
 
-They are not listed in `sources` — neither is a file anyone edits — but they are
+They are not listed in `sources` - neither is a file anyone edits - but they are
 now inside `prompt`, which is what the audit needed. That restores the invariant:
 **the system prompt the model saw is exactly `SystemPromptNode.prompt`**, nothing
 is added downstream, and `requestDigest` becomes a meaningful replay check for
@@ -1462,7 +1463,7 @@ the prompt.
 ### 17.6 Section markers
 
 Markers such as `<intent> … </intent>` are opt-in per part (`section`), because a
-marker is tokens the model reads and therefore changes behaviour — a wrapper that
+marker is tokens the model reads and therefore changes behaviour - a wrapper that
 "doesn't influence the content" does not exist for an LLM. Rendering is
 deterministic: `<section>\n…\n</section>`, parts joined by a blank line. Nothing
 needs to be versioned or hashed, because a change to any of it changes `prompt`
@@ -1480,14 +1481,14 @@ const files = trajectory
     .flatMap((n) => (n.sources ?? []).map((s) => ({ agent: n.agent, path: s.path })));
 ```
 
-A shipped helper would have to guess the caller's question — newest-first or
+A shipped helper would have to guess the caller's question - newest-first or
 oldest-first, deduped by path or by path and content, current agent or all of
-them — and every guess is one line for the caller to write differently. The
+them - and every guess is one line for the caller to write differently. The
 provenance is the data; the query is not the core's business.
 
 Skills answer through their own node for the same reason, plus a stronger one.
 `LoadSkillsNode` gains `file` per skill where the provider knows it (`file.ts`
-already tracks it), which is strictly more informative — it names the activation
+already tracks it), which is strictly more informative - it names the activation
 that pulled the file in, not just the file. Merging the two into one list would
 also mean one `sha256` field with two meanings, since a skill's hash covers its
 body after frontmatter is stripped rather than the file's bytes.
@@ -1496,5 +1497,5 @@ body after frontmatter is stripped rather than the file's bytes.
 
 `sources` is optional, so every node recorded before this section stays valid and
 simply reports no files. No new node type, no migration of stored runs, and the
-authoring change is additive — a string instruction keeps working and becomes the
+authoring change is additive - a string instruction keeps working and becomes the
 one-element case.

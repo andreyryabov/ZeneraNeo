@@ -1,4 +1,4 @@
-# The sandbox — `zen sandbox`
+# The sandbox - `zen sandbox`
 
 ```
 zen sandbox [status|up|pull|clean|disk] [options]
@@ -7,7 +7,7 @@ zen sandbox [status|up|pull|clean|disk] [options]
 Shell commands run in a container over the session workspace, never on the
 host. None of this is required: a run does all of it on its own, the first time
 an agent that can reach a shell is about to start one. These subcommands are for
-doing it deliberately — before a demo, in CI, or when diagnosing.
+doing it deliberately - before a demo, in CI, or when diagnosing.
 
 | Subcommand | What it does                                                   |
 | ---------- | -------------------------------------------------------------- |
@@ -26,14 +26,14 @@ The engine is Podman. On macOS a machine has to exist and be running; `up`
 offers to install and start one, and its size follows the project's `cpus` and
 `memory`.
 
-## Configuring it — `sandbox:` in `agents.yaml`
+## Configuring it - `sandbox:` in `agents.yaml`
 
 Top level, and again per agent, where an agent's block is merged over the base.
 
 | Key       | Meaning                                                          |
 | --------- | ---------------------------------------------------------------- |
 | `image`   | The image to run. Mutually exclusive with `build`                |
-| `build`   | `{ dockerfile, context? }` — build one instead. Excludes `image` |
+| `build`   | `{ dockerfile, context? }` - build one instead. Excludes `image` |
 | `cpus`    | CPU limit                                                        |
 | `memory`  | Memory limit, in MiB                                             |
 | `network` | Whether the container has one                                    |
@@ -51,7 +51,7 @@ process environment, and a sandbox is the last place they should be forwarded to
 
 Only `/workspace` and `/home/agent` survive an ephemeral container. A
 `pip install` as root, or an `apt-get install`, lands in the image's system
-paths and is gone by the next run — so the agent silently reinstalls its
+paths and is gone by the next run - so the agent silently reinstalls its
 toolchain every single time. `zen init` scaffolds `persist: true` for that
 reason.
 
@@ -69,8 +69,8 @@ sandbox:
     persist: true
 ```
 
-The tag is content-addressed — a hash of the Dockerfile and every file in its
-context — so a changed Dockerfile is a different image and a `persist: true`
+The tag is content-addressed - a hash of the Dockerfile and every file in its
+context - so a changed Dockerfile is a different image and a `persist: true`
 container can never be left sitting on a stale rootfs. It is built only when
 that tag is absent, which is safe precisely because the tag follows the content.
 `zen sandbox pull` forces a rebuild.
@@ -87,5 +87,5 @@ prepared, and the message names the command to run for this platform. `zen check
 distinguishes the two cases: a broken Dockerfile is an error, a laptop with no
 Podman is a warning.
 
-`zen sandbox clean` removes every container this CLI created — the way out of a
+`zen sandbox clean` removes every container this CLI created - the way out of a
 container left on a bad rootfs.

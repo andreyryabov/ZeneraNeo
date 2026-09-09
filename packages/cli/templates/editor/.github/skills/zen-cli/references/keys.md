@@ -1,4 +1,4 @@
-# Credentials — `zen key`
+# Credentials - `zen key`
 
 ```
 zen key <ls|add|use|check|rm|show|env> [ref] [options]
@@ -85,7 +85,7 @@ behind, marked `~` and named for the variable rather than for a key:
 ~ vertex/adc               …/application_default_credentials.json
 ```
 
-These can be listed and checked, not chosen or forgotten — there is nothing to
+These can be listed and checked, not chosen or forgotten - there is nothing to
 choose between, and nothing of ours to remove. Unset the variable, or
 `gcloud auth application-default revoke`.
 
@@ -94,15 +94,15 @@ choose between, and nothing of ours to remove. Unset the variable, or
 `zen key check` and `zen key ls --check` do one round trip per key and record
 the verdict:
 
-- **live** — authenticated. A rate-limited answer counts as live, because it
+- **live** - authenticated. A rate-limited answer counts as live, because it
   proves the credential.
-- **dead** — the provider rejected it. A verdict.
-- **blocked** — the credential was accepted and the **account** refused: an API
+- **dead** - the provider rejected it. A verdict.
+- **blocked** - the credential was accepted and the **account** refused: an API
   switched off in the project, an empty balance, a model this key was never
   granted. Do not rotate the key; a new one is refused identically. The check
-  carries a `fix` — for a disabled Google API, the exact
+  carries a `fix` - for a disabled Google API, the exact
   `gcloud services enable <api> --project <id>`.
-- **unknown** — the provider could not be asked. Says nothing about the key;
+- **unknown** - the provider could not be asked. Says nothing about the key;
   usually the network.
 
 `zen init` uses the same probe to pick which provider to scaffold with, so a
@@ -110,9 +110,9 @@ project is not built around a revoked key.
 
 ## When a run says there is no credential
 
-The frame does **not** materialise the keyring for you — each command that needs
+The frame does **not** materialise the keyring for you - each command that needs
 a credential opens the store itself. If `zen key ls` shows a key as live and a
-command still says `provider "openai": no api key — set OPENAI_API_KEY`, the
+command still says `provider "openai": no api key - set OPENAI_API_KEY`, the
 credential is fine and the command is at fault. Everything that runs a model
 (`run`, `check`, `models`, `faker`, `rag`) already does this.
 

@@ -15,9 +15,9 @@ Always:
 
 Never:
 
-- "approved", "we will pay", "you are covered" — those are the adjuster's
+- "approved", "we will pay", "you are covered" - those are the adjuster's
   words, not yours. Use "the policy treats this as…".
-- "unfortunately", "regrettably", "we regret to inform" — say the thing.
+- "unfortunately", "regrettably", "we regret to inform" - say the thing.
 - Bullet lists. Claims correspondence is prose.
 
 If a figure is disputed, name the tool that produced it and offer the

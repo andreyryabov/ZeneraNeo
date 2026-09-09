@@ -5,8 +5,8 @@ from nothing: the same investigation is done twice, the script that worked last
 week is written again, and a correction the user made on Tuesday is gone by
 Thursday.
 
-It is a **graph**, not a list. A node is one thing worth keeping — a task, a
-plan, a fact, a snippet, a file, an API call, a preference — and an edge says
+It is a **graph**, not a list. A node is one thing worth keeping - a task, a
+plan, a fact, a snippet, a file, an API call, a preference - and an edge says
 how one led to another. Recall returns the connected piece, so an agent that
 finds the right answer also gets the reasoning that produced it and the script
 that ran it.
@@ -43,7 +43,7 @@ agents:
 ```
 
 That is the whole feature. The agent can search, load and commit, and it recalls
-automatically before answering new user input. The block is optional — an agent
+automatically before answering new user input. The block is optional - an agent
 saying `memory: true` gets the defaults without one, and a project that mentions
 memory nowhere opens no store and creates no directory.
 
@@ -62,7 +62,7 @@ Kinds are `task`, `plan`, `fact`, `snippet`, `file`, `operation`, `preference`;
 relations are `PRODUCED`, `INFORMED`, `CALLS`, `SUPERSEDES`. Both are closed
 sets offered to the model as enums, which is what keeps a graph built by a
 language model queryable a month later. Widen them only if the domain genuinely
-does not fit — a wider vocabulary is a vaguer one.
+does not fit - a wider vocabulary is a vaguer one.
 
 Two kinds do something the others do not.
 
@@ -74,13 +74,13 @@ it directly:
 run_command  python3 /memory/01JD9Q7X8N2K4M6P8R0T2V4W6Y.py
 ```
 
-The graph holds the provenance around it — what asked for it, what plan it came
-from, what it called — and that subgraph is what comes back on recall.
+The graph holds the provenance around it - what asked for it, what plan it came
+from, what it called - and that subgraph is what comes back on recall.
 
 **Preferences.** A memory of kind `preference` is a standing instruction from
 the user: "always report findings as a table", "use ISO dates". These are not
 recalled by similarity, because they are not _about_ the request in front of the
-agent — an instruction on how to report sits nowhere near a question about
+agent - an instruction on how to report sits nowhere near a question about
 gateway rules in embedding space, and a search would never surface it. So they
 are listed rather than ranked, and rendered into the system prompt with their
 ids, in the cached prefix, costing once per run rather than once per turn.
@@ -104,10 +104,10 @@ agents:
 
 `access` decides the tools and nothing else does: `read` gets `memory_search`
 and `memory_load`, `read-write` adds `memory_commit`, `full` adds
-`memory_forget`. These four are never named in `tools:` — the binding is what
+`memory_forget`. These four are never named in `tools:` - the binding is what
 grants them.
 
-**One memory, masked — not one memory each.** Every node carries an audience,
+**One memory, masked - not one memory each.** Every node carries an audience,
 and `sees` is the set an agent reads. `*` is the public slice and is always
 included, so a binding can only widen what an agent sees, never hide the common
 ground. `writes` is the other half: an agent that reads a private slice need not
@@ -121,7 +121,7 @@ leaves the agent to decide when to search.
 ## Looking at it
 
 Recall is masked, ranked and truncated by design, so what an agent sees is never
-the whole picture — and when the picture is what is wrong, you need the part
+the whole picture - and when the picture is what is wrong, you need the part
 that was hidden. `zen memory` reads the graph **unmasked**, locally, without
 contacting a model:
 
@@ -136,7 +136,7 @@ zen memory forget <id...>   # remove nodes, their vectors and their files
 `export` is the one to reach for: node list on the left, graph in the middle,
 whatever you clicked on the right, file contents and all.
 
-`forget` is for what should never have been written down — it removes the node,
+`forget` is for what should never have been written down - it removes the node,
 its vector and its file bytes together. A memory that is merely out of date
 should be superseded instead.
 
@@ -145,13 +145,13 @@ should be superseded instead.
 Memory changes what the system is, so it belongs in `SPECIFICATION.md`: that
 agents remember between sessions, what kind of thing is worth keeping, who may
 read whose, and what must never be written down. The scaffolded specification
-lists memory under **Out of scope** for exactly this reason — moving it out of
+lists memory under **Out of scope** for exactly this reason - moving it out of
 that list is the change, and `/sync-with-spec` does the wiring. See
 [specification.md](specification.md).
 
 ## Further
 
-- [agents-yaml.md](agents-yaml.md#memory) — the full `memory:` and
+- [agents-yaml.md](agents-yaml.md#memory) - the full `memory:` and
   `agents[].memory` reference
 - Your editor has a `zen-memory` skill installed by `zen init`, with the
   commit-worthiness rules and the recall shapes.

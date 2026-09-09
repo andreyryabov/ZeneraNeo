@@ -1,6 +1,6 @@
 ---
 name: water_damage
-description: Escape of water from plumbing, tanks and appliances — and the freezing exclusion
+description: Escape of water from plumbing, tanks and appliances - and the freezing exclusion
 tags: [peril, water]
 version: 2.0.0
 ---

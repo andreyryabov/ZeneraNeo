@@ -1,6 +1,6 @@
 ---
 name: storm_damage
-description: Wind, hail and falling-tree damage — what counts as a storm and what is excluded
+description: Wind, hail and falling-tree damage - what counts as a storm and what is excluded
 tags: [peril, weather]
 tools: [damage_estimate]
 version: 3.1.0

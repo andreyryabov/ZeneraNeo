@@ -16,7 +16,7 @@
 an append-only trajectory.**
 
 > Part of [ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo). This is an
-> open-source side project for experimentation and chore work — **not** the
+> open-source side project for experimentation and chore work - **not** the
 > official Zenera AI Platform. It carries no support or stability promises.
 
 ## Install
@@ -41,7 +41,7 @@ or load them from a folder.
 ### In code
 
 An agent is an instruction, a model, some tools, and who it may hand work to.
-That is the whole list — there is no orchestration layer underneath.
+That is the whole list - there is no orchestration layer underneath.
 
 ```ts
 import { AgentRunner, createModel, tool } from '@zenera/neo';
@@ -72,7 +72,7 @@ console.log(result.output);
 ```
 
 `run()` returns a handle: `await` it for the answer, or iterate it for the
-stream — token deltas plus a checkpoint for every model call, tool call,
+stream - token deltas plus a checkpoint for every model call, tool call,
 handoff, fork and join.
 
 ```ts
@@ -88,7 +88,7 @@ them.
 
 ### From a folder
 
-An agentic project is a folder — prompts, agent wiring, skills and tool
+An agentic project is a folder - prompts, agent wiring, skills and tool
 selections are Markdown and YAML files, not code buried inside an application.
 Load one and run it:
 
@@ -127,29 +127,29 @@ agents:
 ```
 
 It is validated strictly at load: an unknown tool, a handoff to nobody, a
-missing prompt file — each fails immediately, naming the offending key, instead
+missing prompt file - each fails immediately, naming the offending key, instead
 of surfacing three turns into a run as a confused model.
 
 ## What it gives you
 
-- **Agents** — an instruction, a model, tools, skills, who it may hand the work
+- **Agents** - an instruction, a model, tools, skills, who it may hand the work
   to, and how it splits into parallel branches. There is no hidden orchestration
   layer.
-- **Models** — OpenAI, Anthropic, Google/Vertex and OpenRouter behind one
+- **Models** - OpenAI, Anthropic, Google/Vertex and OpenRouter behind one
   interface, each through its own SDK, plus any OpenAI-compatible endpoint.
   Named providers and model aliases resolve from config or from the host.
-- **Tools** — plain typed functions, selectable per agent by name, group or
+- **Tools** - plain typed functions, selectable per agent by name, group or
   wildcard. Workspace file tools and a Podman sandbox ship with the library.
-- **Skills** — instruction bundles discovered and loaded on demand instead of
+- **Skills** - instruction bundles discovered and loaded on demand instead of
   permanently occupying the prompt, optionally owning their own tools.
-- **Memory** — a timed, masked knowledge graph that outlives a run: recall
+- **Memory** - a timed, masked knowledge graph that outlives a run: recall
   returns a stitched subgraph rather than a ranked list, remembered files are
   mounted at `/memory`, and standing preferences go into the system prompt.
-- **Trajectory** — an append-only log of everything that happened. What is sent
+- **Trajectory** - an append-only log of everything that happened. What is sent
   to a provider is derived from it, and compaction _covers_ nodes rather than
   deleting them, so the full record survives even when older turns have to be
   pushed out of the context window.
-- **Inspection** — `renderReportHtml` turns any run into one self-contained HTML
+- **Inspection** - `renderReportHtml` turns any run into one self-contained HTML
   file: the graph, every request, every token.
 
 ## Entry points
@@ -174,14 +174,14 @@ folder.
 
 | Package                                                                                         | What it is                                                    |
 | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| [`@zenera/cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` — this runtime on the command line, with a TUI          |
-| [`@zenera/faker`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` — a mock API from an openapi/swagger document     |
-| [`@zenera/rag`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md)     | `zen rag` — an API description as a searchable graph, + tools |
+| [`@zenera/cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` - this runtime on the command line, with a TUI          |
+| [`@zenera/faker`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` - a mock API from an openapi/swagger document     |
+| [`@zenera/rag`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md)     | `zen rag` - an API description as a searchable graph, + tools |
 
 `@zenera/rag` also exports tools you can hand straight to `loadProject`, so an
 agent can search an API it has never read.
 
 ## License
 
-Early days and moving fast — issues, questions and pull requests are welcome.
+Early days and moving fast - issues, questions and pull requests are welcome.
 [MIT](LICENSE).

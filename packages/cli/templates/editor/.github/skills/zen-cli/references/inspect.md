@@ -1,4 +1,4 @@
-# Reports — `zen inspect`
+# Reports - `zen inspect`
 
 ```
 zen inspect [run] [--session <id>] [--open] [--rebuild] [--serve [port]]
@@ -29,7 +29,7 @@ was assembled differently from how it looks in the repository: a skill that did
 not activate, a hand-off that fired early, a tool that was withheld, an asset
 that was not attached.
 
-The report also draws the architecture — agents, their tools, their hand-offs —
+The report also draws the architecture - agents, their tools, their hand-offs -
 and falls back to reconstructing the wiring from the trajectory when the run
 did not record it.
 
@@ -52,7 +52,7 @@ resolves them back.
 
 ## What it prints
 
-The path to `report.html` on stdout — it is the answer, so it pipes. `--json`
+The path to `report.html` on stdout - it is the answer, so it pipes. `--json`
 gives `{ session, run, report }` instead. A report that is missing is built
 before either; `--rebuild` builds one that already exists again, which is always
 safe because the report is derived and `state.json` is the truth. That is also

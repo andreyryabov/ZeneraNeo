@@ -9,7 +9,7 @@ Read them alongside [docs/agents-yaml.md](../../docs/agents-yaml.md), which is
 the reference these are the worked examples of.
 
 Committed rather than written to a temp directory, unlike the fixtures in
-[../project.test.ts](../project.test.ts) — those are about the loader and are
+[../project.test.ts](../project.test.ts) - those are about the loader and are
 clearest inline; these are about the configuration language and are meant to be
 read.
 
@@ -34,7 +34,7 @@ Each of these fails at load, with the offending key named.
 | Folder                     | Failure                                                   |
 | -------------------------- | --------------------------------------------------------- |
 | `unknown-provider`         | An agent names a provider nobody declared                 |
-| `unused-alias-typo`        | A typo in a `models:` entry no agent uses — still caught  |
+| `unused-alias-typo`        | A typo in a `models:` entry no agent uses - still caught  |
 | `api-on-single-api-vendor` | `api:` on a vendor that speaks only one                   |
 | `unknown-api`              | An API the openai protocol does not speak                 |
 | `openrouter-responses`     | An api named in a _ref_, on a kind that has none          |

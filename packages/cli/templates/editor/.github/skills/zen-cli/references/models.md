@@ -1,4 +1,4 @@
-# Models — `zen models`
+# Models - `zen models`
 
 ```
 zen models <providers|ls|search|show|test|pick> [ref] [options]
@@ -6,8 +6,8 @@ zen models <providers|ls|search|show|test|pick> [ref] [options]
 
 Alias: `model`.
 
-Answers **what can I use**. `zen check` answers the other question — whether one
-particular project works — and needs a project to do it. This one needs nothing
+Answers **what can I use**. `zen check` answers the other question - whether one
+particular project works - and needs a project to do it. This one needs nothing
 but a credential.
 
 ## Subcommands
@@ -33,7 +33,7 @@ Filters, on `ls` and `search`: `--chat`, `--embeddings`, `--images`, `--audio`,
 The providers themselves, cached for a day in `~/.zenera/neo/catalog`. When a
 provider cannot be asked, the last listing is used and reported as stale; only
 if there was never one does a short built-in list stand in. Every row says which
-it was — `--json` carries `source` per model and `origin` per provider.
+it was - `--json` carries `source` per model and `origin` per provider.
 
 `--refresh` bypasses the cache. It is the only thing that does.
 
@@ -48,7 +48,7 @@ zen models test vertex:gemini-embedding-001 --embedding
 
 The role is taken from the flag, else from what the provider says the model is
 for, else from the id. One minimal call: `ok` for a chat model, one short vector
-for an embedder — the embedding's width is reported, which matters because a
+for an embedder - the embedding's width is reported, which matters because a
 model serving a different number of dimensions is not interchangeable with the
 one an index was built on.
 
@@ -84,7 +84,7 @@ openai:text-embedding-3-small
 ```
 
 `pick` tries a short ordered list one at a time and stops at the first that
-works. Sequential on purpose — the goal is one working ref, not a survey. The
+works. Sequential on purpose - the goal is one working ref, not a survey. The
 ref goes to **stdout alone and unstyled**, so it substitutes directly:
 
 ```sh
@@ -92,7 +92,7 @@ zen rag schema index --embedding "$(zen models pick --embedding)" ./specs/*.yaml
 ```
 
 `zen models pick --embedding --json` gives `{ref, provider, model, role,
-dimensions, ms, tried}` — `tried` lists every candidate and why it was passed
+dimensions, ms, tried}` - `tried` lists every candidate and why it was passed
 over, so a caller can see _why_ a provider was skipped rather than only that it
 was.
 
@@ -101,7 +101,7 @@ When nothing answers, exit `4` and the table of everything tried.
 ## What it will not do
 
 There is no `test --all`. A sweep across every model on the machine is a bill,
-not a diagnostic — name the refs you care about, or use `pick`.
+not a diagnostic - name the refs you care about, or use `pick`.
 
 There is no ranking. The candidate order in `pick` is cheapest-and-fastest
 first, which is about how quickly an answer arrives, not about which model is
