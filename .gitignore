@@ -7,6 +7,9 @@ dist/
 .out/
 *.tsbuildinfo
 
+# Scratch
+.tmp/
+
 # Test / coverage
 coverage/
 .vitest/
