@@ -881,11 +881,11 @@ By default the container is removed when the session closes, so anything
 installed into its root filesystem is gone. These directories are bind mounts
 and do survive:
 
-| Inside        | On the host                                              |
-| ------------- | -------------------------------------------------------- |
-| `/workspace`  | the session's workspace                                  |
-| `/assets`     | the project's `assets:`, read-only, if it has one        |
-| `/skills`     | the project's skill catalog, read-only, if it has one    |
+| Inside       | On the host                                           |
+| ------------ | ----------------------------------------------------- |
+| `/workspace` | the session's workspace                               |
+| `/assets`    | the project's `assets:`, read-only, if it has one     |
+| `/skills`    | the project's skill catalog, read-only, if it has one |
 
 `/workspace` is the same directory the file tools work in, and they are told so:
 `read_file`, `apply_patch` and the rest accept `/workspace/src/a.ts` as well as

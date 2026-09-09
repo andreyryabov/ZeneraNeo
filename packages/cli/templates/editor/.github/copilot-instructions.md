@@ -230,12 +230,12 @@ belong in `INSTRUCTIONS.md` and the agent prompts, which are never overwritten.
 The tree in §2.1 is the **author's** view. A running agent sees almost none of
 it. Its entire world is the tools it was granted (§3.5) and four paths:
 
-| Path         | Is                                        | Access                                              |
-| ------------ | ----------------------------------------- | --------------------------------------------------- |
+| Path         | Is                                        | Access                                                 |
+| ------------ | ----------------------------------------- | ------------------------------------------------------ |
 | `/workspace` | the session's workspace — the work itself | read/write; `zen run --read-only` withholds the writes |
-| `/assets`    | `assets/`, reference material — §3.11     | read-only                                           |
-| `/skills`    | the whole skill catalog — §3.4.1          | read-only                                           |
-| `/memory`    | files carried by remembered nodes — §5.3  | read-only, and only when `memory:` is configured    |
+| `/assets`    | `assets/`, reference material — §3.11     | read-only                                              |
+| `/skills`    | the whole skill catalog — §3.4.1          | read-only                                              |
+| `/memory`    | files carried by remembered nodes — §5.3  | read-only, and only when `memory:` is configured       |
 
 Commands run inside the container `sandbox:` describes (§3.7): the same
 `/workspace`, and whatever the image ships.
@@ -1776,37 +1776,37 @@ Before finishing any change here:
 
 ## 10. Where to change what
 
-| Symptom                                    | Change this                                                         |
-| ------------------------------------------ | ------------------------------------------------------------------- |
-| Wrong tone, wrong format, wrong length     | `INSTRUCTIONS.md` (all agents) or the agent prompt                  |
-| Says something forbidden                   | `INSTRUCTIONS.md` prohibition, stated specifically                  |
-| Ignores a rule that only applies sometimes | Move the rule into a skill with a sharp description                 |
-| Never loads the skill it should            | The skill's `description`; or `preload` it                          |
-| Loads too much, answers slowly             | `allow:`, `maxIndexEntries:`, or `discovery: search`                |
-| Invents a number                           | A skill holding the figure, or a script that computes it — §3.4.1   |
-| A skill in the catalog is never offered    | It is a bare `<name>.md`; move it to `<name>/SKILL.md` — §3.4       |
-| Cannot find a file its own skill names     | Absolute `/skills/<name>/…` path, and `sandbox:*` — §3.4.1          |
-| Tries to open `agents.yaml` or its own prompt | The prompt names a file no agent can see — §2.5                  |
-| Says a file is missing that is in the project | The workspace is not the project directory — §2.5                |
-| Rewrites a whole file to change one line   | A prompt line preferring `apply_patch` — §3.6                       |
-| Edits files it should only be reading      | Subtract the mutating tools, or `zen run --read-only`               |
-| Cannot run the build or the tests          | Grant `sandbox:*`; add the toolchain to `sandbox/Dockerfile`        |
-| Installs the same packages on every run    | Put them in `sandbox/Dockerfile`, or `sandbox.persist: true` — §3.7 |
-| Answers from stale knowledge of the world  | Grant `web_search` + `web_read`, and say when — §3.8                |
-| Cites a page it only saw the excerpt of    | A prompt line: `web_read` before quoting — §3.8                     |
-| Every web call refuses                     | No Exa key: `zen key add exa` — `zen check` warns — §3.8            |
-| A model or embedder refuses every call     | `zen models test <ref>` — if `blocked`, `zen models pick` — §8      |
-| Answers instead of routing                 | Router prompt prohibition; check `handoffs:`                        |
-| Routes to the wrong specialist             | The target agents' `description:` fields                            |
-| Gets stuck in the agent it routed to       | The target needs a handoff back — §6.3                              |
-| Loses a detail after a handoff             | Say it in the handoff; check the collapse policy                    |
-| Works through N independent items serially | `fork:` on that agent, and a prompt line — §6.4                     |
-| Forks when the steps actually depend       | Prompt line: branches cannot see each other                         |
-| Slow and expensive on trivial cases        | Demote that agent's model tier / reasoning effort                   |
-| Fails only on genuinely hard cases         | Promote that agent's tier, or split the hard path out               |
-| Shows no reasoning while it works          | Turn summaries on for that model — §7.6                             |
-| Forgets across conversations               | Continue the session rather than starting a new one                 |
-| Breaks at load with a named path           | Read the message — it names the exact key                           |
+| Symptom                                       | Change this                                                         |
+| --------------------------------------------- | ------------------------------------------------------------------- |
+| Wrong tone, wrong format, wrong length        | `INSTRUCTIONS.md` (all agents) or the agent prompt                  |
+| Says something forbidden                      | `INSTRUCTIONS.md` prohibition, stated specifically                  |
+| Ignores a rule that only applies sometimes    | Move the rule into a skill with a sharp description                 |
+| Never loads the skill it should               | The skill's `description`; or `preload` it                          |
+| Loads too much, answers slowly                | `allow:`, `maxIndexEntries:`, or `discovery: search`                |
+| Invents a number                              | A skill holding the figure, or a script that computes it — §3.4.1   |
+| A skill in the catalog is never offered       | It is a bare `<name>.md`; move it to `<name>/SKILL.md` — §3.4       |
+| Cannot find a file its own skill names        | Absolute `/skills/<name>/…` path, and `sandbox:*` — §3.4.1          |
+| Tries to open `agents.yaml` or its own prompt | The prompt names a file no agent can see — §2.5                     |
+| Says a file is missing that is in the project | The workspace is not the project directory — §2.5                   |
+| Rewrites a whole file to change one line      | A prompt line preferring `apply_patch` — §3.6                       |
+| Edits files it should only be reading         | Subtract the mutating tools, or `zen run --read-only`               |
+| Cannot run the build or the tests             | Grant `sandbox:*`; add the toolchain to `sandbox/Dockerfile`        |
+| Installs the same packages on every run       | Put them in `sandbox/Dockerfile`, or `sandbox.persist: true` — §3.7 |
+| Answers from stale knowledge of the world     | Grant `web_search` + `web_read`, and say when — §3.8                |
+| Cites a page it only saw the excerpt of       | A prompt line: `web_read` before quoting — §3.8                     |
+| Every web call refuses                        | No Exa key: `zen key add exa` — `zen check` warns — §3.8            |
+| A model or embedder refuses every call        | `zen models test <ref>` — if `blocked`, `zen models pick` — §8      |
+| Answers instead of routing                    | Router prompt prohibition; check `handoffs:`                        |
+| Routes to the wrong specialist                | The target agents' `description:` fields                            |
+| Gets stuck in the agent it routed to          | The target needs a handoff back — §6.3                              |
+| Loses a detail after a handoff                | Say it in the handoff; check the collapse policy                    |
+| Works through N independent items serially    | `fork:` on that agent, and a prompt line — §6.4                     |
+| Forks when the steps actually depend          | Prompt line: branches cannot see each other                         |
+| Slow and expensive on trivial cases           | Demote that agent's model tier / reasoning effort                   |
+| Fails only on genuinely hard cases            | Promote that agent's tier, or split the hard path out               |
+| Shows no reasoning while it works             | Turn summaries on for that model — §7.6                             |
+| Forgets across conversations                  | Continue the session rather than starting a new one                 |
+| Breaks at load with a named path              | Read the message — it names the exact key                           |
 
 ---
 
