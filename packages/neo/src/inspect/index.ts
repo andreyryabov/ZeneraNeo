@@ -10,7 +10,7 @@ export {
     MERMAID_URL,
     type ReportOptions,
     type RunMemory,
-    type RunReport
+    type RunReport,
 } from './report.ts';
 
 /** Report → one standalone HTML document. */

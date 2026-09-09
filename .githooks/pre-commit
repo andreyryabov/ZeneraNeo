@@ -1,5 +1,5 @@
 #!/bin/sh
-# Secret scan for staged changes. Enabled via `core.hooksPath` (npm run prepare).
+# Secret scan and formatting for staged changes. Enabled via `core.hooksPath` (npm run prepare).
 # Bypass a false positive with: git commit --no-verify
 
 set -e
@@ -38,3 +38,23 @@ fi
     echo "pre-commit: blocked. Re-run with --no-verify if this is a false positive." >&2
     exit 1
 }
+
+# 3. Format what is being committed. Staged files only — `npm run format` writes the whole tree,
+# which would sweep unrelated dirty files into the commit. A file with unstaged changes is left
+# alone: re-adding it would commit the half you did not stage. `.tmpl` files hold {{...}} and
+# are deliberately kept away from prettier.
+if [ -x node_modules/.bin/prettier ]; then
+    unstaged=$(git diff --name-only || true)
+    format=$(printf '%s\n' "$staged" | grep -vE '\.tmpl$' || true)
+    [ -z "$unstaged" ] || format=$(printf '%s\n' "$format" | grep -vxF "$unstaged" || true)
+
+    if [ -n "$format" ]; then
+        printf '%s\n' $format | xargs node_modules/.bin/prettier --ignore-unknown --write --log-level warn
+        rewritten=$(printf '%s\n' $format | xargs git diff --name-only -- || true)
+        if [ -n "$rewritten" ]; then
+            echo "pre-commit: formatted" >&2
+            printf '  %s\n' $rewritten >&2
+            printf '%s\n' $rewritten | xargs git add --
+        fi
+    fi
+fi
