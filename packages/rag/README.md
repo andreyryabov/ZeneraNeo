@@ -1,11 +1,19 @@
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-rag-dark.svg">
+  <img src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-rag-light.svg" alt="ZENERA RAG" width="702">
+</picture>
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/andreyryabov/ZeneraNeo/blob/main/LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
+
+</div>
+
 # @zenera/rag
 
 **A corpus, indexed and searched by meaning — an OpenAPI description as a
 graph, a pile of markdown as quotable passages — for agents that have to work
 with something they have not read.**
-
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/andreyryabov/ZeneraNeo/blob/main/LICENSE)
-[![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
 
 > Part of [ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo). It ships no
 > binary of its own: installing it adds a `rag` **subcommand** to

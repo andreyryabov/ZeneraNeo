@@ -1,7 +1,7 @@
 <div align="center">
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/imgs/banner-dark.svg">
-  <img src="docs/imgs/banner-light.svg" alt="ZENERA NEO" width="720">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/imgs/banner-neo-dark.svg">
+  <img src="docs/imgs/banner-neo-light.svg" alt="ZENERA NEO" width="720">
 </picture>
 
 [![CI](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml)

@@ -83,9 +83,26 @@ const SHAPES = {
 /** The four tones `banner.ts` paints with, by their 256-colour index. */
 const ROLE = { 231: 'face', 244: 'shade', 208: 'accent', 130: 'accentShade' };
 
-const THEMES = {
-    dark: { face: '#ffffff', shade: '#8b949e', accent: '#ff8700', accentShade: '#d75f00' },
-    light: { face: '#1f2328', shade: '#8c959f', accent: '#d95c00', accentShade: '#9a4200' },
+/** The head word is the same on every mark; only the second word changes hue. */
+const HEAD = {
+    dark: { face: '#ffffff', shade: '#8b949e' },
+    light: { face: '#1f2328', shade: '#8c959f' },
+};
+
+/** One accent per package, so the three marks are told apart at a glance. */
+const ACCENTS = {
+    orange: {
+        dark: { accent: '#ff8700', accentShade: '#d75f00' },
+        light: { accent: '#d95c00', accentShade: '#9a4200' },
+    },
+    green: {
+        dark: { accent: '#3fb950', accentShade: '#238636' },
+        light: { accent: '#1a7f37', accentShade: '#0f5323' },
+    },
+    violet: {
+        dark: { accent: '#a371f7', accentShade: '#7c4ddb' },
+        light: { accent: '#8250df', accentShade: '#5a32a3' },
+    },
 };
 
 /** An ANSI line as `{ char, role }` cells — the escape codes carry the tone. */
@@ -117,7 +134,7 @@ function trim(rows) {
     return rows.map((row) => row.slice(from, to));
 }
 
-function svg(rows, theme) {
+function svg(rows, theme, label) {
     const paths = new Map();
     rows.forEach((row, r) => {
         row.forEach((cell, c) => {
@@ -139,20 +156,31 @@ function svg(rows, theme) {
         .map(([role, d]) => `  <path fill="${theme[role]}" d="${d.join('')}"/>`)
         .join('\n');
 
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="ZENERA NEO">
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="${label}">
 ${body}
 </svg>
 `;
 }
 
-const rows = trim(bannerLines(NEO_BANNER, 999).slice(0, 6).map(cells));
+/** One per README that carries the mark. The head word never changes. */
+const WORDMARKS = [
+    { file: 'banner-neo', accent: 'orange', text: NEO_BANNER },
+    { file: 'banner-rag', accent: 'green', text: { ...NEO_BANNER, accent: 'Rag' } },
+    { file: 'banner-faker', accent: 'violet', text: { ...NEO_BANNER, accent: 'Faker' } },
+];
 
-if (!rows.some((row) => row.some((cell) => cell.role))) {
-    throw new Error('banner came back uncoloured — run with FORCE_COLOR=3');
-}
+for (const { file, accent, text } of WORDMARKS) {
+    const rows = trim(bannerLines(text, 999).slice(0, 6).map(cells));
+    if (!rows.some((row) => row.some((cell) => cell.role))) {
+        throw new Error('banner came back uncoloured — run with FORCE_COLOR=3');
+    }
 
-for (const [name, theme] of Object.entries(THEMES)) {
-    const file = join(OUT, `banner-${name}.svg`);
-    writeFileSync(file, svg(rows, theme));
-    console.log(`wrote ${file}`);
+    const label = `${text.head} ${text.accent}`.toUpperCase();
+    for (const [name, head] of Object.entries(HEAD)) {
+        const theme = { ...head, ...ACCENTS[accent][name] };
+        writeFileSync(join(OUT, `${file}-${name}.svg`), svg(rows, theme, label));
+    }
+    // Three quarters of the drawing, which is where the strokes stay crisp.
+    const cols = Math.max(...rows.map((row) => row.length));
+    console.log(`${file}: width="${Math.round((cols * W * 3) / 4)}"`);
 }

@@ -1,10 +1,18 @@
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-faker-dark.svg">
+  <img src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-faker-light.svg" alt="ZENERA FAKER" width="837">
+</picture>
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/andreyryabov/ZeneraNeo/blob/main/LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
+
+</div>
+
 # @zenera/faker
 
 **A mock HTTP server for swagger/OpenAPI documents. Point it at a spec and it
 serves it — the response bodies are written, once, by a model.**
-
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/andreyryabov/ZeneraNeo/blob/main/LICENSE)
-[![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
 
 > Part of [ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo). It ships no
 > binary of its own: installing it adds a `faker` **subcommand** to
