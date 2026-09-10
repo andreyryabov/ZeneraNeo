@@ -21,5 +21,10 @@ export interface Command {
     readonly usage: string;
     /** lines printed under the usage line by `zen help <command>` */
     readonly details?: readonly string[];
+    /**
+     * Answers `--help` itself, for a command whose arguments select a page the
+     * frame cannot see. Without it the frame prints this command's own page.
+     */
+    help?(ctx: Context): Promise<void> | void;
     run(ctx: Context): Promise<void>;
 }

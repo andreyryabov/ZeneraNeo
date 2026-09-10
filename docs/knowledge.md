@@ -87,7 +87,7 @@ Reach for those whenever the question is whether something is there at all. A
 ranking can only hand back the top of a list, so it cannot answer "does the word
 `deprecated` appear anywhere" - the honest answer is every match or none.
 
-Run `zen rag help docs` for the full flag list.
+Run `zen rag docs --help` for the full flag list.
 
 ## Wiring it into a project
 

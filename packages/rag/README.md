@@ -168,7 +168,7 @@ knowing: it means no request in this document will ever carry it.
 <details>
 <summary>Every flag</summary>
 
-`zen rag help schema` prints the same table.
+`zen rag schema --help` prints the same table.
 
 **index**
 
@@ -364,7 +364,7 @@ answer whether a string appears at all.
 <details>
 <summary>Every flag</summary>
 
-`zen rag help docs` prints the same table.
+`zen rag docs --help` prints the same table.
 
 **index**
 

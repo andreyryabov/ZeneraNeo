@@ -84,17 +84,18 @@ async function main(argv: readonly string[]): Promise<number> {
         fail(`unknown command "${parts.name}"`, `run ${bold(`${NAME} --help`)} for the list`);
         return EXIT.usage;
     }
-    if (values.help) {
-        await usage(name);
-        return EXIT.ok;
-    }
-
     // `-C` is consumed here so no command ever reads `process.cwd()` itself,
     // and every relative path in every command means the same thing.
     const cwd = resolve(values.directory ?? process.cwd());
 
     try {
         const one = command ?? (await loadExternal(name, external!));
+        if (values.help) {
+            // A command that nests its own pages answers for them; the frame
+            // only knows the one page it printed the command's name on.
+            await (one.help ? one.help({ args: rest, json, cwd }) : usage(name));
+            return EXIT.ok;
+        }
         await one.run({ args: rest, json, cwd });
         return EXIT.ok;
     } catch (e) {

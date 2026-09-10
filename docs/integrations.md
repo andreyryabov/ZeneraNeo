@@ -71,7 +71,7 @@ graph: given a field, it walks up to the operations that accept or return it.
 "Which endpoints expose this?" is a question about edges, and a ranking cannot
 answer it.
 
-Run `zen rag help schema` for the full flag list.
+Run `zen rag schema --help` for the full flag list.
 
 ## Wiring it into a project
 

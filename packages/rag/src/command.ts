@@ -26,8 +26,9 @@ import { command as schema } from './schema/command.ts';
 // to mean one of them, and whichever was chosen would be wrong for the other
 // forever.
 //
-// `help <subject>` is a verb rather than a flag because `--help` never gets
-// here: the frame lifts it out of the arguments and answers with this page.
+// The outer frame settles `--help`, then tells an external command it saw it.
+// That keeps help syntax uniform while still letting this dispatcher name the
+// subject page.
 // ---------------------------------------------------------------------------
 
 const SUBJECTS: Record<string, Command> = { schema, docs };
@@ -42,18 +43,19 @@ export const command: Command = {
         ...table(Object.entries(SUBJECTS).map(([name, sub]) => [`  ${name}`, dim(sub.summary)])),
         '',
         ...Object.keys(SUBJECTS).map((name) =>
-            dim(`  ${cyan(`zen rag help ${name}`)} — its commands, flags and examples`),
+            dim(`  ${cyan(`zen rag ${name} --help`)} — its commands, flags and examples`),
         ),
         '',
         dim(`Credentials come from the ${cyan('zen')} keyring — try ${cyan('zen key ls')}.`),
     ],
 
+    help(ctx: Context): void {
+        return help(ctx.args[0]);
+    },
+
     async run(ctx: Context): Promise<void> {
         const [subject, ...rest] = ctx.args;
 
-        if (subject === 'help') {
-            return help(rest[0]);
-        }
         const chosen = subject ? SUBJECTS[subject] : undefined;
         if (!chosen) {
             throw usageError(
@@ -67,14 +69,20 @@ export const command: Command = {
 
 /** Laid out as `zen help <command>` lays out this one, so the two pages match. */
 function help(subject: string | undefined): void {
-    const chosen = subject ? SUBJECTS[subject] : undefined;
+    if (!subject) {
+        return page(command);
+    }
+    const chosen = SUBJECTS[subject];
     if (!chosen) {
         throw usageError(
-            subject ? `unknown subject "${subject}"` : 'which subject',
-            `expected ${Object.keys(SUBJECTS).join(' or ')} — zen rag help <subject>`,
+            `unknown subject "${subject}"`,
+            `expected ${Object.keys(SUBJECTS).join(' or ')} — zen rag <subject> --help`,
         );
     }
+    return page(chosen);
+}
 
+function page(chosen: Command): void {
     write(bold(chosen.usage));
     write(`\n  ${chosen.summary}`);
     if (chosen.details?.length) {

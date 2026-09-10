@@ -43,7 +43,11 @@ interface Run {
 }
 
 /** Captures both streams, and keeps them when the command throws. */
-async function invoke(args: string[], json: boolean): Promise<Run & { error?: unknown }> {
+async function invoke(
+    args: string[],
+    json: boolean,
+    help = false,
+): Promise<Run & { error?: unknown }> {
     const out: string[] = [];
     const err: string[] = [];
     vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
@@ -56,7 +60,8 @@ async function invoke(args: string[], json: boolean): Promise<Run & { error?: un
     });
     let error: unknown;
     try {
-        await command.run({ args, json, cwd: process.cwd() });
+        const ctx = { args, json, cwd: process.cwd() };
+        await (help ? command.help!(ctx) : command.run(ctx));
     } catch (thrown) {
         error = thrown;
     }
@@ -93,10 +98,16 @@ describe('dispatch', () => {
         expect(err.message).toContain('unknown subject "stats"');
     });
 
-    it('prints a subject’s own help, which --help never reaches', async () => {
-        const { out } = await run(['help', 'schema']);
+    it('prints a subject’s help when the outer frame recognised --help', async () => {
+        const { out } = await invoke(['schema'], false, true);
         expect(out).toContain('zen rag schema');
         expect(out).toContain('trace <pattern>');
+    });
+
+    it('lists the subjects when --help names none of them', async () => {
+        const { out } = await invoke([], false, true);
+        expect(out).toContain('zen rag <subject>');
+        expect(out).toContain('docs');
     });
 });
 
