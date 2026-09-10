@@ -31,20 +31,25 @@ you can run, inspect, improve, review and share.
 > It is **not** the official Zenera AI Platform, and it carries no support or
 > stability promises.
 
-## From knowledge to a better system
+## Autonomous specialization and improvement
 
+People define the job; they should not have to hand-design every agent, prompt,
+handoff, tool, memory rule and evaluation loop required to do it well.
 `SPECIFICATION.md` is the source of intent: the work to perform, the knowledge
-to use, the boundaries to keep, and the criteria that define success. A
-meta-agent turns that intent into a working system and keeps the implementation
-aligned as the specification changes.
+to use, the boundaries to keep, and the criteria that define success.
+
+ZeneraNeo's meta-agent turns that intent into a working system, then autonomously
+tests it, examines its observable trajectory, and proposes improvements to the
+specification. The next system is generated from that improved intent. This is a
+continuous loop for making a specialized system more effective without losing
+the human-defined purpose and constraints.
 
 ![The continuous improvement loop from knowledge and specification to an agentic system, run analysis, and specification updates](docs/imgs/continuous_improvement_loop.svg)
 
 The loop is deliberate. A run is not only an answer; it is evidence about the
 system that produced it. ZeneraNeo records the trajectory, evaluates the result
 against the specification, identifies changes that improve quality, accuracy,
-latency or token use, and turns those findings into reviewable updates. The next
-system is generated from the improved specification rather than patched by hand.
+latency or token use, and turns those findings into reviewable updates.
 
 Projects are ordinary Markdown and YAML, so the intent, generated system and
 proposed changes can be versioned in Git and reviewed like any other software.
