@@ -38,27 +38,7 @@ to use, the boundaries to keep, and the criteria that define success. A
 meta-agent turns that intent into a working system and keeps the implementation
 aligned as the specification changes.
 
-```text
-documents, policies, APIs, files and operational data
-                         |
-                         v
-                  SPECIFICATION.md
-                         |
-                         v
- agentic system: specialists, handoffs, tools, skills, memory,
- retrieval, context strategy and execution boundaries
-                         |
-                         v
-       sandbox runs, self-tests and success-criteria checks
-                         |
-                         v
- trajectory analysis: quality, accuracy, speed and token use
-                         |
-                         v
- per-run improvement proposals -> aggregated specification updates
-                         |
-                         +-------------------- repeat --------------------+
-```
+![The continuous improvement loop from knowledge and specification to an agentic system, run analysis, and specification updates](docs/imgs/continuous_improvement_loop.svg)
 
 The loop is deliberate. A run is not only an answer; it is evidence about the
 system that produced it. ZeneraNeo records the trajectory, evaluates the result
