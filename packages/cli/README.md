@@ -14,6 +14,10 @@
 
 **`zen` - build specialist agents. Share them. Run them from the command line.**
 
+`@zenera/cli` is the command-line package in the
+[ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo) toolkit. It creates,
+runs, tests and improves the specialized agent systems defined by a project.
+
 Not one general assistant that is passable at everything - a team built for the
 work you actually keep doing, under a name you can type:
 
@@ -108,19 +112,28 @@ npx @zenera/cli --help
 
 ## Quickstart
 
-Four commands, from nothing to an answer:
+From nothing to a specialized agent system:
 
 ```sh
 npm i -g @zenera/cli         # every vendor SDK comes with it
 zen key add openai           # asks for the key without showing it; stored in ~/.zenera
 zen init my-project          # scaffolds a project and registers it
-zen run my-project "introduce yourself"
+zen open my-project          # open the specification and project in your editor
 ```
 
-The name works from anywhere after that, and the directory you are standing in
-is what it works on:
+In the editor, describe the job in `SPECIFICATION.md`, then send this in the
+agent chat:
+
+```
+/sync-with-spec
+```
+
+It creates the specialists, responsibilities, tool access and handoffs the job
+needs. Back in the terminal, validate the generated system and run it against a
+real workspace:
 
 ```sh
+zen check my-project
 cd ~/code/some-repo
 zen run my-project "summarise this repo and write NOTES.md"
 ```
@@ -142,9 +155,8 @@ Giving a prompt on the command line skips every question: it starts a fresh
 session and uses the current directory as the workspace, with write access.
 `--session`, `--workspace` and `--read-only` override that.
 
-To change what the system does, open the project in your editor with
-`zen open`, edit `SPECIFICATION.md` to say what you actually want built, and
-send `/sync-with-spec` in the editor's chat. That is the next section.
+To change what the system does, update `SPECIFICATION.md` and send
+`/sync-with-spec` again. The next section explains that workflow in detail.
 
 ## You write the specification; a coding agent writes the system
 
@@ -409,6 +421,27 @@ the prompts and skills it needs to keep the project matching its specification.
   parses, model listings, generated mocks. Shared by every project on the
   machine, and never emptied by anything but you. See [Cache](#cache--work-you-have-already-paid-for).
 
+## Sandbox commands
+
+Agents use an isolated container when a project grants them command-line tools.
+`zen run` prepares it automatically before the first command, but these commands
+make setup, diagnostics and cleanup explicit - useful on a new machine or when
+you want to validate a project's execution environment before a run.
+
+```sh
+zen sandbox status                    # engine, project image and active containers
+zen sandbox up                        # prepare the execution environment for this project
+zen sandbox pull                      # pull or build this project's image only
+zen sandbox status --project my-app   # inspect a named project from anywhere
+zen sandbox disk                      # storage used by the engine and known projects
+zen sandbox clean                     # remove containers created by zen
+```
+
+`status`, `up` and `pull` use the project in the current directory, or accept
+`--project <name|dir>`. `--image <ref>` selects an image explicitly. `clean` and
+`disk` are machine-wide operations, so use them when you mean to inspect or
+remove resources beyond the current project.
+
 ## Commands
 
 | Command   | Does                                                                 |
@@ -440,17 +473,36 @@ an installed one costs nothing until it is used.
 | `faker` | `@zenera/faker` | A mock API from an openapi/swagger document.   |
 | `rag`   | `@zenera/rag`   | Search an openapi/swagger document as a graph. |
 
+**`zen faker`** turns an OpenAPI or Swagger description into a working mock
+server. It generates behavior for each route, checks the result against the
+response contract, and reuses the generated implementation on later requests.
+
 ```sh
 npm i -g @zenera/faker
 zen faker serve api/openapi.yaml --port 8787   # a working mock, bodies written by a model
 
+curl -s localhost:8787/users/12324
+# { "user_id": 12324, "email": "brooke.hoffman@example.org", … }
+```
+
+**`zen rag`** adds advanced retrieval for the knowledge an agent needs to work
+from: documentation and API schemas. Document indexes support semantic,
+full-text and hybrid search with passages returned alongside their source lines.
+Schema indexes add graph-aware retrieval across operations, types, fields,
+requests and responses, so an answer can include the connected API context
+rather than an isolated match.
+
+```sh
 npm i -g @zenera/rag
 zen rag schema index --embedding openai:text-embedding-3-small ./specs/*.yaml
 zen rag schema search --output-property "user billing history" --format ts
+
+zen rag docs index ./handbook --embedding openai:text-embedding-3-small
+zen rag docs search "how does failover work when the primary is unreachable"
 ```
 
-They use this keyring and these credentials, so there is nothing new to
-configure. Details:
+Use [@zenera/rag](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md)
+for its complete retrieval capabilities and examples. Details:
 [@zenera/faker](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md)
 ·
 [@zenera/rag](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md).
