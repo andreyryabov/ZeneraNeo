@@ -1,7 +1,7 @@
 <div align="center">
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-neo-dark.svg">
-  <img src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-neo-light.svg" alt="ZENERA NEO" width="720">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-cli-dark.svg">
+  <img src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-cli-light.svg" alt="ZENERA CLI" width="720">
 </picture>
 
 [![npm](https://img.shields.io/npm/v/@zenera/cli.svg)](https://www.npmjs.com/package/@zenera/cli)
@@ -240,6 +240,11 @@ edit SPECIFICATION.md → /sync-with-spec → zen check → zen run
         ↑                                                  ↓
         └───── refine the spec <-──── zen inspect <-───────┘
 ```
+
+`zen inspect` makes the record visible: the run trace, timing and token
+statistics, agent architecture, and memory used during the run.
+
+![Run inspection: trace, agent architecture, and memory](https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/0910_480.gif)
 
 Every step is a command, and everything each one reads or writes is a plain
 file: the specification, the findings `zen check` prints with a code, a location

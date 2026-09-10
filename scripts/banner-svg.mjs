@@ -165,6 +165,7 @@ ${body}
 /** One per README that carries the mark. The head word never changes. */
 const WORDMARKS = [
     { file: 'banner-neo', accent: 'orange', text: NEO_BANNER },
+    { file: 'banner-cli', accent: 'orange', text: { ...NEO_BANNER, accent: 'CLI' } },
     { file: 'banner-rag', accent: 'green', text: { ...NEO_BANNER, accent: 'Rag' } },
     { file: 'banner-faker', accent: 'violet', text: { ...NEO_BANNER, accent: 'Faker' } },
 ];
