@@ -34,12 +34,22 @@ programmed: what an agent knows, which model answers, and which of the tools
 6. Every change must still load: `agents.yaml` is validated strictly at load,
    and `zen check` says so before a model is ever called.
 
-### 0.1 Copilot is the meta-agent: CLI and RAG
+### 0.1 Copilot is the meta-agent: load the skill for every capability in use
 
 Copilot is always the meta-agent that creates and changes target projects. Load
 the editor's `zen-cli` skill before deciding how a target project should run,
 be validated, or use command-line capabilities. It is the command contract; do
 not reconstruct `zen` arguments from memory or call `--help` to discover them.
+
+**Every runtime capability a project turns on carries obligations that are not
+visible in `agents.yaml` and that `zen check` does not report.** Before
+reviewing or changing a project, list the capabilities it has turned on and load
+the editor skill for each one - `zen-memory` for a `memory:` block, `zen-rag-
+schema` or `zen-rag-docs` for an index, `zen-cli` always. A capability that is
+already configured and already passing `zen check` is exactly the case that
+looks finished and is not: the obligation lives in the skill, so a review that
+never opens the skill cannot find what is missing. This applies whatever
+prompted the change - a task scoped to `SPECIFICATION.md` does not narrow it.
 
 First determine whether the target project uses RAG: a `zen rag` command in an
 agent prompt or skill, RAG tools supplied by its host, or a documentation or
@@ -67,6 +77,15 @@ the commands, tools, paths, and corpus-specific constraints that exist in the
 target project. Grant the agents that need CLI RAG the necessary `sandbox:*`
 tool access; give tool-based RAG users the configured RAG tools instead. Run
 `zen check` after adding or changing the skill.
+
+Memory has one such obligation and it is absolute: **a project with a `memory:`
+block carries `references/memory-house-rules.md` from the `zen-memory` skill in
+its own `INSTRUCTIONS.md`, copied whole and verbatim**, with project-specific
+policy underneath it. Nothing else tells a running agent how the store works, so
+without it nothing forbids an agent from pointing `grep` or `cat` at `/memory` -
+a read that bypasses the audience mask and serves superseded nodes as current.
+Re-paste the reference when it changes rather than hand-patching the copy, and
+never paraphrase it into prose of your own. See §5.3.
 
 ---
 
@@ -1166,6 +1185,16 @@ Every node carries an **audience**, and an agent's `sees` is the set it reads:
 one graph, masked per agent, never one graph each. The four `memory_*` tools are
 derived from `access` and are never listed in `tools:`.
 
+**Turning memory on is two edits, not one.** The second is `INSTRUCTIONS.md`:
+the `zen-memory` skill's `references/memory-house-rules.md`, pasted whole and
+verbatim, with this project's policy underneath it. It is what tells the agent
+that the store is reached only through the tools, that `memory_search` clips a
+node's text and `memory_load` reads it whole, that a remembered file's path
+comes from `memory_load` and not from listing `/memory`, what a node must carry
+to be worth having, and that a correction is a `SUPERSEDES` edge rather than an
+edit. `zen check` validates the `memory:` block and says nothing about the
+block's absence, so this is checked by reading `INSTRUCTIONS.md`, every time.
+
 Do not treat memory as a database. It is for things learned that should
 persist. Anything authoritative - a rate, a policy clause, a procedure - belongs
 in a skill, where it is versioned and reviewable.
@@ -1756,6 +1785,8 @@ Before finishing any change here:
 - [ ] Failure paths stated for every instruction that can fail
 - [ ] No facts, rates or figures embedded in a prompt
 - [ ] No hedging, no meta-talk about the runtime
+- [ ] If any agent has `memory:`, `INSTRUCTIONS.md` carries the `zen-memory`
+      house-rules block verbatim and current - §5.3
 
 **Paths (§2.5 - run its checklist over the three trees)**
 
@@ -1841,6 +1872,8 @@ Before finishing any change here:
 | Fails only on genuinely hard cases            | Promote that agent's tier, or split the hard path out               |
 | Shows no reasoning while it works             | Turn summaries on for that model - §7.6                             |
 | Forgets across conversations                  | Continue the session rather than starting a new one                 |
+| Greps `/memory` or reads `graph.json`         | The house-rules block is missing from `INSTRUCTIONS.md` - §5.3      |
+| Recalls a note it cannot check or continue    | Same block: it is what requires provenance on every node - §5.3     |
 | Breaks at load with a named path              | Read the message - it names the exact key                           |
 
 ---
@@ -1860,6 +1893,12 @@ Before finishing any change here:
   that follows it - §2.5.
 - **Arithmetic in prose.** A skill that walks the model through a calculation it
   will get wrong, in a folder that could have held the script - §3.4.1.
+- **The unguarded store.** `memory:` turned on and the house-rules block never
+  pasted into `INSTRUCTIONS.md`, so nothing tells the agent the store is reached
+  only through the tools - and `zen check` passes throughout - §5.3.
+- **Reviewing a capability without its skill.** A project whose memory, index or
+  sandbox was configured by an earlier pass looks finished because it loads. The
+  obligations are in the editor skill, not in `agents.yaml` - §0.1.
 - **Politeness padding.** "Please try your best to be helpful." Costs tokens,
   changes nothing.
 - **Commented implementation notes.** `agents.yaml` explaining how skill
@@ -1894,6 +1933,8 @@ Update it when:
 - a vendor trap is discovered - add it to §7.7
 - a recurring review comment appears twice - turn it into a checklist line in §9
 - a runtime capability is added - describe it here, or it will not be used
+- an editor skill starts requiring a block in the target project - name the
+  requirement in §0.1 and the check for it in §9, or it will be missed
 
 Do not let it grow without pruning. When a section is only true of one agent, it
 belongs in that agent's prompt, not here.
