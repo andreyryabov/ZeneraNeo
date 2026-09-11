@@ -347,6 +347,23 @@ path relative to the common root of everything indexed. Tables survive the trip
 whole: a row that matches still arrives with its column names attached, so a
 number is never quoted without the thing it measures.
 
+### One wording per leg
+
+A plain query is asked of two retrievers that read it differently: the full-text
+index wants the words the documents themselves use, and the vector index wants
+the question stated in full. One sentence rarely suits both. `--text-query` and
+`--vector-query` say each outright, and what comes back is fused exactly as it
+would have been:
+
+```sh
+zen rag docs search --text-query "Retry-After" \
+  --vector-query "how long to wait before trying the request again"
+```
+
+Either flag on its own runs that leg alone. They replace the positional text
+rather than narrowing it, and they settle the mode by existing, so `--mode`
+alongside a single wording is refused instead of quietly losing.
+
 ### Exact document inspection
 
 ```sh

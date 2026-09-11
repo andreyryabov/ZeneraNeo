@@ -41,6 +41,7 @@ import { repl } from './repl.ts';
 import {
     DEFAULT_LIMIT,
     DocsIndex,
+    legsOf,
     SEARCH_MODES,
     type DocsQuery,
     type SearchMode,
@@ -75,7 +76,8 @@ const { defaultDir: DEFAULT_DIR, envName: DIR_ENV } = DOCS_INDEX;
 const USAGE = 'zen rag docs <index|search|list|grep|show|stats> [args...]';
 
 const INDEX_USAGE = 'zen rag docs index --embedding <ref> [--out <dir>] <path...>';
-const SEARCH_USAGE = 'zen rag docs search [--dir <dir>] [query...]';
+const SEARCH_USAGE =
+    'zen rag docs search [--dir <dir>] [query... | --text-query <text> --vector-query <text>]';
 const LIST_USAGE = 'zen rag docs list <files|sections|tables> [--dir <dir>]';
 const GREP_USAGE = 'zen rag docs grep <pattern> [--dir <dir>]';
 const SHOW_USAGE = 'zen rag docs show <file> [--section <name>] [--lines <from-to>]';
@@ -145,6 +147,8 @@ export const command: Command = {
             ],
             ['  -d, --dir <dir>', dim(`Which index. Found from here if unset; see ${DIR_ENV}.`)],
             ['  --embedding <ref>', dim('Must be the one the index was built with.')],
+            ['  --text-query <text>', dim('Wording for the full-text leg, instead of <text>.')],
+            ['  --vector-query <text>', dim('Wording for the vector leg, instead of <text>.')],
             ['  -f, --file <pattern>', dim('Only these documents. Repeatable.')],
             ['  --exclude-file <pattern>', dim('Drop these documents. Repeatable.')],
             ['  -s, --section <name>', dim('Only under this heading, and what nests in it.')],
@@ -165,6 +169,15 @@ export const command: Command = {
         '',
         dim('  Default hybrid fuses full-text matches with vector similarity. Use --mode text'),
         dim('  or --mode vector to use just one of them.'),
+        '',
+        dim('  The two legs read a question differently: the full-text one wants the words the'),
+        dim('  documents use, the vector one wants the meaning. Say each outright with'),
+        dim('  --text-query and --vector-query, and what comes back is fused as usual. Either'),
+        dim('  one alone runs that leg alone, so they replace <text> and --mode rather than'),
+        dim('  joining them.'),
+        '',
+        dim(`  ${cyan('zen rag docs search --text-query "retry after header" \\')}`),
+        dim(`  ${cyan('  --vector-query "how long to wait before trying again"')}`),
         '',
         dim('  A --file pattern with * or ? is a glob over the whole document name,'),
         dim('  otherwise a substring. Names are relative to what was indexed, so'),
@@ -397,6 +410,8 @@ const still = (pending: readonly string[]): string =>
 interface SearchFlags {
     dir?: string;
     embedding?: string;
+    'text-query'?: string;
+    'vector-query'?: string;
     file?: string[];
     'exclude-file'?: string[];
     section?: string[];
@@ -421,6 +436,8 @@ async function search(args: readonly string[], ctx: Context): Promise<void> {
         {
             dir: { type: 'string', short: 'd' },
             embedding: { type: 'string' },
+            'text-query': { type: 'string' },
+            'vector-query': { type: 'string' },
             file: { ...MANY, short: 'f' },
             'exclude-file': MANY,
             section: { ...MANY, short: 's' },
@@ -442,6 +459,8 @@ async function search(args: readonly string[], ctx: Context): Promise<void> {
     const text = positionals.join(' ').trim();
     const query: DocsQuery = {
         query: text || undefined,
+        textQuery: values['text-query'],
+        vectorQuery: values['vector-query'],
         mode: modeOf(values.mode),
         files: values.file,
         exclude_files: values['exclude-file'],
@@ -455,15 +474,27 @@ async function search(args: readonly string[], ctx: Context): Promise<void> {
         after: values.after ? count(values.after, '--after', 0) : undefined,
         maxLines: values['max-lines'] ? count(values['max-lines'], '--max-lines') : undefined,
     };
+    const perLeg = Boolean(values['text-query'] ?? values['vector-query']);
 
     // Everything that can be wrong about the invocation is settled before a
     // credential is asked for, so a typo is a usage error and not a login.
     if (values.interactive && !isInteractive()) {
         throw usageError('--interactive needs a terminal', SEARCH_USAGE);
     }
-    if (!values.interactive && !text) {
+    for (const flag of ['text-query', 'vector-query'] as const) {
+        if (values[flag] !== undefined && !values[flag]!.trim()) {
+            throw usageError(`--${flag} is empty`, SEARCH_USAGE);
+        }
+    }
+    if (perLeg && values.interactive) {
+        // The prompt narrows one question by typing at it; there is no second
+        // line to type the other leg's wording on.
+        throw usageError('--interactive searches a single query', SEARCH_USAGE);
+    }
+    if (!values.interactive && !text && !perLeg) {
         throw usageError('nothing to search for', SEARCH_USAGE);
     }
+    await patterned(() => legsOf(query));
 
     const dir = indexDir(ctx, values.dir);
     const manifest = await readManifest(dir);

@@ -527,6 +527,67 @@ describe('show', () => {
     });
 });
 
+// ---------------------------------------------------------------------------
+// Arguments the docs half settles before it opens anything
+//
+// All of this is decided from the argv alone, so a contradictory invocation is
+// a usage error rather than a failed search — and costs neither an index nor a
+// credential to find out.
+// ---------------------------------------------------------------------------
+
+describe('docs search arguments', () => {
+    it('wants something to search for', async () => {
+        const err = await fails(['docs', 'search', '--dir', dir]);
+        expect(err.code).toBe(EXIT.usage);
+        expect(err.message).toContain('nothing to search for');
+    });
+
+    it('refuses a phrase beside a worded leg', async () => {
+        const err = await fails(['docs', 'search', 'retry', '--text-query', 'retry']);
+        expect(err.code).toBe(EXIT.usage);
+        expect(err.message).toContain('cannot both be given');
+    });
+
+    it('refuses a mode the wording has already settled', async () => {
+        const one = await fails(['docs', 'search', '--text-query', 'retry', '--mode', 'vector']);
+        expect(one.code).toBe(EXIT.usage);
+
+        const both = await fails([
+            'docs',
+            'search',
+            '--text-query',
+            'retry',
+            '--vector-query',
+            'how long to wait',
+            '--mode',
+            'text',
+        ]);
+        expect(both.code).toBe(EXIT.usage);
+    });
+
+    it('refuses an empty wording rather than searching for nothing', async () => {
+        const err = await fails(['docs', 'search', '--text-query', '  ']);
+        expect(err.code).toBe(EXIT.usage);
+        expect(err.message).toContain('--text-query is empty');
+    });
+
+    it('takes both wordings and gets as far as the index', async () => {
+        // This directory holds a schema index, so reaching the complaint about
+        // what it holds is the proof that the arguments were accepted.
+        const err = await fails([
+            'docs',
+            'search',
+            '--dir',
+            dir,
+            '--text-query',
+            'retry after header',
+            '--vector-query',
+            'how long to wait before trying again',
+        ]);
+        expect(err.code).toBe(EXIT.invalid);
+    });
+});
+
 describe('the query contract', () => {
     it('accepts every field it documents', () => {
         const query = parseQuery({

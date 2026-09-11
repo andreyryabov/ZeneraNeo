@@ -67,6 +67,62 @@ zen models test <ref>                 whether one model actually answers
 zen models pick --embedding           the first embedder that does, on stdout
 ```
 
+## Searching documents without help
+
+Use `zen rag docs` for a directory of Markdown or text, and put the index path
+in `-d <index-dir>` when it is not beside the working directory. These commands
+are enough to discover the corpus and retrieve evidence; do not spend a turn on
+`--help` first:
+
+```sh
+zen rag docs list files -d <index-dir>
+zen rag docs list sections -d <index-dir> --file "<path-pattern>"
+zen rag docs search -d <index-dir> "<question in natural language>"
+zen rag docs search -d <index-dir> --file "<path-pattern>" --section "<heading>" "<question>"
+zen rag docs grep -d <index-dir> "<exact string>" --file "<path-pattern>"
+zen rag docs show -d <index-dir> "<file>" --section "<heading>"
+```
+
+Start with one ordinary hybrid question. It is the best default for concepts and
+open questions. Search returns candidates, not proof: read the quoted lines,
+then use `show` or `grep` before claiming a fact is present or absent.
+
+When the first answer is from the wrong product area, version, file, or heading,
+ask the same question again with `--file` and then `--section`. A bare `--file`
+value is a substring; `*` and `?` make it a glob. Use `--kind table` or
+`--kind table_row` for limits and matrices, `--mode text` for a known exact
+phrase, and `--exclude-id <id>` to continue past an already-read passage.
+
+`--file` is the primary scope control: repeat it to admit several document
+families, and use `--exclude-file` to remove a noisy family. Both are resolved
+before ranking, so a result cannot come from an excluded document. `--section`
+then keeps only a matching heading and its nested headings within those files.
+For example, search two manual families but exclude archived releases:
+
+```sh
+zen rag docs search -d <index-dir> --file "manual-*/**" --file "guide-*/**" \
+	--exclude-file "*-archive/**" --section "Operations" "<question>"
+```
+
+Hybrid is not a vector reranker. It retrieves a candidate list from full-text
+search and another from vector similarity, then fuses their ranks. Full-text
+finds literal terms; vector search finds passages with the same meaning even
+when their wording differs. `--mode text` or `--mode vector` runs only one leg;
+ordinary hybrid runs both and is normally the right choice.
+
+Use `--text-query` with `--vector-query` only when one wording cannot serve both
+retrievers: a distinctive corpus term or command for the text leg, and the full
+question for the vector leg. For example:
+
+```sh
+zen rag docs search -d <index-dir> --text-query "exact identifier" \
+	--vector-query "what it means and how to use it"
+```
+
+This is not a general upgrade over hybrid search. Generic product names and
+common nouns make weak text legs that can displace better semantic results. The
+two flags replace positional text and `--mode`; give neither alongside them.
+
 Run `zen check` after any edit to `agents.yaml`, a prompt or a skill: it reads
 the project the way a run does, reports everything wrong at once, and calls no
 model. It is the cheapest possible test.
