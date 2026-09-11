@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { extract, split } from '../src/args.ts';
 import { auditModels } from '../src/audit.ts';
+import { bannerLines, NEO_BANNER } from '../src/banner.ts';
 import { Cache, cacheKey } from '../src/cache.ts';
 import {
     CATALOG_KIND,
@@ -326,6 +327,11 @@ describe('keys', () => {
 });
 
 describe('columns', () => {
+    it('can keep the block banner for an interactive terminal', () => {
+        expect(bannerLines(NEO_BANNER, 1)).toHaveLength(2);
+        expect(bannerLines(NEO_BANNER, Infinity)).toHaveLength(8);
+    });
+
     it('aligns on visible width, not byte length', () => {
         const styled = '\u001b[1mzn\u001b[22m';
         expect(pad(styled, 5)).toBe(`${styled}   `);

@@ -114,6 +114,11 @@ export interface BannerText {
     subtitle: string;
 }
 
+export interface PrintBannerOptions {
+    /** Render the block face even when the terminal is narrower than it. */
+    readonly full?: boolean;
+}
+
 export const NEO_BANNER: BannerText = {
     head: 'Zenera',
     accent: 'Neo',
@@ -150,12 +155,12 @@ export function bannerLines(text: BannerText, columns = process.stderr.columns |
 }
 
 /** Narration, and only for someone watching. */
-export function printBanner(text: BannerText): void {
+export function printBanner(text: BannerText, options: PrintBannerOptions = {}): void {
     if (!process.stderr.isTTY) {
         return;
     }
     note('');
-    for (const line of bannerLines(text)) {
+    for (const line of bannerLines(text, options.full ? Infinity : undefined)) {
         note(line);
     }
     note('');
