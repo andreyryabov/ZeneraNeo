@@ -86,12 +86,27 @@ export const command: Command = {
     details: [
         'Commands',
         ...table([
-            ['  index <path...>', dim('Read the documents and write a searchable index.')],
-            ['  search [text]', dim('Ask it something. --interactive for a prompt.')],
-            ['  list <what>', dim('Every document, section or table. No ranking.')],
-            ['  grep <pattern>', dim('Every matching line, with the section it sits in.')],
-            ['  show <file>', dim('A document, a section of one, or a line range.')],
-            ['  stats', dim('What is in an index, and what built it.')],
+            [
+                '  index <path...>',
+                dim('Build or refresh an index before searching changed documents.'),
+            ],
+            [
+                '  search [text]',
+                dim('Rank relevant passages with hybrid full-text and vector search.'),
+            ],
+            [
+                '  list <what>',
+                dim('Browse every indexed file, heading or table when you need an inventory.'),
+            ],
+            [
+                '  grep <pattern>',
+                dim('Find every literal or regex line match; use it to prove whether text exists.'),
+            ],
+            [
+                '  show <file>',
+                dim('Read a document, heading or line range verbatim after finding its location.'),
+            ],
+            ['  stats', dim('Inspect the index contents, size and embedding configuration.')],
         ]),
         '',
         'Index',
@@ -124,6 +139,10 @@ export const command: Command = {
         'Search',
         ...table([
             ['  <text>', dim('What to look for. One question, not a list of terms.')],
+            [
+                '  --interactive',
+                dim('Keep a docs> prompt open to search again and refine file, section or kind.'),
+            ],
             ['  -d, --dir <dir>', dim(`Which index. Found from here if unset; see ${DIR_ENV}.`)],
             ['  --embedding <ref>', dim('Must be the one the index was built with.')],
             ['  -f, --file <pattern>', dim('Only these documents. Repeatable.')],
@@ -141,9 +160,11 @@ export const command: Command = {
             ],
             ['  --no-numbers', dim('Quote the lines without their numbers.')],
             ['  --hits', dim('One line per passage instead of the text.')],
-            ['  --interactive', dim('Prompt, search, narrow, search again. Needs a terminal.')],
             ['  --quiet', dim('No narration.')],
         ]),
+        '',
+        dim('  Default hybrid fuses full-text matches with vector similarity. Use --mode text'),
+        dim('  or --mode vector to use just one of them.'),
         '',
         dim('  A --file pattern with * or ? is a glob over the whole document name,'),
         dim('  otherwise a substring. Names are relative to what was indexed, so'),
