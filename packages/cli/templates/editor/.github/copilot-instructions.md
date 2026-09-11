@@ -34,6 +34,40 @@ programmed: what an agent knows, which model answers, and which of the tools
 6. Every change must still load: `agents.yaml` is validated strictly at load,
    and `zen check` says so before a model is ever called.
 
+### 0.1 Copilot is the meta-agent: CLI and RAG
+
+Copilot is always the meta-agent that creates and changes target projects. Load
+the editor's `zen-cli` skill before deciding how a target project should run,
+be validated, or use command-line capabilities. It is the command contract; do
+not reconstruct `zen` arguments from memory or call `--help` to discover them.
+
+First determine whether the target project uses RAG: a `zen rag` command in an
+agent prompt or skill, RAG tools supplied by its host, or a documentation or
+schema index it is expected to consult all count. When it does, also load the
+`zen-cli` skill's `references/rag.md` before writing the target's instructions.
+
+Then create or maintain `agents/skills/rag_search/SKILL.md` in the target
+project. Its description must say when an agent should load it. Its body must
+name the target's actual RAG surface and index location, state which agents may
+use it, and give an executable retrieval procedure:
+
+1. Discover document and section names with the exact listing command or tool.
+2. Start with hybrid search for a complete natural-language question.
+3. Narrow by document, section, and content kind before repeatedly rewording a
+   query; verify facts with exact lookup or a verbatim read.
+4. Use full-text search for a known literal term, vector search for unknown
+   wording, and split text/vector queries only when the exact term is
+   distinctive enough to improve the semantic question.
+5. Retrieve a complete section verbatim, or list a table and read its inclusive
+   line range when every row is needed.
+
+Keep this as runtime guidance, not a pointer to this editor reference: a target
+agent cannot read `.github/` or this project layout while it runs. Include only
+the commands, tools, paths, and corpus-specific constraints that exist in the
+target project. Grant the agents that need CLI RAG the necessary `sandbox:*`
+tool access; give tool-based RAG users the configured RAG tools instead. Run
+`zen check` after adding or changing the skill.
+
 ---
 
 ## 1. Mental model

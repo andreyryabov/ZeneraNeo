@@ -38,6 +38,16 @@ export const SEARCH_MODES: readonly SearchMode[] = ['hybrid', 'vector', 'text'];
 
 export interface DocsQuery {
     query?: string;
+    /**
+     * One wording per leg, for a caller that can write both. `query` asks the
+     * same sentence of two retrievers that read it differently: the full-text
+     * index wants the words the corpus uses, and the vector index wants the
+     * meaning. These say each half outright, and are fused exactly as `query`
+     * would have been. They replace `query` rather than narrowing it, so a
+     * request carries one account of what is wanted and not two.
+     */
+    textQuery?: string;
+    vectorQuery?: string;
     mode?: SearchMode;
     /** patterns over the document name: a glob, a substring, or a regex */
     files?: readonly string[];
@@ -201,8 +211,8 @@ export class DocsIndex {
     }
 
     async search(query: DocsQuery, signal?: AbortSignal): Promise<DocsResult> {
-        const mode = query.mode ?? 'hybrid';
-        const text = (query.query ?? '').trim();
+        const legs = legsOf(query);
+        const mode = legs.mode;
         const limit = Math.max(1, query.limit ?? DEFAULT_LIMIT);
         const files = this.resolveFiles(query.files, query.exclude_files);
         const headings = this.resolveSections(query.section ?? [], files);
@@ -212,7 +222,7 @@ export class DocsIndex {
         // section no document has. Both are told, not silently widened.
         const impossible =
             files.length === 0 || ((query.section?.length ?? 0) > 0 && sections.length === 0);
-        if (impossible || !text) {
+        if (impossible || (!legs.text && !legs.vector)) {
             return { matches: [], mode, files, sections, considered: 0 };
         }
 
@@ -220,8 +230,8 @@ export class DocsIndex {
         const excluded = new Set(query.exclude_ids ?? []);
         const fetch = Math.min(limit * OVERFETCH, MAX_FETCH) + excluded.size;
 
-        const vector = mode === 'text' ? [] : await this.#nearest(text, filter, fetch, signal);
-        const lexical = mode === 'vector' ? [] : await this.#store.matching(text, filter, fetch);
+        const vector = legs.vector ? await this.#nearest(legs.vector, filter, fetch, signal) : [];
+        const lexical = legs.text ? await this.#store.matching(legs.text, filter, fetch) : [];
 
         const fused = fuse(vector, lexical).filter(
             (match) =>
@@ -285,6 +295,56 @@ const anyMatch = (patterns: readonly string[]) => {
 export const under = (path: string, sections: readonly string[]): boolean =>
     sections.length === 0 ||
     sections.some((section) => path === section || path.startsWith(`${section}/`));
+
+/** What each retriever is asked, and the mode that describes the pair. */
+export interface Legs {
+    text?: string;
+    vector?: string;
+    mode: SearchMode;
+}
+
+/**
+ * Which leg reads what, decided in one place because three surfaces ask it.
+ *
+ * A plain `query` keeps its old bargain with `mode`: hybrid runs both halves on
+ * the one sentence, and the other two shut a half off. A per-leg wording says
+ * the same thing by existing — one of them runs one half, both of them run both
+ * — so a `mode` alongside it is either a restatement or a contradiction, and
+ * neither is worth honouring. `hybrid` is let through for the pair alone, since
+ * that is the one spelling that agrees with what was asked.
+ */
+export function legsOf(query: DocsQuery): Legs {
+    const plain = (query.query ?? '').trim();
+    const text = (query.textQuery ?? '').trim();
+    const vector = (query.vectorQuery ?? '').trim();
+
+    if (!text && !vector) {
+        const mode = query.mode ?? 'hybrid';
+        return {
+            text: mode === 'vector' ? undefined : plain || undefined,
+            vector: mode === 'text' ? undefined : plain || undefined,
+            mode,
+        };
+    }
+    if (plain) {
+        throw new PatternError(
+            'a per-leg wording replaces the plain query rather than narrowing it, so the two ways of asking cannot both be given',
+        );
+    }
+    const both = Boolean(text && vector);
+    if (query.mode !== undefined && !(both && query.mode === 'hybrid')) {
+        throw new PatternError(
+            both
+                ? 'a wording for each leg is already a hybrid search, so the mode cannot be anything else'
+                : `a ${text ? 'text' : 'vector'} wording on its own already says which leg runs, so a mode says nothing here`,
+        );
+    }
+    return {
+        text: text || undefined,
+        vector: vector || undefined,
+        mode: both ? 'hybrid' : text ? 'text' : 'vector',
+    };
+}
 
 function kindsOf(kinds: readonly string[] | undefined): string[] | undefined {
     if (!kinds || kinds.length === 0) {

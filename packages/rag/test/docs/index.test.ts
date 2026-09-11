@@ -206,6 +206,73 @@ describe('searching', () => {
     });
 });
 
+// ---------------------------------------------------------------------------
+// A wording per leg
+//
+// The proof that each half really is asked its own question is two wordings
+// with no word in common, each of which can only be answered by one document:
+// "keyring" is a word only the onboarding note contains, and telemetry is what
+// only the manual is about. Fused, both documents come back — which no single
+// shared query could have produced.
+// ---------------------------------------------------------------------------
+
+describe('a wording for each leg', () => {
+    it('runs one leg alone when only that leg is worded', async () => {
+        const text = await index.search({ textQuery: 'keyring' });
+        expect(text.mode).toBe('text');
+        expect(text.matches.length).toBeGreaterThan(0);
+        expect(text.matches.every((m) => m.path === 'notes/onboarding.txt')).toBe(true);
+
+        const vector = await index.search({ vectorQuery: 'telemetry counter' });
+        expect(vector.mode).toBe('vector');
+        expect(vector.matches[0]!.path).toBe('manual/telemetry.md');
+    });
+
+    it('asks each leg its own question and fuses the two answers', async () => {
+        const result = await index.search({
+            textQuery: 'keyring',
+            vectorQuery: 'telemetry counter',
+            limit: 10,
+        });
+        const paths = result.matches.map((m) => m.path);
+
+        expect(result.mode).toBe('hybrid');
+        expect(paths).toContain('notes/onboarding.txt');
+        expect(paths).toContain('manual/telemetry.md');
+    });
+
+    it('refuses a plain query beside a worded leg, rather than picking one', async () => {
+        await expect(
+            index.search({ query: 'retry', textQuery: 'retry after header' }),
+        ).rejects.toThrow(/cannot both be given/);
+    });
+
+    it('refuses a mode the wording has already settled', async () => {
+        await expect(index.search({ textQuery: 'keyring', mode: 'vector' })).rejects.toThrow(
+            /says nothing here/,
+        );
+        await expect(
+            index.search({ textQuery: 'keyring', vectorQuery: 'telemetry', mode: 'text' }),
+        ).rejects.toThrow(/cannot be anything else/);
+
+        // The one mode that agrees with what was asked is let through.
+        const both = await index.search({
+            textQuery: 'keyring',
+            vectorQuery: 'telemetry',
+            mode: 'hybrid',
+        });
+        expect(both.mode).toBe('hybrid');
+    });
+
+    it('leaves the plain query saying what it always said', async () => {
+        const text = await index.search({ query: 'keyring', mode: 'text' });
+        const vector = await index.search({ query: 'keyring', mode: 'vector' });
+        expect(text.mode).toBe('text');
+        expect(vector.mode).toBe('vector');
+        expect(text.matches.every((m) => m.path === 'notes/onboarding.txt')).toBe(true);
+    });
+});
+
 describe('assembling an answer', () => {
     it('quotes the lines it matched, verbatim and numbered', async () => {
         const result = await index.search({
@@ -350,6 +417,27 @@ describe('the tools an agent is given', () => {
         const result = await call('search_docs', { query: 'anything', files: ['acme_9*'] });
         expect(result.found).toBe(0);
         expect(String(result.hint)).toContain('list_docs');
+    });
+
+    it('takes a wording for each leg and fuses what both found', async () => {
+        const result = await call('search_docs', {
+            text_query: 'keyring',
+            vector_query: 'telemetry counter',
+            limit: 10,
+        });
+        expect(result.documents).toContain('notes/onboarding.txt');
+        expect(result.documents).toContain('manual/telemetry.md');
+    });
+
+    it('says what is wrong rather than throwing when asked two ways at once', async () => {
+        const result = await call('search_docs', { query: 'retry', text_query: 'retry' });
+        expect(String(result.error)).toContain('cannot both be given');
+    });
+
+    it('asks for a question when it was sent none', async () => {
+        const result = await call('search_docs', {});
+        expect(String(result.error)).toContain('nothing to search for');
+        expect(String(result.hint)).toContain('text_query');
     });
 
     it('reads a line range so a passage can be quoted in full', async () => {

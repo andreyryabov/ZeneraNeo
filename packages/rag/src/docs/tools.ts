@@ -57,7 +57,9 @@ export interface DocsToolOptions {
 }
 
 interface SearchArgs {
-    query: string;
+    query?: string;
+    text_query?: string;
+    vector_query?: string;
     files?: string[];
     exclude_files?: string[];
     section?: string[];
@@ -120,6 +122,20 @@ export function docsTools<TCtx = unknown>(
                     type: 'string',
                     description: 'What is wanted, as a sentence rather than keywords.',
                 },
+                text_query: {
+                    type: 'string',
+                    description:
+                        'Instead of query: the wording for the full-text half alone — the ' +
+                        'words the documents themselves would use. Pair it with vector_query ' +
+                        'to search both halves, or send it alone for exact wording only.',
+                },
+                vector_query: {
+                    type: 'string',
+                    description:
+                        'Instead of query: the wording for the vector half alone — the ' +
+                        'question stated in full, for meaning rather than wording. Pair it ' +
+                        'with text_query, or send it alone to search by meaning only.',
+                },
                 files: strings(
                     'Only documents whose name matches. A glob if it has * or ?, e.g. ' +
                         '"guides/**" or "acme_4.2*/api/**"; otherwise a substring.',
@@ -155,12 +171,19 @@ export function docsTools<TCtx = unknown>(
                     description: `A ceiling on the whole answer. Default ${DEFAULT_MAX_LINES}.`,
                 },
             },
-            required: ['query'],
             additionalProperties: false,
         },
         execute: async (args) => {
+            if (!args.query?.trim() && !args.text_query?.trim() && !args.vector_query?.trim()) {
+                return {
+                    error: 'nothing to search for',
+                    hint: 'send `query`, or a `text_query` and `vector_query` for the two halves',
+                };
+            }
             const query: DocsQuery = {
                 query: args.query,
+                textQuery: args.text_query,
+                vectorQuery: args.vector_query,
                 files: args.files,
                 exclude_files: args.exclude_files,
                 section: args.section,

@@ -281,6 +281,25 @@ The narrowings are resolved against the manifest and the outline **before** the
 store is touched, so a `--file` pattern that matches nothing says so instead of
 quietly searching everything.
 
+### One wording per leg
+
+`hybrid` asks two retrievers the same sentence, and they read it differently:
+the full-text leg wants the words the documents use, the vector leg wants the
+question stated in full. When you know both - the exact header name _and_ what
+you actually want to know about it - say each one:
+
+```sh
+zen rag docs search --text-query "Retry-After" \
+  --vector-query "how long to wait before trying the request again"
+```
+
+Both legs run and the results fuse as usual. Either flag alone runs that leg
+alone, so `--text-query` by itself is `--mode text` with its own wording.
+
+They **replace** the positional text rather than narrowing it, and they settle
+the mode by existing. `search "x" --text-query "y"` and `--text-query "y"
+--mode vector` are both refused, because each says two things at once.
+
 ### Shaping the answer
 
 | Flag                 | Default | Meaning                                   |
@@ -465,6 +484,10 @@ the same sentence with `files: ["acme_4.2*/api/**"]`, or `section: "Rate limits"
 or `kind: ["table"]`. Those are parameters and not separate tools, so narrowing
 costs one call instead of three. `exclude_ids` takes the ids from an earlier
 answer, so asking again moves on instead of repeating itself.
+
+`text_query` and `vector_query` are the tool's version of the two flags above:
+send one to run that leg alone, or both to word each half of a hybrid search.
+They replace `query`, so sending it as well is refused.
 
 Every answer carries line numbers and `read_docs` takes them. That is the loop
 the whole subject exists for: **find the passage, read around it, then edit the

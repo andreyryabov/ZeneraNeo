@@ -383,6 +383,8 @@ zen rag docs search [text...] [-f <pattern>] [-s <section>] [--kind <k>]
 | `-s`, `--section <name>` | -        | Only under this heading, and what nests in it        |
 | `--kind <k>`             | -        | `paragraph`, `list`, `table`, `table_row`, `code`, … |
 | `--mode <m>`             | `hybrid` | `hybrid`, `vector` or `text` for exact wording       |
+| `--text-query <text>`    | -        | Wording for the full-text leg, instead of `[text]`   |
+| `--vector-query <text>`  | -        | Wording for the vector leg, instead of `[text]`      |
 | `--limit <n>`            | `8`      | Passages kept                                        |
 | `-B`, `-A <n>`           | `0`      | Extra lines quoted before and after each passage     |
 | `--max-lines <n>`        | `400`    | A ceiling on the whole answer                        |
@@ -403,6 +405,113 @@ zen rag docs search --mode text "X-RateLimit-Remaining"
 A `--file` pattern with `*` or `?` is a glob over the whole document name and
 a substring otherwise.
 
+### Limiting the search scope
+
+`--file` selects the documents that are allowed to contribute passages. Repeat
+it to include multiple document families; use `--exclude-file` to subtract a
+family. Both are applied before ranking, so a returned passage cannot come from
+a document outside the selected set. Start with `list files` when the corpus
+names are unknown:
+
+```sh
+zen rag docs list files -d <index-dir>
+zen rag docs search -d <index-dir> --file "manual-*/**" "<question>"
+zen rag docs search -d <index-dir> --file "guide-*/**" --file "reference-*/**" \
+  --exclude-file "*-archive/**" "<question>"
+```
+
+`--section` narrows the selected documents again, retaining a named heading and
+all headings below it. It accepts a heading title, structure id, or structure
+path printed by `list sections`. Combine it with `--file` when the same heading
+exists in more than one document. `--kind` scopes by content shape: use `table`
+or `table_row` for limits and matrices, and `code` for commands or examples.
+
+```sh
+zen rag docs list sections -d <index-dir> --file "manual-*/**"
+zen rag docs search -d <index-dir> --file "manual-*/**" --section "Operations" \
+  --kind table_row "<question about a limit>"
+```
+
+### Search strategy
+
+### How retrieval modes work
+
+Search has two independent retrieval legs, followed by reciprocal-rank fusion
+and a diversity pass. It does **not** run full-text search and then use a vector
+model to rerank those same results.
+
+| Mode     | What runs                                | Best for                                                      | Caution                                               |
+| -------- | ---------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------- |
+| `hybrid` | Full-text and vector legs, fused by rank | Default: concepts, explanations, broad questions              | A broad corpus can still need `--file` or `--section` |
+| `text`   | Full-text only                           | Exact errors, headers, commands, identifiers, and phrases     | Literal wording only; misses paraphrases              |
+| `vector` | Vector similarity only                   | A concept whose wording is unknown or differs from the corpus | Can retrieve topical but imprecise passages           |
+
+The full-text leg rewards words present in the chunk. The vector leg embeds the
+question and retrieves similar meaning, even with different vocabulary. Hybrid
+adds a rank-based contribution from each leg, so a passage supported by both
+normally rises while a strong result from either leg can still appear. The final
+diversity pass prevents near-identical neighbouring chunks from consuming the
+whole answer.
+
+**Use hybrid first.** Ask the user-facing question as a complete sentence. It
+combines semantic similarity with the words in the corpus and is the strongest
+default for concepts, explanations, and broad operational questions:
+
+```sh
+zen rag docs search -d <index-dir> "How is a failed request retried?"
+```
+
+Treat the answer as candidates, not confirmation. Search ranks a fixed number
+of passages, so it cannot prove an exact phrase is absent and may return a
+nearby version or an incident that happens to share terms. Read the returned
+line-numbered passage; then use `show` for its surrounding section or `grep`
+for an exact existence check.
+
+**Narrow before rewriting the question.** For a corpus with releases, products,
+or repeated manuals, a broad term can retrieve a relevant-looking answer from
+the wrong part of the tree. Keep the question and progressively constrain it:
+
+```sh
+zen rag docs list files -d <index-dir>
+zen rag docs list sections -d <index-dir> --file "guide-*/**"
+zen rag docs search -d <index-dir> --file "guide-*/**" --section "Operations" \
+  "How is a failed request retried?"
+```
+
+Use `--kind table` or `--kind table_row` for a limit, entitlement, or matrix;
+use `--kind code` for a command or configuration sample. Pass returned ids to
+`--exclude-id` when the next answer must be new rather than a repeat.
+
+**Use exact lookup for exact claims.** `--mode text` is for a known error,
+header, command, identifier, or phrase. `grep` is stronger when the question is
+whether that exact string appears anywhere, because it counts every match and
+does not depend on vector ranking:
+
+```sh
+zen rag docs search -d <index-dir> --mode text "exact identifier"
+zen rag docs grep -d <index-dir> "exact identifier"
+```
+
+**Split the wording only when it is genuinely two wordings.** The text leg
+wants a distinctive string likely to occur verbatim; the vector leg wants the
+full intent. This is useful for an exact identifier plus an explanatory
+question:
+
+```sh
+zen rag docs search -d <index-dir> --text-query "exact identifier" \
+  --vector-query "what it means, its constraints, and how to use it"
+```
+
+Both flags run and fuse the two legs. One on its own runs only that leg.
+`--text-query` and `--vector-query` replace positional `[text]` and settle the
+mode themselves: do not combine them with `[text]` or `--mode`.
+
+Split search is an expert control, not a stronger default. A generic text leg
+such as a product name or common noun retrieves every incidental mention and
+can displace the more useful semantic passages. Use it only when the text leg
+is specific enough to add evidence rather than noise; otherwise stay with
+ordinary hybrid search and narrow by file or section.
+
 ## `list`, `grep`, `show` - no embedder, no credential
 
 ```
@@ -416,6 +525,32 @@ section is named before it is searched. `grep` reports `found` as the true
 total even when `--limit` cuts the rows, so unlike a search it can answer
 whether a string appears at all. `show` prints a document, a named section, or
 a line range, verbatim.
+
+### Reading a complete section or table
+
+Search finds relevant passages, not necessarily every row of a table. When the
+whole section or table is needed, use the exact readers instead of increasing a
+search limit.
+
+Read a heading and everything nested beneath it verbatim:
+
+```sh
+zen rag docs show -d <index-dir> "<document-name>" --section "<heading>"
+```
+
+For one complete table, list its metadata first. Each row reports the document
+name and the table's inclusive `line` and `end` range. Give that range to
+`show --lines` to print the complete table, including its header, verbatim:
+
+```sh
+zen rag docs list tables -d <index-dir> --file "<document-name>"
+zen rag docs show -d <index-dir> "<document-name>" --lines <line>-<end>
+```
+
+Narrow `list tables` with `--file` or `--section` when the corpus has many
+tables. `search --kind table` and `search --kind table_row` are useful to find
+a relevant table, but remain ranked retrieval; use the listed line span when
+the answer needs every row.
 
 ## Giving it to an agent
 
