@@ -2,7 +2,10 @@
     "chat.useNestedAgentsMdFiles": false,
     "chat.tools.terminal.enableAutoApprove": true,
     "chat.tools.terminal.ignoreDefaultAutoApproveRules": true,
-    "chat.tools.edits.autoApprove": {
-        "**": true
+    "chat.tools.edits.autoApprove": true,
+    "chat.tools.terminal.autoApprove": {
+        "^(?:(?:export\\s+[A-Za-z_][A-Za-z0-9_]*(?:=[^;\\s]+)?\\s*;\\s*)|(?:[A-Za-z_][A-Za-z0-9_]*=[^;\\s]+\\s+))*(?:cat|echo|head|ls|pwd|rg|tail|which)(?:\\s|$)": true,
+        "^(?:(?:export\\s+[A-Za-z_][A-Za-z0-9_]*(?:=[^;\\s]+)?\\s*;\\s*)|(?:[A-Za-z_][A-Za-z0-9_]*=[^;\\s]+\\s+))*(?:git\\s+(?:branch|diff|log|show|status)|npm\\s+(?:run\\s+(?:build|format:check|lint|test|typecheck)|test)|tsc)(?:\\s|$)": true,
+        "^(?:(?:export\\s+[A-Za-z_][A-Za-z0-9_]*(?:=[^;\\s]+)?\\s*;\\s*)|(?:[A-Za-z_][A-Za-z0-9_]*=[^;\\s]+\\s+))*(?:zen|zn|zenera)(?:\\s|$)": true
     }
 }
