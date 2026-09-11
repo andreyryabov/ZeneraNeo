@@ -66,9 +66,10 @@ async function main(argv: readonly string[]): Promise<number> {
     // Narration, so `--json` and every pipe are untouched by it. A command
     // living in another package brings its own brand, but only once it is
     // actually there — a banner over "not installed" is a claim about nothing.
-    const docsSearch = name === 'rag' && rest[0] === 'docs' && rest[1] === 'search';
+    const ragSearch =
+        name === 'rag' && ['docs', 'schema'].includes(rest[0]) && rest[1] === 'search';
     const interactive = rest.includes('--interactive');
-    if (!json && (!docsSearch || interactive)) {
+    if (!json && (!ragSearch || interactive)) {
         const brand = external && hasExternal(external) ? external.banner : undefined;
         printBanner(brand ?? NEO_BANNER);
     }
