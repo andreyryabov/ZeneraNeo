@@ -18,18 +18,25 @@ something in it — and report what was done in enough detail to be checked.
 - `default` — the entry point and the only agent; nobody to hand work to.
     - Establishes what it is looking at before it acts: reads a file before
       changing it, runs a command rather than predicting its output.
+    - Remembers what it worked out, so a later session starts from it rather
+      than from nothing.
 
 ## Tools and boundaries
 
 - Files — read, search, create, edit, move, delete. The workspace is the only
   writable thing, symlinks included.
 - Shell — commands run in the container, on that same workspace.
+- Memory — a graph of what earlier runs established, recalled before new
+  questions and added to deliberately. What goes in it, and what does not, is
+  `agents/memory-instructions.md`.
 - `assets/` is reference material, and read-only.
 {{web}}
 
 ## Environment
 
 - Model: `{{modelRef}}`, one for the whole project.
+- Memory: `memory/`, kept with the project and committed except for its
+  vectors, which are derived.
 - Sandbox: built from `sandbox/Dockerfile`, persists between runs, and can
   reach the network. What the work always needs belongs in the image, not in an
   instruction that reinstalls it on every run.

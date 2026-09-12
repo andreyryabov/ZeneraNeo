@@ -1,0 +1,22 @@
+# This project's environment.
+#
+# `zen run` reads this file before it loads the project, and forwards every
+# name in it into the sandbox — so a command the agent runs sees the same
+# variables the run does. Values are forwarded by name, never written onto a
+# command line, and `--no-keys` withholds the whole file.
+#
+# Precedence: what is already set in your shell wins, then this file, then the
+# keyring (`zen key add`). So this is the place for what belongs to *this*
+# project — the credential one of its tools needs, the address of the service
+# it talks to — and the keyring is the place for what belongs to you.
+#
+# It is in .gitignore, and should stay there. Everything else in the project is
+# meant to be read, copied and shared; this is the one file that is not.
+#
+# A credential *file* — GOOGLE_APPLICATION_CREDENTIALS — may be named by a path
+# relative to this directory. It is mounted into the sandbox where the agent
+# can read it, which is worth knowing before you point at one.
+
+# OPENAI_API_KEY=
+# ACME_API_TOKEN=
+# ACME_BASE_URL=https://api.example.test

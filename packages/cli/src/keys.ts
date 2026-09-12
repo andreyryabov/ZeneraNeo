@@ -166,6 +166,11 @@ export function envNames(provider: KeyOwner): string[] {
     return SHAPES[provider].forms.map((f) => f.env);
 }
 
+/** Variables that name a credential *file* rather than carrying the secret. */
+export const FILE_ENVS: string[] = OWNERS.flatMap((owner) =>
+    SHAPES[owner].forms.filter((f) => f.holds === 'file').map((f) => f.env),
+);
+
 /** The variable this particular credential occupies. */
 export function envOf(entry: Pick<KeyEntry, 'provider' | 'holds' | 'env'>): string {
     if (entry.env) {

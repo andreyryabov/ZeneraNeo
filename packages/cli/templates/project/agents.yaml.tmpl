@@ -29,11 +29,20 @@ sandbox:
     build:
         dockerfile: sandbox/Dockerfile
 
+{{memory}}
+
 agents:
     - name: default
       description: The entry point.
       # Instructions live in agents/prompts/<name>.md and are picked up by
       # convention — no need to name the file here.
+      #
+      # The memory store above is opened for this agent: it can search, load
+      # and commit, and it recalls on its own before answering something new.
+      # The block form narrows that — `memory:` with `access: read` lets it use
+      # what is there without adding to it. Drop the line and it never sees the
+      # store at all.
+      memory: true
       #
       # workspace:* is every file tool at once, sandbox:* is the shell. Name
       # them one by one to be narrower, or subtract: [workspace:*, -delete_file]

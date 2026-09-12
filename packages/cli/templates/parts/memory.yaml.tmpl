@@ -1,0 +1,12 @@
+# What the agents work out, kept with the project rather than in the session
+# that found it out. `agents/memory-instructions.md` is what they read about
+# using it, and `zen memory` is how you look at it from the outside.
+memory:
+    dir: memory
+    # Recall by meaning rather than by the words a question happened to reuse.
+    # The width is learned from the first response, so swapping this model
+    # later is refused rather than quietly mixing two vector spaces.
+    embedding: main
+
+embeddings:
+    main: {{embedding}}

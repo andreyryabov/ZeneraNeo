@@ -2,6 +2,7 @@ import { existsSync, statSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { one, parse } from '../args.ts';
 import type { Command } from '../command.ts';
+import { loadProjectEnv } from '../env.ts';
 import { KeyStore } from '../keys.ts';
 import { duration } from '../narrate.ts';
 import { Registry } from '../projects.ts';
@@ -117,7 +118,10 @@ export const check: Command = {
 
         // Materialised first, so the credential verdicts are the ones a run
         // would reach: a key in the environment and a key in the keyring are
-        // the same key by the time the library asks.
+        // the same key by the time the library asks. The project's own `.env`
+        // goes first for the same reason — `zen run` reads it, so a check that
+        // did not would report a missing credential for a project that runs.
+        loadProjectEnv(dir);
         const keys = await KeyStore.open();
         keys.materialize();
 

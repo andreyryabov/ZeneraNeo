@@ -80,13 +80,25 @@ tool access; give tool-based RAG users the configured RAG tools instead. Run
 `zen check` after adding or changing the skill.
 
 Memory has one such obligation and it is absolute: **a project with a `memory:`
-block carries `references/memory-house-rules.md` from the `zen-memory` skill in
-its own `agents/memory-instructions.md`, copied whole and verbatim**, with
-project-specific policy underneath it. Nothing else tells a running agent how the
-store works, so without it nothing forbids an agent from pointing `grep` or `cat`
-at `/memory` - a read that bypasses the audience mask and serves superseded nodes
-as current. Re-paste the reference when it changes rather than hand-patching the
-copy, and never paraphrase it into prose of your own. See §5.3.
+block carries the `zen-memory` skill's `references/memory-instructions.md` in its
+own `agents/memory-instructions.md`.** `zen init` writes both, since it scaffolds
+memory on; what needs watching is a project that deleted the file, or one whose
+copy has fallen behind the reference. It is a copy, never a transcription - the
+reference ships inside the project, because `zen init` and `zen open` write this
+whole `.github/` tree. From the project root:
+
+```sh
+cp .github/skills/zen-memory/references/memory-instructions.md agents/memory-instructions.md
+```
+
+Nothing else tells a running agent how the store works, so without it nothing
+forbids an agent from pointing `grep` or `cat` at `/memory` - a read that
+bypasses the audience mask and serves superseded nodes as current. Keep the copy
+byte-identical and put this project's own memory policy in a second topic file,
+`agents/memory-policy-instructions.md`, which is read straight after it: then the
+copy can be re-run after any `zen init` or `zen open` refreshes the reference,
+without losing anything. Never paraphrase the reference into prose of your own.
+See §5.3.
 
 ---
 
@@ -179,7 +191,7 @@ my-project/
 │   ├── copilot-instructions.md   this file
 │   ├── prompts/*.prompt.md       tasks you invoke by name
 │   └── skills/*/SKILL.md         reference the editor loads on demand
-├── .env                          credentials - NEVER committed
+├── .env                          this project's environment - NEVER committed
 ├── agents.yaml                   who exists, what they may reach for
 ├── agents/
 │   ├── instructions.md            house rules, prepended to every agent
@@ -1206,18 +1218,36 @@ Every node carries an **audience**, and an agent's `sees` is the set it reads:
 one graph, masked per agent, never one graph each. The four `memory_*` tools are
 derived from `access` and are never listed in `tools:`.
 
-**Turning memory on is two edits, not one.** The second is a new file,
-`agents/memory-instructions.md`: the `zen-memory` skill's
-`references/memory-house-rules.md`, pasted whole and verbatim, with this
-project's policy underneath it. It is what tells the agent that the store is
-reached only through the tools, that `memory_search` clips a node's text and
-`memory_load` reads it whole, that a remembered file's path comes from
-`memory_load` and not from listing `/memory`, what a node must carry to be worth
-having, and that a correction is a `SUPERSEDES` edge rather than an edit. It is
-its own file rather than a section of `agents/instructions.md` because it arrives
-with the `memory:` block and leaves with it. `zen check` validates the `memory:`
-block and says nothing about the rules' absence, so this is checked by reading
-`agents/memory-instructions.md`, every time.
+**Memory comes on.** `zen init` writes the block above, `memory: true` on the
+default agent, and the half nobody would guess was part of it:
+`agents/memory-instructions.md`, a copy of the `zen-memory` skill's
+`references/memory-instructions.md`, which the project already holds. Adding
+memory to a project that has none is both of those edits, and a copy that was
+lost or went stale is one command:
+
+```sh
+cp .github/skills/zen-memory/references/memory-instructions.md agents/memory-instructions.md
+```
+
+It is what tells the agent that the store is reached only through the tools, that
+`memory_search` clips a node's text and `memory_load` reads it whole, that a
+remembered file's path comes from `memory_load` and not from listing `/memory`,
+what a node must carry to be worth having, and that a correction is a
+`SUPERSEDES` edge rather than an edit. It is its own file rather than a section of
+`agents/instructions.md` because it arrives with the `memory:` block and leaves
+with it.
+
+**Leave that file as a pure copy.** Anything this project decides for itself -
+which audience holds what, what must never be written down, what an agent is
+expected to commit at the end of a job - goes in
+`agents/memory-policy-instructions.md`. Topic files are read in filename order,
+so the policy lands directly after the rules it qualifies, and the copy stays
+re-runnable: the reference is rewritten by every `zen init` and `zen open`, and
+keeping up with it is then the same one-line command rather than a hand-patch.
+
+`zen check` validates the `memory:` block and says nothing about the rules'
+absence, so this is checked by reading `agents/memory-instructions.md`, every
+time - and `diff` against the reference says whether it is current.
 
 Do not treat memory as a database. It is for things learned that should
 persist. Anything authoritative - a rate, a policy clause, a procedure - belongs
@@ -1812,8 +1842,10 @@ Before finishing any change here:
 - [ ] Failure paths stated for every instruction that can fail
 - [ ] No facts, rates or figures embedded in a prompt
 - [ ] No hedging, no meta-talk about the runtime
-- [ ] If any agent has `memory:`, `agents/memory-instructions.md` carries the
-      `zen-memory` house-rules block verbatim and current - §5.3
+- [ ] If any agent has `memory:`, `agents/memory-instructions.md` is a
+      byte-identical copy of the `zen-memory` skill's
+      `references/memory-instructions.md` - `diff` the two - and anything
+      project-specific is in `agents/memory-policy-instructions.md` - §5.3
 
 **Paths (§2.5 - run its checklist over the three trees)**
 
@@ -1920,10 +1952,10 @@ Before finishing any change here:
   the turn that follows it - §2.5.
 - **Arithmetic in prose.** A skill that walks the model through a calculation it
   will get wrong, in a folder that could have held the script - §3.4.1.
-- **The unguarded store.** `memory:` turned on and the house-rules block never
-  pasted into `agents/memory-instructions.md`, so nothing tells the agent the
-  store is reached only through the tools - and `zen check` passes throughout -
-  §5.3.
+- **The unguarded store.** `memory:` turned on and the skill's
+  `references/memory-instructions.md` never copied to
+  `agents/memory-instructions.md`, so nothing tells the agent the store is
+  reached only through the tools - and `zen check` passes throughout - §5.3.
 - **Reviewing a capability without its skill.** A project whose memory, index or
   sandbox was configured by an earlier pass looks finished because it loads. The
   obligations are in the editor skill, not in `agents.yaml` - §0.1.

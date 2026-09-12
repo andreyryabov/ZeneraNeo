@@ -67,6 +67,7 @@ sessions that ran against it.
         <topic>-instructions.md  more of them, as the project grows
         prompts/
         skills/
+    .env                         this project's environment, git-ignored
     sessions/
         20260825-143012-a7f3/
             workspace/           what the agent can see and write
@@ -731,6 +732,19 @@ is what makes a session self-contained the way the rest of it already is - a
 `pip install --user` is still there when the session is reopened, and travels
 with the directory when it is copied. Everything outside the two mounts is
 thrown away when the session closes, unless `sandbox.persist` says otherwise.
+
+The container's environment comes from three places. `sandbox.env` names host
+variables to pass through, by name only and never anything credential-shaped.
+The keyring's selected credentials are forwarded for the model, a service
+account file being bind-mounted read-only under `/run/zenera/keys` instead. And
+the project's own `.env` - written by `zen init`, ignored by git - is read
+before the project loads and forwarded whole. All of it goes to podman as
+`--env NAME` without a value, so nothing appears in an argv, in `ps` or in
+`podman inspect`, and the container's identity is a function of the names
+rather than of the secrets: rotating a key does not abandon a persisted rootfs.
+`keys: false`, or `zen run --no-keys`, withholds the credentials and the `.env`
+together - a `.env` is where an api token lives, so splitting them would make
+the flag a promise it does not keep.
 
 ### 9.1 Building instead of pulling
 

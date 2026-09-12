@@ -378,8 +378,9 @@ is a command on their machine too.
 Prompts, agent wiring, skills and tool selections are all files - Markdown and
 YAML - rather than code buried inside an application. So the folder can be
 committed, copied to another machine, reviewed in a pull request, and handed to
-someone else who runs it with one command. Credentials live in `$HOME`, never in
-the project, so there is no secret to strip before sharing it.
+someone else who runs it with one command. Model credentials live in `$HOME`,
+never in the project, and anything the project itself needs goes in a
+git-ignored `.env` - so there is no secret to strip before sharing it.
 
 ```
 my-project/
@@ -393,6 +394,7 @@ my-project/
     assets/                      reference material, read-only at /assets
     sandbox/Dockerfile           the container commands run in
     scripts/_setup.sh            the one command that initialises the project
+    .env                         this project's environment - git-ignored
     sessions/                    one workspace, memory and trajectory each
         <id>/
             workspace/           what the agents can read and write

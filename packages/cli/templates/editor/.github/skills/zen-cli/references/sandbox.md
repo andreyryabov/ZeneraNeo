@@ -47,6 +47,12 @@ Top level, and again per agent, where an agent's block is merged over the base.
 `CREDENTIAL`: the keyring has already materialised real credentials into the
 process environment, and a sandbox is the last place they should be forwarded to.
 
+The door for those is the project's `.env`, which `zen init` writes and
+`.gitignore` covers. `zen run` reads it before loading the project and forwards
+every name in it into the container **by name**, so the value never reaches an
+argv. `keys: false` and `zen run --no-keys` withhold it along with the API keys.
+The shell's environment wins over the file; the keyring fills in the rest.
+
 ## `persist: true` is usually what you want
 
 Only `/workspace` and `/home/agent` survive an ephemeral container. A

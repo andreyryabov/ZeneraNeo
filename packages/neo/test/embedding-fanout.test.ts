@@ -29,6 +29,10 @@ function refused(status: number, headers?: Record<string, string>): Error {
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+/** Timers that are holding the event loop open; an unref'd one is not counted. */
+const timers = (): number =>
+    process.getActiveResourcesInfo().filter((kind) => kind === 'Timeout').length;
+
 describe('classify', () => {
     it('reads the status wherever the SDK keeps it', () => {
         expect(statusOf(refused(429))).toBe(429);
@@ -135,6 +139,35 @@ describe('RateLimiter', () => {
         // The pause is shared, so the queued task waits for it too rather than
         // starting the moment the refused one let go of its slot.
         expect(started[1]!).toBeGreaterThanOrEqual(60);
+    });
+
+    it('keeps the event loop alive while the queue waits out a pause', async () => {
+        // The bug this pins is exit 13, ERR_UNSETTLED_TOP_LEVEL_AWAIT: a parked
+        // task is a bare promise and keeps nothing alive, so an unref'd wake-up
+        // let the loop empty the moment the last request settled — thousands of
+        // promises that could never settle, and no error anywhere to say so.
+        const limiter = new RateLimiter({ start: 1, max: 1, maxRetries: 0 });
+        const before = timers();
+
+        const first = limiter.run(async () => {
+            throw refused(429, { 'retry-after-ms': '80' });
+        });
+        const second = limiter.run(async () => 'ok');
+
+        await expect(first).rejects.toThrow('stub 429');
+        expect(timers()).toBeGreaterThan(before);
+        await expect(second).resolves.toBe('ok');
+    });
+
+    it('lets the process exit rather than sitting out a pause nobody is waiting on', async () => {
+        const limiter = new RateLimiter({ maxRetries: 0 });
+        const before = timers();
+        await expect(
+            limiter.run(async () => {
+                throw refused(429, { 'retry-after-ms': '5000' });
+            }),
+        ).rejects.toThrow('stub 429');
+        expect(timers()).toBe(before);
     });
 
     it('climbs back up while calls succeed and the queue is not empty', async () => {

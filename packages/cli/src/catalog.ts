@@ -96,29 +96,28 @@ export const CURATED: Record<
     readonly Omit<CatalogEntry, 'ref' | 'provider' | 'source'>[]
 > = {
     openai: [
-        { id: 'gpt-4o-mini', roles: ['chat'], contextLength: 128_000 },
-        { id: 'gpt-4o', roles: ['chat'], contextLength: 128_000 },
+        { id: 'gpt-5.6-luna', roles: ['chat'], contextLength: 1_050_000 },
+        { id: 'gpt-5.6-terra', roles: ['chat'], contextLength: 1_050_000 },
         { id: 'text-embedding-3-small', roles: ['embedding'], dimensions: 1536 },
         { id: 'text-embedding-3-large', roles: ['embedding'], dimensions: 3072 },
     ],
     anthropic: [
-        { id: 'claude-haiku-4-5', roles: ['chat'], contextLength: 200_000 },
-        { id: 'claude-sonnet-4-5', roles: ['chat'], contextLength: 200_000 },
+        { id: 'claude-sonnet-5', roles: ['chat'], contextLength: 1_000_000 },
+        { id: 'claude-opus-5', roles: ['chat'], contextLength: 1_000_000 },
     ],
     google: [
-        { id: 'gemini-2.5-flash', roles: ['chat'], contextLength: 1_048_576 },
-        { id: 'gemini-2.5-pro', roles: ['chat'], contextLength: 1_048_576 },
-        { id: 'gemini-embedding-001', roles: ['embedding'], dimensions: 3072 },
+        { id: 'gemini-3.5-flash-lite', roles: ['chat'], contextLength: 1_048_576 },
+        { id: 'gemini-3.8-flash', roles: ['chat'], contextLength: 1_048_576 },
+        { id: 'gemini-embedding-2', roles: ['embedding'] },
     ],
     vertex: [
-        { id: 'gemini-2.5-flash', roles: ['chat'], contextLength: 1_048_576 },
-        { id: 'gemini-2.5-pro', roles: ['chat'], contextLength: 1_048_576 },
-        { id: 'gemini-embedding-001', roles: ['embedding'], dimensions: 3072 },
-        { id: 'text-embedding-005', roles: ['embedding'], dimensions: 768 },
+        { id: 'gemini-3.5-flash-lite', roles: ['chat'], contextLength: 1_048_576 },
+        { id: 'gemini-3.8-flash', roles: ['chat'], contextLength: 1_048_576 },
+        { id: 'gemini-embedding-2', roles: ['embedding'] },
     ],
     openrouter: [
-        { id: 'openai/gpt-4o-mini', roles: ['chat'] },
-        { id: 'anthropic/claude-haiku-4.5', roles: ['chat'] },
+        { id: 'openai/gpt-5.6-luna', roles: ['chat'], contextLength: 1_050_000 },
+        { id: 'anthropic/claude-sonnet-5', roles: ['chat'], contextLength: 1_000_000 },
         { id: 'openai/text-embedding-3-small', roles: ['embedding'], dimensions: 1536 },
     ],
 };
@@ -135,23 +134,23 @@ export const PREFERRED: Record<
     { chat: readonly string[]; embedding: readonly string[] }
 > = {
     openai: {
-        chat: ['gpt-4o-mini', 'gpt-4o'],
+        chat: ['gpt-5.6-luna', 'gpt-5.6-terra'],
         embedding: ['text-embedding-3-small', 'text-embedding-3-large'],
     },
     anthropic: {
-        chat: ['claude-haiku-4-5', 'claude-sonnet-4-5'],
+        chat: ['claude-sonnet-5', 'claude-opus-5'],
         embedding: [],
     },
     google: {
-        chat: ['gemini-2.5-flash', 'gemini-2.5-pro'],
-        embedding: ['gemini-embedding-001'],
+        chat: ['gemini-3.5-flash-lite', 'gemini-3.5-flash'],
+        embedding: ['gemini-embedding-2'],
     },
     vertex: {
-        chat: ['gemini-2.5-flash', 'gemini-2.5-pro'],
-        embedding: ['text-embedding-005', 'gemini-embedding-001'],
+        chat: ['gemini-3.5-flash-lite', 'gemini-3.5-flash'],
+        embedding: ['gemini-embedding-2'],
     },
     openrouter: {
-        chat: ['openai/gpt-4o-mini', 'anthropic/claude-haiku-4.5'],
+        chat: ['openai/gpt-5.6-luna', 'anthropic/claude-sonnet-5'],
         embedding: ['openai/text-embedding-3-small'],
     },
 };

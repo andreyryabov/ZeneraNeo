@@ -41,7 +41,8 @@ checked too. A word that is neither is a usage error (exit 2), not a report.
 - Skills bind to a catalog that holds them, and every declared skill is
   reachable from some agent.
 - Every declared model and embedding resolves to a provider, and that provider
-  has a credential on this machine.
+  has a credential on this machine. The project's `.env` is read first, exactly
+  as `zen run` reads it, so the verdict is the one a run would reach.
 - Unless `--no-models`, every model that has a credential is **asked to answer**
   once. A key that authenticates says nothing about the id it is spent on, so
   this is the only way to catch a misspelt, retired or ungranted model. A refusal

@@ -47,10 +47,18 @@ automatically before answering new user input. The block is optional - an agent
 saying `memory: true` gets the defaults without one, and a project that mentions
 memory nowhere opens no store and creates no directory.
 
+`zen init` writes both halves, so a scaffolded project remembers from its first
+run: the block, `memory: true` on the default agent, and
+`agents/memory-instructions.md` - the house rules that tell an agent how to use
+the store, copied from the `zen-memory` skill the same command installs.
+
 **Give it an embedding.** Without one, recall falls back to term overlap, which
 finds a memory phrased the way the query was and misses the rest. The width is
 learned from the first response, and changing the model afterwards is refused
-rather than silently mixing two vector spaces.
+rather than silently mixing two vector spaces. `zen init` picks one from the
+same provider as the model, and leaves it out for a provider that publishes no
+embeddings API - Anthropic - rather than writing an entry that would fail to
+load.
 
 The store is a directory in the project (`memory/` by default). `zen init`
 git-ignores its vectors, because they are derived and large; the graph itself is

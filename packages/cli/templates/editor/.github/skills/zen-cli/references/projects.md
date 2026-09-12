@@ -21,20 +21,26 @@ What it writes:
 zenera.json                     { version, name }
 agents.yaml                     the configuration
 agents/instructions.md          house rules, prepended to every agent
+agents/memory-instructions.md   more of them, about the memory store
 agents/prompts/default.md       the default agent's prompt
 agents/skills/                  empty, for skills
 assets/README.md
 sandbox/Dockerfile              the image the sandbox builds
 sessions/                       empty
+.env                            this project's environment, git-ignored
 .gitignore
 .vscode/settings.json           editor files
 .github/                        copilot instructions, prompts, this skill
 ```
 
-More house rules are added by hand, never by `init`: any
-`agents/<topic>-instructions.md` is read too, in filename order, and prepended
-to every agent. A capability that needs standing rules - memory, say - gets its
-own file rather than another section of `agents/instructions.md`.
+More house rules can be added by hand: any `agents/<topic>-instructions.md` is
+read too, in filename order, and prepended to every agent. A capability that
+needs standing rules - memory, say - gets its own file rather than another
+section of `agents/instructions.md`. Memory's are not written from scratch:
+`agents/memory-instructions.md` is the same file as
+`.github/skills/zen-memory/references/memory-instructions.md`, which init puts
+in the project as well, so a copy that was lost or went stale is restored with
+`cp` rather than rewritten.
 
 The project's own files are never overwritten - `--force` is what allows
 writing into an occupied directory, and the files already there stay. The
@@ -43,7 +49,12 @@ are ours and are replaced on every `init` and every `zen open`, so edits to them
 do not survive.
 
 The default agent gets the file tools and a sandboxed shell, plus `exa:*` when
-the keyring holds an Exa key.
+the keyring holds an Exa key. It also gets memory: the store is scaffolded in
+`memory/`, the agent is bound to it with `memory: true`, and it is vectorised by
+the chosen provider's embedding model. A provider that publishes none -
+Anthropic - gets the store without an `embeddings:` entry, and recall ranks by
+term overlap until one is added; an entry naming a provider with no embeddings
+API is a project that fails to load, not one that degrades.
 
 **Choosing the model.** Without `--model`, the keyring is asked - not counted.
 Stored credentials are probed, because holding a key is not the same as holding

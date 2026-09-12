@@ -157,10 +157,12 @@ export class RateLimiter {
                 if (at >= 0) {
                     this.#waiting.splice(at, 1);
                 }
+                this.#hold();
                 reject(signal?.reason);
             };
             signal?.addEventListener('abort', abort, { once: true });
             this.#waiting.push(waiter);
+            this.#hold();
         });
     }
 
@@ -182,6 +184,7 @@ export class RateLimiter {
             this.#active++;
             this.#waiting.shift()!.grant(this.#epoch);
         }
+        this.#hold();
     }
 
     #succeeded(): void {
@@ -233,7 +236,23 @@ export class RateLimiter {
             return;
         }
         this.#timer = setTimeout(() => this.#arm(), remaining);
-        this.#timer.unref?.();
+        this.#hold();
+    }
+
+    /**
+     * A parked task is a bare promise, which keeps nothing alive, and while the
+     * pause is in force this timer is the only thing that can ever wake it — so
+     * it has to hold the event loop open, or the last in-flight request settling
+     * empties the loop and Node exits 13 with the whole queue unsettled. With
+     * nobody waiting it must NOT hold it, or a run that ended on a refusal sits
+     * out the rest of the backoff before the process can exit.
+     */
+    #hold(): void {
+        if (this.#waiting.length > 0) {
+            this.#timer?.ref?.();
+        } else {
+            this.#timer?.unref?.();
+        }
     }
 }
 

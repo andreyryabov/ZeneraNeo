@@ -2,6 +2,7 @@ import { readProjectConfig } from '@zenera/neo';
 import { existsSync, readdirSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { one, parse } from '../args.ts';
+import { PREFERRED } from '../catalog.ts';
 import type { Command } from '../command.ts';
 import { ensureHome } from '../home.ts';
 import { resolveBuild } from '../image.ts';
@@ -71,6 +72,38 @@ const DEFAULT_MODEL: Record<Provider, ModelChoice> = {
 };
 
 /**
+ * What vectorises the project's memory, given the provider it ends up on.
+ *
+ * Taken from the same table `zen models pick` ranks by rather than written out
+ * again here, so the scaffold cannot drift from what the catalogue calls
+ * current. Anthropic publishes no embeddings API, and a `--model` naming a
+ * provider we do not ship gives nothing to guess from; both scaffold without
+ * one, and memory still works by ranking recall on term overlap. An
+ * `embeddings:` entry pointing at a provider that has none is not a degraded
+ * project, it is one that fails to load.
+ */
+function defaultEmbedding(provider: Provider | undefined): string | undefined {
+    if (provider === undefined) {
+        return undefined;
+    }
+    const id = PREFERRED[provider].embedding[0];
+    return id === undefined ? undefined : `${provider}:${id}`;
+}
+
+/**
+ * The provider a model ref names, when it names one we know.
+ *
+ * Every ref the scaffold writes carries its provider, so this is how the
+ * memory store ends up on the same credential as the chat model — including
+ * for an explicit `--model`, where nothing else says which vendor was meant.
+ */
+function providerOf(ref: string): Provider | undefined {
+    const colon = ref.indexOf(':');
+    const head = colon < 0 ? '' : ref.slice(0, colon);
+    return isProvider(head) ? head : undefined;
+}
+
+/**
  * The provider this machine can actually reach.
  *
  * Holding a key is not the same as holding a working one, so stored
@@ -131,10 +164,11 @@ export const init: Command = {
     summary: 'Create a project here, or in <dir>, and register it.',
     usage: USAGE,
     details: [
-        'Writes SPECIFICATION.md, agents.yaml, agents/ (house rules and one',
-        'role prompt) and scripts/, then records the directory so `zen list`',
-        'and `zen open` can find it by name. Editor files (.vscode/settings.json',
-        'and the .github/ tree) are written alongside, replacing any already there.',
+        'Writes SPECIFICATION.md, agents.yaml, agents/ (house rules, the memory',
+        'rules and one role prompt) and scripts/, then records the directory so',
+        '`zen list` and `zen open` can find it by name. Editor files',
+        '(.vscode/settings.json and the .github/ tree) are written alongside,',
+        'replacing any already there.',
         '',
         'A directory that is already a project is adopted rather than rebuilt:',
         'it is registered under its own name, and nothing in it is touched.',
@@ -146,7 +180,9 @@ export const init: Command = {
         'there, then run /sync-with-spec in your editor to make the rest match.',
         '',
         'The default agent gets the file tools and a sandboxed shell, plus',
-        '`exa:*` when the keyring holds an Exa key. Without --model, the',
+        '`exa:*` when the keyring holds an Exa key. It keeps a memory of its',
+        'own work in memory/, vectorised by the same provider as the model',
+        'when that provider publishes embeddings. Without --model, the',
         'keyring is checked and the model is picked from a credential the',
         'provider accepts.',
         '',
@@ -185,7 +221,8 @@ export const init: Command = {
             : DEFAULT_MODEL[provider ?? 'openai'];
         const model = choice.ref;
         const web = hasExa(store);
-        const written = scaffold({ dir, model, modelOptions: choice.options, web });
+        const embedding = defaultEmbedding(providerOf(model));
+        const written = scaffold({ dir, model, modelOptions: choice.options, web, embedding });
 
         const registry = await Registry.open();
         registry.add(name, dir);

@@ -107,6 +107,15 @@ export interface SandboxInputs {
     image?: string;
     /** `--no-keys`: refuse to forward credentials, whatever the config says */
     keys?: boolean;
+    /**
+     * Names from the project's `.env`, forwarded into the container the same
+     * way a credential is — by name, so the value stays out of the argv.
+     *
+     * They travel with the keys rather than beside them: a `.env` is where an
+     * api token lives, so `--no-keys` has to withhold it too or the flag is a
+     * promise it does not keep.
+     */
+    env?: readonly string[];
 }
 
 export function buildSandbox(opts: SandboxInputs): SandboxSetup {
@@ -128,7 +137,7 @@ export function buildSandbox(opts: SandboxInputs): SandboxSetup {
     // read-only directory fails on writing its own `__pycache__` — a confusing
     // error about a file nobody asked for.
     const extra = { HOME, PYTHONDONTWRITEBYTECODE: '1', ...(keys?.env ?? {}) };
-    const spec = toSpec(base, extra, keys?.secrets);
+    const spec = toSpec(base, extra, secretsOf(keys?.secrets, opts.env));
 
     const agents: Record<string, SandboxSpec> = {};
     for (const agent of opts.config.agents) {
@@ -142,7 +151,7 @@ export function buildSandbox(opts: SandboxInputs): SandboxSetup {
             agents[agent.name] = toSpec(
                 merged,
                 { HOME, PYTHONDONTWRITEBYTECODE: '1', ...(own?.env ?? {}) },
-                own?.secrets,
+                own && secretsOf(own.secrets, opts.env),
             );
         }
     }
@@ -177,9 +186,33 @@ function merge(base: SandboxConfig, agent: SandboxConfig): SandboxConfig {
 }
 
 /**
+ * The two sources of forwarded names, as one list: the credentials the keyring
+ * selected, and whatever the project's `.env` declares. Deduped, because the
+ * same variable named twice is the same `--env` twice.
+ *
+ * `undefined` in means keys are withheld, and the file goes with them.
+ */
+function secretsOf(
+    secrets: readonly string[] | undefined,
+    env: readonly string[] | undefined,
+): string[] | undefined {
+    if (!secrets) {
+        return undefined;
+    }
+    return [...new Set([...secrets, ...(env ?? [])])];
+}
+
+/**
  * Config names a variable; this reads it. A name that is not set on this host
  * is simply not forwarded — an empty string in the container is a different
  * thing from an absent one, and tools test for absence.
+ *
+ * A name that has already been answered with a value drops off the forwarded
+ * list: `--env NAME=value` and `--env NAME` are the same variable twice, and
+ * the one that carries a value is the one that was resolved on purpose. That
+ * matters for `GOOGLE_APPLICATION_CREDENTIALS`, which is rewritten here to
+ * where the key file was mounted — a `.env` naming it must not put the host's
+ * path back, since that path does not exist inside the container.
  */
 function toSpec(
     config: SandboxConfig,
@@ -203,7 +236,7 @@ function toSpec(
         user: config.user,
         persist: config.persist,
         env,
-        secrets,
+        secrets: secrets?.filter((name) => !(name in env)),
     };
 }
 

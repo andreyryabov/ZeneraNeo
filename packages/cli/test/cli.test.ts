@@ -29,6 +29,7 @@ import {
 } from '../src/catalog.ts';
 import { ALIASES, COMMANDS, EXTERNAL, type External } from '../src/commands/index.ts';
 import { cliManifest, versionOf } from '../src/commands/version.ts';
+import { loadProjectEnv } from '../src/env.ts';
 import { hasExternal, loadExternal } from '../src/external.ts';
 import { History, historyPath, MAX_ENTRIES } from '../src/history.ts';
 import { isStamp, stamp, stampInstant } from '../src/ids.ts';
@@ -1127,6 +1128,95 @@ describe('the scaffold', () => {
         // thing anyone has to know. Twice, because it has to stay safe to redo.
         const run = (): string => execFileSync(script, { cwd: tmpdir(), encoding: 'utf8' });
         expect(run()).toBe(run());
+    });
+
+    /**
+     * A file the project needs and git must never see. It cannot be stored
+     * under its own name — this repository ignores `.env` too — so the one
+     * thing worth pinning is that it arrives with the dot on.
+     */
+    it('writes a .env, and ignores it', () => {
+        const dir = join(root, 'env');
+        mkdirSync(dir, { recursive: true });
+        const written = scaffold({ dir, model: 'gpt-4o' });
+
+        expect(written.files).toContain('.env');
+        expect(readFileSync(join(dir, '.env'), 'utf8')).not.toContain('{{');
+        expect(readFileSync(join(dir, '.gitignore'), 'utf8')).toMatch(/^\.env$/m);
+    });
+
+    it('leaves a filled-in .env alone', () => {
+        const dir = join(root, 'filled');
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, '.env'), 'ACME_TOKEN=mine\n');
+        scaffold({ dir, model: 'gpt-4o' });
+
+        expect(readFileSync(join(dir, '.env'), 'utf8')).toBe('ACME_TOKEN=mine\n');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// The project's own environment
+//
+// Two things to hold: the real environment still wins, and the names come back
+// whole. The second is what the sandbox forwards, and a name dropped because
+// the shell happened to answer it first is a variable missing inside the
+// container for reasons nobody could reconstruct.
+// ---------------------------------------------------------------------------
+
+describe("a project's .env", () => {
+    const root = mkdtempSync(join(tmpdir(), 'zen-env-'));
+    const names = ['ZEN_TEST_SET', 'ZEN_TEST_UNSET', 'ZEN_TEST_BLANK'];
+
+    afterAll(() => rmSync(root, { recursive: true, force: true }));
+    afterEach(() => {
+        for (const name of [...names, 'GOOGLE_APPLICATION_CREDENTIALS']) {
+            delete process.env[name];
+        }
+    });
+
+    it('fills the gaps and reports every name', () => {
+        const dir = join(root, 'one');
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(
+            join(dir, '.env'),
+            '# a comment\nZEN_TEST_SET=from-file\nZEN_TEST_UNSET=from-file\nZEN_TEST_BLANK=from-file\n',
+        );
+        process.env['ZEN_TEST_SET'] = 'from-shell';
+        process.env['ZEN_TEST_BLANK'] = '';
+
+        const loaded = loadProjectEnv(dir);
+
+        expect([...(loaded?.names ?? [])].sort()).toEqual([...names].sort());
+        // What is exported wins; what is merely declared empty does not.
+        expect(process.env['ZEN_TEST_SET']).toBe('from-shell');
+        expect(process.env['ZEN_TEST_UNSET']).toBe('from-file');
+        expect(process.env['ZEN_TEST_BLANK']).toBe('from-file');
+    });
+
+    it('says nothing about a project that has none', () => {
+        const dir = join(root, 'bare');
+        mkdirSync(dir, { recursive: true });
+
+        expect(loadProjectEnv(dir)).toBeUndefined();
+    });
+
+    it('reads a credential file path as relative to the project', () => {
+        const dir = join(root, 'gac');
+        mkdirSync(dir, { recursive: true });
+        delete process.env['GOOGLE_APPLICATION_CREDENTIALS'];
+        writeFileSync(
+            join(dir, '.env'),
+            'GOOGLE_APPLICATION_CREDENTIALS=service-account.json\nZEN_TEST_UNSET=./not-a-path\n',
+        );
+
+        loadProjectEnv(dir);
+
+        expect(process.env['GOOGLE_APPLICATION_CREDENTIALS']).toBe(
+            join(dir, 'service-account.json'),
+        );
+        // Only the variables that name a file are paths; the rest are values.
+        expect(process.env['ZEN_TEST_UNSET']).toBe('./not-a-path');
     });
 });
 

@@ -945,6 +945,13 @@ sandbox, but because `env:` is the wrong door for them: they go through `keys:`,
 which forwards a known set and can be turned off in one place, where a
 hand-written `env: [OPENAI_API_KEY]` would be a second, silent way in.
 
+The door for a project's own secrets is the project's own `.env`, which `zen
+init` writes and `.gitignore` covers. `zen run` reads it before it loads the
+project - so `${VAR}` anywhere in this file can name something in it - and
+forwards every name it declares into the container by name, alongside the
+keys. Anything already set in the shell wins over the file, and the keyring
+fills in whatever neither supplied.
+
 ### `keys:`, and what it gives away
 
 The model credentials reach the container by default. The scaffolded image
@@ -965,10 +972,14 @@ sandbox:
 `zen run --no-keys` does the same for one run, whatever the file says.
 
 What is forwarded, when it is on: the API key of every provider the run has a
-credential for, plus `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`. A
-Vertex service-account file is bind-mounted read-only - that one file, not the
-directory it sits in - under `/run/zenera/keys`, and
-`GOOGLE_APPLICATION_CREDENTIALS` points there instead.
+credential for, plus `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`, plus
+every name in the project's `.env`. A Vertex service-account file is
+bind-mounted read-only - that one file, not the directory it sits in - under
+`/run/zenera/keys`, and `GOOGLE_APPLICATION_CREDENTIALS` points there instead.
+
+The `.env` travels with the keys rather than beside them, because that is where
+an api token lives: `keys: false` and `--no-keys` withhold it too, or the
+switch would be a promise it does not keep.
 
 Secrets are handed to podman **by name**, never as `NAME=value`, so a key does
 not appear in the container's argv, in `ps`, or in `podman inspect`. For the
