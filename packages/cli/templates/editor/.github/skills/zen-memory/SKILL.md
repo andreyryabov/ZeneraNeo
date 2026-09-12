@@ -1,6 +1,6 @@
 ---
 name: zen-memory
-description: How agent memory is organised and how to configure it in `agents.yaml` - the `memory:` block, per-agent `access`/`sees`/`writes`/`autoRecall`, the four `memory_*` tools, kinds and relations, how recall ranks and stitches a subgraph, and how to design a memory strategy for a project. Includes the usage rules every memory-enabled project must carry in its `INSTRUCTIONS.md` (references/memory-house-rules.md), what to commit and what never to, how to keep a working file under `/memory` and re-run it later, and how to put memory in front of a `zen rag schema` or `zen rag docs` index so a search that already succeeded once is not paid for again.
+description: How agent memory is organised and how to configure it in `agents.yaml` - the `memory:` block, per-agent `access`/`sees`/`writes`/`autoRecall`, the four `memory_*` tools, kinds and relations, how recall ranks and stitches a subgraph, and how to design a memory strategy for a project. Includes the usage rules every memory-enabled project must carry in `agents/memory-instructions.md` (references/memory-house-rules.md), what to commit and what never to, how to keep a working file under `/memory` and re-run it later, and how to put memory in front of a `zen rag schema` or `zen rag docs` index so a search that already succeeded once is not paid for again.
 ---
 
 # Memory
@@ -467,10 +467,17 @@ because it is the same subject:
 ## The house rules
 
 **Every project that enables memory carries `references/memory-house-rules.md`
-in its own `INSTRUCTIONS.md`** - copied whole and verbatim, as part of turning
-memory on. That file is how the agent is told to use the store: read and search
-it only through the tools, never through `/memory` itself, and what a node must
-carry to still be worth having. Project-specific policy goes underneath it.
+in its own `agents/memory-instructions.md`** - copied whole and verbatim, as
+part of turning memory on. That file is how the agent is told to use the store:
+read and search it only through the tools, never through `/memory` itself, and
+what a node must carry to still be worth having. Project-specific policy goes
+underneath it.
+
+Create that file when you turn memory on; `zen init` does not write it, because
+init never enables memory. Everything the project keeps under `agents/` named
+`<topic>-instructions.md` is prepended to every agent, in filename order, so
+this belongs in its own document rather than as another section of
+`agents/instructions.md` - it arrives with memory and it leaves with it.
 
 When the reference changes, re-paste it rather than hand-patching the copies.
 
@@ -534,8 +541,8 @@ agents:
 
 ## Review checklist
 
-- [ ] `INSTRUCTIONS.md` carries the block from `references/memory-house-rules.md`,
-      verbatim and current.
+- [ ] `agents/memory-instructions.md` carries the block from
+      `references/memory-house-rules.md`, verbatim and current.
 - [ ] `memory.embedding` is set, and was set before the graph had content.
 - [ ] Every agent that should learn has a `memory:` binding - the top-level
       block alone enables nothing.
@@ -558,7 +565,7 @@ agents:
 | Recall finds nothing after changing the embedder  | Refused rather than mixed - a manifest records the model. Re-embed or change it back                       |
 | Vectors fewer than nodes                          | Some nodes were committed with no embedder; they are only reachable by term overlap                        |
 | The graph fills with restated requests            | The commit rule is not in a prompt or skill. State the "would a later run redo this" test                  |
-| An agent greps `/memory` or reads `graph.json`    | The house-rules block is missing from `INSTRUCTIONS.md` - the system prompt never forbids it               |
+| An agent greps `/memory` or reads `graph.json`    | The house-rules block is missing from `agents/memory-instructions.md` - the system prompt never forbids it |
 | A recalled fact cannot be checked or continued    | Nodes were committed with no provenance. The block's "say where it came from" rule is what prevents it     |
 | A wrong memory keeps coming back                  | It was edited instead of superseded, or superseded in the wrong direction - the **new** node is the source |
 | An agent cannot see a node you can                | Its `audience` is not in that agent's `sees`. Invisible and missing are the same thing, on purpose         |

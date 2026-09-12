@@ -17,8 +17,8 @@ loadEnv();
 // This demo has none of that. It points `loadProject` at a directory and runs
 // what it finds:
 //
-//   assets/project/INSTRUCTIONS.md                house rules, every agent
 //   assets/project/agents.yaml                    who exists, what they reach for
+//   assets/project/agents/instructions.md         house rules, every agent
 //   assets/project/agents/prompts/<name>.md       one agent's own brief
 //   assets/project/agents/skills/<name>/SKILL.md  the catalog
 //
@@ -107,10 +107,7 @@ const damageEstimate = tool<{
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-    banner(
-        'A project is a folder',
-        'agents.yaml, INSTRUCTIONS.md and agents/ — loaded, not written',
-    );
+    banner('A project is a folder', 'agents.yaml and agents/ — loaded, not written');
 
     step(1, 'Loading');
     // One store for both runners below, so the two chats' payloads land in the

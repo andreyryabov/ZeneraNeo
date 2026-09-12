@@ -107,10 +107,12 @@ A real environment variable always beats the keyring.
 
 <project>/
     zenera.json           { version, name }
-    INSTRUCTIONS.md       house rules, prepended to every agent's prompt
     agents.yaml           the configuration
-    agents/prompts/       one .md per agent
-    agents/skills/        one directory per skill, each with SKILL.md
+    agents/
+        instructions.md   house rules, prepended to every agent's prompt
+        *-instructions.md more house rules, in filename order
+        prompts/          one .md per agent
+        skills/           one directory per skill, each with SKILL.md
     sandbox/Dockerfile    the image commands run in, when the project builds one
     sessions/             run state, memory, blobs, reports - never committed
 ```

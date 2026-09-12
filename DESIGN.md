@@ -1310,9 +1310,9 @@ full state, §17.2).
 
 ## 17. System prompt composition - a prompt is a list of sources
 
-A real system prompt is never one string: it is an agent-specific file, a shared
-`INSTRUCTIONS.md`, a house style block, a skill index, and a couple of runtime
-notes, concatenated. Today all of that collapses into a single
+A real system prompt is never one string: it is an agent-specific file, the
+shared house rules under `agents/`, a house style block, a skill index, and a
+couple of runtime notes, concatenated. Today all of that collapses into a single
 `SystemPromptNode.prompt` blob (plus fragments appended inside `buildRequest`),
 so the trajectory can say _what the model read_ but not _which file to edit to
 change it_. This section makes the composition itself first-class.
@@ -1413,9 +1413,10 @@ export interface SystemPromptNode extends NodeBase {
 
 Two fields, and each earns its place:
 
-- `content` is a `Payload` because everything is (§4): `INSTRUCTIONS.md` shared by
-  ten agents, by both sides of a handoff and by every fork branch is stored once,
-  and the content address doubles as the drift hash - no parallel hash field.
+- `content` is a `Payload` because everything is (§4): `agents/instructions.md`
+  shared by ten agents, by both sides of a handoff and by every fork branch is
+  stored once, and the content address doubles as the drift hash - no parallel
+  hash field.
 - Offsets into `prompt` are deliberately absent. They would be a third
   representation of the same bytes, invalidated by any change to an earlier
   part, and an inspector that wants to highlight a region can find it by content.

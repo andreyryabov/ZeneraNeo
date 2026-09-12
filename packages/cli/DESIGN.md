@@ -61,9 +61,10 @@ sessions that ran against it.
 
 ```
 <project>/
-    INSTRUCTIONS.md
     agents.yaml                  what makes the directory a project
     agents/
+        instructions.md          house rules, prepended to every agent
+        <topic>-instructions.md  more of them, as the project grows
         prompts/
         skills/
     sessions/
@@ -235,9 +236,9 @@ and two projects quoting the same handbook pay for it once between them.
 ### 5.1 `zen init [dir]`
 
 Scaffolds the project - a `SPECIFICATION.md`, a nearly empty
-`INSTRUCTIONS.md`, a minimal `agents.yaml` naming one `default` agent, empty
-`agents/prompts/` and `agents/skills/`, and a `scripts/_setup.sh` with no steps
-in it yet - and adds the path to `projects.json`.
+`agents/instructions.md`, a minimal `agents.yaml` naming one `default` agent,
+empty `agents/prompts/` and `agents/skills/`, and a `scripts/_setup.sh` with no
+steps in it yet - and adds the path to `projects.json`.
 
 `SPECIFICATION.md` is the one file written out in full, and it specifies the
 project that was just scaffolded: every line of it is implemented by something
@@ -289,13 +290,22 @@ It also writes `.vscode/settings.json`:
 }
 ```
 
-The project's house rules live in `INSTRUCTIONS.md`, deliberately not
+The project's house rules live in `agents/instructions.md`, deliberately not
 `AGENTS.md`. Every coding assistant now reads that name out of the root of an
 open folder and feeds it to itself as always-on instructions, and `zen open`
 opens exactly this directory - so a project that used it would have its rules,
 addressed to _its_ agents about _their_ tools and workspace, confused with the
 editor's own every single time. A name nobody else claims settles that without a
 setting.
+
+They sit beside the prompts and the skills, under `agents/`, because the root of
+a project is where its _subject_ lives - the specification, the sources, the
+sessions - and because there is rarely only one of them. Anything named
+`agents/<topic>-instructions.md` is read too, in filename order, and prepended to
+every agent. That is what gives a capability its own document: the memory usage
+rules are true for every agent, but they are about memory, so they arrive with
+the `memory:` block and leave with it rather than becoming a section of a file
+that only ever grows.
 
 `chat.useNestedAgentsMdFiles` is written anyway. It is already false by default,
 but it is opt-in globally, and this is a directory the agent itself writes into;

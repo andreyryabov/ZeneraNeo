@@ -14,9 +14,10 @@ See [agents-yaml.md](agents-yaml.md) for the configuration reference,
 ```
 my-project/
     SPECIFICATION.md                 what this project is for - the intent
-    INSTRUCTIONS.md                  house rules, prepended to every agent
     agents.yaml                      who exists, what they may reach for
     agents/
+        instructions.md              house rules, prepended to every agent
+        memory-instructions.md       more of them, one topic at a time
         prompts/
             intake.md                one agent's own brief
             adjuster.md
@@ -111,16 +112,31 @@ hit _across_ conversations, not merely within one.
 
 Each agent's instructions are assembled in a fixed order:
 
-1. `INSTRUCTIONS.md`, if present - read **once** and shared by every agent, so
-   the report says "one document, five prompts" instead of five identical blobs.
-   The name is deliberately not `AGENTS.md`: that one is claimed by coding
-   assistants, and these rules address _this project's_ agents.
+1. The house rules - read **once** and shared by every agent, so the report says
+   "one document, five prompts" instead of five identical blobs:
+   `agents/instructions.md`, then every `agents/<topic>-instructions.md` in
+   filename order. The name is deliberately not `AGENTS.md`: that one is claimed
+   by coding assistants, and these rules address _this project's_ agents.
 2. The agent's own file: `system:` if given, otherwise
    `agents/prompts/<name>.md` if it exists.
 
+Each arrives as its own block, tagged with the path it came from - `<house_rules
+src="agents/memory-instructions.md">` - so the model can tell one document from
+the next and a report can say which file a rule was in.
+
+A topic file earns its own document when it is true for every agent but is about
+one capability: the memory usage rules travel with the `memory:` block, and a
+project that switches memory off deletes one file rather than editing around a
+section. Filename order, because it is the only order that is the same on every
+machine.
+
 Shared context before the specific job - which also puts the stable half of the
-prompt in front, where a cache can reuse it. Both are optional; an agent with
-neither simply has no instructions.
+prompt in front, where a cache can reuse it. All of them are optional; an agent
+with neither simply has no instructions.
+
+A project written against the old layout, with `INSTRUCTIONS.md` in the root, is
+still read - that file takes the first position. `zen check` reports it as
+something to move.
 
 ## Paths
 

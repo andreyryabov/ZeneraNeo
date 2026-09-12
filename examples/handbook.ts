@@ -100,7 +100,12 @@ async function main(): Promise<void> {
 
     // Read once, used by both agents. Same bytes, same content hash, so the
     // report shows one document feeding two prompts rather than two copies.
-    const house = promptFile(doc('INSTRUCTIONS.md'), 'house_rules');
+    //
+    // The third argument is the name the model is told, written onto the block
+    // as `<house_rules src="INSTRUCTIONS.md">`. Deliberately not the path read
+    // from: that one is absolute, and a home directory in the prompt gives two
+    // machines two different cache prefixes for the same text.
+    const house = promptFile(doc('INSTRUCTIONS.md'), 'house_rules', 'INSTRUCTIONS.md');
 
     const runner = new AgentRunner({
         model: pick('thinking'),

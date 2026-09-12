@@ -19,6 +19,13 @@ export interface PromptText {
     path?: string;
     /** opt-in wrapper tag, e.g. `intent` → `<intent>…</intent>` */
     section?: string;
+    /**
+     * The name of that document *as the model is told it*, written onto the
+     * wrapper tag as `src`. Deliberately not `path`: that one is absolute, so
+     * it would put a home directory in the prompt and give two machines two
+     * different cache prefixes for the same project.
+     */
+    src?: string;
 }
 
 /**
@@ -50,9 +57,14 @@ export type Instructions<TCtx = unknown> =
  * A prompt that must change without a restart is a different feature: rebuild
  * the agent, or use the function form.
  */
-export function promptFile(path: string, section?: string): PromptText {
+export function promptFile(path: string, section?: string, src?: string): PromptText {
     const text = readFileSync(path, 'utf8');
-    return section === undefined ? { text, path } : { text, path, section };
+    return {
+        text,
+        path,
+        ...(section === undefined ? {} : { section }),
+        ...(src === undefined ? {} : { src }),
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -74,12 +86,25 @@ export interface ComposedPrompt {
 
 const SEPARATOR = '\n\n';
 
+/** `&`, `<` and `"` are the three that would end the attribute or the tag. */
+function attribute(value: string): string {
+    return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+}
+
 /**
  * Markers are opt-in because they are tokens the model reads: a wrapper that
  * "does not influence the content" does not exist for an LLM.
+ *
+ * `src` rides on the marker rather than being a line of prose above it for the
+ * same reason the marker exists at all — it is structure, and a model that can
+ * see where a block ends can see where it came from.
  */
 function wrap(part: PromptText): string {
-    return part.section ? `<${part.section}>\n${part.text}\n</${part.section}>` : part.text;
+    if (!part.section) {
+        return part.text;
+    }
+    const src = part.src ? ` src="${attribute(part.src)}"` : '';
+    return `<${part.section}${src}>\n${part.text}\n</${part.section}>`;
 }
 
 /**

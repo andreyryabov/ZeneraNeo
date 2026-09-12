@@ -171,12 +171,18 @@ function copyTree(from: string, dir: string, rel: string, opts: CopyOptions): st
 // ---------------------------------------------------------------------------
 // Telling the editor which instructions are not for it
 //
-// The project's house rules are `INSTRUCTIONS.md`, deliberately not
+// The project's house rules are `agents/instructions.md`, deliberately not
 // `AGENTS.md`: every coding assistant now reads that name out of an open
 // folder and feeds it to itself as always-on instructions, and `zen open`
 // opens exactly this directory. A name nobody else claims means the two are
 // never confused, and `chat.useAgentsMdFile` no longer has to be switched off
 // to keep them apart.
+//
+// They sit under `agents/` because there is rarely only one of them. Anything
+// named `agents/<topic>-instructions.md` is read too, in filename order, so a
+// subject that is true for every agent but is about one capability — memory,
+// say — gets its own document instead of another section in a file that keeps
+// growing.
 //
 // `chat.useNestedAgentsMdFiles` is still written. It is already false by
 // default, but it is opt-in globally, and this is a directory the agent itself
@@ -185,12 +191,12 @@ function copyTree(from: string, dir: string, rel: string, opts: CopyOptions): st
 // setting, so it applies only in a trusted workspace; that is the right way
 // round, since an untrusted folder is not one to run agents in either.
 //
-// `INSTRUCTIONS.md` addresses the *project's* agents. The editor's assistant
-// still needs a brief of its own, and what it needs to know is how this kind
-// of project is put together — the file formats, how a prompt is written, when
-// to add a skill rather than an agent. That is what the `.github/` tree is: the
-// standing brief, plus the prompt files and skills the editor picks up from the
-// same place.
+// `agents/instructions.md` addresses the *project's* agents. The editor's
+// assistant still needs a brief of its own, and what it needs to know is how
+// this kind of project is put together — the file formats, how a prompt is
+// written, when to add a skill rather than an agent. That is what the
+// `.github/` tree is: the standing brief, plus the prompt files and skills the
+// editor picks up from the same place.
 // ---------------------------------------------------------------------------
 
 /**

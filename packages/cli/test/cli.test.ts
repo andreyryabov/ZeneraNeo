@@ -794,7 +794,7 @@ describe('the project check', () => {
 
     it('passes a project whose files are all there', async () => {
         const dir = project({
-            'INSTRUCTIONS.md': 'House rules.\n',
+            'agents/instructions.md': 'House rules.\n',
             'agents.yaml': 'version: 1\nmodel: gpt-4o\nagents:\n  - name: solo\n',
             'agents/prompts/solo.md': 'Be useful.\n',
         });
@@ -804,11 +804,54 @@ describe('the project check', () => {
         expect(errors(report)).toEqual([]);
         expect(report.project.entry).toBe('solo');
         expect(report.agents[0].instructions).toEqual([
-            'INSTRUCTIONS.md',
+            'agents/instructions.md',
             'agents/prompts/solo.md',
         ]);
         // No keyring was passed, so nothing may be said about credentials.
         expect(report.models[0].credential).toBe('unknown');
+    });
+
+    /**
+     * Every agent reads every one of them, so the check has to name every one
+     * of them: an instruction file nothing lists is one nobody knows is live.
+     */
+    it('lists every house-rules file an agent is given, in the loader order', async () => {
+        const dir = project({
+            'agents/instructions.md': 'House rules.\n',
+            'agents/memory-instructions.md': 'Never grep /memory.\n',
+            'agents/aaa-instructions.md': 'First.\n',
+            'agents.yaml': 'version: 1\nmodel: gpt-4o\nagents:\n  - name: solo\n',
+            'agents/prompts/solo.md': 'Be useful.\n',
+        });
+        const report = await validateProject({ dir });
+
+        expect(errors(report)).toEqual([]);
+        expect(report.agents[0].instructions).toEqual([
+            'agents/instructions.md',
+            'agents/aaa-instructions.md',
+            'agents/memory-instructions.md',
+            'agents/prompts/solo.md',
+        ]);
+        expect(report.files.find((f) => f.path === 'agents/memory-instructions.md')?.exists).toBe(
+            true,
+        );
+    });
+
+    /** The old layout still runs, so this is a warning and never an error. */
+    it('asks for a root INSTRUCTIONS.md to be moved', async () => {
+        const dir = project({
+            'INSTRUCTIONS.md': 'House rules, where they used to live.\n',
+            'agents.yaml': 'version: 1\nmodel: gpt-4o\nagents:\n  - name: solo\n',
+            'agents/prompts/solo.md': 'Be useful.\n',
+        });
+        const report = await validateProject({ dir });
+
+        const legacy = report.findings.find((f) => f.code === 'house-rules.legacy');
+        expect(legacy?.severity).toBe('warning');
+        expect(legacy?.fix).toContain('agents/instructions.md');
+        expect(errors(report)).toEqual([]);
+        expect(codes(report)).not.toContain('house-rules.missing');
+        expect(report.agents[0].instructions[0]).toBe('INSTRUCTIONS.md');
     });
 
     it('reports every broken reference, not the first', async () => {
@@ -880,7 +923,9 @@ describe('the project check', () => {
     });
 
     it('says which files it looked for when there is no config at all', async () => {
-        const report = await validateProject({ dir: project({ 'INSTRUCTIONS.md': 'hello\n' }) });
+        const report = await validateProject({
+            dir: project({ 'agents/instructions.md': 'hello\n' }),
+        });
 
         expect(errors(report)).toEqual(['config.missing']);
         expect(report.project.config).toBeNull();
@@ -895,12 +940,12 @@ describe('the project check', () => {
         const report = await validateProject({
             dir: project({
                 'agents.yaml': 'version: 1\nagents:\n  - name: Not A Name\n',
-                'INSTRUCTIONS.md': 'hello\n',
+                'agents/instructions.md': 'hello\n',
             }),
         });
 
         expect(errors(report)).toEqual(['config.invalid']);
-        expect(report.files.find((f) => f.path === 'INSTRUCTIONS.md')?.exists).toBe(true);
+        expect(report.files.find((f) => f.path === 'agents/instructions.md')?.exists).toBe(true);
     });
 
     it('checks the skill catalog it will actually read', async () => {

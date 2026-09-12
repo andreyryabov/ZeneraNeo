@@ -41,7 +41,7 @@ function project(files: Record<string, string>): string {
 }
 
 const MINIMAL = {
-    'INSTRUCTIONS.md': 'Be terse.',
+    'agents/instructions.md': 'Be terse.',
     'agents.yaml': `
 agents:
   - name: solo
@@ -93,14 +93,52 @@ Be brief.
 // ---------------------------------------------------------------------------
 
 describe('project layout', () => {
-    it('assembles agents, prompts and the shared INSTRUCTIONS.md', async () => {
+    it('assembles agents, prompts and the shared house rules', async () => {
         const p = await loadProject(project(MINIMAL));
 
         expect(p.registry.names()).toEqual(['solo']);
-        const instructions = p.registry.get('solo').instructions as { path: string }[];
-        expect(instructions.map((i) => i.path.split('/').pop())).toEqual([
+        const instructions = p.registry.get('solo').instructions as { src: string }[];
+        expect(instructions.map((i) => i.src)).toEqual([
+            'agents/instructions.md',
+            'agents/prompts/solo.md',
+        ]);
+    });
+
+    /**
+     * Filename order, because it is the only order that is the same on every
+     * machine and is visible without opening another file.
+     */
+    it('prepends every agents/<topic>-instructions.md, in filename order', async () => {
+        const p = await loadProject(
+            project({
+                ...MINIMAL,
+                'agents/memory-instructions.md': 'Never grep /memory.',
+                'agents/aaa-instructions.md': 'First.',
+                // Neither of these is an instructions file, and a walk that
+                // took the directory rather than the suffix would swallow both.
+                'agents/prompts/ignored-instructions.md': 'Not mine.',
+                'agents/notes.md': 'Not mine either.',
+            }),
+        );
+        const instructions = p.registry.get('solo').instructions as { src: string }[];
+        expect(instructions.map((i) => i.src)).toEqual([
+            'agents/instructions.md',
+            'agents/aaa-instructions.md',
+            'agents/memory-instructions.md',
+            'agents/prompts/solo.md',
+        ]);
+    });
+
+    /** The old layout still runs; `zen check` is what asks for the move. */
+    it('still reads a legacy INSTRUCTIONS.md, ahead of the rest', async () => {
+        const p = await loadProject(
+            project({ ...MINIMAL, 'INSTRUCTIONS.md': 'From before the move.' }),
+        );
+        const instructions = p.registry.get('solo').instructions as { src: string }[];
+        expect(instructions.map((i) => i.src)).toEqual([
             'INSTRUCTIONS.md',
-            'solo.md',
+            'agents/instructions.md',
+            'agents/prompts/solo.md',
         ]);
     });
 
@@ -116,7 +154,7 @@ describe('project layout', () => {
         expect(instructions[0].path.endsWith('solo.md')).toBe(true);
     });
 
-    it('shares one INSTRUCTIONS.md object across every agent', async () => {
+    it('shares one house-rules object across every agent', async () => {
         const p = await loadProject(
             project({
                 ...MINIMAL,

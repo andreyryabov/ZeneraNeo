@@ -4,8 +4,9 @@ description: Review the project against the checklist before committing.
 ---
 
 Review this project the way a maintainer would, then report. Read
-`agents.yaml`, `INSTRUCTIONS.md`, every file under `agents/prompts/` and the
-skill descriptions under `agents/skills/` before saying anything.
+`agents.yaml`, every `agents/*instructions.md`, every file under
+`agents/prompts/` and the skill descriptions under `agents/skills/` before
+saying anything.
 
 Work the checklist in §9 of the copilot instructions. In particular:
 
@@ -13,11 +14,13 @@ Work the checklist in §9 of the copilot instructions. In particular:
 - **One job each.** Can you state every agent's job in one sentence? If not,
   say which agent and what the two jobs are.
 - **Prompts.** Second person, imperative, failure paths stated, no hedging, no
-  politeness padding, no meta-talk about the runtime. Nothing in
-  `INSTRUCTIONS.md` that is true of only one agent.
+  politeness padding, no meta-talk about the runtime. Nothing in the house rules
+  that is true of only one agent, and nothing in `agents/instructions.md` that
+  belongs in a `<topic>-instructions.md` of its own because it only applies when
+  one capability is on.
 - **Facts.** Any number, threshold, fee or date living in a prompt is in the
   wrong file. Name it and say which skill it belongs in.
-- **Paths.** Work the checklist in §2.5 over `INSTRUCTIONS.md`,
+- **Paths.** Work the checklist in §2.5 over `agents/*instructions.md`,
   `agents/prompts/*.md` and `agents/skills/*/SKILL.md`. Every absolute path must
   be under `/workspace`, `/assets`, `/skills` or `/memory`; nothing may name a
   project file the agent cannot open, and nothing may assume the workspace is

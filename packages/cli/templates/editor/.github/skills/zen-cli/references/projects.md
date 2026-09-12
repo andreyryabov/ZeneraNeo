@@ -19,8 +19,8 @@ What it writes:
 
 ```
 zenera.json                     { version, name }
-INSTRUCTIONS.md                 house rules
 agents.yaml                     the configuration
+agents/instructions.md          house rules, prepended to every agent
 agents/prompts/default.md       the default agent's prompt
 agents/skills/                  empty, for skills
 assets/README.md
@@ -30,6 +30,11 @@ sessions/                       empty
 .vscode/settings.json           editor files
 .github/                        copilot instructions, prompts, this skill
 ```
+
+More house rules are added by hand, never by `init`: any
+`agents/<topic>-instructions.md` is read too, in filename order, and prepended
+to every agent. A capability that needs standing rules - memory, say - gets its
+own file rather than another section of `agents/instructions.md`.
 
 The project's own files are never overwritten - `--force` is what allows
 writing into an occupied directory, and the files already there stay. The

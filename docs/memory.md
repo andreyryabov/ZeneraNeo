@@ -25,7 +25,7 @@ wrong one is expensive.
 | **A document index** ([knowledge.md](knowledge.md))     | Prose that already exists and does not change per run                                                                       |
 | **A schema index** ([integrations.md](integrations.md)) | An API description                                                                                                          |
 | **`assets/`**                                           | Anything an agent should read the same way every time                                                                       |
-| **`INSTRUCTIONS.md`**                                   | What is always true, for everybody                                                                                          |
+| **`agents/*instructions.md`**                           | What is always true, for everybody                                                                                          |
 
 If a fact is in a manual, index the manual. Memory is for what is not written
 down anywhere yet.

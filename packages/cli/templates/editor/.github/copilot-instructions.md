@@ -7,9 +7,10 @@
 >
 > It describes the Zenera Neo runtime, not this particular project, and `zen`
 > rewrites the whole tree on `init` and `open` - so put this project's own
-> conventions in `INSTRUCTIONS.md`, where they will survive. The runtime's own
-> reference is `docs/agents-yaml.md`, `docs/projects.md` and `DESIGN.md` in the
-> @zenera/neo repository - where they disagree with this file, they win.
+> conventions in `agents/instructions.md`, where they will survive. The
+> runtime's own reference is `docs/agents-yaml.md`, `docs/projects.md` and
+> `DESIGN.md` in the @zenera/neo repository - where they disagree with this
+> file, they win.
 
 ---
 
@@ -80,12 +81,12 @@ tool access; give tool-based RAG users the configured RAG tools instead. Run
 
 Memory has one such obligation and it is absolute: **a project with a `memory:`
 block carries `references/memory-house-rules.md` from the `zen-memory` skill in
-its own `INSTRUCTIONS.md`, copied whole and verbatim**, with project-specific
-policy underneath it. Nothing else tells a running agent how the store works, so
-without it nothing forbids an agent from pointing `grep` or `cat` at `/memory` -
-a read that bypasses the audience mask and serves superseded nodes as current.
-Re-paste the reference when it changes rather than hand-patching the copy, and
-never paraphrase it into prose of your own. See §5.3.
+its own `agents/memory-instructions.md`, copied whole and verbatim**, with
+project-specific policy underneath it. Nothing else tells a running agent how the
+store works, so without it nothing forbids an agent from pointing `grep` or `cat`
+at `/memory` - a read that bypasses the audience mask and serves superseded nodes
+as current. Re-paste the reference when it changes rather than hand-patching the
+copy, and never paraphrase it into prose of your own. See §5.3.
 
 ---
 
@@ -95,12 +96,12 @@ never paraphrase it into prose of your own. See §5.3.
 
 An agent is four things and nothing more:
 
-| Part            | Where it lives                                 | What it decides               |
-| --------------- | ---------------------------------------------- | ----------------------------- |
-| **Instruction** | `INSTRUCTIONS.md` + `agents/prompts/<name>.md` | How it behaves                |
-| **Model**       | `agents.yaml` → `model:`                       | How well and how expensively  |
-| **Tools**       | `agents.yaml` → `tools:`                       | What it can _do_              |
-| **Knowledge**   | `agents/skills/*` + memory                     | What it can _know_, on demand |
+| Part            | Where it lives                                         | What it decides               |
+| --------------- | ------------------------------------------------------ | ----------------------------- |
+| **Instruction** | `agents/*instructions.md` + `agents/prompts/<name>.md` | How it behaves                |
+| **Model**       | `agents.yaml` → `model:`                               | How well and how expensively  |
+| **Tools**       | `agents.yaml` → `tools:`                               | What it can _do_              |
+| **Knowledge**   | `agents/skills/*` + memory                             | What it can _know_, on demand |
 
 Plus two relations: **handoffs** - which other agents it may transfer control to
 
@@ -135,7 +136,7 @@ is deciding **what is in that sequence and in what order**.
 ```
 ┌─────────────────────────────────────────────┐
 │ tool schemas          fixed at load         │  ← stable, cacheable
-│ INSTRUCTIONS.md       shared by all agents  │  ← stable, cacheable
+│ agents/*instructions  shared by all agents  │  ← stable, cacheable
 │ agent prompt          this agent's brief    │  ← stable per agent
 │ skill index           names + descriptions  │  ← stable per agent
 │ preloaded skills      activated turn 0      │  ← stable, in the cached prefix
@@ -179,9 +180,10 @@ my-project/
 │   ├── prompts/*.prompt.md       tasks you invoke by name
 │   └── skills/*/SKILL.md         reference the editor loads on demand
 ├── .env                          credentials - NEVER committed
-├── INSTRUCTIONS.md               house rules, prepended to every agent
 ├── agents.yaml                   who exists, what they may reach for
 ├── agents/
+│   ├── instructions.md            house rules, prepended to every agent
+│   ├── memory-instructions.md     more of them - any `<topic>-instructions.md`
 │   ├── prompts/
 │   │   ├── intake.md             one agent's own brief
 │   │   └── adjuster.md
@@ -204,13 +206,18 @@ Only `agents.yaml` is required, and only `agents:` is required inside it.
 The config is found by name, in order: `agents.yaml`, `agents.yml`,
 `agents/agents.yaml`, `agents/agents.yml`.
 
+The house rules are `agents/instructions.md` plus every
+`agents/<topic>-instructions.md`, read in filename order and prepended to every
+agent (§3.2). A project written before the move keeps its `INSTRUCTIONS.md` in
+the root; that still loads, and `zen check` says to move it.
+
 ### 2.2 Variants
 
 **Single agent, knowledge-heavy** - the most under-used shape. One agent, one
 prompt, a large skill catalog. Prefer this until routing is genuinely needed.
 
 ```
-INSTRUCTIONS.md · agents.yaml · agents/prompts/assistant.md · agents/skills/**  (20 skills)
+agents.yaml · agents/instructions.md · agents/prompts/assistant.md · agents/skills/**  (20 skills)
 ```
 
 **Router + specialists** - a cheap intake agent that classifies and hands off.
@@ -255,10 +262,10 @@ dots.
 There are two sets of instructions in this repository and they are not for the
 same reader. Keeping them apart is the single easiest thing to get wrong.
 
-| Tree                         | Read by                                    | About                               |
-| ---------------------------- | ------------------------------------------ | ----------------------------------- |
-| `INSTRUCTIONS.md`, `agents/` | the **project's** agents, at run time      | the domain this system works in     |
-| `.github/`                   | the **editor's** assistant, while you edit | how a project of this kind is built |
+| Tree                     | Read by                                    | About                               |
+| ------------------------ | ------------------------------------------ | ----------------------------------- |
+| `agents.yaml`, `agents/` | the **project's** agents, at run time      | the domain this system works in     |
+| `.github/`               | the **editor's** assistant, while you edit | how a project of this kind is built |
 
 The `.github/` tree follows the same progressive-disclosure discipline the
 agents do, for the same reason - it is a prefix somebody pays for:
@@ -277,7 +284,8 @@ agents do, for the same reason - it is a prefix somebody pays for:
 
 `zen init` and `zen open` rewrite this whole tree from the version of `zen` in
 hand, so **edits inside `.github/` do not survive**. Project-specific conventions
-belong in `INSTRUCTIONS.md` and the agent prompts, which are never overwritten.
+belong in `agents/instructions.md` and the agent prompts, which are never
+overwritten.
 
 ### 2.5 What a running agent can actually see
 
@@ -295,10 +303,10 @@ Commands run inside the container `sandbox:` describes (§3.7): the same
 `/workspace`, and whatever the image ships.
 
 Everything else in the project directory is **invisible at run time** -
-`agents.yaml`, `INSTRUCTIONS.md`, `agents/prompts/`, `agents/skills/` under that
-name, `sandbox/Dockerfile`, `.env`, `.github/`, `sessions/`, and the project
-root itself. `zen` reads them to build the run; they are never a path an agent
-can open.
+`agents.yaml`, `agents/instructions.md`, `agents/prompts/`, `agents/skills/`
+under that name, `sandbox/Dockerfile`, `.env`, `.github/`, `sessions/`, and the
+project root itself. `zen` reads them to build the run; they are never a path an
+agent can open.
 
 Two consequences:
 
@@ -317,13 +325,13 @@ prose**, in the prompt - never sent to read the file that configured it.
 
 #### Checklist - no path an agent cannot open
 
-Run this over `INSTRUCTIONS.md`, every `agents/prompts/*.md` and every
-`agents/skills/*/SKILL.md` after editing any of them. Every path-shaped token in
-those files is read by a model as an instruction to open something:
+Run this over every `agents/*instructions.md`, every `agents/prompts/*.md` and
+every `agents/skills/*/SKILL.md` after editing any of them. Every path-shaped
+token in those files is read by a model as an instruction to open something:
 
 - [ ] Every absolute path begins `/workspace`, `/assets`, `/skills` or
       `/memory`. Nothing else exists.
-- [ ] No project file is named: `agents.yaml`, `INSTRUCTIONS.md`,
+- [ ] No project file is named: `agents.yaml`, `agents/instructions.md`,
       `agents/prompts/…`, `agents/skills/…`, `sandbox/Dockerfile`, `.env`,
       `.github/…`, `sessions/…`, `SPECIFICATION.md`, `README.md`, `docs/…`.
 - [ ] Nothing escapes a mount: no `../`, no `~`, no host path (`/Users/…`,
@@ -347,7 +355,7 @@ three trees, minus the ones under a mount:
 
 ```sh
 grep -Eohr '[~.]?/?[A-Za-z0-9_.-]*/[A-Za-z0-9_.*-]+' \
-     INSTRUCTIONS.md agents/prompts agents/skills \
+     agents/prompts agents/skills agents/*instructions.md \
   | sort -u | grep -Ev '^/(workspace|assets|skills|memory)(/|$)'
 ```
 
@@ -518,14 +526,26 @@ hide that. `maxBatch` therefore defaults to `1`; raise it only for a
 `zen check` reports every declared embedding beside the models, with the
 credential each one would need.
 
-### 3.2 `INSTRUCTIONS.md`
+### 3.2 `agents/instructions.md` and friends
 
-House rules, read **once** and prepended to every agent's system prompt. It is
-the stable head of the cached prefix, so it should change rarely. The name is
+House rules, read **once** and prepended to every agent's system prompt. They are
+the stable head of the cached prefix, so they should change rarely. The name is
 deliberately not `AGENTS.md` - that one belongs to the coding assistant reading
 this file, and these rules address the project's own agents.
 
-Put here only what is true for **every** agent:
+There may be more than one. `agents/instructions.md` is the base; every
+`agents/<topic>-instructions.md` is read after it, in filename order, and every
+agent gets all of them. Each arrives as its own block tagged with the file it
+came from - `<house_rules src="agents/memory-instructions.md">` - so the model
+can tell one document from the next.
+
+Split a topic out when it is true for every agent but belongs to **one
+capability**: the memory usage rules (§5.3) are the standard case - they arrive
+when `memory:` is turned on and are deleted when it is turned off, which is a
+whole file rather than a section somebody has to find. Do not split by author,
+by date, or to keep a file short; that is what a skill is for.
+
+Put in them only what is true for **every** agent:
 
 - identity and domain ("You work the property claims desk")
 - non-negotiable prohibitions (regulatory, legal, safety)
@@ -552,13 +572,13 @@ follow. So:
 - Anything only one agent needs goes in that agent's prompt instead. If you find
   yourself writing "if you are the router…", you are in the wrong file.
 
-Target 20–60 lines. If it exceeds ~100, split the stable half out into a
+Target 20–60 lines each. If one exceeds ~100, split the stable half out into a
 preloaded skill.
 
 ### 3.3 `agents/prompts/<name>.md`
 
 Plain Markdown, no frontmatter. This is the agent's _job description_, appended
-after `INSTRUCTIONS.md`.
+after the house rules.
 
 Structure that works:
 
@@ -593,8 +613,8 @@ literally; it states the boundary ("you do not have them") with the _reason_; it
 forbids the specific failure that agent actually exhibits.
 
 Write it as a prompt, under the rules in §4.2 - **instructive and concise**. It
-tells one agent what to do; it never explains the system (`INSTRUCTIONS.md`
-already did, §3.2), never repeats a house rule, and never describes the runtime.
+tells one agent what to do; it never explains the system (the house rules
+already did, §3.2), never repeats one of them, and never describes the runtime.
 Every line should be an instruction the model can act on or a boundary it can
 check itself against.
 
@@ -1060,13 +1080,14 @@ is a different project, not a different key.
 ### 4.1 Composition order
 
 ```
-1. INSTRUCTIONS.md        (shared, once, all agents)
-2. agents/prompts/<n>.md  (this agent)
-3. skill index            (rendered by the runtime - do not hand-write it)
-4. preloaded skills       (activated before the first call)
+1. agents/instructions.md       (shared, once, all agents)
+2. agents/*-instructions.md     (shared too, filename order)
+3. agents/prompts/<n>.md        (this agent)
+4. skill index                  (rendered by the runtime - do not hand-write it)
+5. preloaded skills             (activated before the first call)
 ```
 
-Never duplicate `INSTRUCTIONS.md` content into an agent prompt; never hand-render
+Never duplicate house-rules content into an agent prompt; never hand-render
 a list of skills into a prompt (the runtime does it, and a hand-written one goes
 stale silently).
 
@@ -1108,8 +1129,8 @@ When behaviour is wrong, in this order:
 
 1. **Read the actual assembled prompt**, not the file. Use the inspect report.
 2. Is the instruction _present_? (Missed skill load, wrong agent, compaction.)
-3. Is it _contradicted_ by `INSTRUCTIONS.md` or a skill? Adjacent contradictions
-   win over distant ones; later text usually wins over earlier.
+3. Is it _contradicted_ by a house-rules file or a skill? Adjacent
+   contradictions win over distant ones; later text usually wins over earlier.
 4. Is it _specific enough to be checkable_? Rewrite as a testable assertion.
 5. Only then consider a stronger model.
 
@@ -1124,15 +1145,15 @@ it forever.
 
 The decision for every piece of knowledge:
 
-| Where               | Cost                    | Use when                                              |
-| ------------------- | ----------------------- | ----------------------------------------------------- |
-| `INSTRUCTIONS.md`   | every call, every agent | true always, for everyone                             |
-| agent prompt        | every call, one agent   | true always, for this job                             |
-| **preloaded skill** | every call, one agent   | always needed, but versioned/shared separately        |
-| **indexed skill**   | one line until loaded   | needed _sometimes_, model can tell when from one line |
-| **searched skill**  | nothing until searched  | catalog too large to index (>~30 entries)             |
-| **tool**            | schema only             | needs live data, exact arithmetic, or a side effect   |
-| **memory**          | recall block when hit   | learned across runs, not authored                     |
+| Where                     | Cost                    | Use when                                              |
+| ------------------------- | ----------------------- | ----------------------------------------------------- |
+| `agents/*instructions.md` | every call, every agent | true always, for everyone                             |
+| agent prompt              | every call, one agent   | true always, for this job                             |
+| **preloaded skill**       | every call, one agent   | always needed, but versioned/shared separately        |
+| **indexed skill**         | one line until loaded   | needed _sometimes_, model can tell when from one line |
+| **searched skill**        | nothing until searched  | catalog too large to index (>~30 entries)             |
+| **tool**                  | schema only             | needs live data, exact arithmetic, or a side effect   |
+| **memory**                | recall block when hit   | learned across runs, not authored                     |
 
 ### 5.2 Skill bindings
 
@@ -1185,15 +1206,18 @@ Every node carries an **audience**, and an agent's `sees` is the set it reads:
 one graph, masked per agent, never one graph each. The four `memory_*` tools are
 derived from `access` and are never listed in `tools:`.
 
-**Turning memory on is two edits, not one.** The second is `INSTRUCTIONS.md`:
-the `zen-memory` skill's `references/memory-house-rules.md`, pasted whole and
-verbatim, with this project's policy underneath it. It is what tells the agent
-that the store is reached only through the tools, that `memory_search` clips a
-node's text and `memory_load` reads it whole, that a remembered file's path
-comes from `memory_load` and not from listing `/memory`, what a node must carry
-to be worth having, and that a correction is a `SUPERSEDES` edge rather than an
-edit. `zen check` validates the `memory:` block and says nothing about the
-block's absence, so this is checked by reading `INSTRUCTIONS.md`, every time.
+**Turning memory on is two edits, not one.** The second is a new file,
+`agents/memory-instructions.md`: the `zen-memory` skill's
+`references/memory-house-rules.md`, pasted whole and verbatim, with this
+project's policy underneath it. It is what tells the agent that the store is
+reached only through the tools, that `memory_search` clips a node's text and
+`memory_load` reads it whole, that a remembered file's path comes from
+`memory_load` and not from listing `/memory`, what a node must carry to be worth
+having, and that a correction is a `SUPERSEDES` edge rather than an edit. It is
+its own file rather than a section of `agents/instructions.md` because it arrives
+with the `memory:` block and leaves with it. `zen check` validates the `memory:`
+block and says nothing about the rules' absence, so this is checked by reading
+`agents/memory-instructions.md`, every time.
 
 Do not treat memory as a database. It is for things learned that should
 persist. Anything authoritative - a rate, a policy clause, a procedure - belongs
@@ -1208,12 +1232,12 @@ in front of a `zen rag` index - is in the `zen-memory` skill.
 Rules that follow directly from "stable prefix = cache hit":
 
 - Do not reorder `agents.yaml` for cosmetic reasons - tool order is prompt order.
-- Do not put timestamps, run ids, or "today is …" in `INSTRUCTIONS.md` or a
+- Do not put timestamps, run ids, or "today is …" in a house-rules file or a
   prompt. A changing prefix is a permanent cache miss. Put volatile facts in a
   tool result.
 - Prefer `preload` over an instruction telling the model to load a skill first.
 - Keep the volatile half of an instruction in the agent prompt and the stable
-  half in `INSTRUCTIONS.md`, not the reverse.
+  half in the house rules, not the reverse.
 
 ---
 
@@ -1779,18 +1803,21 @@ Before finishing any change here:
 
 **Prompts**
 
-- [ ] `INSTRUCTIONS.md` carries the shared architecture and nothing agent-specific
-- [ ] Nothing duplicated between `INSTRUCTIONS.md` and an agent prompt
+- [ ] `agents/instructions.md` carries the shared architecture and nothing
+      agent-specific
+- [ ] Nothing duplicated between a house-rules file and an agent prompt
+- [ ] Each `agents/<topic>-instructions.md` is about one capability, and is true
+      of every agent
 - [ ] Every tool and agent referenced by its exact name
 - [ ] Failure paths stated for every instruction that can fail
 - [ ] No facts, rates or figures embedded in a prompt
 - [ ] No hedging, no meta-talk about the runtime
-- [ ] If any agent has `memory:`, `INSTRUCTIONS.md` carries the `zen-memory`
-      house-rules block verbatim and current - §5.3
+- [ ] If any agent has `memory:`, `agents/memory-instructions.md` carries the
+      `zen-memory` house-rules block verbatim and current - §5.3
 
 **Paths (§2.5 - run its checklist over the three trees)**
 
-- [ ] Every absolute path in `INSTRUCTIONS.md`, `agents/prompts/*.md` and
+- [ ] Every absolute path in `agents/*instructions.md`, `agents/prompts/*.md` and
       `agents/skills/*/SKILL.md` is under `/workspace`, `/assets`, `/skills` or
       `/memory`
 - [ ] No prompt or skill names a project file - `agents.yaml`, a prompt path, a
@@ -1844,8 +1871,8 @@ Before finishing any change here:
 
 | Symptom                                       | Change this                                                         |
 | --------------------------------------------- | ------------------------------------------------------------------- |
-| Wrong tone, wrong format, wrong length        | `INSTRUCTIONS.md` (all agents) or the agent prompt                  |
-| Says something forbidden                      | `INSTRUCTIONS.md` prohibition, stated specifically                  |
+| Wrong tone, wrong format, wrong length        | The house rules (all agents) or the agent prompt                    |
+| Says something forbidden                      | A house-rules prohibition, stated specifically                      |
 | Ignores a rule that only applies sometimes    | Move the rule into a skill with a sharp description                 |
 | Never loads the skill it should               | The skill's `description`; or `preload` it                          |
 | Loads too much, answers slowly                | `allow:`, `maxIndexEntries:`, or `discovery: search`                |
@@ -1872,7 +1899,7 @@ Before finishing any change here:
 | Fails only on genuinely hard cases            | Promote that agent's tier, or split the hard path out               |
 | Shows no reasoning while it works             | Turn summaries on for that model - §7.6                             |
 | Forgets across conversations                  | Continue the session rather than starting a new one                 |
-| Greps `/memory` or reads `graph.json`         | The house-rules block is missing from `INSTRUCTIONS.md` - §5.3      |
+| Greps `/memory` or reads `graph.json`         | `agents/memory-instructions.md` is missing the block - §5.3         |
 | Recalls a note it cannot check or continue    | Same block: it is what requires provenance on every node - §5.3     |
 | Breaks at load with a named path              | Read the message - it names the exact key                           |
 
@@ -1883,19 +1910,20 @@ Before finishing any change here:
 - **The mega-prompt.** 300 lines covering twelve scenarios. Split into skills.
 - **Agent sprawl.** Eight agents that share one model, one tool set and one
   prompt style. Collapse into one with a catalog.
-- **Facts in prompts.** A fee schedule inside `INSTRUCTIONS.md`. It cannot be
-  versioned, cannot be shared, and is paid for on every call.
+- **Facts in prompts.** A fee schedule inside `agents/instructions.md`. It cannot
+  be versioned, cannot be shared, and is paid for on every call.
 - **The bare skill file.** `agents/skills/<name>.md` instead of a folder. It can
   never grow the table or script the next revision of the rule will want - §3.4.
 - **Pointing an agent at the project.** A prompt or skill naming `agents.yaml`,
-  `INSTRUCTIONS.md`, `agents/skills/<name>/…` or `sandbox/Dockerfile`. None of
-  them are on any path the agent can open, so the instruction fails on the turn
-  that follows it - §2.5.
+  `agents/instructions.md`, `agents/skills/<name>/…` or `sandbox/Dockerfile`.
+  None of them are on any path the agent can open, so the instruction fails on
+  the turn that follows it - §2.5.
 - **Arithmetic in prose.** A skill that walks the model through a calculation it
   will get wrong, in a folder that could have held the script - §3.4.1.
 - **The unguarded store.** `memory:` turned on and the house-rules block never
-  pasted into `INSTRUCTIONS.md`, so nothing tells the agent the store is reached
-  only through the tools - and `zen check` passes throughout - §5.3.
+  pasted into `agents/memory-instructions.md`, so nothing tells the agent the
+  store is reached only through the tools - and `zen check` passes throughout -
+  §5.3.
 - **Reviewing a capability without its skill.** A project whose memory, index or
   sandbox was configured by an earlier pass looks finished because it loads. The
   obligations are in the editor skill, not in `agents.yaml` - §0.1.
@@ -1914,7 +1942,7 @@ Before finishing any change here:
   branch needs the first branch's answer is a sequence wearing a fork's clothes.
 - **Installing the toolchain every run.** A prompt that begins with `apt-get
 install` is an `image:` that was never set - §3.7.
-- **Volatile prefix.** "Current date: …" in `INSTRUCTIONS.md`. Permanent cache
+- **Volatile prefix.** "Current date: …" in the house rules. Permanent cache
   miss.
 
 ---

@@ -14,7 +14,7 @@ Read, in this order, and do not edit until all of it is read:
 1. `SPECIFICATION.md` - what the system is meant to be.
 2. `agents.yaml` - providers, models, embeddings, agents, tools, handoffs,
    skills, sandbox.
-3. `INSTRUCTIONS.md` and every file under `agents/prompts/`.
+3. Every `agents/*instructions.md` and every file under `agents/prompts/`.
 4. Every `agents/skills/*/SKILL.md`, plus what each skill folder ships.
 5. `assets/`, `sandbox/Dockerfile` and every script under `scripts/`, starting
    with `scripts/_setup.sh`.
@@ -41,14 +41,15 @@ handoff edges and fork permissions; the tools each agent holds; every skill the
 specification implies; and every setup step, index or asset it depends on.
 
 Then build the difference the other way, because the list above can only find
-what the specification asked for and nothing implements. Read `INSTRUCTIONS.md`,
-each `agents/prompts/*.md` and each `SKILL.md` **line by line**, and for every
-line name the specification item it serves. A line serving none is an **extra** -
-the category covers a single sentence in a prompt, not only a whole file. Three
-things to look for while reading, none of which the forward pass can see:
+what the specification asked for and nothing implements. Read every
+`agents/*instructions.md`, each `agents/prompts/*.md` and each `SKILL.md` **line
+by line**, and for every line name the specification item it serves. A line
+serving none is an **extra** - the category covers a single sentence in a prompt,
+not only a whole file. Three things to look for while reading, none of which the
+forward pass can see:
 
 - **A line that contradicts another file.** One prompt against another, a prompt
-  against `INSTRUCTIONS.md`, or a prompt against `agents.yaml` - an instruction
+  against the house rules, or a prompt against `agents.yaml` - an instruction
   to use a tool the agent does not hold, to hand to an agent that is not in its
   `handoffs:`, or to load a skill outside its `allow:`.
 - **A line that asks for something the system already supplies.** A question put

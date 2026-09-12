@@ -384,9 +384,10 @@ the project, so there is no secret to strip before sharing it.
 ```
 my-project/
     SPECIFICATION.md             what this is for - the intent
-    INSTRUCTIONS.md              house rules, prepended to every agent
     agents.yaml                  who exists, what they may reach for
     agents/
+        instructions.md          house rules, prepended to every agent
+        <topic>-instructions.md  more of them, one subject at a time
         prompts/<name>.md        each agent's own brief
         skills/<name>/           knowledge loaded on demand, not always-on
     assets/                      reference material, read-only at /assets

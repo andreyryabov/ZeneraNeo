@@ -83,8 +83,8 @@ panel and it is in the list. It is a long prompt and worth reading once; in
 outline it:
 
 1. **Reads everything before editing anything** - the specification, then
-   `agents.yaml`, `INSTRUCTIONS.md`, every prompt, every skill, the assets, the
-   Dockerfile and the scripts. Then runs `zen check`.
+   `agents.yaml`, the house rules under `agents/`, every prompt, every skill, the
+   assets, the Dockerfile and the scripts. Then runs `zen check`.
 2. **Builds a difference list both ways.** Forwards: for each item in the
    specification, is it present, missing, divergent or unclear. Backwards: for
    each line of each prompt and skill, which specification item does it serve -

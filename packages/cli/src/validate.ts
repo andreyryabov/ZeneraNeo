@@ -231,7 +231,10 @@ export interface ValidateOptions {
 // Duplicated rather than exported, because a check that agreed with the loader
 // by construction could not report that the two had diverged.
 const CONFIG_NAMES = ['agents.yaml', 'agents.yml', 'agents/agents.yaml', 'agents/agents.yml'];
-const HOUSE_RULES = 'INSTRUCTIONS.md';
+const AGENTS_DIR = 'agents';
+const HOUSE_RULES = 'agents/instructions.md';
+const INSTRUCTIONS_SUFFIX = '-instructions.md';
+const LEGACY_HOUSE_RULES = 'INSTRUCTIONS.md';
 const PROMPTS_DIR = 'agents/prompts';
 const SKILLS_DIR = 'agents/skills';
 const SKILL_FILE = 'SKILL.md';
@@ -239,6 +242,34 @@ const ASSETS_DIR = 'assets';
 
 /** What `allow:` and `preload:` accept, so a skill outside it cannot be named. */
 const REFERABLE = /^[a-z0-9]+(?:[-_][a-z0-9]+)*$/;
+
+/**
+ * Mirrors `readHouseRules` in the loader, in the same order: the legacy file
+ * first, then `agents/instructions.md`, then every
+ * `agents/<topic>-instructions.md` by filename.
+ */
+function houseRules(root: string): string[] {
+    const found: string[] = [];
+    const take = (rel: string): void => {
+        if (existsSync(join(root, rel))) {
+            found.push(rel);
+        }
+    };
+    take(LEGACY_HOUSE_RULES);
+    take(HOUSE_RULES);
+    const dir = join(root, AGENTS_DIR);
+    if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+        return found;
+    }
+    const topics = readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name.endsWith(INSTRUCTIONS_SUFFIX))
+        .map((entry) => entry.name)
+        .sort((a, b) => a.localeCompare(b));
+    for (const name of topics) {
+        take(`${AGENTS_DIR}/${name}`);
+    }
+    return found;
+}
 
 export async function validateProject(opts: ValidateOptions): Promise<Report> {
     const root = resolve(opts.dir);
@@ -387,28 +418,40 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
     // Files the config and the conventions name
     // -----------------------------------------------------------------------
 
-    const hasHouseRules = record(
-        HOUSE_RULES,
-        'house rules — prepended to every agent prompt',
-        'file',
-        false,
-    );
-    if (!hasHouseRules) {
+    const rules = houseRules(root);
+    for (const rel of rules) {
+        record(rel, 'house rules — prepended to every agent prompt', 'file', false);
+        if (empty(join(root, rel))) {
+            add({
+                severity: 'warning',
+                code: 'house-rules.empty',
+                where: rel,
+                message: `${rel} is empty, so it contributes nothing but a prompt section`,
+                fix: 'write the rules that hold whichever agent is answering, or delete it',
+            });
+        }
+    }
+    if (rules.length === 0) {
+        record(HOUSE_RULES, 'house rules — prepended to every agent prompt', 'file', false);
         add({
             severity: 'note',
             code: 'house-rules.missing',
             where: HOUSE_RULES,
             message:
-                'no INSTRUCTIONS.md, which is allowed: every agent then runs on its own role ' +
+                'no house rules, which is allowed: every agent then runs on its own role ' +
                 'prompt alone, with nothing shared between them',
         });
-    } else if (empty(join(root, HOUSE_RULES))) {
+    }
+    if (rules.includes(LEGACY_HOUSE_RULES)) {
         add({
             severity: 'warning',
-            code: 'house-rules.empty',
-            where: HOUSE_RULES,
-            message: 'INSTRUCTIONS.md is empty, so it contributes nothing but a prompt section',
-            fix: 'write the rules that hold regardless of which agent is answering, or delete it',
+            code: 'house-rules.legacy',
+            where: LEGACY_HOUSE_RULES,
+            message:
+                `${LEGACY_HOUSE_RULES} is where the house rules used to live. It is still ` +
+                `read, and still first, but the layout now keeps them under ${AGENTS_DIR}/ ` +
+                'so a project can have more than one of them',
+            fix: `move it to ${HOUSE_RULES}, or fold it into the ${AGENTS_DIR}/*${INSTRUCTIONS_SUFFIX} files already there`,
         });
     }
 
@@ -714,16 +757,12 @@ function checkAgent(
     add: Add,
 ): AgentReport {
     const where = `agents.${spec.name}`;
-    const instructions: string[] = [];
-
-    if (existsSync(join(root, HOUSE_RULES))) {
-        instructions.push(HOUSE_RULES);
-    }
+    const instructions: string[] = [...houseRules(root)];
 
     // The role prompt: named by `system:`, or found by convention. A named one
     // that is not there is an error — the loader says so too. An absent
     // conventional one is not, because a project may keep everything it has to
-    // say in INSTRUCTIONS.md.
+    // say in its house rules.
     if (spec.system) {
         const rel = normalise(root, spec.system);
         const outside = rel === undefined;
@@ -777,7 +816,7 @@ function checkAgent(
             code: 'agent.no-instructions',
             where,
             message:
-                'this agent has no prompt at all — no INSTRUCTIONS.md and no role file — so ' +
+                'this agent has no prompt at all — no house rules and no role file — so ' +
                 'it runs on the tool descriptions alone',
             fix: `write ${join(PROMPTS_DIR, `${spec.name}.md`)}, or name one with \`system:\``,
         });
