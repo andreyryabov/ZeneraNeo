@@ -449,7 +449,7 @@ provider with a missing key does not fail loading.
 - `agents[].handoffs` naming an unknown agent, or the agent itself
 - `agents[].skills.provider` / `.allow` / `.preload` naming something absent
 - a `preload:` entry missing from `allow:`
-- `agents[].fork.agents` naming an unknown agent, or being empty; `maxBranches` below 2
+- `agents[].fork.agents` naming an unknown agent, or being empty; `maxBranches` below 1
 - `system:` pointing at a missing file, or outside the project root
 
 **Not caught at load** - a model id whose prefix is missing and so resolves to the
@@ -1352,7 +1352,8 @@ interchangeable:
 - The other agent should **own the conversation from here** → `handoffs:`, and
   something on the far side has to lead back.
 - This agent needs **an answer and then carries on** → `fork:`. Never a handoff:
-  a handoff spends the conversation to get the answer.
+  a handoff spends the conversation to get the answer. One branch is enough -
+  a fork of one is exactly "ask the specialist and continue".
 
 But the return is **condensed**: `A → fork → B` rejoins as one tool result
 holding B's answer, so A never sees the steps B took - no tool calls, no files
@@ -1380,7 +1381,7 @@ agents:
 | Field         | Default              | Meaning                               |
 | ------------- | -------------------- | ------------------------------------- |
 | `agents`      | every declared agent | Which agents a branch may run         |
-| `maxBranches` | unlimited            | Cap on branches per call; minimum `2` |
+| `maxBranches` | unlimited            | Cap on branches per call; minimum `1` |
 
 The **model** decides the split: it names N branches, each with self-contained
 instructions. They run truly concurrently and rejoin as **one tool call and one
@@ -1393,8 +1394,10 @@ Rules worth knowing before you write the key:
   is not an error, and one role fanned out over ten items is the common shape.
   The list reaches the model as an `enum`, so a name outside it cannot even be
   decoded.
-- A fork always needs **at least two** branches. A one-branch call is refused
-  with a message telling the model to do the work itself instead.
+- A fork of **one** branch is delegation, and it is valid: one assignment run
+  elsewhere, its conclusion returned, its transcript left out of this
+  conversation. Use it when another agent suits the job better, or when the job
+  would fill the caller's context with material it has no use for afterwards.
 - **Branches cannot talk to each other.** If branch B needs branch A's answer,
   it is a sequence, not a fork - keep it in one conversation.
 - Nesting is capped by the run's `maxForkDepth` (2 by default), so a branch may
@@ -1413,10 +1416,12 @@ agent's prompt which one this work wants:
 - `none` - system prompt plus instructions only. Cheapest; for independent
   lookups.
 
-Declaring `fork:` only makes the tool available. Say in the agent's prompt when
-to reach for it, in the terms of this domain - _"When the request covers more
-than one region, fork one branch per region and merge their findings"_ - or a
-weaker model will work through the list serially and never call it.
+Declaring `fork:` only makes the tool available. What a fork costs and what
+survives the join is explained to the model by the runtime, in the system prompt
+of every agent holding the key. What is left to you is _when_, in the terms of
+this domain - _"When the request covers more than one region, fork one branch
+per region and merge their findings"_ - or a weaker model will work through the
+list serially and never call it.
 
 ### 6.5 Termination
 

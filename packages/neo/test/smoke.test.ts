@@ -250,6 +250,58 @@ describe('smoke', () => {
         expect(Object.values(bundle.blobs)).toContain('done branch: left');
     });
 
+    it('delegates a single branch and keeps its steps out of the caller', async () => {
+        const peek = tool({
+            name: 'peek',
+            description: 'looks something up',
+            parameters: { type: 'object', properties: {} },
+            execute: () => 'the register says 42',
+        });
+
+        const model = new RuleModel(
+            (req) => (hasToolResult(req, 'peek') ? say('42, from the register') : undefined),
+            (req) => (req.system?.startsWith('SPECIALIST') ? callTool('peek', {}) : undefined),
+            (req) => (hasToolResult(req, 'fork') ? say('it is 42') : undefined),
+            () =>
+                callTool('fork', {
+                    branches: [
+                        { name: 'lookup', instructions: 'find the number', agent: 'specialist' },
+                    ],
+                    context: 'compact',
+                }),
+        );
+        const runner = new AgentRunner({ model });
+        runner.agent({ name: 'specialist', instructions: 'SPECIALIST', tools: [peek] });
+        runner.agent({ name: 'lead', instructions: 'LEAD', fork: { maxBranches: 1 } });
+
+        const res = await runner.run('lead', 'what is the number');
+        expect(res.output).toBe('it is 42');
+
+        const join = findNode(res.state, 'join');
+        expect(join.branches.map((b) => b.name)).toEqual(['lookup']);
+        expect(join.branches[0].status).toBe('ok');
+
+        // The caller gets the conclusion and none of the work behind it.
+        const { messages } = await projectMessages(res.state.trajectory, runner.services.payloads);
+        const forkResults = messages.filter((m) => m.role === 'tool' && m.name === 'fork');
+        expect(forkResults).toHaveLength(1);
+        expect(forkResults[0].role === 'tool' && forkResults[0].content).toContain(
+            '42, from the register',
+        );
+        expect(messages.some((m) => m.role === 'tool' && m.name === 'peek')).toBe(false);
+        expect(res.state.trajectory.some((n) => n.type === 'tool_call')).toBe(false);
+        // … while the branch's own history is on record, one level down.
+        expect(join.branches[0].nodes.some((n) => n.type === 'tool_call')).toBe(true);
+
+        // A lone branch is told it has no siblings, not handed an empty list.
+        const seed = join.branches[0].nodes[0];
+        const brief =
+            seed.type === 'tool_result' ? await runner.services.payloads.get(seed.result) : '';
+        expect(brief).toContain('find the number');
+        expect(brief).toContain('No other branch was opened');
+        expect(brief).not.toContain('Running in parallel');
+    });
+
     it('keeps a branch agent out of the parent after the join', async () => {
         const model = new RuleModel(
             (req) => (hasToolResult(req, 'fork') ? say('merged') : undefined),
@@ -277,7 +329,8 @@ describe('smoke', () => {
 
         // The prompt in force after the join is the one from before the fork.
         const { system } = await projectMessages(res.state.trajectory, runner.services.payloads);
-        expect(system).toBe('LEAD');
+        expect(system?.startsWith('LEAD')).toBe(true);
+        expect(system).not.toContain('SCOUT');
         expect(res.state.trajectory.some((n) => n.agent === 'scout')).toBe(false);
         // … while the branch's own prompt is still on record, one level down.
         const join = findNode(res.state, 'join');

@@ -425,11 +425,20 @@ describe('validation', () => {
         expect(p.registry.get('solo').fork?.agents).toEqual(['solo']);
     });
 
+    it('takes a branch cap of one as delegation without fan-out', async () => {
+        const p = await loadProject(
+            project({
+                'agents.yaml': 'agents:\n  - name: solo\n    fork:\n      maxBranches: 1\n',
+            }),
+        );
+        expect(p.registry.get('solo').fork?.maxBranches).toBe(1);
+    });
+
     it('rejects a branch cap no call could satisfy', async () => {
         await expect(
             loadProject(
                 project({
-                    'agents.yaml': 'agents:\n  - name: solo\n    fork:\n      maxBranches: 1\n',
+                    'agents.yaml': 'agents:\n  - name: solo\n    fork:\n      maxBranches: 0\n',
                 }),
             ),
         ).rejects.toThrow(/fork\.maxBranches/);

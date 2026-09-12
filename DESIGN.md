@@ -798,6 +798,12 @@ into N independent child runs, and rejoins into a single result. From the
 parent's message history the whole episode looks like **one tool call and one
 tool result** - sequential semantics, parallel execution.
 
+N may be 1. A fork of one is delegation: the same mechanism used for its other
+half, which is that a branch's transcript never reaches the parent. It is the
+only sub-agent call that returns - a handoff spends the conversation to get its
+answer - so refusing one branch would leave no way to ask another agent a
+question and carry on.
+
 ### 10.1 The fork tool
 
 ```ts
@@ -811,12 +817,21 @@ z.object({
                 agent: z.string().optional(), // defaults to the forking agent
             }),
         )
-        .min(2),
+        .min(1),
     context: z.enum(['inherit', 'compact', 'none']).default('inherit'),
 });
 ```
 
 Agent opt-in: `AgentOptions.fork?: { agents?: string[]; maxBranches?: number }`.
+
+The schema is mechanics. The policy - what survives a join, that a branch cannot
+be corrected once it starts, which `context` mode fits which shape of work -
+lives in `forkInstructions()` (`src/fork.ts`), pushed into the system prompt by
+`derivedPrompt` under the same condition that offers the tool: a fork binding,
+and `forkDepth < maxForkDepth`. Same seam as `memoryInstructions`, and for the
+same reason - it is per-run policy, not per-call argument documentation, so
+stating it once in the cacheable prefix costs less than restating it in every
+tool schema the model reads.
 
 ### 10.2 Data model
 
@@ -907,6 +922,8 @@ conversation to arrive in:
   call arguments, but _which one is mine_, _who has the rest_ and _what becomes
   of my answer_ exist nowhere else. Without them a branch re-derives work a
   sibling owns and writes an answer shaped for a user rather than for a merge.
+  A lone branch is told the opposite thing - that nobody else was opened, so
+  none of it will be picked up elsewhere.
 - `none` - a `UserInputNode` carrying the instructions, because there is no call
   above to answer.
 
