@@ -83,13 +83,18 @@ Memory has one such obligation and it is absolute: **a project with a `memory:`
 block carries the `zen-memory` skill's `references/memory-instructions.md` in its
 own `agents/memory-instructions.md`.** `zen init` writes both, since it scaffolds
 memory on; what needs watching is a project that deleted the file, or one whose
-copy has fallen behind the reference. It is a copy, never a transcription - the
-reference ships inside the project, because `zen init` and `zen open` write this
-whole `.github/` tree. From the project root:
+copy has fallen behind the reference. Do not read the two files against each
+other - they drift by trailing whitespace inside tables, which is invisible.
+The skill ships the check:
 
 ```sh
-cp .github/skills/zen-memory/references/memory-instructions.md agents/memory-instructions.md
+.github/skills/zen-memory/scripts/check-instructions.sh       # the verdict
+.github/skills/zen-memory/scripts/check-instructions.sh fix   # copy the reference over
 ```
+
+It is a copy, never a transcription - the reference ships inside the project,
+because `zen init` and `zen open` write this whole `.github/` tree, so `fix` is
+just `cp` from one to the other.
 
 Nothing else tells a running agent how the store works, so without it nothing
 forbids an agent from pointing `grep` or `cat` at `/memory` - a read that
@@ -377,13 +382,17 @@ Finding the candidates, from the project root - every path-shaped token in the
 three trees, minus the ones under a mount:
 
 ```sh
-grep -Eohr '[~.]?/?[A-Za-z0-9_.-]*/[A-Za-z0-9_.*-]+' \
-     agents/prompts agents/skills agents/*instructions.md \
-  | sort -u | grep -Ev '^/(workspace|assets|skills|memory)(/|$)'
+.github/skills/zen-review/scripts/check-paths.sh
 ```
 
-Everything it prints is either a false positive (a url, a `path/to` in a
-sentence, `and/or`) or a path the agent cannot open. There is no third case.
+It prints each candidate with the file and line it is on, and exits non-zero
+while any remain. Everything it prints is either a path the agent cannot open or
+noise the script has not learned yet - a url, a `path/to` in a sentence, an
+`and/or` - and there is no third case. It strips the noise it does know about,
+so a candidate that survives is one to explain or fix rather than one to skim
+past. `check-paths.sh raw` is the sweep with nothing filtered, for when the
+filter itself is the suspect. The `zen-review` skill says what it covers and
+what it cannot.
 
 ---
 
@@ -1248,7 +1257,7 @@ memory to a project that has none is both of those edits, and a copy that was
 lost or went stale is one command:
 
 ```sh
-cp .github/skills/zen-memory/references/memory-instructions.md agents/memory-instructions.md
+.github/skills/zen-memory/scripts/check-instructions.sh fix
 ```
 
 It is what tells the agent that the store is reached only through the tools, that
@@ -1268,8 +1277,10 @@ re-runnable: the reference is rewritten by every `zen init` and `zen open`, and
 keeping up with it is then the same one-line command rather than a hand-patch.
 
 `zen check` validates the `memory:` block and says nothing about the rules'
-absence, so this is checked by reading `agents/memory-instructions.md`, every
-time - and `diff` against the reference says whether it is current.
+absence, so this is checked every time, by
+`.github/skills/zen-memory/scripts/check-instructions.sh` and never by reading
+the two files against each other: they drift by trailing whitespace inside a
+table, and the script is what can see that.
 
 Do not treat memory as a database. It is for things learned that should
 persist. Anything authoritative - a rate, a policy clause, a procedure - belongs
@@ -1846,6 +1857,16 @@ ok, `1` failed, `2` usage, `3` invalid project, `4` no usable credential.
 
 ## 9. Review checklist
 
+Four of these are decidable, and are one command - `zen check`, the path sweep,
+the memory copy, the spec-sync record, in that order:
+
+```sh
+.github/skills/zen-review/scripts/review.sh
+```
+
+Run it first and read what it says. Everything else below is judgement, which is
+why it is still a list. The `zen-review` skill has the detail.
+
 Before finishing any change here:
 
 **Structure**
@@ -1869,12 +1890,13 @@ Before finishing any change here:
 - [ ] Failure paths stated for every instruction that can fail
 - [ ] No facts, rates or figures embedded in a prompt
 - [ ] No hedging, no meta-talk about the runtime
-- [ ] If any agent has `memory:`, `agents/memory-instructions.md` is a
-      byte-identical copy of the `zen-memory` skill's
-      `references/memory-instructions.md` - `diff` the two - and anything
-      project-specific is in `agents/memory-policy-instructions.md` - §5.3
+- [ ] If any agent has `memory:`,
+      `.github/skills/zen-memory/scripts/check-instructions.sh` exits zero -
+      `agents/memory-instructions.md` is the reference byte for byte - and
+      anything project-specific is in `agents/memory-policy-instructions.md` - §5.3
 
-**Paths (§2.5 - run its checklist over the three trees)**
+**Paths (§2.5 - `.github/skills/zen-review/scripts/check-paths.sh` finds the
+candidates; these are the judgements to make about each one)**
 
 - [ ] Every absolute path in `agents/*instructions.md`, `agents/prompts/*.md` and
       `agents/skills/*/SKILL.md` is under `/workspace`, `/assets`, `/skills` or

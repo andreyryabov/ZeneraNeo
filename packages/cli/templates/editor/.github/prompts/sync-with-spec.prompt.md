@@ -196,8 +196,8 @@ The file is scanned before it is read, so keep the emoji on every heading:
 ```
 
 Each entry is its own `###` heading - the emoji of its section, a number, and a
-short title naming the problem - with an `<a id="N"></a>` anchor above it so the
-table of contents can link to it. Under the heading, in this order:
+short title naming the problem - which the table of contents links to by its
+own generated anchor. Under the heading, in this order:
 
 - **The spec says** - the text quoted as a blockquote, introduced by a link to
   the exact line: `[SPECIFICATION.md#L66](SPECIFICATION.md#L66)`, plus the

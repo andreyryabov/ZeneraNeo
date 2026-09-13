@@ -1,6 +1,6 @@
 ---
 name: zen-memory
-description: How agent memory is organised and how to configure it in `agents.yaml` - the `memory:` block, per-agent `access`/`sees`/`writes`/`autoRecall`, the four `memory_*` tools, kinds and relations, how recall ranks and stitches a subgraph, and how to design a memory strategy for a project. Includes the usage rules every memory-enabled project must carry in `agents/memory-instructions.md` (references/memory-instructions.md), what to commit and what never to, how to keep a working file under `/memory` and re-run it later, and how to put memory in front of a `zen rag schema` or `zen rag docs` index so a search that already succeeded once is not paid for again.
+description: How agent memory is organised and how to configure it in `agents.yaml` - the `memory:` block, per-agent `access`/`sees`/`writes`/`autoRecall`, the four `memory_*` tools, kinds and relations, how recall ranks and stitches a subgraph, and how to design a memory strategy for a project. Includes the usage rules every memory-enabled project must carry in `agents/memory-instructions.md` (references/memory-instructions.md) and the script that says whether that copy is still current (scripts/check-instructions.sh), what to commit and what never to, how to keep a working file under `/memory` and re-run it later, and how to put memory in front of a `zen rag schema` or `zen rag docs` index so a search that already succeeded once is not paid for again.
 ---
 
 # Memory
@@ -496,9 +496,24 @@ worth having.
 first run. Two cases are left to check by hand: a project that turned memory on
 afterwards, and one whose copy has drifted from the reference or was deleted.
 
+Neither is checked by eye. The skill ships the check, and it is one command:
+
+```sh
+.github/skills/zen-memory/scripts/check-instructions.sh        # the verdict
+.github/skills/zen-memory/scripts/check-instructions.sh diff   # every differing line
+.github/skills/zen-memory/scripts/check-instructions.sh fix    # copy the reference over
+```
+
+It says whether this project turns memory on at all, exits non-zero on a copy
+that is missing or stale, and prints the `cp` that repairs it. When the only
+difference is trailing whitespace it says so - that is the usual drift, it is
+invisible on screen, and it is the reason reading the two files side by side
+never caught it.
+
 It is a copy, not a transcription - this reference already sits in the project,
 because `zen init` and `zen open` write the whole `.github/` tree, and they write
-it from the same file the project's copy came from. From the project root:
+it from the same file the project's copy came from. What `fix` runs, from the
+project root, is exactly:
 
 ```sh
 cp .github/skills/zen-memory/references/memory-instructions.md agents/memory-instructions.md
@@ -512,9 +527,8 @@ memory and it leaves with it.
 **Keep that file a pure copy.** Project-specific policy - audiences, what must
 never be written down, what an agent commits at the end of a job - goes in
 `agents/memory-policy-instructions.md`, which filename order puts directly after
-it. Then keeping up with a changed reference is the same one-line command again,
-rather than a hand-patch around prose that has to be preserved. `diff` the two
-files to see whether the copy is current.
+it. Then keeping up with a changed reference is the same one command again,
+rather than a hand-patch around prose that has to be preserved.
 
 ## Inspecting and repairing it
 
@@ -576,9 +590,9 @@ agents:
 
 ## Review checklist
 
-- [ ] `agents/memory-instructions.md` is a byte-identical copy of
-      `references/memory-instructions.md` - `diff` says so - and project policy
-      lives in `agents/memory-policy-instructions.md`.
+- [ ] `.github/skills/zen-memory/scripts/check-instructions.sh` exits zero, so
+      `agents/memory-instructions.md` is the reference byte for byte - and
+      project policy lives in `agents/memory-policy-instructions.md`.
 - [ ] `memory.embedding` is set, and was set before the graph had content.
 - [ ] Every agent that should learn has a `memory:` binding - the top-level
       block alone enables nothing.

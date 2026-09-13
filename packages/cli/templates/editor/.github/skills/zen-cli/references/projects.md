@@ -39,8 +39,9 @@ needs standing rules - memory, say - gets its own file rather than another
 section of `agents/instructions.md`. Memory's are not written from scratch:
 `agents/memory-instructions.md` is the same file as
 `.github/skills/zen-memory/references/memory-instructions.md`, which init puts
-in the project as well, so a copy that was lost or went stale is restored with
-`cp` rather than rewritten.
+in the project as well, so a copy that was lost or went stale is restored rather
+than rewritten - `.github/skills/zen-memory/scripts/check-instructions.sh` says
+which of the two it is, and `… fix` does the copy.
 
 The project's own files are never overwritten - `--force` is what allows
 writing into an occupied directory, and the files already there stay. The
