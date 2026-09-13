@@ -859,22 +859,33 @@ sandbox:
     env: [HTTPS_PROXY, NO_PROXY] # host variables to forward, by NAME
 ```
 
-| Field     | Default                                       | Meaning                                      |
-| --------- | --------------------------------------------- | -------------------------------------------- |
-| `image`   | `docker.io/library/python:3.14-slim-bookworm` | The base image commands run in               |
-| `build`   | none                                          | A Dockerfile to build instead                |
-| `cpus`    | the host's                                    | Fractional cores                             |
-| `memory`  | the host's                                    | MiB                                          |
-| `network` | `bridge`                                      | `bridge` / `none` / `host`                   |
-| `workdir` | `/workspace`                                  | Mount point and default cwd                  |
-| `timeout` | `120`                                         | Seconds per command                          |
-| `user`    | the image's                                   | uid, name, or `uid:gid`                      |
-| `persist` | `false` - **set it to `true`**                | Keep the container between runs of a session |
-| `env`     | none                                          | Host variables to forward, **names**         |
+| Field     | Default                                       | Meaning                                       |
+| --------- | --------------------------------------------- | --------------------------------------------- |
+| `image`   | `docker.io/library/python:3.14-slim-bookworm` | The base image commands run in                |
+| `build`   | none                                          | A Dockerfile to build instead                 |
+| `cpus`    | the host's                                    | Fractional cores                              |
+| `memory`  | the host's                                    | MiB                                           |
+| `network` | `bridge`                                      | `bridge` / `none` / `host`                    |
+| `workdir` | `/workspace`                                  | Mount point and default cwd                   |
+| `timeout` | `120`                                         | Seconds per command                           |
+| `user`    | the image's                                   | uid, name, or `uid:gid`                       |
+| `persist` | `false` - **set it to `true`**                | Keep the container between runs of a session  |
+| `env`     | none                                          | Host variables to forward, **names**          |
+| `keys`    | `true`                                        | Whether model credentials reach the container |
 
 `env:` takes **names, never values** - a value here would be a secret in the
 repository - and anything credential-shaped (`KEY`, `TOKEN`, `SECRET`,
 `PASSWORD`, `CREDENTIAL`) is refused at load.
+
+**Model credentials are already inside the container** (`keys:`, default
+`true`). Every provider key the run holds is forwarded by name, and a Vertex
+service-account file is bind-mounted read-only at `/run/zenera/keys` with
+`GOOGLE_APPLICATION_CREDENTIALS` rewritten to point there - wherever it sits on
+the host, keyring included. So a `zen` command that embeds (`zen rag … search`)
+works in the sandbox: do not assume otherwise, do not route around it, and
+never copy a key file into the project to "reach" the container. Only
+`keys: false` / `zen run --no-keys` withholds them, and `network: none` is what
+stops the call going out.
 
 **`build:`, when no published image fits.** A project that needs two runtimes,
 or a pinned toolchain, names a Dockerfile instead of an image - `zen init`

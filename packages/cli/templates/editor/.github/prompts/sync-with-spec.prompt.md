@@ -133,7 +133,16 @@ anything in the
 specification is unclear, contradictory, impossible, or wrong. If there is
 nothing to raise, say so in the chat and do not create the file.
 
-Group entries under these headings, and omit a heading that has no entries.
+**Write it for the person who has to fix the specification, not for yourself.**
+Every entry must be answerable in one word by someone who has not read the
+implementation, and must carry the text they need to paste back into
+`SPECIFICATION.md`. A paragraph that ends in "is that what you meant?" is not
+an entry - it is a question they have to do the work to answer.
+
+The file opens with one short paragraph saying how many entries there are and
+how to answer them, then a table of contents - one row per entry: number and
+anchor link, the question in under ten words, and what was built. Then the
+entries, grouped under these headings, omitting any heading with no entries.
 The file is scanned before it is read, so keep the emoji on every heading:
 
 ```markdown
@@ -150,20 +159,37 @@ The file is scanned before it is read, so keep the emoji on every heading:
 ## ➕ Out of scope - implemented but unspecified
 ```
 
-Each entry is one bullet, opening with the emoji of the heading it sits under,
-then four parts in this order:
+Each entry is its own `###` heading - the emoji of its section, a number, and a
+short title naming the problem - with an `<a id="N"></a>` anchor above it so the
+table of contents can link to it. Under the heading, in this order:
 
-- **What the specification says**, quoted, with the section it is in.
-- **Why it cannot be implemented as written** - the specific gap, not "unclear".
-- **What was done in the meantime**, or "nothing - blocked".
-- **The question**, phrased so a one-line answer unblocks it.
+- **The spec says** - the text quoted as a blockquote, introduced by a link to
+  the exact line: `[SPECIFICATION.md#L66](SPECIFICATION.md#L66)`, plus the
+  section name. Link every line you quote; a reader must reach it in one click.
+- **The problem** - two or three sentences on the specific gap, in terms of what
+  goes wrong, not "unclear" or "ambiguous".
+- **Built in the meantime** - what the implementation does now, and the one fact
+  that made it the default. Or "Nothing - blocked."
+- **Choose one** - a table of two to four options, one per row, each with its
+  consequence. Mark the one that is implemented `_(built)_` and, where one is
+  better for a reason the reader can check, `_(recommended)_`. An option is a
+  real alternative, not a restatement of the question.
+- **Paste into the spec** - a fenced block holding the replacement text for the
+  chosen option, introduced by where it goes: "replace line 21", "add after line
+  66". Write it in the specification's own voice and format so it can be pasted
+  without editing. Where an option needs different text, say what the reader
+  must supply instead.
 
-Use no other emoji anywhere in the file - one per entry is what makes them
-scannable. Keep entries factual and short. Do not editorialise about the
-specification's quality, do not restate the runtime, and do not copy the whole
-section in.
-Append to the existing file rather than rewriting it; strike an entry only when
-this pass has actually resolved it, and say in the chat which ones you closed.
+Under `➕`, drop **Choose one** and **Paste into the spec**, and end with **If
+unwanted** - what removing it would cost.
+
+Use no emoji except the one on each heading. Keep the prose short; the tables
+carry the detail. Do not editorialise about the specification's quality, do not
+restate the runtime, and do not copy a whole section in.
+
+Append to the existing file rather than rewriting it, keeping the numbering and
+the table of contents in step; strike an entry only when this pass has actually
+resolved it, and say in the chat which ones you closed.
 
 ## 6. Run `scripts/_setup.sh` and watch it finish
 
