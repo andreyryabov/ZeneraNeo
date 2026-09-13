@@ -379,11 +379,14 @@ node explaining what it is and the graph cannot acquire orphans. To change a
 remembered file: copy it into the workspace, edit it there, commit the new one
 and link it with `SUPERSEDES` to the old.
 
-| Commit as | When                                                                      |
-| --------- | ------------------------------------------------------------------------- |
-| `file`    | It is runnable, or it is the artifact itself: a script, a config, a query |
-| `snippet` | It is a few lines that only make sense read: a request body, a fragment   |
-| `fact`    | It is a sentence. A file containing one sentence is a fact in a costume   |
+The node text describes and locates; the file carries the content. Reach for a
+node with no file only when the whole of what you know fits on one line.
+
+| Commit as | When                                                                        |
+| --------- | --------------------------------------------------------------------------- |
+| `file`    | It is content - a script, a config, a query, a passage, an assembled answer |
+| `snippet` | It is a few lines that only make sense read, and nothing will ever run them |
+| `fact`    | It is one line. A file containing one sentence is a fact in a costume       |
 
 ## Memory in front of a `zen rag` index
 
@@ -400,18 +403,26 @@ it is entirely a matter of **what you commit**.
 | Freshness       | as fresh as the last `index`                                    | as stale as it was allowed to get |
 | Cost of a query | one embedding round trip (`search`), or nothing (`list`/`grep`) | already in the prompt             |
 
-So: **never copy index content into memory.** A schema pasted into a node goes
-stale silently and the index already answers in milliseconds; a documentation
-passage quoted into a node outlives the release it was true for and will look
-exactly as authoritative when it is wrong.
+So: **never copy content out of an index that still changes.** A schema pasted
+into a node goes stale silently and the index already answers in milliseconds; a
+documentation passage quoted into a node outlives the release it was true for
+and will look exactly as authoritative when it is wrong.
 
-What memory should hold is the **route** - the resolution, not the source:
+A **pinned** index is the exception, and a real one. Docs indexed from a
+released version or a versioned reference tree cannot change under the memory,
+so a passage taken out of one stays true as long as the project stays on that
+version. Keep it as a `file` node whose text names the documents and line ranges
+and says which version it was. That is as well as the route, never instead of
+it.
+
+What memory should hold first is the **route** - the resolution, not the source:
 
 | Commit                                                                            | Kind               | Because                                                                           |
 | --------------------------------------------------------------------------------- | ------------------ | --------------------------------------------------------------------------------- |
 | The endpoint that turned out to be the answer, and its shape                      | `operation`        | A `search_api` costs a round trip and returns five ranked guesses; this names one |
 | The sequence of calls that was necessary                                          | `plan`             | No ranking finds an ordering. It is not in the document                           |
 | Where the answer lives in the docs - document name, heading, line range           | `fact`             | `zen rag docs show` reads it back verbatim and current                            |
+| The passage itself, when the index is pinned to a released version                | `file`             | It cannot change under you, and the pointer alone makes the next run re-read it   |
 | A convention the index cannot state - auth, casing, base path, the error envelope | `fact`             | It is not in the graph, and it is wrong to re-derive it every run                 |
 | Where the index itself is                                                         | `fact`             | `-d` or `$ZEN_SCHEMA_DB`. An agent cannot guess a path                            |
 | A working request body, or a script that drives the API                           | `snippet` / `file` | The thing you would otherwise write again                                         |
@@ -451,8 +462,12 @@ cheap and settles it.
 ### The project skill is where this is written down
 
 An index used by a project needs a skill in that project describing it - see
-`zen-rag-schema` and `zen-rag-docs`. Memory policy belongs in the same skill,
-because it is the same subject:
+`zen-rag-schema` and `zen-rag-docs`. The memory policy that is **about the
+index** belongs in that skill, because it is the same subject and it is read at
+the moment the index is. Policy that holds whatever the agent is doing -
+audiences, what must never be written down - goes in
+`agents/memory-policy-instructions.md` instead, which every agent gets whether
+it loads the skill or not.
 
 ```md
 - Recalled routes are a shortcut, not authority. Confirm with `list_api --name`
@@ -460,8 +475,13 @@ because it is the same subject:
 - After solving something the index made you work for, commit it: the
   `operation` you ended on, linked to the `task` that asked and any `fact` you
   had to discover. Phrase the text as the question, not as the operation id.
-- Never commit schema text or documentation passages. Commit the pointer -
-  document, heading, line range - and read it back with `zen rag docs show`.
+- Never commit schema text or documentation passages copied out of a document
+  that still changes. Commit the pointer - document, heading, line range -
+  alongside what you concluded from it, and read the passage back with
+  `zen rag docs show` to check the conclusion still holds.
+- Our docs are indexed from the pinned 1.4 tree, so a passage out of them is
+  safe to keep whole: commit it as a `file` node headed with the documents and
+  line ranges, next to the pointer and the conclusion.
 ```
 
 ## The house rules
@@ -573,20 +593,21 @@ agents:
 
 ## When it goes wrong
 
-| Symptom                                           | Cause                                                                                                      |
-| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| The `memory_*` tools are missing                  | No `memory:` on the agent. They come from the binding, never from `tools:`                                 |
-| `zen memory` says the project has none            | Neither a `memory:` block nor an agent binding - nothing is opened and no directory is made                |
-| Recall finds a memory only when reworded          | No embedder. `zen memory stats` says `embedding none`                                                      |
-| Recall finds nothing after changing the embedder  | Refused rather than mixed - a manifest records the model. Re-embed or change it back                       |
-| Vectors fewer than nodes                          | Some nodes were committed with no embedder; they are only reachable by term overlap                        |
-| The graph fills with restated requests            | The commit rule is not in a prompt or skill. State the "would a later run redo this" test                  |
-| An agent greps `/memory` or reads `graph.json`    | The house-rules block is missing from `agents/memory-instructions.md` - the system prompt never forbids it |
-| A recalled fact cannot be checked or continued    | Nodes were committed with no provenance. The block's "say where it came from" rule is what prevents it     |
-| A wrong memory keeps coming back                  | It was edited instead of superseded, or superseded in the wrong direction - the **new** node is the source |
-| An agent cannot see a node you can                | Its `audience` is not in that agent's `sees`. Invisible and missing are the same thing, on purpose         |
-| "this agent cannot remember files"                | The agent has no workspace, so a path cannot be resolved. Commit without `file`                            |
-| A remembered file will not run                    | It is not self-contained - it referenced the workspace it was written in                                   |
-| Recollections are large and unhelpful             | `autoRecall.limit` is too high, or node texts describe answers rather than questions                       |
-| The model recalls a route the API no longer has   | Nothing re-checks memory against a rebuilt index. Supersede, and require verification                      |
-| A second run of the same project refuses to start | The directory lock. A lock whose process is gone is stale and is taken over                                |
+| Symptom                                             | Cause                                                                                                      |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| The `memory_*` tools are missing                    | No `memory:` on the agent. They come from the binding, never from `tools:`                                 |
+| `zen memory` says the project has none              | Neither a `memory:` block nor an agent binding - nothing is opened and no directory is made                |
+| Recall finds a memory only when reworded            | No embedder. `zen memory stats` says `embedding none`                                                      |
+| Recall finds nothing after changing the embedder    | Refused rather than mixed - a manifest records the model. Re-embed or change it back                       |
+| Vectors fewer than nodes                            | Some nodes were committed with no embedder; they are only reachable by term overlap                        |
+| The graph fills with restated requests              | The commit rule is not in a prompt or skill. State the "would a later run redo this" test                  |
+| An agent greps `/memory` or reads `graph.json`      | The house-rules block is missing from `agents/memory-instructions.md` - the system prompt never forbids it |
+| A recalled fact cannot be checked or continued      | Nodes were committed with no provenance. The block's "say where it came from" rule is what prevents it     |
+| Recall returns pointers and the run re-reads it all | Content was committed as `text` alone. A node's text describes and locates; the content belongs in a file  |
+| A wrong memory keeps coming back                    | It was edited instead of superseded, or superseded in the wrong direction - the **new** node is the source |
+| An agent cannot see a node you can                  | Its `audience` is not in that agent's `sees`. Invisible and missing are the same thing, on purpose         |
+| "this agent cannot remember files"                  | The agent has no workspace, so a path cannot be resolved. Commit without `file`                            |
+| A remembered file will not run                      | It is not self-contained - it referenced the workspace it was written in                                   |
+| Recollections are large and unhelpful               | `autoRecall.limit` is too high, or node texts describe answers rather than questions                       |
+| The model recalls a route the API no longer has     | Nothing re-checks memory against a rebuilt index. Supersede, and require verification                      |
+| A second run of the same project refuses to start   | The directory lock. A lock whose process is gone is stale and is taken over                                |
