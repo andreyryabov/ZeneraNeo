@@ -36,6 +36,7 @@
         "/^git (branch|diff|log|show|status)\\b/": true,
         "/^npm (test|run (build|format:check|lint|test|typecheck))\\b/": true,
         "/\\bfind\\b[^|;]*\\s-(exec|execdir|ok|okdir|delete)\\b/": false,
-        "./scripts/_setup.sh": true
+        "./scripts/_setup.sh": true,
+        "scripts/_setup.sh": true
     }
 }
