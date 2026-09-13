@@ -309,6 +309,13 @@ export function scaffold(opts: ScaffoldOptions): Scaffolded {
     mkdirSync(join(opts.dir, 'sessions'), { recursive: true });
     mkdirSync(join(opts.dir, '.tmp'), { recursive: true });
 
+    // Where `/sync-with-spec` records what it applied, so the next pass works
+    // the difference rather than the whole specification again. Empty here, and
+    // git does not carry an empty directory: what says a pass has completed is
+    // `baseline/manifest.txt`, never the directory itself.
+    mkdirSync(join(opts.dir, '.spec-sync', 'baseline'), { recursive: true });
+    mkdirSync(join(opts.dir, '.spec-sync', 'history'), { recursive: true });
+
     // The project directory is what `zen open` opens, so this is where the
     // editor actually reads them.
     return { files, editor: editorFiles(opts.dir) };

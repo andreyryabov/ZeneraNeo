@@ -1153,6 +1153,63 @@ describe('the scaffold', () => {
 
         expect(readFileSync(join(dir, '.env'), 'utf8')).toBe('ACME_TOKEN=mine\n');
     });
+
+    /**
+     * The record `/sync-with-spec` works from: two directories the project
+     * commits, empty because what marks a completed pass is the manifest
+     * inside them, and the script that writes it — executable, and at the path
+     * the prompt tells the agent to run.
+     */
+    it('makes room for the spec-sync record, and ships the script that writes it', () => {
+        const dir = join(root, 'spec-sync');
+        mkdirSync(dir, { recursive: true });
+        const written = scaffold({ dir, model: 'gpt-4o' });
+        const script = join('.github', 'skills', 'zen-spec-sync', 'scripts', 'snapshot.sh');
+
+        expect(readdirSync(join(dir, '.spec-sync', 'baseline'))).toEqual([]);
+        expect(readdirSync(join(dir, '.spec-sync', 'history'))).toEqual([]);
+        // A record only this machine has is not a record.
+        expect(readFileSync(join(dir, '.gitignore'), 'utf8')).not.toContain('.spec-sync');
+
+        expect(written.editor).toContain(join('.github', 'skills', 'zen-spec-sync', 'SKILL.md'));
+        expect(written.editor).toContain(script);
+        expect(statSync(join(dir, script)).mode & 0o777).toBe(0o755);
+        // The prompt sends the agent to that path, so the two have to agree.
+        expect(
+            readFileSync(join(dir, '.github', 'prompts', 'sync-with-spec.prompt.md'), 'utf8'),
+        ).toContain(script);
+
+        // Called from anywhere, and honest about a project that has never had
+        // a pass: there is nothing to diff against yet.
+        expect(
+            execFileSync(join(dir, script), ['status'], { cwd: tmpdir(), encoding: 'utf8' }),
+        ).toContain('mode: full');
+    });
+
+    /**
+     * The record covers the implementation as well as the intent, so a prompt,
+     * skill or house rule edited between passes is a change the next pass has
+     * to account for rather than one nothing reports.
+     */
+    it('records the implementation too, so a hand-edited house rule reads as a change', () => {
+        const dir = join(root, 'spec-sync-tree');
+        mkdirSync(dir, { recursive: true });
+        scaffold({ dir, model: 'gpt-4o' });
+        const script = join(dir, '.github', 'skills', 'zen-spec-sync', 'scripts', 'snapshot.sh');
+        const run = (arg: string) =>
+            execFileSync(script, [arg], { cwd: tmpdir(), encoding: 'utf8' });
+
+        writeFileSync(join(dir, '.spec-sync', 'history', '2026-09-13T104500Z.md'), '# pass\n');
+        run('commit');
+        expect(existsSync(join(dir, '.spec-sync', 'baseline', 'agents', 'instructions.md'))).toBe(
+            true,
+        );
+        expect(run('status')).toContain('mode: incremental');
+
+        writeFileSync(join(dir, 'agents', 'instructions.md'), 'rewritten by hand\n');
+        expect(run('status')).toContain('changed: agents/instructions.md');
+        expect(run('diff')).toContain('rewritten by hand');
+    });
 });
 
 // ---------------------------------------------------------------------------

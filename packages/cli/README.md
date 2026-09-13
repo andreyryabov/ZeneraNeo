@@ -394,6 +394,7 @@ my-project/
     assets/                      reference material, read-only at /assets
     sandbox/Dockerfile           the container commands run in
     scripts/_setup.sh            the one command that initialises the project
+    .spec-sync/                  what the last sync with the spec applied
     .env                         this project's environment - git-ignored
     sessions/                    one workspace, memory and trajectory each
         <id>/

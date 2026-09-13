@@ -67,6 +67,9 @@ sessions that ran against it.
         <topic>-instructions.md  more of them, as the project grows
         prompts/
         skills/
+    .spec-sync/                  what the last sync with the spec applied
+        baseline/                the specification as that pass left it
+        history/                 one file per pass
     .env                         this project's environment, git-ignored
     sessions/
         20260825-143012-a7f3/
@@ -247,6 +250,16 @@ next to it, and everything implemented is in it. It is there to be replaced,
 but until it is it is true, which is what makes it a template worth reading
 rather than a heading list. `/sync-with-spec` then works from the first edit
 onwards, because there is already a specification to diverge from.
+
+`.spec-sync/baseline/` and `.spec-sync/history/` are made empty for it to write
+into: a pass records the specification it applied, so the next one diffs against
+that record and works the difference rather than re-deriving every decision the
+last one already made. Empty is the honest state - git cannot carry an empty
+directory, and `zen` never writes into it, so what marks a project as having
+completed a pass is `baseline/manifest.txt` rather than the directory. The
+mechanism is the `zen-spec-sync` skill's `scripts/snapshot.sh`, in the `.github/`
+tree, and not a `zen` command: it is twenty lines of `sh` over `cmp` and
+`shasum`, read by the agent that runs it, and nothing in it needs the runtime.
 
 That agent gets `workspace:*` and `sandbox:*`: an agent that can read and write
 files but cannot run the test it just changed is a demo, not a project, and the

@@ -7,6 +7,33 @@ the files are the implementation. Where they disagree, the specification wins -
 except where it is ambiguous, contradictory or impossible, which is what
 `SPECIFICATION-FEEDBACK.md` is for.
 
+## 0. Decide the size of this pass
+
+Load the `zen-spec-sync` skill first, before anything else and whatever state
+the project is in - a project with no baseline is the one that needs it most,
+because this pass has to make the first. Then, from the project root:
+
+```sh
+.github/skills/zen-spec-sync/scripts/snapshot.sh status
+.github/skills/zen-spec-sync/scripts/snapshot.sh diff
+```
+
+`status` answers `full`, `incremental` or `tampered`. Say which in the chat
+before reading anything, and on an incremental pass state the scope you drew
+from the diffs - the skill says how. `full` and `tampered` both mean the whole
+prompt as written below, from nothing.
+
+The diff covers both sides. `SPECIFICATION.md` and `SPECIFICATION-FEEDBACK.md`
+say what has been **asked for** since the last pass; `agents.yaml` and every
+file under `agents/` say what has been **built or hand-edited** since then. The
+first narrows the pass to the work nobody has done; the second only widens it,
+because a prompt or skill someone changed outside a pass still has to be
+accounted for against the specification.
+
+The scope decides what you **read and edit**. It never decides what you
+**verify**: §6, §7 and the four checks in the skill run at full size on every
+pass, however small the diff.
+
 ## 1. Read before changing anything
 
 Read, in this order, and do not edit until all of it is read:
@@ -20,6 +47,10 @@ Read, in this order, and do not edit until all of it is read:
    with `scripts/_setup.sh`.
 6. `SPECIFICATION-FEEDBACK.md`, if it exists - do not re-raise something already
    open there.
+
+On an incremental pass this list narrows to the artefacts the scope implicates,
+and to the changed hunks of the specification rather than all of it. The
+narrowing is a claim: name what you skipped and why the diff does not reach it.
 
 Run `zen check` first and record what it said. A project that does not load is
 the first thing to fix.
@@ -60,6 +91,11 @@ forward pass can see:
 
 These are bugs whatever the specification says: fix them in place and report each
 one. An extra that is merely unspecified is reported under `➕`, not removed.
+
+On an incremental pass this reverse reading covers every file this pass touched
+plus every file the implementation diff in §0 named - an edit made in this
+session, or made by hand since the last pass, is exactly where a fresh
+contradiction comes from. On a full pass it is the whole tree, as above.
 
 ## 3. Change the smallest thing that closes the gap
 
@@ -191,6 +227,9 @@ Append to the existing file rather than rewriting it, keeping the numbering and
 the table of contents in step; strike an entry only when this pass has actually
 resolved it, and say in the chat which ones you closed.
 
+Read the feedback diff from §0 before writing: an entry the human answered since
+the last pass is work to close, not a question to ask again.
+
 ## 6. Run `scripts/_setup.sh` and watch it finish
 
 After `zen check` passes, run `scripts/_setup.sh` yourself. A pass is not done
@@ -227,6 +266,25 @@ fail. Then report in the chat:
 - the outcome of every `scripts/_setup.sh` step, and what each one produced
 - what is still open, with a pointer to its `SPECIFICATION-FEEDBACK.md` entry
 - anything you found that the specification does not cover at all
+
+## 8. Record the pass
+
+Last, and only once §6 and §7 have actually passed. Write
+`.spec-sync/history/<stamp>.md` in the format the `zen-spec-sync` skill gives -
+including `Still open`, which is the only place the next pass learns that an
+unchanged specification line is not yet implemented - and then:
+
+```sh
+.github/skills/zen-spec-sync/scripts/snapshot.sh commit
+```
+
+In that order, never the other way. Moving the baseline before the pass has
+finished records a specification as applied that was not: the next pass diffs
+against it, sees nothing to do, and the work is never done by anybody. A pass
+that fails with the baseline unmoved costs one repeat.
+
+A pass that changed nothing still writes a history file and still commits. Say
+in the chat which history file you wrote and that the baseline moved.
 
 Do not report a specification item as done unless the file that implements it
 exists, `zen check` passes, and `scripts/_setup.sh` completed every step it owns.

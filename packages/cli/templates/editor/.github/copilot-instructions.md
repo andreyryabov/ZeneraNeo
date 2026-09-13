@@ -100,6 +100,16 @@ copy can be re-run after any `zen init` or `zen open` refreshes the reference,
 without losing anything. Never paraphrase the reference into prose of your own.
 See §5.3.
 
+A project with a `SPECIFICATION.md` carries one more: **`.spec-sync/` records
+what the last `/sync-with-spec` pass applied**, and the `zen-spec-sync` skill is
+loaded before running that prompt, whether or not a baseline exists yet. The
+state is committed, because a record only the last machine has is not a record.
+Two things to watch for, neither of which `zen check` reports: a baseline that
+moved without a history entry to match it, which is a pass claiming work it did
+not do, and a `.spec-sync/baseline/` whose `manifest.txt` no longer matches its
+files. Both are reported, not quietly repaired - rewriting the manifest asserts
+a pass that never happened.
+
 ---
 
 ## 1. Mental model
@@ -192,6 +202,7 @@ my-project/
 │   ├── prompts/*.prompt.md       tasks you invoke by name
 │   └── skills/*/SKILL.md         reference the editor loads on demand
 ├── .env                          this project's environment - NEVER committed
+├── .spec-sync/                   what the last /sync-with-spec applied - §0.1
 ├── agents.yaml                   who exists, what they may reach for
 ├── agents/
 │   ├── instructions.md            house rules, prepended to every agent
@@ -1912,6 +1923,18 @@ Before finishing any change here:
 
 - [ ] No key literal in YAML, prompt, skill or log - `${VAR}` only
 - [ ] `.env` is git-ignored
+
+**Specification** (only where the project has a `SPECIFICATION.md`)
+
+- [ ] `.github/skills/zen-spec-sync/scripts/snapshot.sh status` does not say
+      `tampered` - the baseline matches its own `manifest.txt`
+- [ ] `.spec-sync/baseline/applied.txt` names the newest file in
+      `.spec-sync/history/`; a baseline ahead of the history is a pass that
+      claimed work it did not finish
+- [ ] The newest history entry's `Still open` is what the next pass will trust,
+      and says so honestly - an unchanged specification line is not evidence
+      that anything implements it
+- [ ] `.spec-sync/` is committed and `.tmp/` is not
 
 ---
 
