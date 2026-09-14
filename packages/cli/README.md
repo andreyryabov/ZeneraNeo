@@ -145,7 +145,7 @@ zen run my-project              # no prompt given: opens a full-screen terminal 
 zen check my-project            # validate the project and every file it names
 zen inspect                     # open the last run's report.html
 zen list --sessions             # every project, its sessions and last run
-echo "triage this" | zen run my-project --quiet | jq
+echo "triage this" | zen run my-project --json | jq
 ```
 
 Standing inside the project, the name is optional: a bare `zen run`, `zen check`

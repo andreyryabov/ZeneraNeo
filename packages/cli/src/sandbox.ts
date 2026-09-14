@@ -88,6 +88,8 @@ export interface SandboxSetup {
     build?: ResolvedBuild;
     /** host side of the container's `$HOME`, created only if it is ever needed */
     home: string;
+    /** every tree bound into the container besides the workspace itself */
+    mounts: readonly SandboxMount[];
 }
 
 export interface SandboxInputs {
@@ -165,7 +167,7 @@ export function buildSandbox(opts: SandboxInputs): SandboxSetup {
         mounts,
     });
 
-    return { pool, spec, image: spec.image ?? DEFAULT_SANDBOX_IMAGE, build, home };
+    return { pool, spec, image: spec.image ?? DEFAULT_SANDBOX_IMAGE, build, home, mounts };
 }
 
 /**

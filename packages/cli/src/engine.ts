@@ -67,6 +67,10 @@ export interface Engine {
     runner: AgentRunner;
     name: string;
     workspace: string;
+    /** where the workspace appears inside the container */
+    workspaceMount: string;
+    /** whether the agent was denied every writing tool */
+    readOnly: boolean;
     session: SessionPaths;
     /** the session's accumulated state, when it has one */
     state?: AgentState;
@@ -186,6 +190,8 @@ export async function open(opts: EngineOptions): Promise<Engine> {
         runner,
         name: opts.project.name,
         workspace,
+        workspaceMount: sandbox.spec.workdir ?? SANDBOX_MOUNT,
+        readOnly: Boolean(opts.readOnly),
         session: opts.session,
         state,
         sandbox,
@@ -216,6 +222,26 @@ async function loadState(session: SessionPaths): Promise<AgentState | undefined>
 // ---------------------------------------------------------------------------
 // Running
 // ---------------------------------------------------------------------------
+
+export interface Mount {
+    /** the directory on this machine */
+    host: string;
+    /** where it appears to the agent */
+    at: string;
+    readOnly: boolean;
+}
+
+/** Every tree the agent can see, the workspace first. */
+export function mounts(engine: Engine): Mount[] {
+    return [
+        { host: engine.workspace, at: engine.workspaceMount, readOnly: engine.readOnly },
+        ...engine.sandbox.mounts.map((m) => ({
+            host: m.host,
+            at: m.at,
+            readOnly: Boolean(m.readOnly),
+        })),
+    ];
+}
 
 export interface RunOutcome {
     run: RunPaths;

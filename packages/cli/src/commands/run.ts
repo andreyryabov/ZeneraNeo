@@ -21,7 +21,6 @@ interface Flags {
     'no-keys'?: boolean;
     'read-only'?: boolean;
     yes?: boolean;
-    quiet?: boolean;
     plain?: boolean;
     theme?: string;
     out?: string;
@@ -31,33 +30,40 @@ export const run: Command = {
     summary: 'Run the project — the TUI on a terminal, one shot otherwise.',
     usage: USAGE,
     details: [
-        '  --project <name|dir>   Which project. Inferred from the directory.',
-        '  --session <id>         Continue a particular session.',
-        '  --new                  Start a fresh one.',
-        '  --workspace <dir>      What the agent can read and write.',
-        '  --model <ref>          Override the default model.',
-        '  --image <ref>          Override the sandbox image commands run in.',
-        '  --read-only            Give the agent no way to write.',
-        '  --no-keys              Keep the API keys out of the sandbox.',
-        '  --quiet                Answer only; no narration.',
-        '  --plain                One shot, even on a terminal.',
-        '  --theme <dark|light>   Force the palette. Detected otherwise; $ZENERA_THEME.',
-        '  --out <file>           Write the answer here as well as to stdout.',
-        '  --yes                  Accept the questions this would otherwise ask.',
+        'Arguments:',
+        '  [project]   Name of a project. Default: the one you are in.',
+        '  [prompt]    Your question, in quotes. Without one, the TUI opens.',
         '',
-        'The first word is the project when it names one, as in `zen run acme`,',
-        'and the first word of the prompt when it does not. --project settles it.',
+        'Options:',
+        '  --project <name|dir>   Which project to run. Default: the one you are in.',
+        '  --session <id>         Continue this session.',
+        '  --new                  Start a new session without asking which one.',
+        '  --workspace <dir>      Directory the agent can read and write.',
+        '  --model <ref>          Use this model instead of the default.',
+        '  --image <ref>          Use this container image to run commands in.',
+        '  --read-only            Take away every tool that can write.',
+        '  --no-keys              Do not pass API keys into the container.',
+        '  --plain                Never open the TUI. Needs a prompt.',
+        '  --theme <dark|light>   Colours for the TUI. Default: auto.',
+        '  --out <file>           Put the answer in this file instead of on screen.',
+        '  --yes                  Answer yes to every question.',
         '',
-        "The project's .env is read before it loads, and every name in it is",
-        'forwarded into the sandbox. Your shell wins over the file, and the',
-        'keyring fills in the rest; --no-keys withholds all of it.',
+        'The first word is the project when it names one, otherwise the prompt.',
+        'The answer goes to stdout and the progress to stderr, so `> out.md` keeps',
+        'the answer alone and `2>/dev/null` hides the progress.',
         '',
-        'The prompt comes from the argument, or stdin, or the TUI. There is no',
-        '`resume`: a session continues itself, because its state is what it is.',
+        'A prompt always starts a new session, so --new is for the TUI, where the',
+        'alternative is being asked which session to continue.',
         '',
-        'With a prompt on the command line nothing is asked: a fresh session, the',
-        'directory you are in as the workspace, writable. --session, --workspace',
-        'and --read-only override that; the TUI still asks.',
+        'Examples:',
+        '  zen run                               open the TUI in this project',
+        '  zen run acme                          open the TUI in the acme project',
+        '  zen run "what changed?"               ask that, print the answer, exit',
+        '  git diff | zen run                    take the prompt from stdin',
+        '  zen run "what changed?" > out.md      redirect the answer into a file',
+        '  zen run --out out.md "what changed?"  write the answer to out.md only',
+        '  zen run --read-only "what changed?"   let it read but not write',
+        '  zen run --new                         open the TUI in a new session',
     ],
     run: async (ctx) => {
         const { values, positionals } = parse<Flags>(
@@ -72,7 +78,6 @@ export const run: Command = {
                 'no-keys': { type: 'boolean' },
                 'read-only': { type: 'boolean' },
                 yes: { type: 'boolean' },
-                quiet: { type: 'boolean' },
                 plain: { type: 'boolean' },
                 theme: { type: 'string' },
                 out: { type: 'string' },
@@ -131,7 +136,6 @@ export const run: Command = {
             const drawing =
                 !prompt &&
                 !values.plain &&
-                !values.quiet &&
                 !ctx.json &&
                 Boolean(process.stdout.isTTY && process.stdin.isTTY);
 
@@ -168,7 +172,7 @@ async function once(
     where: Target,
 ): Promise<void> {
     const narrator = new Narrator({
-        quiet: Boolean(values.quiet) || asJson,
+        quiet: asJson,
         live: Boolean(process.stderr.isTTY),
     });
 
@@ -178,7 +182,7 @@ async function once(
     const onInterrupt = (): void => stopping.abort();
     process.once('SIGINT', onInterrupt);
 
-    if (!values.quiet && !asJson) {
+    if (!asJson) {
         // Two questions were just answered, possibly without being asked. Say
         // which way they went: a run that quietly resumed the wrong session, or
         // wrote into the directory you were standing in, is only explainable
@@ -209,28 +213,40 @@ async function once(
 
     if (asJson) {
         json({
-            session: engine.session.id,
-            run: outcome.run.id,
+            session: { id: engine.session.id, dir: engine.session.dir },
+            run: {
+                id: outcome.run.id,
+                dir: outcome.run.dir,
+                input: outcome.run.input,
+                output: outcome.run.output,
+                state: outcome.run.state,
+                meta: outcome.run.meta,
+                ...(outcome.report ? { report: outcome.report } : {}),
+            },
+            mounts: Engine.mounts(engine),
             agent: outcome.result.agent,
             stopReason: outcome.result.stopReason,
             durationMs: outcome.durationMs,
             usage: outcome.result.usage,
             output: outcome.text,
-            report: outcome.run.report,
         });
         return;
     }
 
-    write(outcome.text);
+    // --out is a destination, not a copy: the answer goes there instead of to
+    // stdout, so a redirect and a file cannot both end up holding it.
+    if (values.out) {
+        note(dim(`answer: ${cyan(values.out)}`));
+    } else {
+        write(outcome.text);
+    }
 
-    if (!values.quiet) {
-        note('');
-        note(
-            `${stopMark(outcome.result.stopReason)} ${dim(duration(outcome.durationMs))}  ` +
-                dim(summary(outcome.result.usage)),
-        );
-        if (outcome.report) {
-            note(dim(`report: ${cyan(display(outcome.report, cwd))}`));
-        }
+    note('');
+    note(
+        `${stopMark(outcome.result.stopReason)} ${dim(duration(outcome.durationMs))}  ` +
+            dim(summary(outcome.result.usage)),
+    );
+    if (outcome.report) {
+        note(dim(`report: ${cyan(display(outcome.report, cwd))}`));
     }
 }
