@@ -126,12 +126,12 @@ describe('what a loaded skill reads as', () => {
         ]);
 
     it('says nothing about files when the skill has none of its own', () => {
-        expect(body()).toBe('## Skill: greet\nSay hello.');
+        expect(body()).toBe('<skill name="greet">\nSay hello.\n</skill>');
     });
 
     it('names the directory the skill ships, once, when the host mounted it', () => {
         const said = body('/skills/greet');
-        expect(said).toContain('## Skill: greet');
+        expect(said).toContain('<skill name="greet">');
         expect(said).toContain('Say hello.');
         // The one thing the model cannot work out for itself: where the files
         // the instructions talk about actually are, and that it cannot write there.

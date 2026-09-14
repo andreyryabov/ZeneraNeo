@@ -154,7 +154,7 @@ live('openai live skill loading', () => {
         expect(messageRoles(req)).toEqual(['user']);
         const req0Text = requestMessageText(req);
         expect(req0Text).toContain('Give a short budget Kyoto suggestion');
-        expect(req0Text).not.toContain('## Skill: beta_cedar');
+        expect(req0Text).not.toContain('<skill name="beta_cedar"');
 
         const requests = await recordedRequests(result.state, runner);
         expect(requests.length).toBeGreaterThanOrEqual(2);
@@ -165,14 +165,16 @@ live('openai live skill loading', () => {
         const skillUserIdx = requests[1].messages.findIndex(
             (m) =>
                 m.role === 'user' &&
-                m.content.some((p) => p.type === 'text' && p.text.includes('## Skill: beta_cedar')),
+                m.content.some(
+                    (p) => p.type === 'text' && p.text.includes('<skill name="beta_cedar"'),
+                ),
         );
         expect(skillUserIdx).toBeGreaterThanOrEqual(0);
         const toolIdx = requests[1].messages.findIndex((m) => m.role === 'tool');
         expect(toolIdx).toBeGreaterThanOrEqual(0);
         expect(skillUserIdx).toBeGreaterThan(toolIdx);
         const req1Text = requestMessageText(requests[1]);
-        expect(req1Text).toContain('## Skill: beta_cedar');
+        expect(req1Text).toContain('<skill name="beta_cedar"');
         expect(req1Text).toContain('BETA_SKILL_ACTIVE');
 
         const text = String(result.output);
@@ -211,7 +213,7 @@ live('openai live skill loading', () => {
         expect(messageRoles(req)).toEqual(['user']);
         const reqText = requestMessageText(req);
         expect(reqText).toContain('Say OK.');
-        expect(reqText).not.toContain('## Skill:');
+        expect(reqText).not.toContain('<skill ');
         expect(reqText).not.toContain('BETA_SKILL_ACTIVE');
     }, 120000);
 
@@ -246,7 +248,7 @@ live('openai live skill loading', () => {
         expect(messageRoles(req)).toEqual(['user']);
         const reqText = requestMessageText(req);
         expect(reqText).toContain('Say OK.');
-        expect(reqText).not.toContain('## Skill:');
+        expect(reqText).not.toContain('<skill ');
         expect(reqText).not.toContain('BETA_SKILL_ACTIVE');
     }, 120000);
 });
@@ -526,7 +528,7 @@ live('openai live preloaded skills', () => {
         // 4. The text really was on the wire, in the very first request.
         const first = await firstRecordedRequest(result.state, runner);
         const firstText = requestMessageText(first);
-        expect(firstText).toContain('## Skill: court_protocol');
+        expect(firstText).toContain('<skill name="court_protocol"');
         expect(firstText).toContain('PROTOCOL_ACTIVE');
 
         // 5. A preloaded skill is not advertised in the index — offering

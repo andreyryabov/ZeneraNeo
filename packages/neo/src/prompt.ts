@@ -87,7 +87,7 @@ export interface ComposedPrompt {
 const SEPARATOR = '\n\n';
 
 /** `&`, `<` and `"` are the three that would end the attribute or the tag. */
-function attribute(value: string): string {
+export function attribute(value: string): string {
     return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 }
 

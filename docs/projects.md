@@ -202,10 +202,16 @@ A skill ships more than text. Pass `ProjectOptions.skillsAt` - the CLI passes
 be reached by, and its rendered instructions say so:
 
 ```
-## Skill: house_style
+<skill name="house_style" src="house_style/SKILL.md">
 This skill's files are at /skills/house_style, read-only. Paths written in it
 are relative to that directory.
+...
+</skill>
 ```
+
+`src` is the skill file relative to the catalog root - the same contract as a
+prompt block's `src`, so the model can name the file to edit and the prompt
+stays identical on every machine.
 
 That is what makes `python /skills/house_style/scripts/lint.py` runnable rather
 than aspirational. The CLI bind-mounts the whole catalog into the sandbox

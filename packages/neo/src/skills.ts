@@ -1,4 +1,5 @@
 import { hash } from './payload.ts';
+import { attribute } from './prompt.ts';
 import type { AgentState } from './state.ts';
 import { projected } from './trajectory.ts';
 import {
@@ -48,6 +49,13 @@ export interface Skill extends SkillSummary {
     path?: string;
     /** absolute path of the source file, if known (set by file-backed providers) */
     file?: string;
+    /**
+     * The source document *as the model is told it*, written onto the block as
+     * `src`. Deliberately not `file`: that one is absolute, so it would put a
+     * home directory in the prompt and give two machines two different cache
+     * prefixes for the same catalog.
+     */
+    src?: string;
 }
 
 export interface SkillProvider {
@@ -93,15 +101,21 @@ export function skillContentHash(s: Skill): string {
 export function renderSkills(skills: Skill[]): string {
     return skills
         .map((s) => {
-            const head = `## Skill: ${s.name}${s.version ? ` (${s.version})` : ''}`;
+            const attrs = [
+                ` name="${attribute(s.name)}"`,
+                s.version ? ` version="${attribute(s.version)}"` : '',
+                // Same contract as a prompt block's `src`: the document to edit,
+                // under a name that is the same on every machine.
+                s.src ? ` src="${attribute(s.src)}"` : '',
+            ].join('');
             // One line, and only when the files are reachable. Without it the
             // model has the instructions and no way to act on the half of them
             // that names a file.
             const where = s.path
-                ? `\nThis skill's files are at ${s.path}, read-only. Paths written in it are ` +
-                  'relative to that directory.\n'
+                ? `This skill's files are at ${s.path}, read-only. Paths written in it are ` +
+                  'relative to that directory.\n\n'
                 : '';
-            return `${head}${where}\n${s.content}`;
+            return `<skill${attrs}>\n${where}${s.content}\n</skill>`;
         })
         .join('\n\n');
 }

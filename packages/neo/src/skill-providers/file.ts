@@ -1,5 +1,5 @@
 import { readFile, readdir } from 'node:fs/promises';
-import { basename, join, resolve } from 'node:path';
+import { basename, join, relative, resolve } from 'node:path';
 import type { Skill, SkillProvider, SkillSummary } from '../skills.ts';
 import { selectTools, type AnyTool } from '../types.ts';
 
@@ -38,6 +38,8 @@ interface Entry {
     summary: SkillSummary;
     /** absolute path of the markdown file */
     file: string;
+    /** that file relative to its root directory — the name the prompt shows */
+    src: string;
     /** the folder holding the skill, or undefined for a bare `<name>.md` */
     folder?: string;
     /** that folder under the name the agent can use, when the host gave one */
@@ -135,6 +137,7 @@ export class FileSkillProvider implements SkillProvider {
             ...entry.summary,
             content: entry.content,
             file: entry.file,
+            src: entry.src,
             ...(tools.length ? { tools } : {}),
             ...(entry.at ? { path: entry.at } : {}),
         };
@@ -176,7 +179,7 @@ export class FileSkillProvider implements SkillProvider {
                 // Only a folder skill has files of its own to point at, and
                 // only when the host said where the directory can be reached.
                 const at = folder && dir.at ? `${dir.at}/${basename(folder)}` : undefined;
-                const entry = parse(raw, base, file, folder, at);
+                const entry = parse(raw, base, file, relative(dir.path, file), folder, at);
                 index.set(entry.summary.name, entry);
             }
         }
@@ -184,12 +187,20 @@ export class FileSkillProvider implements SkillProvider {
     }
 }
 
-function parse(raw: string, base: string, file: string, folder?: string, at?: string): Entry {
+function parse(
+    raw: string,
+    base: string,
+    file: string,
+    src: string,
+    folder?: string,
+    at?: string,
+): Entry {
     const { data, body } = frontmatter(raw);
     const tags = toList(data.tags);
     const tools = toList(data.tools);
     return {
         file,
+        src,
         folder,
         ...(at ? { at } : {}),
         content: body,
