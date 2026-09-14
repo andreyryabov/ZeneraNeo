@@ -24,6 +24,7 @@ import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { auditModels, describeIssue } from './audit.ts';
+import { loadProjectEnv } from './env.ts';
 import { readJson, writeJson } from './home.ts';
 import { KeyStore, assertUsable } from './keys.ts';
 import { projectMounts, type Project } from './projects.ts';
@@ -81,6 +82,11 @@ export interface Engine {
  * and the whole conversation, its memory and its blobs travel with it.
  */
 export async function open(opts: EngineOptions): Promise<Engine> {
+    // Before the keyring, so the project's own file wins over the machine's
+    // keys, and before the load, so `${VAR}` in agents.yaml can name anything
+    // in it. The real environment still beats both.
+    const env = loadProjectEnv(opts.project.dir);
+
     const keys = await KeyStore.open();
     keys.materialize();
     assertUsable(keys);
@@ -117,6 +123,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
             readOnly: opts.readOnly,
             image: opts.image,
             keys: opts.keys,
+            env: env?.names,
             mounts,
         });
         const workspaceOptions = {

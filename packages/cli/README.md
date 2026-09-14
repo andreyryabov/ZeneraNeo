@@ -205,9 +205,12 @@ In the window that opens:
 2. **Open the chat panel and send `/sync-with-spec`.** It reads the
    specification and every file implementing it, works out the difference in
    both directions, and changes the smallest thing that closes each gap.
-3. **Read `SPECIFICATION-FEEDBACK.md`**, which it writes for anything it could
-   not do without guessing. Answer its questions by editing `SPECIFICATION.md`
-    - not by editing prompts - and send `/sync-with-spec` again.
+3. **Answer `SPECIFICATION-FEEDBACK.md`**, which it writes for anything it could
+   not do without guessing. Every question carries two to four written-out
+   answers, each with a `[ ]` box: tick one, delete the ones you do not want, or
+   write your own in their place.
+4. **Send `/update-spec-from-feedback`.** It folds the answers you chose into
+   `SPECIFICATION.md` - never into a prompt - and then `/sync-with-spec` again.
 
 Back in the terminal: `zen check`, then `zen run`.
 
@@ -218,12 +221,13 @@ They are prompt files under `.github/prompts/`, which VS Code and its forks
 offer as chat slash-commands. Both `zen init` and `zen open` write them fresh,
 so they never go stale - and edits to them do not survive.
 
-| In chat           | Does                                                        |
-| ----------------- | ----------------------------------------------------------- |
-| `/sync-with-spec` | Makes every file match `SPECIFICATION.md`, both directions. |
-| `/review-project` | Reads the project as a reviewer would, and reports.         |
-| `/new-agent`      | Adds an agent - prompt, wiring and hand-offs.               |
-| `/new-skill`      | Adds a skill under `agents/skills/`.                        |
+| In chat                      | Does                                                             |
+| ---------------------------- | ---------------------------------------------------------------- |
+| `/sync-with-spec`            | Makes every file match `SPECIFICATION.md`, both directions.      |
+| `/update-spec-from-feedback` | Folds your answers in `SPECIFICATION-FEEDBACK.md` into the spec. |
+| `/review-project`            | Reads the project as a reviewer would, and reports.              |
+| `/new-agent`                 | Adds an agent - prompt, wiring and hand-offs.                    |
+| `/new-skill`                 | Adds a skill under `agents/skills/`.                             |
 
 In an editor that does not support prompt files, paste the contents of
 `.github/prompts/sync-with-spec.prompt.md` into its chat instead - it is only a
@@ -378,20 +382,24 @@ is a command on their machine too.
 Prompts, agent wiring, skills and tool selections are all files - Markdown and
 YAML - rather than code buried inside an application. So the folder can be
 committed, copied to another machine, reviewed in a pull request, and handed to
-someone else who runs it with one command. Credentials live in `$HOME`, never in
-the project, so there is no secret to strip before sharing it.
+someone else who runs it with one command. Model credentials live in `$HOME`,
+never in the project, and anything the project itself needs goes in a
+git-ignored `.env` - so there is no secret to strip before sharing it.
 
 ```
 my-project/
     SPECIFICATION.md             what this is for - the intent
-    INSTRUCTIONS.md              house rules, prepended to every agent
     agents.yaml                  who exists, what they may reach for
     agents/
+        instructions.md          house rules, prepended to every agent
+        <topic>-instructions.md  more of them, one subject at a time
         prompts/<name>.md        each agent's own brief
         skills/<name>/           knowledge loaded on demand, not always-on
     assets/                      reference material, read-only at /assets
     sandbox/Dockerfile           the container commands run in
     scripts/_setup.sh            the one command that initialises the project
+    .spec-sync/                  what the last sync with the spec applied
+    .env                         this project's environment - git-ignored
     sessions/                    one workspace, memory and trajectory each
         <id>/
             workspace/           what the agents can read and write

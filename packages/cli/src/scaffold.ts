@@ -1,12 +1,13 @@
 import {
     chmodSync,
+    copyFileSync,
     existsSync,
     mkdirSync,
     readdirSync,
     readFileSync,
     writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // ---------------------------------------------------------------------------
@@ -26,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 //
 // The trees are copied whole and nothing enumerates them, so adding a file to
 // a new project is adding a file to `templates/project/` and nothing else.
+// `MEMORY_RULES` is the single exception, and it is named below.
 //
 // What is there is deliberately close to empty: a template full of
 // commented-out options is a template nobody reads and everybody deletes. The
@@ -42,6 +44,18 @@ const TEMPLATES = fileURLToPath(new URL('../templates', import.meta.url));
 
 /** The suffix on a file with `{{...}}` in it, dropped when the file lands. */
 const TEMPLATE = '.tmpl';
+
+/** How to use the memory graph: a house rules file, landing under `agents/`. */
+const MEMORY_RULES = join('agents', 'memory-instructions.md');
+
+/** The same bytes, kept in the `zen-memory` skill to restore or diff against. */
+const MEMORY_REFERENCE = join(
+    '.github',
+    'skills',
+    'zen-memory',
+    'references',
+    'memory-instructions.md',
+);
 
 /**
  * This `zen`'s own version, which the scaffold pins the sandbox's tools to.
@@ -122,17 +136,25 @@ interface CopyOptions {
 }
 
 /**
- * The name a template file lands under.
+ * Template files that land under a name they cannot be stored under.
  *
- * `gitignore` gains its dot here because it cannot have one in the repository:
- * npm strips a `.gitignore` out of a published tarball, and git would read this
- * one as rules about `packages/cli/templates/` rather than as content.
+ * `gitignore` cannot have its dot in the repository: npm strips a `.gitignore`
+ * out of a published tarball, and git would read this one as rules about
+ * `packages/cli/templates/` rather than as content. `env` cannot have its dot
+ * for a plainer reason — this repository ignores `.env` everywhere, as every
+ * repository should, so the template would never be committed at all.
  */
+const DOTFILES: Record<string, string> = {
+    gitignore: '.gitignore',
+    env: '.env',
+};
+
+/** The name a template file lands under. */
 function target(name: string): string {
     if (name.endsWith(TEMPLATE)) {
         return name.slice(0, -TEMPLATE.length);
     }
-    return name === 'gitignore' ? '.gitignore' : name;
+    return DOTFILES[name] ?? name;
 }
 
 /**
@@ -171,12 +193,18 @@ function copyTree(from: string, dir: string, rel: string, opts: CopyOptions): st
 // ---------------------------------------------------------------------------
 // Telling the editor which instructions are not for it
 //
-// The project's house rules are `INSTRUCTIONS.md`, deliberately not
+// The project's house rules are `agents/instructions.md`, deliberately not
 // `AGENTS.md`: every coding assistant now reads that name out of an open
 // folder and feeds it to itself as always-on instructions, and `zen open`
 // opens exactly this directory. A name nobody else claims means the two are
 // never confused, and `chat.useAgentsMdFile` no longer has to be switched off
 // to keep them apart.
+//
+// They sit under `agents/` because there is rarely only one of them. Anything
+// named `agents/<topic>-instructions.md` is read too, in filename order, so a
+// subject that is true for every agent but is about one capability — memory,
+// say — gets its own document instead of another section in a file that keeps
+// growing.
 //
 // `chat.useNestedAgentsMdFiles` is still written. It is already false by
 // default, but it is opt-in globally, and this is a directory the agent itself
@@ -185,12 +213,12 @@ function copyTree(from: string, dir: string, rel: string, opts: CopyOptions): st
 // setting, so it applies only in a trusted workspace; that is the right way
 // round, since an untrusted folder is not one to run agents in either.
 //
-// `INSTRUCTIONS.md` addresses the *project's* agents. The editor's assistant
-// still needs a brief of its own, and what it needs to know is how this kind
-// of project is put together — the file formats, how a prompt is written, when
-// to add a skill rather than an agent. That is what the `.github/` tree is: the
-// standing brief, plus the prompt files and skills the editor picks up from the
-// same place.
+// `agents/instructions.md` addresses the *project's* agents. The editor's
+// assistant still needs a brief of its own, and what it needs to know is how
+// this kind of project is put together — the file formats, how a prompt is
+// written, when to add a skill rather than an agent. That is what the
+// `.github/` tree is: the standing brief, plus the prompt files and skills the
+// editor picks up from the same place.
 // ---------------------------------------------------------------------------
 
 /**
@@ -201,7 +229,23 @@ function copyTree(from: string, dir: string, rel: string, opts: CopyOptions): st
  * none. Returns the relative paths written.
  */
 export function editorFiles(dir: string): string[] {
-    return copyTree(join(TEMPLATES, 'editor'), dir, '', {});
+    const written = copyTree(join(TEMPLATES, 'editor'), dir, '', {});
+
+    // The one file that belongs to both trees. It is a project file first —
+    // house rules prepended to every agent that can see the graph — and it is
+    // written once and edited from then on, like every other project file. But
+    // a project whose copy drifted, or that deleted it and turned memory back
+    // on later, needs somewhere to get the current text from, and the editor
+    // tree is replaced on every `init` and `open`. Copying the same bytes into
+    // the skill's references is what makes `diff` between the two mean
+    // something, and what stops a second copy of these rules existing in the
+    // repository to fall out of step with the first.
+    const reference = join(dir, MEMORY_REFERENCE);
+    mkdirSync(dirname(reference), { recursive: true });
+    copyFileSync(join(TEMPLATES, 'project', MEMORY_RULES), reference);
+    written.push(MEMORY_REFERENCE);
+
+    return written;
 }
 
 export interface ScaffoldOptions {
@@ -212,6 +256,12 @@ export interface ScaffoldOptions {
     modelOptions?: string;
     /** give the default agent `exa:*` — set when a key for it is on hand */
     web?: boolean;
+    /**
+     * What vectorises the memory graph, as a provider-prefixed ref. Left out
+     * when the project's provider publishes no embeddings API — memory still
+     * works, ranking recall by term overlap instead of by meaning.
+     */
+    embedding?: string;
 }
 
 export interface Scaffolded {
@@ -243,6 +293,9 @@ export function scaffold(opts: ScaffoldOptions): Scaffolded {
             // different readers — and a tool nothing says to use is not one.
             web: opts.web ? part('exa.spec.md') : '',
             webPrompt: opts.web ? part('exa.prompt.md') : '',
+            memory: opts.embedding
+                ? part('memory.yaml', { embedding: opts.embedding })
+                : part('memory-terms.yaml'),
             version: ownVersion(),
         },
     });
@@ -255,6 +308,13 @@ export function scaffold(opts: ScaffoldOptions): Scaffolded {
     mkdirSync(join(opts.dir, 'agents', 'skills'), { recursive: true });
     mkdirSync(join(opts.dir, 'sessions'), { recursive: true });
     mkdirSync(join(opts.dir, '.tmp'), { recursive: true });
+
+    // Where `/sync-with-spec` records what it applied, so the next pass works
+    // the difference rather than the whole specification again. Empty here, and
+    // git does not carry an empty directory: what says a pass has completed is
+    // `baseline/manifest.txt`, never the directory itself.
+    mkdirSync(join(opts.dir, '.spec-sync', 'baseline'), { recursive: true });
+    mkdirSync(join(opts.dir, '.spec-sync', 'history'), { recursive: true });
 
     // The project directory is what `zen open` opens, so this is where the
     // editor actually reads them.

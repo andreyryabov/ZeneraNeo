@@ -1,0 +1,16 @@
+# What the agents work out, kept with the project rather than in the session
+# that found it out. `agents/memory-instructions.md` is what they read about
+# using it, and `zen memory` is how you look at it from the outside.
+#
+# Recall ranks by term overlap here, which finds a memory phrased the way the
+# question was and misses the rest. This project's provider publishes no
+# embeddings API; add one that does and point the store at it to rank by
+# meaning instead:
+#
+#   memory:
+#       embedding: main
+#
+#   embeddings:
+#       main: openai:text-embedding-3-small
+memory:
+    dir: memory

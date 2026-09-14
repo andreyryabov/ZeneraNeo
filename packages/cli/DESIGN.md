@@ -61,11 +61,16 @@ sessions that ran against it.
 
 ```
 <project>/
-    INSTRUCTIONS.md
     agents.yaml                  what makes the directory a project
     agents/
+        instructions.md          house rules, prepended to every agent
+        <topic>-instructions.md  more of them, as the project grows
         prompts/
         skills/
+    .spec-sync/                  what the last sync with the spec applied
+        baseline/                the specification as that pass left it
+        history/                 one file per pass
+    .env                         this project's environment, git-ignored
     sessions/
         20260825-143012-a7f3/
             workspace/           what the agent can see and write
@@ -235,9 +240,9 @@ and two projects quoting the same handbook pay for it once between them.
 ### 5.1 `zen init [dir]`
 
 Scaffolds the project - a `SPECIFICATION.md`, a nearly empty
-`INSTRUCTIONS.md`, a minimal `agents.yaml` naming one `default` agent, empty
-`agents/prompts/` and `agents/skills/`, and a `scripts/_setup.sh` with no steps
-in it yet - and adds the path to `projects.json`.
+`agents/instructions.md`, a minimal `agents.yaml` naming one `default` agent,
+empty `agents/prompts/` and `agents/skills/`, and a `scripts/_setup.sh` with no
+steps in it yet - and adds the path to `projects.json`.
 
 `SPECIFICATION.md` is the one file written out in full, and it specifies the
 project that was just scaffolded: every line of it is implemented by something
@@ -245,6 +250,16 @@ next to it, and everything implemented is in it. It is there to be replaced,
 but until it is it is true, which is what makes it a template worth reading
 rather than a heading list. `/sync-with-spec` then works from the first edit
 onwards, because there is already a specification to diverge from.
+
+`.spec-sync/baseline/` and `.spec-sync/history/` are made empty for it to write
+into: a pass records the specification it applied, so the next one diffs against
+that record and works the difference rather than re-deriving every decision the
+last one already made. Empty is the honest state - git cannot carry an empty
+directory, and `zen` never writes into it, so what marks a project as having
+completed a pass is `baseline/manifest.txt` rather than the directory. The
+mechanism is the `zen-spec-sync` skill's `scripts/snapshot.sh`, in the `.github/`
+tree, and not a `zen` command: it is twenty lines of `sh` over `cmp` and
+`shasum`, read by the agent that runs it, and nothing in it needs the runtime.
 
 That agent gets `workspace:*` and `sandbox:*`: an agent that can read and write
 files but cannot run the test it just changed is a demo, not a project, and the
@@ -289,13 +304,22 @@ It also writes `.vscode/settings.json`:
 }
 ```
 
-The project's house rules live in `INSTRUCTIONS.md`, deliberately not
+The project's house rules live in `agents/instructions.md`, deliberately not
 `AGENTS.md`. Every coding assistant now reads that name out of the root of an
 open folder and feeds it to itself as always-on instructions, and `zen open`
 opens exactly this directory - so a project that used it would have its rules,
 addressed to _its_ agents about _their_ tools and workspace, confused with the
 editor's own every single time. A name nobody else claims settles that without a
 setting.
+
+They sit beside the prompts and the skills, under `agents/`, because the root of
+a project is where its _subject_ lives - the specification, the sources, the
+sessions - and because there is rarely only one of them. Anything named
+`agents/<topic>-instructions.md` is read too, in filename order, and prepended to
+every agent. That is what gives a capability its own document: the memory usage
+rules are true for every agent, but they are about memory, so they arrive with
+the `memory:` block and leave with it rather than becoming a section of a file
+that only ever grows.
 
 `chat.useNestedAgentsMdFiles` is written anyway. It is already false by default,
 but it is opt-in globally, and this is a directory the agent itself writes into;
@@ -721,6 +745,19 @@ is what makes a session self-contained the way the rest of it already is - a
 `pip install --user` is still there when the session is reopened, and travels
 with the directory when it is copied. Everything outside the two mounts is
 thrown away when the session closes, unless `sandbox.persist` says otherwise.
+
+The container's environment comes from three places. `sandbox.env` names host
+variables to pass through, by name only and never anything credential-shaped.
+The keyring's selected credentials are forwarded for the model, a service
+account file being bind-mounted read-only under `/run/zenera/keys` instead. And
+the project's own `.env` - written by `zen init`, ignored by git - is read
+before the project loads and forwarded whole. All of it goes to podman as
+`--env NAME` without a value, so nothing appears in an argv, in `ps` or in
+`podman inspect`, and the container's identity is a function of the names
+rather than of the secrets: rotating a key does not abandon a persisted rootfs.
+`keys: false`, or `zen run --no-keys`, withholds the credentials and the `.env`
+together - a `.env` is where an api token lives, so splitting them would make
+the flag a promise it does not keep.
 
 ### 9.1 Building instead of pulling
 

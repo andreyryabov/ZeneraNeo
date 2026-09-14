@@ -168,15 +168,17 @@ const skillsBinding = z
  * `fork:` is never offered the tool.
  *
  * Both limits are stated as errors rather than as values that get clamped
- * later: `maxBranches: 1` would make every call the model could write fail, and
+ * later: `maxBranches: 0` would make every call the model could write fail, and
  * `agents: []` reads as "no agents" while actually meaning "only itself".
+ * `maxBranches: 1` is not a contradiction — it says this agent may delegate a
+ * job but may not fan out.
  */
 const forkBinding = z
     .object({
         /** agents a branch may run; absent means any registered agent */
         agents: z.array(name).min(1).optional(),
-        /** a fork is never valid with one branch, so a cap below two is a contradiction */
-        maxBranches: z.int().min(2).optional(),
+        /** a cap of 1 allows delegation only; 0 would refuse every possible call */
+        maxBranches: z.int().min(1).optional(),
     })
     .strict();
 

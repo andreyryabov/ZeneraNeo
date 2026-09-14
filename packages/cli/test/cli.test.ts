@@ -1,5 +1,5 @@
 import type { Embedder, EmbeddingRequest, Model, ProcResult, runProcess } from '@zenera/neo';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
     existsSync,
     mkdirSync,
@@ -29,6 +29,7 @@ import {
 } from '../src/catalog.ts';
 import { ALIASES, COMMANDS, EXTERNAL, type External } from '../src/commands/index.ts';
 import { cliManifest, versionOf } from '../src/commands/version.ts';
+import { loadProjectEnv } from '../src/env.ts';
 import { hasExternal, loadExternal } from '../src/external.ts';
 import { History, historyPath, MAX_ENTRIES } from '../src/history.ts';
 import { isStamp, stamp, stampInstant } from '../src/ids.ts';
@@ -794,7 +795,7 @@ describe('the project check', () => {
 
     it('passes a project whose files are all there', async () => {
         const dir = project({
-            'INSTRUCTIONS.md': 'House rules.\n',
+            'agents/instructions.md': 'House rules.\n',
             'agents.yaml': 'version: 1\nmodel: gpt-4o\nagents:\n  - name: solo\n',
             'agents/prompts/solo.md': 'Be useful.\n',
         });
@@ -804,11 +805,54 @@ describe('the project check', () => {
         expect(errors(report)).toEqual([]);
         expect(report.project.entry).toBe('solo');
         expect(report.agents[0].instructions).toEqual([
-            'INSTRUCTIONS.md',
+            'agents/instructions.md',
             'agents/prompts/solo.md',
         ]);
         // No keyring was passed, so nothing may be said about credentials.
         expect(report.models[0].credential).toBe('unknown');
+    });
+
+    /**
+     * Every agent reads every one of them, so the check has to name every one
+     * of them: an instruction file nothing lists is one nobody knows is live.
+     */
+    it('lists every house-rules file an agent is given, in the loader order', async () => {
+        const dir = project({
+            'agents/instructions.md': 'House rules.\n',
+            'agents/memory-instructions.md': 'Never grep /memory.\n',
+            'agents/aaa-instructions.md': 'First.\n',
+            'agents.yaml': 'version: 1\nmodel: gpt-4o\nagents:\n  - name: solo\n',
+            'agents/prompts/solo.md': 'Be useful.\n',
+        });
+        const report = await validateProject({ dir });
+
+        expect(errors(report)).toEqual([]);
+        expect(report.agents[0].instructions).toEqual([
+            'agents/instructions.md',
+            'agents/aaa-instructions.md',
+            'agents/memory-instructions.md',
+            'agents/prompts/solo.md',
+        ]);
+        expect(report.files.find((f) => f.path === 'agents/memory-instructions.md')?.exists).toBe(
+            true,
+        );
+    });
+
+    /** The old layout still runs, so this is a warning and never an error. */
+    it('asks for a root INSTRUCTIONS.md to be moved', async () => {
+        const dir = project({
+            'INSTRUCTIONS.md': 'House rules, where they used to live.\n',
+            'agents.yaml': 'version: 1\nmodel: gpt-4o\nagents:\n  - name: solo\n',
+            'agents/prompts/solo.md': 'Be useful.\n',
+        });
+        const report = await validateProject({ dir });
+
+        const legacy = report.findings.find((f) => f.code === 'house-rules.legacy');
+        expect(legacy?.severity).toBe('warning');
+        expect(legacy?.fix).toContain('agents/instructions.md');
+        expect(errors(report)).toEqual([]);
+        expect(codes(report)).not.toContain('house-rules.missing');
+        expect(report.agents[0].instructions[0]).toBe('INSTRUCTIONS.md');
     });
 
     it('reports every broken reference, not the first', async () => {
@@ -880,7 +924,9 @@ describe('the project check', () => {
     });
 
     it('says which files it looked for when there is no config at all', async () => {
-        const report = await validateProject({ dir: project({ 'INSTRUCTIONS.md': 'hello\n' }) });
+        const report = await validateProject({
+            dir: project({ 'agents/instructions.md': 'hello\n' }),
+        });
 
         expect(errors(report)).toEqual(['config.missing']);
         expect(report.project.config).toBeNull();
@@ -895,12 +941,12 @@ describe('the project check', () => {
         const report = await validateProject({
             dir: project({
                 'agents.yaml': 'version: 1\nagents:\n  - name: Not A Name\n',
-                'INSTRUCTIONS.md': 'hello\n',
+                'agents/instructions.md': 'hello\n',
             }),
         });
 
         expect(errors(report)).toEqual(['config.invalid']);
-        expect(report.files.find((f) => f.path === 'INSTRUCTIONS.md')?.exists).toBe(true);
+        expect(report.files.find((f) => f.path === 'agents/instructions.md')?.exists).toBe(true);
     });
 
     it('checks the skill catalog it will actually read', async () => {
@@ -1082,6 +1128,231 @@ describe('the scaffold', () => {
         // thing anyone has to know. Twice, because it has to stay safe to redo.
         const run = (): string => execFileSync(script, { cwd: tmpdir(), encoding: 'utf8' });
         expect(run()).toBe(run());
+    });
+
+    /**
+     * A file the project needs and git must never see. It cannot be stored
+     * under its own name — this repository ignores `.env` too — so the one
+     * thing worth pinning is that it arrives with the dot on.
+     */
+    it('writes a .env, and ignores it', () => {
+        const dir = join(root, 'env');
+        mkdirSync(dir, { recursive: true });
+        const written = scaffold({ dir, model: 'gpt-4o' });
+
+        expect(written.files).toContain('.env');
+        expect(readFileSync(join(dir, '.env'), 'utf8')).not.toContain('{{');
+        expect(readFileSync(join(dir, '.gitignore'), 'utf8')).toMatch(/^\.env$/m);
+    });
+
+    it('leaves a filled-in .env alone', () => {
+        const dir = join(root, 'filled');
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, '.env'), 'ACME_TOKEN=mine\n');
+        scaffold({ dir, model: 'gpt-4o' });
+
+        expect(readFileSync(join(dir, '.env'), 'utf8')).toBe('ACME_TOKEN=mine\n');
+    });
+
+    /**
+     * The record `/sync-with-spec` works from: two directories the project
+     * commits, empty because what marks a completed pass is the manifest
+     * inside them, and the script that writes it — executable, and at the path
+     * the prompt tells the agent to run.
+     */
+    it('makes room for the spec-sync record, and ships the script that writes it', () => {
+        const dir = join(root, 'spec-sync');
+        mkdirSync(dir, { recursive: true });
+        const written = scaffold({ dir, model: 'gpt-4o' });
+        const script = join('.github', 'skills', 'zen-spec-sync', 'scripts', 'snapshot.sh');
+
+        expect(readdirSync(join(dir, '.spec-sync', 'baseline'))).toEqual([]);
+        expect(readdirSync(join(dir, '.spec-sync', 'history'))).toEqual([]);
+        // A record only this machine has is not a record.
+        expect(readFileSync(join(dir, '.gitignore'), 'utf8')).not.toContain('.spec-sync');
+
+        expect(written.editor).toContain(join('.github', 'skills', 'zen-spec-sync', 'SKILL.md'));
+        expect(written.editor).toContain(script);
+        expect(statSync(join(dir, script)).mode & 0o777).toBe(0o755);
+        // The prompt sends the agent to that path, so the two have to agree.
+        expect(
+            readFileSync(join(dir, '.github', 'prompts', 'sync-with-spec.prompt.md'), 'utf8'),
+        ).toContain(script);
+
+        // Called from anywhere, and honest about a project that has never had
+        // a pass: there is nothing to diff against yet.
+        expect(
+            execFileSync(join(dir, script), ['status'], { cwd: tmpdir(), encoding: 'utf8' }),
+        ).toContain('mode: full');
+    });
+
+    /**
+     * The record covers the implementation as well as the intent, so a prompt,
+     * skill or house rule edited between passes is a change the next pass has
+     * to account for rather than one nothing reports.
+     */
+    it('records the implementation too, so a hand-edited house rule reads as a change', () => {
+        const dir = join(root, 'spec-sync-tree');
+        mkdirSync(dir, { recursive: true });
+        scaffold({ dir, model: 'gpt-4o' });
+        const script = join(dir, '.github', 'skills', 'zen-spec-sync', 'scripts', 'snapshot.sh');
+        const run = (arg: string) =>
+            execFileSync(script, [arg], { cwd: tmpdir(), encoding: 'utf8' });
+
+        writeFileSync(join(dir, '.spec-sync', 'history', '2026-09-13T104500Z.md'), '# pass\n');
+        run('commit');
+        expect(existsSync(join(dir, '.spec-sync', 'baseline', 'agents', 'instructions.md'))).toBe(
+            true,
+        );
+        expect(run('status')).toContain('mode: incremental');
+
+        writeFileSync(join(dir, 'agents', 'instructions.md'), 'rewritten by hand\n');
+        expect(run('status')).toContain('changed: agents/instructions.md');
+        expect(run('diff')).toContain('rewritten by hand');
+    });
+
+    /**
+     * The checks a review makes by rote, shipped as scripts rather than as
+     * commands to retype. `.github/` is ours and is rewritten on every `init`
+     * and `open`, so the distribution is the only place they can come from and
+     * still be there next time.
+     */
+    it('ships the review scripts, runnable from anywhere', () => {
+        const dir = join(root, 'review');
+        mkdirSync(dir, { recursive: true });
+        const written = scaffold({ dir, model: 'gpt-4o' });
+        const entry = join('.github', 'skills', 'zen-review', 'scripts', 'review.sh');
+        const paths = join('.github', 'skills', 'zen-review', 'scripts', 'check-paths.sh');
+        const memory = join('.github', 'skills', 'zen-memory', 'scripts', 'check-instructions.sh');
+
+        expect(written.editor).toContain(join('.github', 'skills', 'zen-review', 'SKILL.md'));
+        for (const script of [entry, paths, memory]) {
+            expect(written.editor).toContain(script);
+            expect(statSync(join(dir, script)).mode & 0o777).toBe(0o755);
+        }
+        // The prompt sends the agent to the entry point, so the two must agree.
+        expect(
+            readFileSync(join(dir, '.github', 'prompts', 'review-project.prompt.md'), 'utf8'),
+        ).toContain(entry);
+
+        const run = (script: string) =>
+            spawnSync(join(dir, script), { cwd: tmpdir(), encoding: 'utf8' });
+
+        // A project as `zen init` leaves it has nothing to report.
+        expect(run(paths).status).toBe(0);
+        expect(run(memory).stdout).toContain('byte for byte');
+
+        // A path outside the four mounts is a finding, and says where it is.
+        writeFileSync(join(dir, 'agents', 'prompts', 'default.md'), 'Read /tmp/x.txt first.\n');
+        const swept = run(paths);
+        expect(swept.status).toBe(1);
+        expect(swept.stdout).toContain('path: /tmp/x.txt');
+        expect(swept.stdout).toContain('agents/prompts/default.md:1');
+    });
+
+    /**
+     * The drift this exists for: a copy that differs from the reference by
+     * trailing whitespace inside a table, which nobody has ever caught by
+     * reading the two files side by side.
+     */
+    it('catches a memory copy that drifted invisibly, and repairs it', () => {
+        const dir = join(root, 'memory-copy');
+        mkdirSync(dir, { recursive: true });
+        scaffold({ dir, model: 'gpt-4o' });
+        const script = join(
+            dir,
+            '.github',
+            'skills',
+            'zen-memory',
+            'scripts',
+            'check-instructions.sh',
+        );
+        const copy = join(dir, 'agents', 'memory-instructions.md');
+        const run = (...args: string[]) =>
+            spawnSync(script, args, { cwd: tmpdir(), encoding: 'utf8' });
+
+        const lines = readFileSync(copy, 'utf8').split('\n');
+        lines[0] = `${lines[0]}  `;
+        writeFileSync(copy, lines.join('\n'));
+
+        const drifted = run();
+        expect(drifted.status).toBe(1);
+        expect(drifted.stdout).toContain('trailing whitespace only');
+        expect(run('diff').stdout).toContain('--- reference');
+
+        expect(run('fix').status).toBe(0);
+        expect(run().status).toBe(0);
+
+        // Gone entirely is the other half of it, and the remedy is the same one.
+        rmSync(copy);
+        const missing = run();
+        expect(missing.status).toBe(1);
+        expect(missing.stdout).toContain('missing: agents/memory-instructions.md');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// The project's own environment
+//
+// Two things to hold: the real environment still wins, and the names come back
+// whole. The second is what the sandbox forwards, and a name dropped because
+// the shell happened to answer it first is a variable missing inside the
+// container for reasons nobody could reconstruct.
+// ---------------------------------------------------------------------------
+
+describe("a project's .env", () => {
+    const root = mkdtempSync(join(tmpdir(), 'zen-env-'));
+    const names = ['ZEN_TEST_SET', 'ZEN_TEST_UNSET', 'ZEN_TEST_BLANK'];
+
+    afterAll(() => rmSync(root, { recursive: true, force: true }));
+    afterEach(() => {
+        for (const name of [...names, 'GOOGLE_APPLICATION_CREDENTIALS']) {
+            delete process.env[name];
+        }
+    });
+
+    it('fills the gaps and reports every name', () => {
+        const dir = join(root, 'one');
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(
+            join(dir, '.env'),
+            '# a comment\nZEN_TEST_SET=from-file\nZEN_TEST_UNSET=from-file\nZEN_TEST_BLANK=from-file\n',
+        );
+        process.env['ZEN_TEST_SET'] = 'from-shell';
+        process.env['ZEN_TEST_BLANK'] = '';
+
+        const loaded = loadProjectEnv(dir);
+
+        expect([...(loaded?.names ?? [])].sort()).toEqual([...names].sort());
+        // What is exported wins; what is merely declared empty does not.
+        expect(process.env['ZEN_TEST_SET']).toBe('from-shell');
+        expect(process.env['ZEN_TEST_UNSET']).toBe('from-file');
+        expect(process.env['ZEN_TEST_BLANK']).toBe('from-file');
+    });
+
+    it('says nothing about a project that has none', () => {
+        const dir = join(root, 'bare');
+        mkdirSync(dir, { recursive: true });
+
+        expect(loadProjectEnv(dir)).toBeUndefined();
+    });
+
+    it('reads a credential file path as relative to the project', () => {
+        const dir = join(root, 'gac');
+        mkdirSync(dir, { recursive: true });
+        delete process.env['GOOGLE_APPLICATION_CREDENTIALS'];
+        writeFileSync(
+            join(dir, '.env'),
+            'GOOGLE_APPLICATION_CREDENTIALS=service-account.json\nZEN_TEST_UNSET=./not-a-path\n',
+        );
+
+        loadProjectEnv(dir);
+
+        expect(process.env['GOOGLE_APPLICATION_CREDENTIALS']).toBe(
+            join(dir, 'service-account.json'),
+        );
+        // Only the variables that name a file are paths; the rest are values.
+        expect(process.env['ZEN_TEST_UNSET']).toBe('./not-a-path');
     });
 });
 

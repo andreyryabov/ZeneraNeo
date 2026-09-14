@@ -798,6 +798,12 @@ into N independent child runs, and rejoins into a single result. From the
 parent's message history the whole episode looks like **one tool call and one
 tool result** - sequential semantics, parallel execution.
 
+N may be 1. A fork of one is delegation: the same mechanism used for its other
+half, which is that a branch's transcript never reaches the parent. It is the
+only sub-agent call that returns - a handoff spends the conversation to get its
+answer - so refusing one branch would leave no way to ask another agent a
+question and carry on.
+
 ### 10.1 The fork tool
 
 ```ts
@@ -811,12 +817,21 @@ z.object({
                 agent: z.string().optional(), // defaults to the forking agent
             }),
         )
-        .min(2),
+        .min(1),
     context: z.enum(['inherit', 'compact', 'none']).default('inherit'),
 });
 ```
 
 Agent opt-in: `AgentOptions.fork?: { agents?: string[]; maxBranches?: number }`.
+
+The schema is mechanics. The policy - what survives a join, that a branch cannot
+be corrected once it starts, which `context` mode fits which shape of work -
+lives in `forkInstructions()` (`src/fork.ts`), pushed into the system prompt by
+`derivedPrompt` under the same condition that offers the tool: a fork binding,
+and `forkDepth < maxForkDepth`. Same seam as `memoryInstructions`, and for the
+same reason - it is per-run policy, not per-call argument documentation, so
+stating it once in the cacheable prefix costs less than restating it in every
+tool schema the model reads.
 
 ### 10.2 Data model
 
@@ -907,6 +922,8 @@ conversation to arrive in:
   call arguments, but _which one is mine_, _who has the rest_ and _what becomes
   of my answer_ exist nowhere else. Without them a branch re-derives work a
   sibling owns and writes an answer shaped for a user rather than for a merge.
+  A lone branch is told the opposite thing - that nobody else was opened, so
+  none of it will be picked up elsewhere.
 - `none` - a `UserInputNode` carrying the instructions, because there is no call
   above to answer.
 
@@ -1310,9 +1327,9 @@ full state, §17.2).
 
 ## 17. System prompt composition - a prompt is a list of sources
 
-A real system prompt is never one string: it is an agent-specific file, a shared
-`INSTRUCTIONS.md`, a house style block, a skill index, and a couple of runtime
-notes, concatenated. Today all of that collapses into a single
+A real system prompt is never one string: it is an agent-specific file, the
+shared house rules under `agents/`, a house style block, a skill index, and a
+couple of runtime notes, concatenated. Today all of that collapses into a single
 `SystemPromptNode.prompt` blob (plus fragments appended inside `buildRequest`),
 so the trajectory can say _what the model read_ but not _which file to edit to
 change it_. This section makes the composition itself first-class.
@@ -1413,9 +1430,10 @@ export interface SystemPromptNode extends NodeBase {
 
 Two fields, and each earns its place:
 
-- `content` is a `Payload` because everything is (§4): `INSTRUCTIONS.md` shared by
-  ten agents, by both sides of a handoff and by every fork branch is stored once,
-  and the content address doubles as the drift hash - no parallel hash field.
+- `content` is a `Payload` because everything is (§4): `agents/instructions.md`
+  shared by ten agents, by both sides of a handoff and by every fork branch is
+  stored once, and the content address doubles as the drift hash - no parallel
+  hash field.
 - Offsets into `prompt` are deliberately absent. They would be a third
   representation of the same bytes, invalidated by any change to an earlier
   part, and an inspector that wants to highlight a region can find it by content.

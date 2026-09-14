@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { Agent, AgentRegistry, handoffTarget, handoffTool } from './agent.ts';
 import type { PendingToolCall } from './events.ts';
+import { FORK_DESCRIPTION, forkInstructions, forkParameters } from './fork.ts';
 import { systemClock, type IdClock } from './ids.ts';
 import { memoryInstructions, renderPreferences } from './memory/instructions.ts';
 import { memoryTools } from './memory/tools.ts';
@@ -333,87 +334,10 @@ function forkAgents<TCtx>(state: AgentState, reg: AgentRegistry<TCtx>): string[]
     return known.length ? known : [state.agentName];
 }
 
-/**
- * Derived from the state rather than a constant, because the one thing a weak
- * model reliably gets wrong here is inventing an agent name. An `enum` of the
- * agents that actually exist is a constraint the provider enforces during
- * decoding, which no amount of prose in the description can match.
- *
- * `minItems`/`maxItems` are stated too, but they are advisory — most providers
- * ignore them under strict decoding — so `parseForkArgs` and `forkProblem`
- * still check both, and their messages are written to be read by the model.
- */
-function forkParameters(agents: string[], self: string, maxBranches?: number): JsonSchema {
-    const max = maxBranches ?? 0;
-    // When the author's list excludes the current agent there is no sane
-    // default, so the model has to name one.
-    const selfAllowed = agents.includes(self);
-    return {
-        type: 'object',
-        properties: {
-            branches: {
-                type: 'array',
-                minItems: 2,
-                ...(max >= 2 ? { maxItems: max } : {}),
-                description:
-                    `At least two branches${max >= 2 ? `, at most ${max}` : ''}. ` +
-                    'One branch is never valid: if the work does not split, do it yourself ' +
-                    'instead of calling this tool.',
-                items: {
-                    type: 'object',
-                    properties: {
-                        name: {
-                            type: 'string',
-                            description: 'Short, unique label for this branch, e.g. "eu-tariffs".',
-                        },
-                        instructions: {
-                            type: 'string',
-                            description:
-                                'The complete assignment for this branch. It runs in a separate ' +
-                                'conversation and cannot ask questions, so state everything it ' +
-                                'needs and exactly what it must return.',
-                        },
-                        agent: {
-                            type: 'string',
-                            enum: agents,
-                            description:
-                                'Which agent runs this branch. Must be one of: ' +
-                                agents.join(', ') +
-                                (selfAllowed ? `. Omit to use "${self}".` : '.'),
-                        },
-                    },
-                    required: selfAllowed
-                        ? ['name', 'instructions']
-                        : ['name', 'instructions', 'agent'],
-                    additionalProperties: false,
-                },
-            },
-            context: {
-                type: 'string',
-                enum: ['inherit', 'compact', 'none'],
-                description:
-                    'How much of this conversation each branch starts with: "inherit" (all of ' +
-                    'it, the default), "compact" (messages only, no tool traffic), "none" ' +
-                    '(nothing but its own instructions).',
-            },
-        },
-        required: ['branches'],
-        additionalProperties: false,
-    };
+/** One condition for the tool and for the prompt block that explains it. */
+function canFork<TCtx>(agent: Agent<TCtx>, state: AgentState): boolean {
+    return Boolean(agent.fork) && state.spec.forkDepth < state.spec.maxForkDepth;
 }
-
-const FORK_DESCRIPTION = [
-    'Split the work into independent branches that run in parallel and rejoin into one result.',
-    '',
-    'Call it when two or more parts of the task can be worked on without seeing each ' +
-        "other's findings — separate documents, regions, candidates, hypotheses. Do not call it " +
-        'to break one line of reasoning into steps: branches cannot talk to each other, and a ' +
-        "step that needs the previous step's answer must stay in this conversation.",
-    '',
-    'Every call needs at least two branches, each with a unique name and self-contained ' +
-        'instructions. Their answers come back to you as the result of this call, and you ' +
-        'decide what the final answer is.',
-].join('\n');
 
 /**
  * tools(state) = agent tools + handoffs + memory + skills + fork +
@@ -449,14 +373,14 @@ export async function resolveTools<TCtx>(
         const own = new Set(agent.tools.map((t) => t.name));
         tools.push(...(await lockedSkillTools<TCtx>(binding, provider, own)));
     }
-    if (agent.fork && state.spec.forkDepth < state.spec.maxForkDepth) {
+    if (canFork(agent, state)) {
         tools.push({
             name: FORK_TOOL,
             description: FORK_DESCRIPTION,
             parameters: forkParameters(
                 forkAgents(state, reg),
                 state.agentName,
-                agent.fork.maxBranches,
+                agent.fork?.maxBranches,
             ),
             // Never executed as a tool: the runner drives branches and the join
             // becomes the tool result.
@@ -517,6 +441,9 @@ async function derivedPrompt<TCtx>(
         if (rendered) {
             out.push(rendered);
         }
+    }
+    if (canFork(agent, state)) {
+        out.push(forkInstructions());
     }
     if (state.spec.outputSchema) {
         out.push(FINAL_OUTPUT_INSTRUCTIONS);
@@ -641,14 +568,7 @@ function parseForkArgs(raw: string): ForkArgs | string {
     // the model as the tool result, and it is the only chance it gets to work
     // out what to do differently.
     if (!Array.isArray(branches) || branches.length === 0) {
-        return 'the "branches" argument is missing or empty; it must be an array of at least two branches';
-    }
-    if (branches.length < 2) {
-        return (
-            'a fork needs at least two branches, and this call has one. Either add the other ' +
-            'independent branches, or do not fork at all and carry out the work in this ' +
-            'conversation.'
-        );
+        return 'the "branches" argument is missing or empty; it must be an array of at least one branch';
     }
     const parsed: ForkArgs['branches'] = [];
     for (const b of branches as Record<string, unknown>[]) {
@@ -1140,6 +1060,9 @@ export async function createChildState(
  * what happens to what it produces, exist nowhere else. Without them a branch
  * re-derives work a sibling already owns and writes an answer shaped for a user
  * rather than for a merge.
+ *
+ * A lone branch has no siblings to be told about, and the thing it does need to
+ * know is the opposite one: nobody else is working on any of this.
  */
 function branchBrief(
     fork: ForkNode,
@@ -1152,11 +1075,16 @@ function branchBrief(
         '',
         instructions,
         '',
-        `Running in parallel, on the assignments the call above gave them: ${siblings.join(', ')}. ` +
-            'You cannot see their work and they cannot see yours, so anything you do on their ' +
-            'part is duplicated effort, and anything you leave to them will be there. This branch ' +
-            'ends with your final answer; that answer alone rejoins the conversation above, ' +
-            'merged with theirs.',
+        siblings.length
+            ? `Running in parallel, on the assignments the call above gave them: ${siblings.join(', ')}. ` +
+              'You cannot see their work and they cannot see yours, so anything you do on their ' +
+              'part is duplicated effort, and anything you leave to them will be there. This branch ' +
+              'ends with your final answer; that answer alone rejoins the conversation above, ' +
+              'merged with theirs.'
+            : 'No other branch was opened, so the whole assignment is yours and nothing you ' +
+              'leave undone will be picked up elsewhere. This branch ends with your final ' +
+              'answer; that answer alone rejoins the conversation above, and none of the steps ' +
+              'you take to reach it go with it.',
     ].join('\n');
 }
 

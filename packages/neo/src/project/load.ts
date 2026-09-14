@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { basename, join, relative, sep } from 'node:path';
 import { Agent, AgentRegistry, type ForkOptions } from '../agent.ts';
 import type { Embedder } from '../embedding.ts';
 import { RunStream } from '../events.ts';
@@ -15,7 +15,7 @@ import {
 } from '../models/factory.ts';
 import type { PayloadStore } from '../payload.ts';
 import { promptFile, type PromptPart } from '../prompt.ts';
-import { AgentRunner, type RunOptions, type RunnerOptions } from '../runner.ts';
+import { AgentRunner, type RunnerOptions, type RunOptions } from '../runner.ts';
 import { FileSkillProvider, type SkillDir } from '../skill-providers/file.ts';
 import type { SkillBinding, SkillProvider, SkillSummary } from '../skills.ts';
 import { selectTools, type AnyTool, type Input } from '../types.ts';
@@ -30,8 +30,9 @@ import { projectDir, projectFile, projectRoot } from './refs.ts';
  * A folder is an agentic system:
  *
  * ```
- * INSTRUCTIONS.md               house rules, prepended to every agent
  * agents.yaml                   who exists, what they may reach for
+ * agents/instructions.md        house rules, prepended to every agent
+ * agents/<topic>-instructions.md   more of them, added as the project grows
  * agents/prompts/<role>.md      one agent's own instructions
  * agents/skills/<name>/SKILL.md
  * assets/                       reference material, mounted read-only at /assets
@@ -90,6 +91,7 @@ export interface ProjectOptions<TCtx = unknown> {
     skillsAt?: string;
 }
 
+const AGENTS_DIR = 'agents';
 const PROMPTS_DIR = 'agents/prompts';
 const SKILLS_DIR = 'agents/skills';
 /** Reference material, by convention, when `assets:` says nothing. */
@@ -98,7 +100,11 @@ const CONFIG_NAMES = ['agents.yaml', 'agents.yml', 'agents/agents.yaml', 'agents
 // Deliberately not `AGENTS.md`: every coding assistant now reads that name out
 // of an open folder, and `zen open` opens exactly this directory. The house
 // rules here address *this project's* agents, not the editor's.
-const HOUSE_RULES = 'INSTRUCTIONS.md';
+const HOUSE_RULES = 'agents/instructions.md';
+/** Every other `agents/<topic>-instructions.md`, in filename order. */
+const INSTRUCTIONS_SUFFIX = '-instructions.md';
+/** Where the house rules used to live. Still read, so an old project still runs. */
+const LEGACY_HOUSE_RULES = 'INSTRUCTIONS.md';
 
 /** A project's declaration, before anything is assembled from it. */
 export interface ProjectSource {
@@ -132,8 +138,8 @@ export async function loadProject<TCtx = unknown>(
 ): Promise<AgentProject<TCtx>> {
     const { root, source, config } = readProjectConfig(dir);
 
-    // Read once and share the object: every agent's prompt then reports the
-    // same path and the same content hash, so the report says "one document,
+    // Read once and share the objects: every agent's prompt then reports the
+    // same paths and the same content hashes, so the report says "one document,
     // five prompts" instead of showing five identical blobs.
     const houseRules = readHouseRules(root);
 
@@ -307,36 +313,66 @@ function findConfig(root: string): string {
     throw new Error(`no project configuration in ${root} (looked for ${CONFIG_NAMES.join(', ')})`);
 }
 
-function readHouseRules(root: string): PromptPart | undefined {
-    const path = join(root, HOUSE_RULES);
-    // Optional on purpose: a one-agent project whose whole prompt is its role
-    // file should not need a second, empty document.
-    return existsSync(path) ? promptFile(path, 'house_rules') : undefined;
+/** The project-relative name of a file, which is the name the model is given. */
+function within(root: string, path: string): string {
+    return relative(root, path).split(sep).join('/');
 }
 
 /**
- * `INSTRUCTIONS.md` first, the agent's own file second — shared context before
+ * Every house-rules document, in the order they are prepended.
+ *
+ * The set is a glob rather than a list in `agents.yaml` because these are read
+ * by every agent without exception — there is nothing to decide, so there is
+ * nothing to declare. Order is the filename's, which is the only ordering that
+ * is the same on every machine and is visible without opening another file.
+ *
+ * All of it is optional: a one-agent project whose whole prompt is its role
+ * file should not need a second, empty document.
+ */
+function readHouseRules(root: string): PromptPart[] {
+    const rules: PromptPart[] = [];
+    const take = (rel: string): void => {
+        const path = join(root, rel);
+        if (existsSync(path)) {
+            rules.push(promptFile(path, 'house_rules', rel));
+        }
+    };
+    // First, because it is the oldest and most general thing the project says:
+    // anything added under `agents/` during a migration layers on top of it.
+    take(LEGACY_HOUSE_RULES);
+    take(HOUSE_RULES);
+    for (const name of topics(root)) {
+        take(`${AGENTS_DIR}/${name}`);
+    }
+    return rules;
+}
+
+/** `agents/<topic>-instructions.md`, sorted. Subdirectories are not searched. */
+function topics(root: string): string[] {
+    const dir = join(root, AGENTS_DIR);
+    if (!existsSync(dir)) {
+        return [];
+    }
+    return readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name.endsWith(INSTRUCTIONS_SUFFIX))
+        .map((entry) => entry.name)
+        .sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * The house rules first, the agent's own file second — shared context before
  * the specific job, and the stable half of the prompt in front where a cache
  * can reuse it.
  */
-function instructionsFor(
-    root: string,
-    spec: AgentConfig,
-    houseRules: PromptPart | undefined,
-): PromptPart[] {
-    const parts: PromptPart[] = [];
-    if (houseRules) {
-        parts.push(houseRules);
-    }
-    if (spec.system) {
-        parts.push(
-            promptFile(projectFile(root, spec.system, `agents.${spec.name}.system`), 'role'),
-        );
-    } else {
-        const conventional = join(root, PROMPTS_DIR, `${spec.name}.md`);
-        if (existsSync(conventional)) {
-            parts.push(promptFile(conventional, 'role'));
-        }
+function instructionsFor(root: string, spec: AgentConfig, houseRules: PromptPart[]): PromptPart[] {
+    const parts: PromptPart[] = [...houseRules];
+    const role = spec.system
+        ? projectFile(root, spec.system, `agents.${spec.name}.system`)
+        : join(root, PROMPTS_DIR, `${spec.name}.md`);
+    // A named prompt that is missing is `projectFile`'s to refuse; a
+    // conventional one that is missing is simply an agent without a role file.
+    if (spec.system || existsSync(role)) {
+        parts.push(promptFile(role, 'role', within(root, role)));
     }
     return parts;
 }

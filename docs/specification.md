@@ -31,21 +31,26 @@ Then, in that window:
 1. **Edit `SPECIFICATION.md`.** What the system is for, which agents exist, what
    each may reach for, and what _done_ means.
 2. **Open the chat panel and send `/sync-with-spec`.**
-3. **Read `SPECIFICATION-FEEDBACK.md`.** Answer its questions by editing
-   `SPECIFICATION.md` - never by editing a prompt - and send `/sync-with-spec`
-   again.
+3. **Answer `SPECIFICATION-FEEDBACK.md`.** It is a questionnaire: every question
+   carries two to four written-out answers, each with a `[ ]` box. Put an `x` in
+   the box of the one you want, delete the ones you do not, or write your own in
+   their place - any of those is an answer.
+4. **Send `/update-spec-from-feedback`.** It folds the answers you chose into
+   `SPECIFICATION.md` - which is why you never edit a prompt to fix a
+   specification problem - and then `/sync-with-spec` again.
 
 Back in the terminal: `zen check`, `scripts/_setup.sh`, `zen run`.
 
-`zen init` installs four prompt files under `.github/prompts/`, which VS Code
+`zen init` installs five prompt files under `.github/prompts/`, which VS Code
 and its forks offer as chat slash-commands:
 
-| In chat           | Does                                                        |
-| ----------------- | ----------------------------------------------------------- |
-| `/sync-with-spec` | Makes every file match `SPECIFICATION.md`, both directions. |
-| `/review-project` | Reads the project as a reviewer would, and reports.         |
-| `/new-agent`      | Adds an agent - prompt, wiring and hand-offs.               |
-| `/new-skill`      | Adds a skill under `agents/skills/`.                        |
+| In chat                      | Does                                                             |
+| ---------------------------- | ---------------------------------------------------------------- |
+| `/sync-with-spec`            | Makes every file match `SPECIFICATION.md`, both directions.      |
+| `/update-spec-from-feedback` | Folds your answers in `SPECIFICATION-FEEDBACK.md` into the spec. |
+| `/review-project`            | Reads the project as a reviewer would, and reports.              |
+| `/new-agent`                 | Adds an agent - prompt, wiring and hand-offs.                    |
+| `/new-skill`                 | Adds a skill under `agents/skills/`.                             |
 
 In an editor with no support for prompt files, paste the contents of
 `.github/prompts/sync-with-spec.prompt.md` into its chat instead - it is only a
@@ -58,7 +63,9 @@ edit SPECIFICATION.md
         ↓
 /sync-with-spec          make the files match it
         ↓
-SPECIFICATION-FEEDBACK.md   what it could not do without guessing
+SPECIFICATION-FEEDBACK.md   what it could not do without guessing:
+        ↓                   tick one answer per question
+/update-spec-from-feedback  the ones you chose become the spec
         ↓
 zen check                the project still loads
         ↓
@@ -83,8 +90,8 @@ panel and it is in the list. It is a long prompt and worth reading once; in
 outline it:
 
 1. **Reads everything before editing anything** - the specification, then
-   `agents.yaml`, `INSTRUCTIONS.md`, every prompt, every skill, the assets, the
-   Dockerfile and the scripts. Then runs `zen check`.
+   `agents.yaml`, the house rules under `agents/`, every prompt, every skill, the
+   assets, the Dockerfile and the scripts. Then runs `zen check`.
 2. **Builds a difference list both ways.** Forwards: for each item in the
    specification, is it present, missing, divergent or unclear. Backwards: for
    each line of each prompt and skill, which specification item does it serve -
@@ -99,14 +106,31 @@ outline it:
    count, a path - an unstated value becomes a question, not a guess.
 5. **Writes `SPECIFICATION-FEEDBACK.md`** for everything it could not settle,
    grouped under 🛑 blocking, ❓ ambiguous, ⚡ contradictions, ✏️ errors, ➕ out
-   of scope. Each entry quotes the specification, says why it could not be
-   implemented as written, says what was done in the meantime, and asks one
-   question a single line can answer.
+   of scope. Each question quotes the specification, says what goes wrong, says
+   what was built in the meantime, and offers two to four answers - each one a
+   line you could have said yourself, what choosing it would change, and the
+   text that goes into the specification if you do.
 6. **Runs `scripts/_setup.sh` and watches it finish**, then runs it again to
    prove every step reports `skipped`.
 
 Read the feedback file first, every time. It is the shortest description of what
 your specification does not yet say.
+
+### `/update-spec-from-feedback`
+
+Answering the feedback file is a tick or a delete. Under every question are two
+to four answers, each headed by a `[ ]` box: mark one `[x]`, or delete the ones
+you do not want, or - where none of them is right - replace them with a sentence
+of your own. Then `/update-spec-from-feedback` takes the answer you chose, puts
+its text into `SPECIFICATION.md` at the line the answer names, and moves the
+question to an `✅ Answered` section recording what was chosen and what still
+has to be built for the specification to be true.
+
+It edits those two files and nothing else. A question with two answers still
+under it and no box ticked has not been answered, and it is left alone; a
+question with none left means you rejected them all, and it asks you what would
+fit rather than inventing a fifth. Send `/sync-with-spec` afterwards - the
+specification has changed, and the project has not yet caught up.
 
 ## Writing a specification an agent can implement
 
