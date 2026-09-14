@@ -1956,6 +1956,9 @@ candidates; these are the judgements to make about each one)**
 - [ ] The newest history entry's `Still open` is what the next pass will trust,
       and says so honestly - an unchanged specification line is not evidence
       that anything implements it
+- [ ] No question in `SPECIFICATION-FEEDBACK.md` has a box marked `[x]`, or
+      exactly one answer left under it, without a matching `✅ Answered` entry -
+      that is an answer given and never folded into the specification
 - [ ] `.spec-sync/` is committed and `.tmp/` is not
 
 ---

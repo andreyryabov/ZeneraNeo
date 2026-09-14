@@ -169,17 +169,32 @@ anything in the
 specification is unclear, contradictory, impossible, or wrong. If there is
 nothing to raise, say so in the chat and do not create the file.
 
-**Write it for the person who has to fix the specification, not for yourself.**
-Every entry must be answerable in one word by someone who has not read the
-implementation, and must carry the text they need to paste back into
-`SPECIFICATION.md`. A paragraph that ends in "is that what you meant?" is not
-an entry - it is a question they have to do the work to answer.
+**It is a questionnaire, and answering it must take one gesture.** Every
+question carries two to four written-out answers, each with a `[ ]` box in its
+heading. The reader marks the box of the one they want - `[x]` - and deletes the
+others, then sends `/update-spec-from-feedback`, which folds what survived into
+`SPECIFICATION.md`. Either gesture alone is enough, and the file says so in
+every question.
 
-The file opens with one short paragraph saying how many entries there are and
-how to answer them, then a table of contents - one row per entry: number and
-anchor link, the question in under ten words, and what was built. Then the
-entries, grouped under these headings, omitting any heading with no entries.
-The file is scanned before it is read, so keep the emoji on every heading:
+Two rules that come before everything else in this section:
+
+- **No markdown tables anywhere in this file.** A table is unreadable the moment
+  a pane is narrow or a cell wraps, and this is a file people read in a side
+  panel. Every list is a list.
+- **Never write a question the reader has to do work to answer.** No paragraph
+  ending in "is that what you meant?", nothing that requires reading the
+  implementation, and no answer phrased as a decision still to be made. If you
+  cannot write two answers a reader could pick between, you have not understood
+  the problem well enough to ask about it yet.
+
+The file opens with one short paragraph: how many questions are open, and how to
+answer them - put an `x` in the box of the answer you want, delete the answers
+you do not want, or replace them all with a sentence of your own, then send
+`/update-spec-from-feedback`. Then a contents list, one line per question: its
+number as an anchor link, the question in under ten words, and what is built in
+the meantime. Then the questions, grouped under these headings, omitting any
+heading with no questions. The file is scanned before it is read, so keep the
+emoji on every heading:
 
 ```markdown
 # Feedback on SPECIFICATION.md
@@ -193,42 +208,129 @@ The file is scanned before it is read, so keep the emoji on every heading:
 ## ✏️ Errors and typos
 
 ## ➕ Out of scope - implemented but unspecified
+
+## ✅ Answered - folded into the specification
 ```
 
-Each entry is its own `###` heading - the emoji of its section, a number, and a
-short title naming the problem - which the table of contents links to by its
-own generated anchor. Under the heading, in this order:
+`✅` is written by `/update-spec-from-feedback`, not by you. Leave what is there
+alone except to strike an entry this pass has actually implemented, and say in
+the chat which ones you closed.
 
-- **The spec says** - the text quoted as a blockquote, introduced by a link to
-  the exact line: `[SPECIFICATION.md#L66](SPECIFICATION.md#L66)`, plus the
-  section name. Link every line you quote; a reader must reach it in one click.
-- **The problem** - two or three sentences on the specific gap, in terms of what
-  goes wrong, not "unclear" or "ambiguous".
+### The shape of one question
+
+Each question is its own `###` heading - the emoji of its section, `Q` and a
+number, then the question itself, ending in a question mark. Under it, in this
+order:
+
+- **Where it comes from** - the specification text quoted as a blockquote,
+  introduced by a link to the exact line,
+  `[SPECIFICATION.md#L66](SPECIFICATION.md#L66)`, plus the section name. Link
+  every line you quote; a reader must reach it in one click. For a question
+  about something the specification does not say at all, link the section it
+  would belong to and say that it is silent there.
+- **Why it is a problem** - two or three sentences on what goes wrong, in terms
+  of behaviour: what an agent does, what a run produces, what breaks. Not
+  "unclear" or "ambiguous", which describe the sentence rather than the damage.
 - **Built in the meantime** - what the implementation does now, and the one fact
   that made it the default. Or "Nothing - blocked."
-- **Choose one** - a table of two to four options, one per row, each with its
-  consequence. Mark the one that is implemented `_(built)_` and, where one is
-  better for a reason the reader can check, `_(recommended)_`. An option is a
-  real alternative, not a restatement of the question.
-- **Paste into the spec** - a fenced block holding the replacement text for the
-  chosen option, introduced by where it goes: "replace line 21", "add after line
-  66". Write it in the specification's own voice and format so it can be pasted
-  without editing. Where an option needs different text, say what the reader
-  must supply instead.
+- **To answer** - the same sentence on every question, word for word: put an `x`
+  in one box below and delete the other answers, either one is enough.
 
-Under `➕`, drop **Choose one** and **Paste into the spec**, and end with **If
-unwanted** - what removing it would cost.
+Then two to four answers, each its own `####` heading of the form
+`#### [ ] A. <the answer in one line, as the reader would say it>`. The one that
+is implemented comes first and is marked `_(built)_`, so the file reads as "this
+is what happens if you change nothing"; mark one `_(recommended)_` where it is
+better for a reason the reader can check. Under each answer heading:
 
-Use no emoji except the one on each heading. Keep the prose short; the tables
-carry the detail. Do not editorialise about the specification's quality, do not
-restate the runtime, and do not copy a whole section in.
+- **What it changes** - one or two sentences on the consequence of choosing it:
+  what the system would then do differently, and what it costs.
+- **The specification text**, in a fenced block, introduced by where it goes -
+  "replace line 66", "add after line 21", "delete lines 30-32". Written in the
+  specification's own voice and format so it can be pasted without editing.
+
+Every answer carries its own box and its own text. They are alternatives that
+will be read alone, so nothing may be shared between them and nothing may refer
+to a sibling ("as above", "same as A"). Where an answer needs a value only the
+reader has, put a `<placeholder>` in the block and say in **What it changes**
+what to substitute.
+
+Two rules on the answers themselves:
+
+- **An answer is a real alternative**, not a restatement of the question or a
+  hedge. "Decide later" is not an answer; "leave it unspecified, and the
+  reviewer keeps using whatever the default agent uses" is.
+- **Never write only one answer.** A question with nothing to choose between is
+  not a question. Even an `✏️` typo has two: the correction, and leaving it as
+  written with a line saying what stays wrong.
+
+Under `➕` the two answers are fixed: keep it, whose block is the specification
+text that would cover what was built, and remove it, whose **What it changes**
+says what removing it would cost and which files would go.
+
+### One question, written out
+
+Copy this shape exactly - the outer fence is four backticks only so the example
+can contain its own:
+
+````markdown
+### ❓ Q4. Do the three agents share one memory, or keep their own?
+
+**Where it comes from** - [SPECIFICATION.md#L14](SPECIFICATION.md#L14), _Common
+memory strategies_:
+
+> use memory to save plans of answering what was delegated to what
+
+**Why it is a problem** - the specification says what each agent writes and
+never says who may read it. Memory is one graph with an audience on every node,
+so this decides whether the orchestrator can plan from what a specialist
+resolved last week, or re-derives it every time.
+
+**Built in the meantime** - one shared slice: `memory: true` on all three, so
+anything one agent writes, another can recall. Chosen because nothing in the
+specification separates them.
+
+**To answer** - put an `x` in one box below and delete the other answers. Either
+one is enough.
+
+#### [ ] A. All three agents share one memory _(built)_
+
+**What it changes** - a lookup is paid for once for the whole system, and every
+agent's recall competes with every other agent's notes for the same few slots.
+
+Add under _Common memory strategies_, after line 17:
+
+```markdown
+All three agents read and write one shared memory: whatever one of them
+discovers is recallable by the others.
+```
+
+#### [ ] B. Each agent keeps its own memory
+
+**What it changes** - recall gets sharper and cheaper because an agent only ever
+sees its own kind of note, and the same lookup is repeated by whoever did not do
+it first.
+
+Add under _Common memory strategies_, after line 17:
+
+```markdown
+Each agent reads and writes only its own memory. A finding one agent needs from
+another travels as part of the hand-off, not through the store.
+```
+````
+
+Use no emoji except the one on each heading. Keep the prose short. Do not
+editorialise about the specification's quality, do not restate the runtime, and
+do not copy a whole section in.
 
 Append to the existing file rather than rewriting it, keeping the numbering and
-the table of contents in step; strike an entry only when this pass has actually
-resolved it, and say in the chat which ones you closed.
+the contents list in step. Numbers are never reused: a struck question's number
+retires with it.
 
-Read the feedback diff from §0 before writing: an entry the human answered since
-the last pass is work to close, not a question to ask again.
+Read the feedback diff from §0 before writing: a question the human answered
+since the last pass is work to close, not a question to ask again. If a question
+has a box marked `[x]`, or one answer left under it, and no `✅` entry, the
+reader answered it and never ran `/update-spec-from-feedback` - implement that
+answer, fold its text into `SPECIFICATION.md` yourself, and say so in the chat.
 
 ## 6. Run `scripts/_setup.sh` and watch it finish
 

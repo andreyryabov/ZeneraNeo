@@ -81,11 +81,14 @@ editing anything, and report it in the chat as the pass's scope.
 1. **The `SPECIFICATION.md` diff.** The primary input: added, changed and
    deleted requirements. A deleted requirement is work too - what implemented it
    is now an **extra**, to be reported under `➕` rather than quietly deleted.
-2. **The `SPECIFICATION-FEEDBACK.md` diff.** An entry the human answered - a
-   `_(built)_` mark moved, an option chosen, text pasted back into the spec - is
-   work, and the specification line it points at is now authoritative. A new
-   entry someone else raised is work. Close what this pass resolves rather than
-   re-raising it.
+2. **The `SPECIFICATION-FEEDBACK.md` diff.** The file is a questionnaire the
+   human answers by ticking one answer's `[ ]` box or deleting the answers they
+   do not want. A question that has moved under `✅ Answered` was folded into the
+   specification by `/update-spec-from-feedback`, and its **Still to implement**
+   line is the work. A question with a box marked `[x]`, or one answer left
+   under it, and no `✅` entry was answered and never folded in - implement it,
+   put its text into `SPECIFICATION.md`, and say so. A new question someone else
+   raised is work too. Close what this pass resolves rather than re-raising it.
 3. **What the last pass left open.** The `Still open` section of the entry named
    by `applied:`, in `.spec-sync/history/`. A specification line that has not
    changed since the baseline is **not therefore implemented**: the baseline
