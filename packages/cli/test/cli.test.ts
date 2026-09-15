@@ -50,7 +50,7 @@ import {
 } from '../src/keys.ts';
 import { classify, probeModels } from '../src/liveness.ts';
 import { engineDisk, ensurePodmanReady, ownedContainers } from '../src/podman.ts';
-import { dirSize, projectMounts } from '../src/projects.ts';
+import { dirSize, lastUsedAt, projectMounts } from '../src/projects.ts';
 import { scaffold } from '../src/scaffold.ts';
 import { bytes, CliError, cut, EXIT, keysIn, pad, table } from '../src/term.ts';
 import {
@@ -1080,6 +1080,42 @@ describe('what a run mounts', () => {
             (m) => m.at === MEMORY_MOUNT,
         );
         expect(at?.host).toBe(realpathSync(join(dir, 'brain', 'files')));
+    });
+});
+
+describe('when a project was last used', () => {
+    const root = mkdtempSync(join(tmpdir(), 'zen-used-'));
+
+    afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+    function project(sessions: Record<string, string[]>): string {
+        const dir = mkdtempSync(join(root, 'p-'));
+        for (const [id, runs] of Object.entries(sessions)) {
+            mkdirSync(join(dir, 'sessions', id), { recursive: true });
+            for (const run of runs) {
+                mkdirSync(join(dir, 'sessions', id, 'runs', run), { recursive: true });
+            }
+        }
+        return dir;
+    }
+
+    it('is the newest run, not the newest session', () => {
+        // A session opened and left empty is newer than the one that did the
+        // work, and would otherwise date the project to now.
+        const dir = project({
+            '20260101-090000-aaaa': ['20260110-120000-cccc'],
+            '20260105-090000-bbbb': [],
+        });
+        expect(lastUsedAt(dir)).toBe('20260110-120000-cccc');
+    });
+
+    it('falls back to the session for one that never ran', () => {
+        const dir = project({ '20260105-090000-bbbb': [] });
+        expect(lastUsedAt(dir)).toBe('20260105-090000-bbbb');
+    });
+
+    it('has no answer for a project nobody has opened', () => {
+        expect(lastUsedAt(project({}))).toBeUndefined();
     });
 });
 

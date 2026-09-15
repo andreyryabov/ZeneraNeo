@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { hostname } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { readJson, writeJson } from './home.ts';
-import { isStamp, stamp } from './ids.ts';
+import { isStamp, stamp, stampInstant } from './ids.ts';
 import { alive, isBusy, runIds, sessionIds, sessionsDir } from './projects.ts';
 import { CliError, EXIT, invalidError, usageError } from './term.ts';
 
@@ -258,6 +258,34 @@ export interface RunMeta {
 
 export function writeRunMeta(p: RunPaths, meta: RunMeta): void {
     writeJson(p.meta, meta, 0o644);
+}
+
+export interface RunSummary {
+    id: string;
+    startedAt?: string;
+    finishedAt?: string;
+    agent?: string;
+    stopReason?: string;
+    error?: string;
+}
+
+/** Newest first — the order a picker wants. */
+export async function listRuns(session: SessionPaths): Promise<RunSummary[]> {
+    const out: RunSummary[] = [];
+    for (const id of runIds(session.dir).reverse()) {
+        // A run killed before it recorded anything still has an id, and the id
+        // says when it started, so it is listable without its meta.
+        const meta = await readJson<Partial<RunMeta>>(runPaths(session, id).meta, {});
+        out.push({
+            id,
+            startedAt: meta.startedAt ?? stampInstant(id),
+            finishedAt: meta.finishedAt,
+            agent: meta.agent,
+            stopReason: meta.stopReason,
+            error: meta.error,
+        });
+    }
+    return out;
 }
 
 export function newestRun(session: SessionPaths): string | undefined {

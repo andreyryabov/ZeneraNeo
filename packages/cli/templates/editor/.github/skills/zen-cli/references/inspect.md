@@ -7,12 +7,13 @@ zen inspect [run] [--session <id>] [--open] [--rebuild] [--serve [port]]
 Alias: `report`.
 
 Renders the trajectory of a run: every message, tool call, skill activation and
-hand-off, in order, with what each one cost. With no arguments it takes the
-newest run of the newest session.
+hand-off, in order, with what each one cost. With no arguments it asks which
+session and which run; where there is nothing to ask on — a script, `--json`,
+an agent — it takes the newest run of the newest session that has one.
 
 | Flag             | Meaning                                                 |
 | ---------------- | ------------------------------------------------------- |
-| `[run]`          | A run id. The newest otherwise                          |
+| `[run]`          | A run id, in whichever session holds it                 |
 | `--session <id>` | Which session the run belongs to                        |
 | `--open`         | Open the report in a browser                            |
 | `--rebuild`      | Rebuild `report.html` from the recorded state           |
