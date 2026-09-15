@@ -16,18 +16,31 @@ import { createServer } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
+import { sessionIds } from '../projects.ts';
 import { project as resolveProject } from '../resolve.ts';
 import {
     display,
+    listRuns,
+    listSessions,
     newestRun,
-    newestSession,
     requireSession,
     runPaths,
     sessionPaths,
     type RunPaths,
     type SessionPaths,
 } from '../session.ts';
-import { bold, cyan, dim, invalidError, json, note, write } from '../term.ts';
+import {
+    ago,
+    bold,
+    choose,
+    cyan,
+    dim,
+    invalidError,
+    isInteractive,
+    json,
+    note,
+    write,
+} from '../term.ts';
 
 const USAGE = 'zen inspect [run] [--session <id>] [--open] [--rebuild] [--serve [port]]';
 
@@ -44,7 +57,8 @@ export const inspect: Command = {
     summary: "Open or rebuild a run's report.html.",
     usage: USAGE,
     details: [
-        'With no arguments: the newest run of the newest session.',
+        'With no arguments: asks which session and run, or takes the newest of',
+        'each when there is nothing to ask on.',
         '--serve starts a local server, which the report needs for its assets.',
         '--memory <dir> reads that memory instead of the project’s, for a run',
         'that was given `zen run --memory`.',
@@ -65,8 +79,11 @@ export const inspect: Command = {
 
         const found = await resolveProject({ cwd: ctx.cwd, project: values.project });
         const dir = found.dir;
-        const session = pickSession(dir, values.session);
-        const run = pickRun(session, positionals[0]);
+        // Asking is only possible at a terminal, and only honest when the
+        // answer is not being parsed by something.
+        const asking = isInteractive() && !ctx.json;
+        const session = await pickSession(dir, values.session, positionals[0], asking);
+        const run = await pickRun(session, positionals[0], asking);
 
         if (values.rebuild || !existsSync(run.report)) {
             await rebuild(session, run, await memory(dir, values.memory, ctx.cwd));
@@ -96,18 +113,93 @@ export const inspect: Command = {
 // Choosing what to show
 // ---------------------------------------------------------------------------
 
-function pickSession(dir: string, asked?: string): SessionPaths {
+/**
+ * Which session to read. With nothing named and a terminal to ask on, the
+ * person picks: "the newest" is a guess about which of a dozen runs they meant,
+ * and a wrong guess looks the same as a broken command.
+ */
+async function pickSession(
+    dir: string,
+    asked: string | undefined,
+    run: string | undefined,
+    asking: boolean,
+): Promise<SessionPaths> {
     if (asked) {
         return requireSession(dir, asked);
     }
-    const newest = newestSession(dir);
-    if (!newest) {
+    if (sessionIds(dir).length === 0) {
         throw invalidError('nothing has been run here yet', 'start one: zen run');
     }
-    return sessionPaths(dir, newest);
+    // A named run answers the question itself: it is in whichever session holds it.
+    if (!asking || run) {
+        return newestWorked(dir, run);
+    }
+    const worked = (await listSessions(dir)).filter((s) => s.runs > 0);
+    if (worked.length === 0) {
+        throw invalidError('no runs yet — every session is empty', 'start one: zen run');
+    }
+    return await choose(
+        'Which session?',
+        worked.map((s) => ({
+            label: s.id,
+            detail: [
+                s.title,
+                `${s.runs} run${s.runs === 1 ? '' : 's'}`,
+                ago(s.lastRunAt ?? s.createdAt),
+                s.busy ? 'running' : '',
+            ]
+                .filter(Boolean)
+                .join('  '),
+            value: sessionPaths(dir, s.id),
+        })),
+    );
 }
 
-function pickRun(session: SessionPaths, asked?: string): RunPaths {
+/**
+ * The newest session that has a report to show — not simply the newest. A
+ * session exists before its first run and outlives one that never recorded
+ * anything, so the newest is routinely empty and picking it blindly answers
+ * "has no runs" about a project full of them.
+ */
+function newestWorked(dir: string, run?: string): SessionPaths {
+    for (const id of sessionIds(dir).reverse()) {
+        const session = sessionPaths(dir, id);
+        if (run ? existsSync(runPaths(session, run).dir) : newestRun(session)) {
+            return session;
+        }
+    }
+    throw invalidError(
+        run ? `no run ${run} in any session` : 'no runs yet — every session is empty',
+        run ? 'see: zen list --sessions' : 'start one: zen run',
+    );
+}
+
+async function pickRun(
+    session: SessionPaths,
+    asked: string | undefined,
+    asking: boolean,
+): Promise<RunPaths> {
+    if (!asked && asking) {
+        const runs = await listRuns(session);
+        if (runs.length === 0) {
+            throw invalidError(`session ${session.id} has no runs`);
+        }
+        // One run is not a question.
+        return await choose(
+            `Which run of ${session.id}?`,
+            runs.map((r) => ({
+                label: r.id,
+                detail: [
+                    r.agent,
+                    r.error ? 'failed' : r.stopReason,
+                    ago(r.finishedAt ?? r.startedAt),
+                ]
+                    .filter(Boolean)
+                    .join('  '),
+                value: runPaths(session, r.id),
+            })),
+        );
+    }
     const id = asked ?? newestRun(session);
     if (!id) {
         throw invalidError(`session ${session.id} has no runs`);

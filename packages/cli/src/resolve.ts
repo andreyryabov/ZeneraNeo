@@ -72,9 +72,15 @@ export async function project(want: Wanted): Promise<Projects.Project> {
     if (!isInteractive()) {
         throw usageError('not inside a project', 'name one with --project');
     }
+    // Most recently worked in first: the answer to "which project" is nearly
+    // always the one from last time, and registration order is nothing to a
+    // person. A project never run sorts last, by name.
+    const ranked = known
+        .map((entry) => ({ entry, used: Projects.lastUsedAt(entry.path) ?? '' }))
+        .sort((a, b) => b.used.localeCompare(a.used) || a.entry.name.localeCompare(b.entry.name));
     const chosen = await choose(
         'Which project?',
-        known.map((e) => ({ label: e.name, detail: e.path, value: e })),
+        ranked.map(({ entry }) => ({ label: entry.name, detail: entry.path, value: entry })),
     );
     return Projects.openDir(chosen.path);
 }

@@ -310,6 +310,24 @@ export function runIds(sessionDir: string): string[] {
     return stampedChildren(join(sessionDir, 'runs'));
 }
 
+/**
+ * When this project was last worked in, as a stamp, or `undefined` for one
+ * that never has been. Session and run ids are stamps in the same format, so
+ * the newest of either compares directly — and reading directory NAMES is what
+ * keeps this cheap enough to ask of every registered project before drawing a
+ * chooser.
+ */
+export function lastUsedAt(projectDir: string): string | undefined {
+    let last: string | undefined;
+    for (const id of sessionIds(projectDir)) {
+        const newest = runIds(join(sessionsDir(projectDir), id)).at(-1) ?? id;
+        if (!last || newest > last) {
+            last = newest;
+        }
+    }
+    return last;
+}
+
 function stampedChildren(dir: string): string[] {
     if (!existsSync(dir)) {
         return [];
