@@ -29,6 +29,7 @@ skill.
 | Flag                    | Meaning                                      |
 | ----------------------- | -------------------------------------------- |
 | `--project <name\|dir>` | Which project. Inferred from the directory   |
+| `--dir <dir>`           | Read this memory directory instead           |
 | `--kind <name>`         | Only this kind of node                       |
 | `--audience <name>`     | Only nodes committed under this label        |
 | `--files`               | Only nodes that remember a file              |
@@ -37,6 +38,19 @@ skill.
 | `--out <file>`          | Where `export` writes. Default `memory.html` |
 | `--open`                | Open the exported page                       |
 | `--yes`                 | Do not ask before removing                   |
+
+## A graph that is not the project's
+
+`--dir` opens a memory directory as it stands, and skips project resolution
+entirely: there need be no `agents.yaml` anywhere above it. That is what to use
+for a graph a run was pointed at with `zen run --memory <dir>`, and for a copy
+taken out of a running session - copy the directory, delete its `.lock`, and
+read the copy while the run continues.
+
+```
+zen run --memory .tmp/mem "…"     remember into .tmp/mem for this run
+zen memory --dir .tmp/mem stats   then read that graph, from anywhere
+```
 
 ## It reads unmasked, on purpose
 

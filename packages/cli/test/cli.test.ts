@@ -1,4 +1,5 @@
 import type { Embedder, EmbeddingRequest, Model, ProcResult, runProcess } from '@zenera/neo';
+import { MEMORY_MOUNT, readProjectConfig } from '@zenera/neo';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
     existsSync,
@@ -6,6 +7,7 @@ import {
     mkdtempSync,
     readdirSync,
     readFileSync,
+    realpathSync,
     rmSync,
     statSync,
     writeFileSync,
@@ -48,7 +50,7 @@ import {
 } from '../src/keys.ts';
 import { classify, probeModels } from '../src/liveness.ts';
 import { engineDisk, ensurePodmanReady, ownedContainers } from '../src/podman.ts';
-import { dirSize } from '../src/projects.ts';
+import { dirSize, projectMounts } from '../src/projects.ts';
 import { scaffold } from '../src/scaffold.ts';
 import { bytes, CliError, cut, EXIT, keysIn, pad, table } from '../src/term.ts';
 import {
@@ -1031,6 +1033,53 @@ describe('the project check', () => {
 
         expect(codes(report)).toContain('assets.empty');
         expect(errors(report)).toEqual([]);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// What a run mounts
+//
+// The container's mounts are decided before the project is loaded, so nothing
+// downstream can correct them: what is asserted here is that the file tools
+// and the container are told about the same directory.
+// ---------------------------------------------------------------------------
+
+describe('what a run mounts', () => {
+    const root = mkdtempSync(join(tmpdir(), 'zen-mounts-'));
+
+    afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+    function project(yaml: string): string {
+        const dir = mkdtempSync(join(root, 'p-'));
+        writeFileSync(join(dir, 'agents.yaml'), yaml, 'utf8');
+        return dir;
+    }
+
+    it('mounts the memory the project declares', () => {
+        const dir = project('agents:\n  - name: solo\n    memory: true\n');
+        const { config } = readProjectConfig(dir);
+        const at = projectMounts(dir, config).find((m) => m.at === MEMORY_MOUNT);
+        expect(at?.host).toBe(realpathSync(join(dir, 'memory', 'files')));
+    });
+
+    it('mounts the one the host named instead', () => {
+        const dir = project('agents:\n  - name: solo\n    memory: true\n');
+        const away = join(dir, 'away');
+        const at = projectMounts(dir, readProjectConfig(dir).config, away).find(
+            (m) => m.at === MEMORY_MOUNT,
+        );
+        // The mount has to follow the override, or the agent would read its
+        // remembered files out of one graph and write them into another.
+        expect(at?.host).toBe(realpathSync(join(away, 'files')));
+        expect(existsSync(join(dir, 'memory'))).toBe(false);
+    });
+
+    it('mounts a named directory for a project that declares none', () => {
+        const dir = project('agents:\n  - name: solo\n');
+        const at = projectMounts(dir, readProjectConfig(dir).config, 'brain').find(
+            (m) => m.at === MEMORY_MOUNT,
+        );
+        expect(at?.host).toBe(realpathSync(join(dir, 'brain', 'files')));
     });
 });
 

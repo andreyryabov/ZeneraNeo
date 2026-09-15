@@ -1,4 +1,5 @@
 import { writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import * as Engine from '../engine.ts';
@@ -16,6 +17,7 @@ interface Flags {
     session?: string;
     new?: boolean;
     workspace?: string;
+    memory?: string;
     model?: string;
     image?: string;
     'no-keys'?: boolean;
@@ -39,6 +41,7 @@ export const run: Command = {
         '  --session <id>         Continue this session.',
         '  --new                  Start a new session without asking which one.',
         '  --workspace <dir>      Directory the agent can read and write.',
+        '  --memory <dir>         Directory the agents remember into.',
         '  --model <ref>          Use this model instead of the default.',
         '  --image <ref>          Use this container image to run commands in.',
         '  --read-only            Take away every tool that can write.',
@@ -63,6 +66,7 @@ export const run: Command = {
         '  zen run "what changed?" > out.md      redirect the answer into a file',
         '  zen run --out out.md "what changed?"  write the answer to out.md only',
         '  zen run --read-only "what changed?"   let it read but not write',
+        '  zen run --memory ./mem                remember into ./mem, not the project',
         '  zen run --new                         open the TUI in a new session',
     ],
     run: async (ctx) => {
@@ -73,6 +77,7 @@ export const run: Command = {
                 session: { type: 'string' },
                 new: { type: 'boolean' },
                 workspace: { type: 'string' },
+                memory: { type: 'string' },
                 model: { type: 'string' },
                 image: { type: 'string' },
                 'no-keys': { type: 'boolean' },
@@ -124,6 +129,9 @@ export const run: Command = {
             readOnly: values['read-only'],
             model: values.model,
             image: values.image,
+            // Relative to where it was typed, like every other path on the line
+            // — the project root is not the cwd.
+            memoryDir: values.memory ? resolve(ctx.cwd, values.memory) : undefined,
             keys: values['no-keys'] ? false : undefined,
             yes: values.yes || ctx.json,
         });

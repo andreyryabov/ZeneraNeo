@@ -1075,6 +1075,7 @@ zen run                         open the entry agent on this project
 zen run "what changed?"         one shot; stdout is the answer
 zen run --session <id>          continue a session
 zen run --workspace ./repo      what the agent may read and write
+zen run --memory ./mem          where the agents remember into, instead of memory/
 zen run --model careful         override the default model for this run
 zen run --image <ref>           override the sandbox image for this run, ignoring build:
 zen run --read-only             withhold every tool that can write

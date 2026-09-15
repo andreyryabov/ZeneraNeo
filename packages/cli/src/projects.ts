@@ -57,7 +57,11 @@ export interface Project {
  * and does not edit — and the paths are resolved, because the podman machine on
  * macOS shares the real path or nothing.
  */
-export function projectMounts(root: string, config: ProjectConfig): SandboxMount[] {
+export function projectMounts(
+    root: string,
+    config: ProjectConfig,
+    memoryAt?: string,
+): SandboxMount[] {
     const mounts: SandboxMount[] = [];
     const assets = assetsDir(root, config);
     if (assets) {
@@ -69,7 +73,7 @@ export function projectMounts(root: string, config: ProjectConfig): SandboxMount
     for (const dir of skillMounts(skillDirs(root, config), SKILLS_MOUNT)) {
         mounts.push({ host: realpathSync(dir.path), at: dir.at, readOnly: true });
     }
-    const memory = memoryDir(root, config);
+    const memory = memoryDir(root, config, memoryAt);
     if (memory) {
         // Created here because the mount is decided before the project is
         // loaded, and podman would refuse a source that does not exist yet.

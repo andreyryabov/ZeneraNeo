@@ -572,6 +572,16 @@ pointed at `$HOME` is a mistake that should take more than one keystroke.
 Once chosen, the workspace is recorded in the session, so resuming never
 re-asks and never silently moves.
 
+`--memory <dir>` is the fourth path a run can be pointed at, and the only one
+that is not asked about: it defaults to the project's own `memory/` and is
+nobody's business otherwise. It has to reach two places that would otherwise
+disagree - the mount table, which decides what `/memory` is in the container,
+and the loader, which decides where the graph is opened - so both take it from
+`memoryDir(root, config, override)` and there is one answer. Naming a directory
+declares memory for a project that has none; it cannot bind an agent to it, so a
+run whose agents all lack `memory: true` is warned rather than left looking
+broken.
+
 A prompt on the command line answers all three questions by itself: `zen run
 acme "what changed?"` starts a **fresh** session with the **current directory**
 as the workspace, writable, and asks nothing - the point of typing a question

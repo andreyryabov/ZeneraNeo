@@ -56,6 +56,8 @@ export interface EngineOptions {
     model?: string;
     /** sandbox image override — `--image` */
     image?: string;
+    /** another directory to remember into — `--memory` */
+    memoryDir?: string;
     /** whether credentials reach the sandbox — `--no-keys` sets this false */
     keys?: boolean;
     /** answer the sandbox's install question without asking — `--yes` */
@@ -117,8 +119,13 @@ export async function open(opts: EngineOptions): Promise<Engine> {
     let files: Workspace;
     try {
         const { root, config } = readProjectConfig(opts.project.dir);
+        // Naming a directory declares the graph, but it cannot bind anyone to
+        // it — so say when the run is pointed at a memory no agent will touch.
+        if (opts.memoryDir && !config.agents.some((a) => a.memory)) {
+            warn('--memory names a directory no agent uses — none has `memory: true`');
+        }
         // Assets and the skill catalog are mounted for both, under one name.
-        const mounts = projectMounts(root, config);
+        const mounts = projectMounts(root, config, opts.memoryDir);
         sandbox = buildSandbox({
             config,
             root,
@@ -153,6 +160,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
                 ...exaTools(),
             ],
             skillsAt: SKILLS_MOUNT,
+            memoryDir: opts.memoryDir,
             payloads,
             resolveFile: (path: string) => files.within(path),
         });

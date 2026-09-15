@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, join, relative, sep } from 'node:path';
+import { basename, join, relative, resolve, sep } from 'node:path';
 import { Agent, AgentRegistry, type ForkOptions } from '../agent.ts';
 import type { Embedder } from '../embedding.ts';
 import { RunStream } from '../events.ts';
@@ -74,6 +74,13 @@ export interface ProjectOptions<TCtx = unknown> {
      */
     registry?: ModelRegistry;
     memory?: MemoryIndex;
+    /**
+     * Another directory to keep the memory graph in, relative to the project
+     * root when it is not absolute. Whoever sets it must mount that directory
+     * as `/memory` too, or the agent reads its remembered files from one graph
+     * and writes to another.
+     */
+    memoryDir?: string;
     /** turns an agent-visible path into a host path, so files can be remembered */
     resolveFile?: (path: string) => string;
     payloads?: PayloadStore;
@@ -173,7 +180,7 @@ export async function loadProject<TCtx = unknown>(
     // `embedding:` fails at load like a broken `model:` does.
     embedders(config.embedding, 'embedding');
 
-    const memory = opts.memory ?? (await openMemory(root, config, embedders));
+    const memory = opts.memory ?? (await openMemory(root, config, embedders, opts.memoryDir));
 
     return new AgentProject<TCtx>({
         root,
@@ -538,8 +545,20 @@ function memoryFor(spec: AgentConfig): MemoryBinding | undefined {
  * with the front end, which has to mount the same directory into the sandbox:
  * two answers to this question would mean `/memory` pointing somewhere the
  * graph is not.
+ *
+ * `override` is the host pointing the run at another graph — `zen run
+ * --memory`. It answers for a project that declares no memory at all, because
+ * naming a directory is the declaration; the agents bound to it are still the
+ * ones that said `memory: true`.
  */
-export function memoryDir(root: string, config: ProjectConfig): string | undefined {
+export function memoryDir(
+    root: string,
+    config: ProjectConfig,
+    override?: string,
+): string | undefined {
+    if (override) {
+        return resolve(root, override);
+    }
     if (!config.memory && !config.agents.some((a) => a.memory)) {
         return undefined;
     }
@@ -556,8 +575,9 @@ async function openMemory(
     root: string,
     config: ProjectConfig,
     embedders: (ref: string | undefined, where: string) => Embedder | undefined,
+    override?: string,
 ): Promise<MemoryIndex | undefined> {
-    const dir = memoryDir(root, config);
+    const dir = memoryDir(root, config, override);
     if (!dir) {
         return undefined;
     }

@@ -552,9 +552,17 @@ so inspection is free and offline.
 | Why was that recalled?                   | `zen memory show <id>`           |
 | That should never have been written down | `zen memory forget <id>`         |
 
+The directory is not fixed. `zen run --memory <dir>` sends one run's memory
+somewhere else - a scratch graph for a trial, one per branch, or a shared one
+outside the repository - and `zen memory --dir <dir>` reads any such directory
+with no project around it. Together they are also how you read a graph while a
+run holds its `.lock`: copy the directory, delete the copy's `.lock`, and point
+`--dir` at the copy.
+
 `zen inspect` answers the other half: a run report shows the recollection block
 exactly as the model received it, which is how you tell "memory had nothing"
-apart from "memory had it and the model ignored it".
+apart from "memory had it and the model ignored it". A run given `--memory`
+wants `zen inspect --memory <dir>` to rebuild its report against the same graph.
 
 ## A worked configuration
 

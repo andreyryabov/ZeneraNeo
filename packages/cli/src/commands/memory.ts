@@ -12,7 +12,7 @@ import {
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
-import { isAbsolute, join, resolve } from 'node:path';
+import { basename, isAbsolute, join, resolve } from 'node:path';
 import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { project as resolveProject } from '../resolve.ts';
@@ -39,6 +39,7 @@ const USAGE = 'zen memory [stats|ls|show|export|forget] [args] [options]';
 
 interface Flags {
     project?: string;
+    dir?: string;
     kind?: string;
     audience?: string;
     files?: boolean;
@@ -84,6 +85,7 @@ export const memory: Command = {
         '  forget <id...>         Remove nodes, their vectors and their files.',
         '',
         '  --project <name|dir>   Which project. Defaults to the one you are in.',
+        '  --dir <dir>            Read this memory directory instead of the project’s.',
         '  --kind <name>          Only this kind of node.',
         '  --audience <name>      Only nodes committed under this label.',
         '  --files                Only nodes that remember a file.',
@@ -106,6 +108,7 @@ export const memory: Command = {
             ctx.args,
             {
                 project: { type: 'string' },
+                dir: { type: 'string' },
                 kind: { type: 'string' },
                 audience: { type: 'string' },
                 files: { type: 'boolean' },
@@ -123,7 +126,7 @@ export const memory: Command = {
             throw usageError(`unknown subcommand: ${what}`, USAGE);
         }
         const rest = positionals.slice(1);
-        const opened = await open(ctx.cwd, values.project);
+        const opened = await open(ctx.cwd, values.project, values.dir);
 
         try {
             switch (what) {
@@ -159,8 +162,23 @@ interface Opened {
  * project would resolve models and read every prompt file to inspect a graph
  * that needs none of it — and would fail on a project whose credentials are
  * missing, which is exactly when someone is debugging.
+ *
+ * A named directory is opened as it stands, project or no project: a graph
+ * copied out of a running session is the one most worth looking at, and it
+ * should not have to be given an `agents.yaml` first.
  */
-async function open(cwd: string, want: string | undefined): Promise<Opened> {
+async function open(
+    cwd: string,
+    want: string | undefined,
+    at: string | undefined,
+): Promise<Opened> {
+    if (at) {
+        const dir = resolve(cwd, at);
+        if (!existsSync(join(dir, 'manifest.json'))) {
+            throw usageError(`${dir} is not a memory`, 'no manifest.json in it');
+        }
+        return { store: await MemoryStore.open(dir), dir, project: basename(dir) };
+    }
     const project = await resolveProject({ cwd, project: want });
     const { config } = readProjectConfig(project.dir);
     const dir = memoryDir(project.dir, config);

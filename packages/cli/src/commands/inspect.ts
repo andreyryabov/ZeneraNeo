@@ -34,6 +34,7 @@ const USAGE = 'zen inspect [run] [--session <id>] [--open] [--rebuild] [--serve 
 interface Flags {
     project?: string;
     session?: string;
+    memory?: string;
     open?: boolean;
     rebuild?: boolean;
     serve?: string;
@@ -45,6 +46,8 @@ export const inspect: Command = {
     details: [
         'With no arguments: the newest run of the newest session.',
         '--serve starts a local server, which the report needs for its assets.',
+        '--memory <dir> reads that memory instead of the project’s, for a run',
+        'that was given `zen run --memory`.',
     ],
     run: async (ctx) => {
         const { values, positionals } = parse<Flags>(
@@ -52,6 +55,7 @@ export const inspect: Command = {
             {
                 project: { type: 'string' },
                 session: { type: 'string' },
+                memory: { type: 'string' },
                 open: { type: 'boolean' },
                 rebuild: { type: 'boolean' },
                 serve: { type: 'string' },
@@ -65,7 +69,7 @@ export const inspect: Command = {
         const run = pickRun(session, positionals[0]);
 
         if (values.rebuild || !existsSync(run.report)) {
-            await rebuild(session, run, await memory(dir));
+            await rebuild(session, run, await memory(dir, values.memory, ctx.cwd));
         }
 
         if (ctx.json) {
@@ -140,9 +144,13 @@ async function rebuild(session: SessionPaths, run: RunPaths, store?: MemoryStore
  * has the shape of what the run recalled but not a word of it; a run that
  * never touched memory pays nothing, because the report asks for no node.
  */
-async function memory(dir: string): Promise<MemoryStore | undefined> {
+async function memory(
+    dir: string,
+    override: string | undefined,
+    cwd: string,
+): Promise<MemoryStore | undefined> {
     const { config } = readProjectConfig(dir);
-    const at = memoryDir(dir, config);
+    const at = memoryDir(dir, config, override && resolve(cwd, override));
     if (!at || !existsSync(join(at, 'manifest.json'))) {
         return undefined;
     }

@@ -798,6 +798,33 @@ describe('memory in agents.yaml', () => {
         }
     });
 
+    it('lets the host name another directory for the graph', async () => {
+        const root = project({
+            'agents.yaml': 'memory:\n  dir: brain\nagents:\n  - name: solo\n    memory: true\n',
+        });
+        const away = join(root, 'away');
+        const p = await loadProject(root, { memoryDir: away });
+        try {
+            expect(memoryDir(root, p.config, away)).toBe(away);
+            expect(memoryDir(root, p.config, 'rel')).toBe(join(root, 'rel'));
+            expect(existsSync(join(away, 'files'))).toBe(true);
+            expect(existsSync(join(root, 'brain'))).toBe(false);
+        } finally {
+            p.close();
+        }
+    });
+
+    it('takes a named directory as the declaration of memory', async () => {
+        const root = project({ 'agents.yaml': 'agents:\n  - name: solo\n' });
+        const p = await loadProject(root);
+        try {
+            expect(memoryDir(root, p.config)).toBeUndefined();
+            expect(memoryDir(root, p.config, 'brain')).toBe(join(root, 'brain'));
+        } finally {
+            p.close();
+        }
+    });
+
     it('refuses a key it does not honour', () => {
         expect(() =>
             parseConfig('agents:\n  - name: a\n    memory:\n      scope: user\n', 'agents.yaml'),

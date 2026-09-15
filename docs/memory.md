@@ -64,6 +64,13 @@ The store is a directory in the project (`memory/` by default). `zen init`
 git-ignores its vectors, because they are derived and large; the graph itself is
 worth committing if the team shares one.
 
+`zen run --memory <dir>` points one run at a different directory - a scratch
+graph for a trial, one graph per branch, or a shared one kept outside the
+repository. It answers for a project that declares no memory at all, because
+naming a directory is the declaration; which agents remember is still `memory:
+true` in `agents.yaml`, and a run whose agents have no binding says so rather
+than writing nothing quietly.
+
 ## What gets remembered
 
 Kinds are `task`, `plan`, `fact`, `snippet`, `file`, `operation`, `preference`;
@@ -143,6 +150,10 @@ zen memory forget <id...>   # remove nodes, their vectors and their files
 
 `export` is the one to reach for: node list on the left, graph in the middle,
 whatever you clicked on the right, file contents and all.
+
+`--dir <dir>` reads a memory directory as it stands, with no project around it:
+the graph a run was given with `zen run --memory`, or a copy taken out of a
+running session - copy the directory, delete its `.lock`, read the copy.
 
 `forget` is for what should never have been written down - it removes the node,
 its vector and its file bytes together. A memory that is merely out of date
