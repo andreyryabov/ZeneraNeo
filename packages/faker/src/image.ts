@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DEFAULT_SANDBOX_IMAGE, runProcess, type Runner } from '@zenera/neo';
 
@@ -77,14 +77,19 @@ export async function ensureImage(opts: ImageOptions): Promise<string> {
     }
 
     opts.onBuild?.(tag);
-    // An empty directory, because the Containerfile arrives on stdin and there
-    // is nothing to COPY: handing podman the working directory instead would
-    // tar up whatever happened to be in it.
+    // An empty directory, because there is nothing to COPY: handing podman the
+    // working directory instead would tar up whatever happened to be in it.
     const context = join(opts.root, 'build');
     mkdirSync(context, { recursive: true });
 
-    const built = await run(engine, ['build', '--tag', tag, '--file', '-', context], {
-        input: containerfile(base),
+    // A real file rather than `--file -`: a spawned child's stdin is a
+    // socketpair, and a socket cannot be reopened through /dev/stdin, so the
+    // engine fails with ENXIO. It sits beside the context, not inside it, so
+    // the context stays empty.
+    const file = join(opts.root, 'Containerfile');
+    writeFileSync(file, containerfile(base));
+
+    const built = await run(engine, ['build', '--tag', tag, '--file', file, context], {
         timeoutMs: 900_000,
         maxBytes: 256 * 1024,
     });
