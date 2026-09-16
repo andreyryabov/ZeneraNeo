@@ -1,5 +1,5 @@
 import { spawn as nodeSpawn } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { invokedAs } from './args.ts';
@@ -584,7 +584,10 @@ export function windowSink(rows = WINDOW_ROWS): Sink {
 
 export interface Log {
     readonly path: string;
+    /** Where the answer alone goes, beside the log and openable on its own. */
+    readonly answerPath: string;
     line(text: string): void;
+    saveAnswer(text: string): void;
     close(): void;
 }
 
@@ -597,11 +600,16 @@ export function openLog(dir: string, now = new Date()): Log {
     const folder = `${dir}/.tmp/logs`;
     mkdirSync(folder, { recursive: true });
     const path = `${folder}/meta.${stamp}.log`;
+    const answerPath = `${folder}/meta.${stamp}.md`;
     const file = createWriteStream(path, { flags: 'a' });
     return {
         path,
+        answerPath,
         line: (text) => {
             file.write(`${plain(text)}\n`);
+        },
+        saveAnswer: (text) => {
+            writeFileSync(answerPath, text.endsWith('\n') ? text : `${text}\n`);
         },
         close: () => {
             file.end();
