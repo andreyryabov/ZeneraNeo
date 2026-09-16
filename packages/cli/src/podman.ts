@@ -1,5 +1,5 @@
 import { runProcess, SandboxError, type ProcResult } from '@zenera/neo';
-import { readdirSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
 import type { ResolvedBuild } from './image.ts';
@@ -183,8 +183,72 @@ function instructions(): string {
         case 'win32':
             return 'install it with: winget install RedHat.Podman';
         default:
-            return 'install it with your package manager, e.g. apt install podman';
+            return linuxInstructions();
     }
+}
+
+/**
+ * How podman gets installed, by distribution — podman.io/docs/installation,
+ * which is where any of these should be checked against.
+ *
+ * "Install it with your package manager" is advice nobody needs and everybody
+ * has to translate; the host already says which one it has, so the message may
+ * as well be the line to paste. It stops at the line: `sudo` wants a terminal
+ * to ask for a password on and `runProcess` gives it a pipe, so running this
+ * for the user would hang rather than help.
+ */
+const LINUX_INSTALL: Record<string, string> = {
+    alpine: 'install it with: sudo apk add podman',
+    arch: 'install it with: sudo pacman -S podman',
+    centos: 'install it with: sudo dnf -y install podman',
+    debian: 'install it with: sudo apt-get -y install podman',
+    fedora: 'install it with: sudo dnf -y install podman',
+    gentoo: 'install it with: sudo emerge app-containers/podman',
+    // Nix installs nothing imperatively worth keeping: the podman that works
+    // rootless is the one the module turns on.
+    nixos: 'enable it with: virtualisation.podman.enable = true; then: sudo nixos-rebuild switch',
+    opensuse: 'install it with: sudo zypper install podman',
+    rhel: 'install it with: sudo dnf -y install podman',
+    sles: 'install it with: sudo zypper install podman',
+    suse: 'install it with: sudo zypper install podman',
+    ubuntu: 'install it with: sudo apt-get update && sudo apt-get -y install podman',
+    void: 'install it with: sudo xbps-install -S podman',
+};
+
+function linuxInstructions(): string {
+    for (const id of osRelease()) {
+        // `opensuse-leap` and `rhel-9` name the same package manager as their
+        // family does, so a miss on the whole id is worth one on its stem.
+        const how = LINUX_INSTALL[id] ?? LINUX_INSTALL[id.split(/[-.]/)[0] ?? ''];
+        if (how) {
+            return how;
+        }
+    }
+    return 'install it with your package manager, e.g. apt-get install podman';
+}
+
+/**
+ * `ID` first, then `ID_LIKE` — the distribution's own name, then the families
+ * it claims to behave like, which is how Rocky, Alma and Mint get answered
+ * without being listed.
+ */
+function osRelease(): string[] {
+    let text: string;
+    try {
+        text = readFileSync('/etc/os-release', 'utf8');
+    } catch {
+        return [];
+    }
+    const read = (key: string): string[] => {
+        const line = new RegExp(`^${key}=(.*)$`, 'm').exec(text)?.[1] ?? '';
+        return line
+            .trim()
+            .replace(/^["']|["']$/g, '')
+            .toLowerCase()
+            .split(/\s+/)
+            .filter(Boolean);
+    };
+    return [...read('ID'), ...read('ID_LIKE')];
 }
 
 // ---------------------------------------------------------------------------
