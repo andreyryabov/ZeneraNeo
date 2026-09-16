@@ -15,6 +15,7 @@ import {
     masked,
     misspelledProvider,
     MODEL_ENV,
+    openLog,
     ORDER,
     PROMPT_DIR,
     providersWarning,
@@ -33,6 +34,7 @@ import {
     choose,
     CliError,
     credentialError,
+    cyan,
     dim,
     EXIT,
     green,
@@ -389,35 +391,58 @@ async function go(
         note(dim(`no model set — using ${chosen.ref}, the best ${owner} model zen knows of`));
         note(dim('set another: zen meta model <provider>/<id>'));
     }
-    note(dim(`${owner} · ${wiring.model} · ${project.name}`));
+    note(cyan(`${owner} · ${wiring.model} · ${project.name}`));
 
-    const outcome = await launch({
-        binary,
-        args,
-        env: wiring.env,
-        cwd: project.dir,
-    });
+    const log = openLog(project.dir);
+    note(`log  ${log.path}`);
+    const elided = args.map((a, i) => (args[i - 1] === '-p' ? '<prompt>' : a));
+    log.line(`zen meta ${new Date().toISOString()}`);
+    log.line(`project ${project.name} ${project.dir}`);
+    log.line(`model   ${chosen.ref} from ${SOURCE_LABELS[chosen.from]}`);
+    log.line(`command ${[binary.command, ...binary.args, ...elided].join(' ')}`);
+    log.line('');
+    log.line('--- prompt ---');
+    log.line(prompt);
+    log.line('');
+    log.line('--- run ---');
 
-    if (ctx.json) {
-        json({
-            project: project.dir,
-            provider: owner,
-            model: chosen.ref,
-            sessionId: outcome.sessionId,
-            exitCode: outcome.exitCode,
-            usage: outcome.usage,
-            answer: outcome.answer,
+    // A run that dies still has to leave a readable file behind.
+    try {
+        const outcome = await launch({
+            binary,
+            args,
+            env: wiring.env,
+            cwd: project.dir,
+            log,
         });
-    } else if (outcome.answer) {
-        write(outcome.answer);
-    }
 
-    if (outcome.exitCode !== 0) {
-        throw new CliError(
-            `the meta agent exited ${outcome.exitCode}`,
-            EXIT.failed,
-            binary.from === 'npx' ? 'install it: npm i -g @github/copilot' : undefined,
-        );
+        log.line('');
+        log.line('--- answer ---');
+        log.line(outcome.answer);
+
+        if (ctx.json) {
+            json({
+                project: project.dir,
+                provider: owner,
+                model: chosen.ref,
+                sessionId: outcome.sessionId,
+                exitCode: outcome.exitCode,
+                usage: outcome.usage,
+                answer: outcome.answer,
+            });
+        } else if (outcome.answer) {
+            write(outcome.answer);
+        }
+
+        if (outcome.exitCode !== 0) {
+            throw new CliError(
+                `the meta agent exited ${outcome.exitCode}`,
+                EXIT.failed,
+                binary.from === 'npx' ? 'install it: npm i -g @github/copilot' : undefined,
+            );
+        }
+    } finally {
+        log.close();
     }
 }
 

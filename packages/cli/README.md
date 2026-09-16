@@ -566,6 +566,12 @@ alternative was a verb that appeared only sometimes, and a bare word after
 The answer goes to stdout and the progress to stderr, like everything else here,
 so `zen meta run "…" > out.md` keeps the answer alone.
 
+Progress is a small window that rewrites itself rather than a transcript
+scrolling past, because only the last few steps say what it is doing now. The
+whole of it - the prompt, every tool call, the answer - is written as it happens
+to `.tmp/logs/meta.<when>.log`, whose path is printed before the run starts, so
+`tail -f` in another terminal follows a run already going.
+
 `zen meta run /<name>` is the part an editor cannot do for you from a script.
 The prompts under `.github/prompts/` - `/sync-with-spec`, `/review-project` -
 are what a chat panel offers as slash commands, and nothing outside an editor
