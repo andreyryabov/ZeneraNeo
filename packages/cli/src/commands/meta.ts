@@ -50,6 +50,8 @@ import {
 
 const USAGE = 'zen meta [project] [prompt] [options]';
 
+const VERBS = new Set(['model', 'run', 'prompts']);
+
 interface Flags {
     project?: string;
     provider?: string;
@@ -79,6 +81,8 @@ export const meta: Command = {
         '  zen meta run [project] /<name> [words]   run a stored prompt',
         '  zen meta prompts [project]               list the stored prompts',
         '  zen meta model [ref]                     show or set the model it uses',
+        '',
+        'The project may come before the verb instead: `zen meta acme run`.',
         '',
         'Arguments:',
         '  [project]   Name of a project. Default: the one you are in.',
@@ -150,14 +154,32 @@ export const meta: Command = {
             USAGE,
         );
 
-        if (positionals[0] === 'model') {
-            return await model(ctx, values, positionals.slice(1));
+        // `zen meta acme run` is typed at least as often as `zen meta run acme`,
+        // and read literally it asks the agent the one-word question "run" —
+        // a whole model call spent on a typo, with nothing on screen to say so.
+        const [first, second] = positionals;
+        const named =
+            first !== undefined &&
+            second !== undefined &&
+            !VERBS.has(first) &&
+            VERBS.has(second) &&
+            (await Projects.find(first))
+                ? first
+                : undefined;
+        const verb = named ? second : first;
+        const args = named ? [named, ...positionals.slice(2)] : positionals.slice(1);
+
+        if (verb === 'model') {
+            if (named) {
+                throw usageError('the model is not per-project', 'try: zen meta model');
+            }
+            return await model(ctx, values, args);
         }
-        if (positionals[0] === 'run') {
-            return await stored(ctx, values, positionals.slice(1));
+        if (verb === 'run') {
+            return await stored(ctx, values, args);
         }
-        if (positionals[0] === 'prompts') {
-            return await prompts(ctx, values, positionals.slice(1));
+        if (verb === 'prompts') {
+            return await prompts(ctx, values, args);
         }
         return await ask(ctx, values, positionals);
     },
@@ -194,7 +216,19 @@ async function ask(ctx: Context, values: Flags, positionals: string[]): Promise<
     const piped = await readStdin();
     const prompt = (values.prompt ?? rest.join(' ')).trim() || piped;
     if (!prompt) {
-        throw usageError('nothing to ask', `try: zen meta "what does this project do?"`);
+        // Having just been made to name a project, being told the invocation was
+        // wrong is a dead end — the stored prompts are the next thing to offer.
+        const names = isInteractive() && !ctx.json ? await listPrompts(project.dir) : [];
+        if (names.length > 0) {
+            return await runPrompt(ctx, values, project, await menu(names), []);
+        }
+        // Dropping the project from the hint reads as a correction of the part
+        // that was already right.
+        const named = rest.length < positionals.length ? ` ${project.name}` : '';
+        throw usageError(
+            'nothing to ask',
+            `try: zen meta${named} "what does this project do?" — or zen meta${named} prompts`,
+        );
     }
     await go(ctx, values, project, prompt);
 }
@@ -216,7 +250,7 @@ async function stored(ctx: Context, values: Flags, args: string[]): Promise<void
         head = args.slice(0, slash);
         name = args[slash];
         extra = args.slice(slash + 1);
-    } else if (args.length > 1 && (await Projects.find(args[0]))) {
+    } else if (args[0] !== undefined && (await Projects.find(args[0]))) {
         head = [args[0]];
         name = args[1];
         extra = args.slice(2);
@@ -227,9 +261,16 @@ async function stored(ctx: Context, values: Flags, args: string[]): Promise<void
     }
 
     const { project } = await where(ctx, values.project, head);
-    if (!name) {
-        name = await pickPrompt(ctx, project.dir);
-    }
+    await runPrompt(ctx, values, project, name ?? (await pickPrompt(ctx, project.dir)), extra);
+}
+
+async function runPrompt(
+    ctx: Context,
+    values: Flags,
+    project: Projects.Project,
+    name: string,
+    extra: string[],
+): Promise<void> {
     const found = await loadPrompt(project.dir, name);
     if (found.description) {
         note(dim(found.description));
@@ -246,11 +287,14 @@ async function pickPrompt(ctx: Context, dir: string): Promise<string> {
     if (!isInteractive() || ctx.json) {
         throw usageError('which prompt?', `try: ${names.map((n) => `/${n}`).join(', ')}`);
     }
-    return await choose(
+    return await menu(names);
+}
+
+const menu = (names: string[]): Promise<string> =>
+    choose(
         'Which prompt?',
         names.map((n) => ({ label: `/${n}`, value: n })),
     );
-}
 
 // ---------------------------------------------------------------------------
 // zen meta prompts [project]
