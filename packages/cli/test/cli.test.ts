@@ -54,6 +54,7 @@ import {
     chooseModel,
     defaultRef,
     masked,
+    misspelledProvider,
     promptPath,
     readPrompt,
     splitRef,
@@ -2293,6 +2294,23 @@ describe('which model the meta agent runs on', () => {
         expect(splitRef('inclusionai/ling-3.0-flash-fin:free')).toEqual({
             id: 'inclusionai/ling-3.0-flash-fin:free',
         });
+    });
+
+    // The prefix that is nearly right is the dangerous one: it parses as a bare
+    // id and gets sent, whole, to whichever provider the default picks.
+    it('catches a misspelt provider without accusing a publisher', () => {
+        expect(misspelledProvider('vertes/gemini-3.5-flash')).toBe('vertex');
+        expect(misspelledProvider('opeani/gpt-5.6-sol')).toBe('openai');
+        expect(misspelledProvider('antropic/claude-opus-5')).toBe('anthropic');
+        expect(misspelledProvider('vertex/gemini-3.8-flash')).toBeUndefined();
+        expect(misspelledProvider('gpt-5.6-sol')).toBeUndefined();
+        // Real OpenRouter ids, which are shaped the same way.
+        expect(misspelledProvider('meta-llama/llama-4')).toBeUndefined();
+        expect(misspelledProvider('inclusionai/ling-3.0-flash-fin:free')).toBeUndefined();
+        expect(misspelledProvider('x-ai/grok-5')).toBeUndefined();
+        expect(misspelledProvider('deepseek/deepseek-v4')).toBeUndefined();
+        expect(misspelledProvider('qwen/qwen4-max')).toBeUndefined();
+        expect(misspelledProvider('mistralai/mistral-large')).toBeUndefined();
     });
 
     // A machine with a key and nothing else should still run, so the last
