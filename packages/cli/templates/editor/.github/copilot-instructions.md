@@ -59,8 +59,9 @@ schema index it is expected to consult all count. When it does, also load the
 
 Then create or maintain `agents/skills/rag_search/SKILL.md` in the target
 project. Its description must say when an agent should load it. Its body must
-name the target's actual RAG surface and index location, state which agents may
-use it, and give an executable retrieval procedure:
+name the target's actual RAG surface and index location, open by stating what an
+agent needs to follow it and what to do without that, and give an executable
+retrieval procedure:
 
 1. Discover document and section names with the exact listing command or tool.
 2. Start with hybrid search for a complete natural-language question.
@@ -71,6 +72,16 @@ use it, and give an executable retrieval procedure:
    distinctive enough to improve the semantic question.
 5. Retrieve a complete section verbatim, or list a table and read its inclusive
    line range when every row is needed.
+
+**State the prerequisite, not the audience.** `skills.allow` restricts loading
+and `zen check` validates it; a list of agent names in the body is a second copy
+of that binding with nothing keeping the two in step, and it is stale the first
+time an agent is renamed (§4.2, rule 10). What a reader can act on is what the
+procedure needs - the RAG tools, or `sandbox:*` and the index at its path - and
+what to do without them: _"say so and stop; do not answer from memory"_ (§4.2,
+rule 6). Put it in the first lines of the body, because the catalog is mounted
+whole at `/skills` before any binding applies (§3.4.1), so an agent that was
+never granted this skill can still read the file and start following it.
 
 Keep this as runtime guidance, not a pointer to this editor reference: a target
 agent cannot read `.github/` or this project layout while it runs. Include only
@@ -1922,6 +1933,9 @@ candidates; these are the judgements to make about each one)**
 - [ ] Catalog >~30 entries → `discovery: search`
 - [ ] A skill that ships a script writes its `/skills/<name>/...` path, the agent
       holds `sandbox:*`, and the sandbox image already has the interpreter
+- [ ] A skill whose procedure needs particular tools, an index or a mounted file
+      opens by naming them and says what to do without them - rather than naming
+      the agents allowed to load it, which `agents.yaml` already decides - §0.1
 
 **Tools**
 

@@ -29,6 +29,7 @@ import {
 } from '../meta.ts';
 import * as Projects from '../projects.ts';
 import { project as resolveProject } from '../resolve.ts';
+import { editorFiles } from '../scaffold.ts';
 import {
     bold,
     choose,
@@ -118,6 +119,11 @@ export const meta: Command = {
         '',
         'Nothing it needs is put on a command line: every credential reaches it',
         'through the environment, where other processes cannot read it.',
+        '',
+        'The editor files `zen init` writes (.vscode/settings.json and the .github/',
+        'tree) are refreshed in the project first, the way `zen open` refreshes',
+        'them: the agent is about to read that brief, and it describes this version',
+        'of zen. Edits to them do not survive.',
         '',
         'The model is looked for in this order: --model, ZENERA_META_MODEL in the',
         "shell, ZENERA_META_MODEL in the project's .env, `zen meta model`, then",
@@ -223,6 +229,23 @@ async function where(
     return { project, rest: named ? tail : positionals };
 }
 
+/**
+ * The editor's files, rewritten before the agent reads them — the same refresh
+ * `zen open` does, for the same reason. `.github/` is the brief this agent works
+ * from and the prompts it is offered, and it describes the version of `zen` in
+ * hand; a project scaffolded by an older one would otherwise be briefed on a
+ * runtime that has moved. A failure is narrated, not raised: a read-only
+ * checkout is no reason to refuse to answer a question.
+ */
+function refresh(project: Projects.Project): void {
+    try {
+        const written = editorFiles(project.dir);
+        note(dim(`refreshed ${written.length} editor files in ${project.name}`));
+    } catch (err) {
+        warn(`could not refresh the editor files — ${(err as Error).message}`);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // zen meta run [project] [/<name>|<question>] [words...]
 //
@@ -250,6 +273,7 @@ async function stored(ctx: Context, values: Flags, args: string[]): Promise<void
     }
 
     const { project } = await where(ctx, values.project, head);
+    refresh(project);
     if (name) {
         return await runPrompt(ctx, values, project, name, rest);
     }
@@ -302,6 +326,7 @@ async function pickPrompt(ctx: Context, project: Projects.Project): Promise<stri
 
 async function prompts(ctx: Context, values: Flags, args: string[]): Promise<void> {
     const { project } = await where(ctx, values.project, args);
+    refresh(project);
     const names = await listPrompts(project.dir);
     const found = await Promise.all(names.map((name) => loadPrompt(project.dir, name)));
 
