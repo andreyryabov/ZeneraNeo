@@ -1,5 +1,5 @@
 import { spawn as nodeSpawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { invokedAs } from './args.ts';
@@ -12,6 +12,7 @@ import {
     dim,
     note,
     pad,
+    plain,
     red,
     usageError,
     write,
@@ -468,6 +469,8 @@ export interface Sink {
     answer(text: string): void;
     narrate(line: string): void;
     warn(line: string): void;
+    /** Kept by the log, never shown: the step-by-step nobody reads while it runs. */
+    detail?(line: string): void;
     /** A transient last row, replaced each time and never kept. '' removes it. */
     status?(line: string): void;
     /** Called once when the run ends, so a repainting sink can clear itself. */
@@ -537,9 +540,9 @@ export function windowSink(rows = WINDOW_ROWS): Sink {
         const inner = columns() - 4;
         const rule = BOX.h.repeat(inner + 2);
         const framed = [
-            dim(`${BOX.tl}${rule}${BOX.tr}`),
-            ...show.map((l) => `${dim(BOX.v)} ${pad(cut(l, inner), inner)} ${dim(BOX.v)}`),
-            dim(`${BOX.bl}${rule}${BOX.br}`),
+            cyan(`${BOX.tl}${rule}${BOX.tr}`),
+            ...show.map((l) => `${cyan(BOX.v)} ${pad(cut(l, inner), inner)} ${cyan(BOX.v)}`),
+            cyan(`${BOX.bl}${rule}${BOX.br}`),
         ];
         process.stderr.write(framed.map((l) => `${l}\n`).join(''));
         painted = framed.length;
@@ -570,6 +573,60 @@ export function windowSink(rows = WINDOW_ROWS): Sink {
     };
 }
 
+// ---------------------------------------------------------------------------
+// The log
+//
+// The window shows the last few steps and the answer goes to stdout, so the
+// middle of a long run is gone by the time anyone wants it. The log is the
+// whole of it — prompt, every step, the answer — written as it happens, so a
+// second terminal can `tail -f` a run that is still going.
+// ---------------------------------------------------------------------------
+
+export interface Log {
+    readonly path: string;
+    line(text: string): void;
+    close(): void;
+}
+
+/** `<project>/.tmp/logs/meta.<when>.log`, opened for append. */
+export function openLog(dir: string, now = new Date()): Log {
+    const two = (n: number): string => String(n).padStart(2, '0');
+    const stamp =
+        `${now.getFullYear()}${two(now.getMonth() + 1)}${two(now.getDate())}` +
+        `${two(now.getHours())}${two(now.getMinutes())}${two(now.getSeconds())}`;
+    const folder = `${dir}/.tmp/logs`;
+    mkdirSync(folder, { recursive: true });
+    const path = `${folder}/meta.${stamp}.log`;
+    const file = createWriteStream(path, { flags: 'a' });
+    return {
+        path,
+        line: (text) => {
+            file.write(`${plain(text)}\n`);
+        },
+        close: () => {
+            file.end();
+        },
+    };
+}
+
+/** Everything the sink is told, kept by the log too — and the detail only there. */
+function tee(sink: Sink, log: Log): Sink {
+    return {
+        answer: (text) => sink.answer(text),
+        narrate: (line) => {
+            log.line(line);
+            sink.narrate(line);
+        },
+        detail: (line) => log.line(line),
+        warn: (line) => {
+            log.line(line);
+            sink.warn(line);
+        },
+        status: (line) => sink.status?.(line),
+        close: () => sink.close?.(),
+    };
+}
+
 /**
  * Folds one event into the outcome and says what, if anything, to show for it.
  *
@@ -586,25 +643,27 @@ export function absorb(event: Event, out: Outcome, sink: Sink, width: number): v
             if (requests.length === 0) {
                 out.answer = content;
             } else if (content) {
-                sink.narrate(dim(cut(content.replace(/\s+/g, ' '), width)));
+                sink.narrate(cut(content.replace(/\s+/g, ' '), width));
             }
             break;
         }
         case 'tool.execution_start': {
             const args = (data.arguments ?? {}) as Record<string, unknown>;
-            const what = String(args.command ?? args.description ?? data.toolName ?? '');
-            sink.narrate(`${cyan('$')} ${cut(what.replace(/\s+/g, ' '), width - 2)}`);
+            const what = String(args.command ?? args.description ?? data.toolName ?? '').trim();
+            // Step-by-step belongs in the log: on screen it is a wall of `$`
+            // saying less than the one line of commentary above it.
+            sink.detail?.(`$ ${what.replace(/\s+/g, ' ')}`);
             break;
         }
         case 'tool.execution_complete': {
             if (data.success === false) {
-                sink.narrate(dim('  failed'));
+                sink.detail?.(`  ${String(data.toolName ?? 'the tool')} failed`);
             }
             break;
         }
         case 'session.tools_updated': {
             if (data.model) {
-                sink.narrate(dim(`model ${String(data.model)}`));
+                sink.detail?.(`model ${String(data.model)}`);
             }
             break;
         }
@@ -641,13 +700,15 @@ export interface Launch {
     env: Record<string, string>;
     cwd: string;
     sink?: Sink;
+    log?: Log;
     width?: number;
     /** injected by the tests, which have no copilot and want none */
     spawn?: typeof nodeSpawn;
 }
 
 export async function launch(opts: Launch): Promise<Outcome> {
-    const sink = opts.sink ?? windowSink();
+    const shown = opts.sink ?? windowSink();
+    const sink = opts.log ? tee(shown, opts.log) : shown;
     const width = opts.width ?? Math.max(40, (process.stderr.columns ?? 100) - 4);
     const start = opts.spawn ?? nodeSpawn;
     const out: Outcome = { answer: '', exitCode: 0, events: [] };
@@ -671,7 +732,7 @@ export async function launch(opts: Launch): Promise<Outcome> {
     // after the model line is indistinguishable from a hang.
     const began = Date.now();
     const beat = setInterval(() => {
-        sink.status?.(dim(`  working … ${Math.round((Date.now() - began) / 1000)}s`));
+        sink.status?.(cyan(`  working … ${Math.round((Date.now() - began) / 1000)}s`));
     }, 1000);
     beat.unref();
 

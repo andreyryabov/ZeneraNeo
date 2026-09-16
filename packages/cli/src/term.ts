@@ -60,7 +60,11 @@ export const cyan = (s: string): string => styleText('cyan', s);
 /** Visible width — style codes must not count towards column alignment. */
 // eslint-disable-next-line no-control-regex
 const ANSI = /\u001b\[[0-9;]*m/g;
-const width = (s: string): string => s.replace(ANSI, '');
+
+/** The text as it reads without styling, which is what a file wants. */
+export const plain = (s: string): string => s.replace(ANSI, '');
+
+const width = plain;
 
 export function pad(s: string, to: number): string {
     return s + ' '.repeat(Math.max(0, to - width(s).length));

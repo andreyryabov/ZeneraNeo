@@ -2441,25 +2441,29 @@ describe('a stored prompt', () => {
 });
 
 describe('re-rendering copilot output', () => {
-    const run = (events: object[]): { out: Outcome; said: string[]; shown: string[] } => {
+    const run = (
+        events: object[],
+    ): { out: Outcome; said: string[]; kept: string[]; shown: string[] } => {
         const said: string[] = [];
+        const kept: string[] = [];
         const shown: string[] = [];
         const sink: Sink = {
             answer: (t) => shown.push(t),
             narrate: (l) => said.push(l),
+            detail: (l) => kept.push(l),
             warn: (l) => said.push(l),
         };
         const out: Outcome = { answer: '', exitCode: 0, events: [] };
         for (const event of events) {
             absorb(event as never, out, sink, 80);
         }
-        return { out, said, shown };
+        return { out, said, kept, shown };
     };
 
     // `assistant.message` carries both the running commentary and the last
     // word. What separates them is whether it asked for a tool.
     it('keeps the message that asked for no tool as the answer', () => {
-        const { out, said } = run([
+        const { out, said, kept } = run([
             { type: 'assistant.message', data: { content: 'Looking.', toolRequests: [{ a: 1 }] } },
             {
                 type: 'tool.execution_start',
@@ -2471,7 +2475,9 @@ describe('re-rendering copilot output', () => {
         expect(out.answer).toBe('Three files.');
         expect(out.sessionId).toBe('s1');
         expect(said.join('\n')).toContain('Looking.');
-        expect(said.join('\n')).toContain('ls');
+        // A step is for the log, not the screen, where it is a wall of `$`.
+        expect(kept.join('\n')).toContain('ls');
+        expect(said.join('\n')).not.toContain('ls');
         // The answer is never narrated; it is the thing stdout is for.
         expect(said.join('\n')).not.toContain('Three files.');
     });
