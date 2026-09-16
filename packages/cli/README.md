@@ -551,17 +551,26 @@ panel drives, as a command you can put in a script.
 
 ```sh
 zen meta run "what does this project do?"
-zen meta run acme "review the last commit" --allow-all
+zen meta run acme "review the last commit"
 zen meta prompts                             # which /<name> prompts this project has
-zen meta run /review-project --allow-all     # .github/prompts/review-project.prompt.md
+zen meta run /review-project                 # .github/prompts/review-project.prompt.md
 zen meta run acme /sync-with-spec agents/triage.md
-git diff | zen meta run "what broke?"
+git diff | zen meta run "what broke?" --allow-tool read
 zen meta run --dry-run "hello"               # what would run, secrets masked
 ```
 
 Every prompt goes through `run`, whether you typed it or it is a file: the
 alternative was a verb that appeared only sometimes, and a bare word after
 `zen meta` that was a subcommand on Tuesdays and a question on Wednesdays.
+
+It uses every tool without asking. The prompts it runs were written for an
+editor, where reading files, writing them and running commands is the whole
+point, and a `-p` run has nobody sitting there to answer the question - so the
+alternative is not a safer run but a stalled one. `--allow-tool read`,
+`--allow-tool 'shell(git:*)'` narrow it to what a particular run needs, and
+`--ask` puts the question back. It is your own checkout and your own key either
+way, so treat it as you would `git push`: fine on a project you own, worth
+narrowing on one you do not.
 
 The answer goes to stdout and the progress to stderr, like everything else here,
 so `zen meta run "…" > out.md` keeps the answer alone.

@@ -66,6 +66,7 @@ interface Flags {
     continue?: boolean;
     'allow-all'?: boolean;
     'allow-tool'?: string;
+    ask?: boolean;
     'add-dir'?: string[];
     'dry-run'?: boolean;
     local?: boolean;
@@ -99,8 +100,8 @@ export const meta: Command = {
         '  --provider <name>      Force the key to use. Default: the model ref says.',
         '  --agent <name>         A .github/agents/<name>.agent.md.',
         '  --effort <level>       none, minimal, low, medium, high, xhigh or max.',
-        '  --allow-all            Let it use every tool without asking.',
-        '  --allow-tool <list>    Narrower: read, shell(git:*), write(README.md).',
+        '  --allow-tool <list>    Only these: read, shell(git:*), write(README.md).',
+        '  --ask                  Have it ask before each tool. Default: it does not.',
         '  --add-dir <dir>        Another directory it may touch. Repeatable.',
         '  --resume <id>          Continue a copilot session. --continue takes the last.',
         '  --share <file>         Write the transcript to a markdown file.',
@@ -109,6 +110,11 @@ export const meta: Command = {
         'It always uses your own keys — `zen key add` — and never a coding-agent',
         'subscription. The answer goes to stdout and the progress to stderr, so',
         '`> out.md` keeps the answer alone.',
+        '',
+        'It may use every tool without asking, because a prompt written for an',
+        'editor expects to read, write and run things, and a terminal has nobody',
+        'watching to answer. Narrow it with --allow-tool, or restore the asking',
+        'with --ask.',
         '',
         'Nothing it needs is put on a command line: every credential reaches it',
         'through the environment, where other processes cannot read it.',
@@ -123,11 +129,11 @@ export const meta: Command = {
         '',
         'Examples:',
         '  zen meta run "what does this project do?"',
-        '  zen meta run acme "review the last commit" --allow-all',
+        '  zen meta run acme "review the last commit"',
         '  zen meta prompts',
-        '  zen meta run /review-project --allow-all',
+        '  zen meta run /review-project',
         '  zen meta run acme /sync-with-spec agents/triage.md',
-        '  git diff | zen meta run "what broke?"',
+        '  git diff | zen meta run "what broke?" --allow-tool read',
         '  zen meta model vertex/gemini-3.8-flash',
         '  zen meta model --pick',
         '  zen meta run --dry-run "hello"',
@@ -147,6 +153,7 @@ export const meta: Command = {
                 continue: { type: 'boolean' },
                 'allow-all': { type: 'boolean' },
                 'allow-tool': { type: 'string' },
+                ask: { type: 'boolean' },
                 'add-dir': { type: 'string', multiple: true },
                 'dry-run': { type: 'boolean' },
                 local: { type: 'boolean' },
@@ -457,7 +464,10 @@ async function go(
 /** Copilot's own flags, assembled once. Nothing secret goes on this line. */
 function argv(values: Flags, dir: string, prompt: string, secret: string[]): string[] {
     const args = ['-C', dir, '-p', prompt, '--output-format', 'json', '--no-color'];
-    if (values['allow-all']) {
+    // A prompt written for an editor expects to read, write and run things, and
+    // there is nobody at a `-p` run to answer the question. Naming tools is the
+    // narrower answer and wins; --ask is the way back to being asked.
+    if (values['allow-all'] || (!values.ask && !values['allow-tool'])) {
         args.push('--allow-all-tools');
     }
     if (values['allow-tool']) {
