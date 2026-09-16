@@ -5,7 +5,18 @@ import { createInterface } from 'node:readline';
 import { invokedAs } from './args.ts';
 import { paths, readJson, writeJson } from './home.ts';
 import { envOf, type KeyEntry, type KeyStore, type Provider } from './keys.ts';
-import { credentialError, cut, cyan, dim, note, red, usageError, write, yellow } from './term.ts';
+import {
+    credentialError,
+    cut,
+    cyan,
+    dim,
+    note,
+    pad,
+    red,
+    usageError,
+    write,
+    yellow,
+} from './term.ts';
 
 // ---------------------------------------------------------------------------
 // The meta agent
@@ -457,6 +468,10 @@ export interface Sink {
     answer(text: string): void;
     narrate(line: string): void;
     warn(line: string): void;
+    /** A transient last row, replaced each time and never kept. '' removes it. */
+    status?(line: string): void;
+    /** Called once when the run ends, so a repainting sink can clear itself. */
+    close?(): void;
 }
 
 export const terminalSink: Sink = {
@@ -464,6 +479,96 @@ export const terminalSink: Sink = {
     narrate: (line) => note(line),
     warn: (line) => note(red(line)),
 };
+
+/** Rows of narration the window keeps on screen. */
+export const WINDOW_ROWS = 8;
+
+const BOX = { tl: '╭', tr: '╮', bl: '╰', br: '╯', h: '─', v: '│' };
+
+/**
+ * Narration held to a fixed number of rows that rewrite themselves in place.
+ *
+ * A long run is hundreds of tool calls, and printing each as its own line
+ * scrolls the question, the model line and every warning off the top of the
+ * screen — by the end the terminal holds a transcript nobody asked for and the
+ * answer is somewhere in the middle of it. Only the last few steps say what it
+ * is doing now, which is the only thing narration is for; the rest is in the
+ * session copilot recorded.
+ *
+ * Warnings are not narration: they leave the window and stay on the screen.
+ *
+ * Without a terminal there is nothing to rewrite over, so every line is its
+ * own — which is what a CI log wants anyway.
+ */
+export function windowSink(rows = WINDOW_ROWS): Sink {
+    if (!process.stderr.isTTY) {
+        return terminalSink;
+    }
+    const kept: string[] = [];
+    let tail = '';
+    let painted = 0;
+
+    // The frame must stay under the viewport: a block taller than the screen
+    // scrolls its own top away, and then the cursor-up erase falls short and
+    // strands a copy of every repaint. The two border rows count towards it.
+    const height = (): number => Math.max(1, Math.min(rows, (process.stderr.rows ?? 24) - 4));
+    const columns = (): number => Math.max(20, (process.stderr.columns ?? 80) - 1);
+
+    const erase = (): void => {
+        if (painted > 0) {
+            process.stderr.write(`\u001b[${painted}A\u001b[0J`);
+            painted = 0;
+        }
+    };
+
+    const paint = (): void => {
+        erase();
+        // slice(-0) is the whole array, so a window with no room for narration
+        // has to be spelled out.
+        const room = height() - (tail ? 1 : 0);
+        const show = room > 0 ? kept.slice(-room) : [];
+        if (tail) {
+            show.push(tail);
+        }
+        if (show.length === 0) {
+            return;
+        }
+        // Every row must be one row: a wrapped line breaks the cursor arithmetic.
+        const inner = columns() - 4;
+        const rule = BOX.h.repeat(inner + 2);
+        const framed = [
+            dim(`${BOX.tl}${rule}${BOX.tr}`),
+            ...show.map((l) => `${dim(BOX.v)} ${pad(cut(l, inner), inner)} ${dim(BOX.v)}`),
+            dim(`${BOX.bl}${rule}${BOX.br}`),
+        ];
+        process.stderr.write(framed.map((l) => `${l}\n`).join(''));
+        painted = framed.length;
+    };
+
+    return {
+        answer: (text) => {
+            erase();
+            write(text);
+        },
+        narrate: (line) => {
+            kept.push(...line.split('\n'));
+            if (kept.length > height() * 4) {
+                kept.splice(0, kept.length - height());
+            }
+            paint();
+        },
+        warn: (line) => {
+            erase();
+            note(red(line));
+            paint();
+        },
+        status: (line) => {
+            tail = line;
+            paint();
+        },
+        close: erase,
+    };
+}
 
 /**
  * Folds one event into the outcome and says what, if anything, to show for it.
@@ -542,7 +647,7 @@ export interface Launch {
 }
 
 export async function launch(opts: Launch): Promise<Outcome> {
-    const sink = opts.sink ?? terminalSink;
+    const sink = opts.sink ?? windowSink();
     const width = opts.width ?? Math.max(40, (process.stderr.columns ?? 100) - 4);
     const start = opts.spawn ?? nodeSpawn;
     const out: Outcome = { answer: '', exitCode: 0, events: [] };
@@ -561,6 +666,14 @@ export async function launch(opts: Launch): Promise<Outcome> {
     const onTerm = stop('SIGTERM');
     process.on('SIGINT', onInt);
     process.on('SIGTERM', onTerm);
+
+    // The first model call says nothing for as long as it takes, and silence
+    // after the model line is indistinguishable from a hang.
+    const began = Date.now();
+    const beat = setInterval(() => {
+        sink.status?.(dim(`  working … ${Math.round((Date.now() - began) / 1000)}s`));
+    }, 1000);
+    beat.unref();
 
     child.stderr?.on('data', (chunk: Buffer) => {
         const text = chunk.toString().trimEnd();
@@ -592,8 +705,11 @@ export async function launch(opts: Launch): Promise<Outcome> {
             out.exitCode = code;
         }
     } finally {
+        clearInterval(beat);
         process.off('SIGINT', onInt);
         process.off('SIGTERM', onTerm);
+        // The answer is written by the caller, so the window has to be gone first.
+        sink.close?.();
     }
     return out;
 }
