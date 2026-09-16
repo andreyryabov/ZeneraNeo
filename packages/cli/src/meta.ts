@@ -445,7 +445,7 @@ function onPath(cmd: string): boolean {
 // Copilot's JSONL is a transcript, not an answer: tool calls, reasoning, model
 // bookkeeping, and — among them — the message it finished with. Re-rendering
 // it is what keeps zen's one rule true, that stdout is the answer and stderr
-// is the story of getting there, so `zen meta … > out.md` holds the answer
+// is the story of getting there, so `zen meta run … > out.md` holds the answer
 // alone the same way `zen run` does.
 // ---------------------------------------------------------------------------
 

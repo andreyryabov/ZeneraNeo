@@ -550,17 +550,21 @@ keyring, and not on anybody's subscription. It is the loop your editor's chat
 panel drives, as a command you can put in a script.
 
 ```sh
-zen meta "what does this project do?"
-zen meta acme "review the last commit" --allow-all
+zen meta run "what does this project do?"
+zen meta run acme "review the last commit" --allow-all
 zen meta prompts                             # which /<name> prompts this project has
 zen meta run /review-project --allow-all     # .github/prompts/review-project.prompt.md
 zen meta run acme /sync-with-spec agents/triage.md
-git diff | zen meta "what broke?"
-zen meta --dry-run "hello"                   # what would run, secrets masked
+git diff | zen meta run "what broke?"
+zen meta run --dry-run "hello"               # what would run, secrets masked
 ```
 
+Every prompt goes through `run`, whether you typed it or it is a file: the
+alternative was a verb that appeared only sometimes, and a bare word after
+`zen meta` that was a subcommand on Tuesdays and a question on Wednesdays.
+
 The answer goes to stdout and the progress to stderr, like everything else here,
-so `zen meta "…" > out.md` keeps the answer alone.
+so `zen meta run "…" > out.md` keeps the answer alone.
 
 `zen meta run /<name>` is the part an editor cannot do for you from a script.
 The prompts under `.github/prompts/` - `/sync-with-spec`, `/review-project` -
@@ -570,7 +574,7 @@ same prompt runs from the editor, from a terminal and from CI.
 
 A terminal has no menu dropping down as you type a slash, so
 `zen meta prompts` lists what this project holds, each with its description.
-`zen meta run` with no name asks the same question interactively.
+`zen meta run` with nothing to say asks the same question interactively.
 
 ### Which model it runs on
 

@@ -663,11 +663,20 @@ so it can be replaced: today it drives GitHub Copilot CLI, and nothing above
 [meta.ts](packages/cli/src/meta.ts) names it.
 
 ```
-zen meta [project] [prompt]              ask it something
+zen meta run [project] "<question>"      ask it something
 zen meta run [project] /<name> [words]   run .github/prompts/<name>.prompt.md
+zen meta run [project]                   pick one of those prompts
 zen meta prompts [project]               list those prompts
 zen meta model [ref]                     show or set the model it uses
 ```
+
+Every prompt goes through `run`. The earlier grammar asked for the verb only in
+front of a stored prompt, which made the first bare word after `zen meta` mean
+different things on different days: `zen meta acme run` read as the question
+"run", asked of project `acme`, and spent a model call saying so. A verb that is
+always there cannot be mistaken for the thing it introduces. The project may sit
+on either side of it - `zen meta acme run` and `zen meta run acme` are the same
+command - because that is the one reordering people actually type.
 
 Three things make it more than `copilot -C`.
 
@@ -703,8 +712,8 @@ tool calls, reasoning and bookkeeping with the answer somewhere inside it:
 `assistant.message` carries both the running commentary and the last word, and
 what separates them is whether it asked for a tool. The last message that asked
 for none is the answer and goes to stdout; everything else is narration and
-goes to stderr. So `zen meta … > out.md` holds the answer alone, the same way
-`zen run` does.
+goes to stderr. So `zen meta run … > out.md` holds the answer alone, the same
+way `zen run` does.
 
 Which model, highest first: `--model`, `ZENERA_META_MODEL` in the shell, the
 same in the project's `.env`, `~/.zenera/neo/meta.json` (`zen meta model <ref>`),
