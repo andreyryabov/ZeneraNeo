@@ -595,6 +595,12 @@ reasoning APIs accept, so use a reasoning model - `gpt-5.6-sol`,
 `claude-opus-5`, `gemini-3.8-flash`. Those three are also what it falls back
 to, and what `zen meta model --pick` offers.
 
+Setting one asks it a one-word question before storing it, so a model that will
+not answer is refused with the provider's own words rather than at the start of
+the next run. A typed prefix that names no provider - `vertes/...` - is caught
+before that, because it would otherwise be sent whole to a vendor you never
+named. `--force` stores a ref without asking.
+
 ## Credentials
 
 One keyring serves every provider, and a key goes in the same way whatever it

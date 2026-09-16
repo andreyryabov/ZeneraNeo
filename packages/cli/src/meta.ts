@@ -180,6 +180,49 @@ export function splitRef(ref: string): { provider?: Provider; id: string } {
         : { id: ref };
 }
 
+/**
+ * The provider a misspelt prefix was reaching for, if that is what it is.
+ *
+ * `vertes/gemini-3.8-flash` is shaped exactly like the OpenRouter id
+ * `meta-llama/llama-4`, so an unknown prefix cannot be an error on its own —
+ * only one close enough to a real provider name to be a slip of the hand.
+ */
+export function misspelledProvider(ref: string): Provider | undefined {
+    const slash = ref.indexOf('/');
+    if (slash <= 0) {
+        return undefined;
+    }
+    const head = ref.slice(0, slash).toLowerCase();
+    if (PROVIDER_NAMES.has(head)) {
+        return undefined;
+    }
+    for (const name of PROVIDER_NAMES) {
+        // Two, so that a transposition — which Levenshtein counts twice — reads
+        // as the typo it is. No provider name is short enough for that to be loose.
+        if (distance(head, name) <= 2) {
+            return name as Provider;
+        }
+    }
+    return undefined;
+}
+
+/** Levenshtein, one row at a time. Both operands are a word long. */
+function distance(a: string, b: string): number {
+    if (Math.abs(a.length - b.length) > 2) {
+        return 3;
+    }
+    let row = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+        const next = [i];
+        for (let j = 1; j <= b.length; j++) {
+            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+            next[j] = Math.min(next[j - 1] + 1, row[j] + 1, row[j - 1] + cost);
+        }
+        row = next;
+    }
+    return row[b.length];
+}
+
 // ---------------------------------------------------------------------------
 // Wiring
 // ---------------------------------------------------------------------------

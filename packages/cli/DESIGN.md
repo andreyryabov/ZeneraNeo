@@ -723,6 +723,17 @@ the deep tier is what it falls back to rather than the cheap one. The choice is
 announced on stderr with the command that overrides it, since a model picked
 for you is only acceptable if you can see it happen.
 
+**A stored ref is vetted before it is stored.** `zen meta model <ref>` asks the
+model one word and refuses to write one that does not answer, because the whole
+value of the store is that the next run works. Ahead of that is the cheaper
+check: a prefix that names no provider but is one edit away from one. It cannot
+be rejected on shape alone - `vertes/gemini-3.5-flash` is built exactly like the
+OpenRouter id `meta-llama/llama-4` - so the near miss is what gives it away, and
+catching it matters because an unrecognised prefix is not an error anywhere
+else: it becomes the model id, and the id goes to whichever provider the
+default names. `--force` writes without asking, for an offline machine or a
+model newer than everything that could check it.
+
 One sharp edge: copilot offers its tools as OpenAI _custom_ tools, which the
 completions API rejects outright - `400 Invalid value: 'custom'`. Only the
 responses API accepts them, so the wire API follows the model rather than being

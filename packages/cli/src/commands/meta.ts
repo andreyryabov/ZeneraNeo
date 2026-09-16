@@ -1,9 +1,10 @@
-import { readProjectConfig } from '@zenera/neo';
+import { createModel, readProjectConfig } from '@zenera/neo';
 import { parse } from '../args.ts';
 import type { Command, Context } from '../command.ts';
 import { loadProjectEnv } from '../env.ts';
 import { ensureHome } from '../home.ts';
 import { assertOwner, KeyStore, PROVIDERS, type Provider } from '../keys.ts';
+import { probeModel } from '../liveness.ts';
 import {
     chooseModel,
     defaultRef,
@@ -12,6 +13,7 @@ import {
     loadPrompt,
     locate,
     masked,
+    misspelledProvider,
     MODEL_ENV,
     ORDER,
     PROMPT_DIR,
@@ -37,6 +39,7 @@ import {
     isInteractive,
     json,
     note,
+    progress,
     readStdin,
     table,
     usageError,
@@ -64,6 +67,7 @@ interface Flags {
     local?: boolean;
     pick?: boolean;
     clear?: boolean;
+    force?: boolean;
 }
 
 export const meta: Command = {
@@ -107,6 +111,9 @@ export const meta: Command = {
         'agents.yaml. With none of them set it uses the best model it knows of for',
         'a provider you hold a key for, and says which on stderr.',
         '',
+        'Setting one asks the provider a one-word question first, so a model that',
+        'will not answer is never stored. --force skips that.',
+        '',
         'Examples:',
         '  zen meta "what does this project do?"',
         '  zen meta acme "review the last commit" --allow-all',
@@ -138,6 +145,7 @@ export const meta: Command = {
                 local: { type: 'boolean' },
                 pick: { type: 'boolean' },
                 clear: { type: 'boolean' },
+                force: { type: 'boolean' },
             },
             USAGE,
         );
@@ -307,6 +315,10 @@ async function go(
 
     const { provider, id } = splitRef(chosen.ref);
     const owner = only ?? provider ?? 'openai';
+    const meant = misspelledProvider(chosen.ref);
+    if (meant && !only) {
+        warn(`${chosen.ref} names no provider — did you mean ${meant}/${id}?`);
+    }
     const entry = store.active(owner);
     if (!entry) {
         throw credentialError(`no ${owner} key`, `add one: zen key add ${owner}`);
@@ -507,6 +519,9 @@ async function set(
     project: Projects.Project | undefined,
     ref: string,
 ): Promise<void> {
+    if (!values.force) {
+        await vet(ctx, ref);
+    }
     if (values.local) {
         if (!project) {
             throw usageError('--local needs a project', 'run it inside one, or drop --local');
@@ -523,6 +538,52 @@ async function set(
         json({ model: ref, where: values.local ? '.env' : 'meta.json' });
     } else {
         write(ref);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Vetting a ref
+//
+// Naming a model is a deliberate act and the run that follows is not free, so
+// the provider is asked one cheap question now. Without it a slip of the hand
+// is stored happily and surfaces much later as a 404 from a vendor nobody
+// named — `vertes/…` has no known prefix, so it would be sent whole to OpenAI.
+// ---------------------------------------------------------------------------
+
+async function vet(ctx: Context, ref: string): Promise<void> {
+    const meant = misspelledProvider(ref);
+    if (meant) {
+        const [head, ...rest] = ref.split('/');
+        throw usageError(
+            `no provider called "${head}"`,
+            `did you mean ${meant}/${rest.join('/')}?`,
+        );
+    }
+    const { provider, id } = splitRef(ref);
+    const owner = provider ?? 'openai';
+    const store = await KeyStore.open();
+    if (!store.active(owner)) {
+        throw credentialError(`no ${owner} key to try ${id} with`, `add one: zen key add ${owner}`);
+    }
+    store.materialize();
+
+    const bar = ctx.json ? undefined : progress();
+    bar?.update(dim(`asking ${owner} about ${id} …`));
+    const probe = await probeModel({
+        // The colon form, so a refusal suggests `zen models ls <provider>`.
+        ref: `${owner}:${id}`,
+        kind: 'model',
+        model: createModel({ provider: owner, model: id, maxTokens: 16 }),
+    });
+    bar?.done();
+
+    if (probe.check.state !== 'live') {
+        const why = probe.check.detail ? ` — ${probe.check.detail}` : '';
+        const fix = probe.check.fix ?? `see what it serves: zen models ls ${owner}`;
+        throw credentialError(`${owner} did not answer to ${id}${why}`, `${fix}, or --force`);
+    }
+    if (!ctx.json) {
+        note(dim(`${owner} answered in ${(probe.ms / 1000).toFixed(1)}s`));
     }
 }
 
