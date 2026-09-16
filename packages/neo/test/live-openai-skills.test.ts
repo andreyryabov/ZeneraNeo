@@ -589,7 +589,9 @@ live('openai live preloaded skills', () => {
         expect(looked).toBeDefined();
         expect(looked!.text).toContain('2031-04-17');
 
-        expect(result.output).toContain('2031-04-17');
+        // The date has to reach the sentence; how it is written there is the
+        // model's business, and `April 17, 2031` answers the question too.
+        expect(result.output).toMatch(/2031-04-17|(april\s+17|17\s+april)[,\s]+2031/i);
         expect(result.output).toContain('PROTOCOL_ACTIVE');
     }, 120000);
 });
