@@ -419,6 +419,9 @@ async function go(
         log.line('');
         log.line('--- answer ---');
         log.line(outcome.answer);
+        if (outcome.answer) {
+            log.saveAnswer(outcome.answer);
+        }
 
         if (ctx.json) {
             json({
@@ -429,9 +432,14 @@ async function go(
                 exitCode: outcome.exitCode,
                 usage: outcome.usage,
                 answer: outcome.answer,
+                answerFile: outcome.answer ? log.answerPath : undefined,
             });
         } else if (outcome.answer) {
             write(outcome.answer);
+            // After the answer, not before: it is the thing you click once you
+            // have read enough to want it in an editor.
+            note();
+            note(cyan(log.answerPath));
         }
 
         if (outcome.exitCode !== 0) {

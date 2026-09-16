@@ -570,7 +570,9 @@ Progress is a small window that rewrites itself rather than a transcript
 scrolling past, because only the last few steps say what it is doing now. The
 whole of it - the prompt, every tool call, the answer - is written as it happens
 to `.tmp/logs/meta.<when>.log`, whose path is printed before the run starts, so
-`tail -f` in another terminal follows a run already going.
+`tail -f` in another terminal follows a run already going. The answer alone is
+kept beside it as `.tmp/logs/meta.<when>.md`, named again once it has printed -
+a terminal turns that into something you click.
 
 `zen meta run /<name>` is the part an editor cannot do for you from a script.
 The prompts under `.github/prompts/` - `/sync-with-spec`, `/review-project` -
