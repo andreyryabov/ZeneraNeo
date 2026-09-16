@@ -126,6 +126,7 @@ two.
 | `key`     | The credential store (§6).                                                 |
 | `models`  | What this machine can use: list, search, test, pick (§6.5).                |
 | `run`     | Runs the project - the TUI on a terminal, one shot otherwise (§7).         |
+| `meta`    | Runs the meta agent over the project, on the keyring (§7.5).               |
 | `inspect` | Opens or rebuilds a run's `report.html`.                                   |
 | `memory`  | The memory graph from outside the agents (§9.3).                           |
 | `check`   | Reports on the project in full: files, wiring, credentials, models (§9.2). |
@@ -649,6 +650,83 @@ Which palette is chosen: `--theme dark|light|auto`, then `ZENERA_THEME`, then
 the terminal asked directly (OSC 11, before Ink takes stdin), then `COLORFGBG`,
 then dark. The override comes first because detection can be wrong and nobody
 should have to argue with a terminal about what colour it is.
+
+### 7.5 The meta agent - `zen meta`
+
+`zen run` runs the agents a project describes. `zen meta` runs an agent _over_
+the project: a coding agent rooted at the project directory, spending the same
+keyring. It is the agent you point at the repository to change it, not the one
+the repository ships.
+
+Which coding agent is an implementation detail, and the CLI surface is written
+so it can be replaced: today it drives GitHub Copilot CLI, and nothing above
+[meta.ts](packages/cli/src/meta.ts) names it.
+
+```
+zen meta [project] [prompt]              ask it something
+zen meta run [project] /<name> [words]   run .github/prompts/<name>.prompt.md
+zen meta prompts [project]               list those prompts
+zen meta model [ref]                     show or set the model it uses
+```
+
+Three things make it more than `copilot -C`.
+
+**It always brings its own key.** Copilot activates BYOK when
+`COPILOT_PROVIDER_BASE_URL` is set, and nothing else turns it on - so every
+provider gets one, OpenAI included, or the run quietly falls back to a GitHub
+subscription that the keyring was supposed to replace. The zen provider becomes
+copilot's `openai` or `anthropic` type, since those and `azure` are the only
+three it has: Vertex, Gemini and OpenRouter all ride the OpenAI wire.
+
+Vertex is the case worth the code. Its endpoint is built from the project and
+region already on the key entry, it speaks publisher names on the wire
+(`google/gemini-3.8-flash`) while keeping the bare id as the catalogue key, and
+its credential is an access token that lives an hour - which a session does
+not. So copilot is handed `COPILOT_PROVIDER_API_KEY_COMMAND=zen key token
+vertex` and mints a fresh one per request rather than being given one that goes
+stale mid-run.
+
+Nothing secret reaches a command line. Every credential arrives in the child's
+environment, and `--secret-env-vars` names them so copilot redacts them from
+its own transcript too.
+
+**It knows what `.github/prompts/` is.** Copilot reads `AGENTS.md`,
+`.github/skills/` and `.github/agents/`, but not the `*.prompt.md` files an
+editor offers as slash commands. `zen meta run /review-project` reads one,
+drops the frontmatter, and sends the body - which is how the same prompt runs
+from the editor and from a script. Nothing on a terminal drops a menu down as
+you type a slash, so `zen meta prompts` lists them and a bare `zen meta run`
+asks.
+
+**It re-renders the transcript.** `--output-format json` is a JSONL stream of
+tool calls, reasoning and bookkeeping with the answer somewhere inside it:
+`assistant.message` carries both the running commentary and the last word, and
+what separates them is whether it asked for a tool. The last message that asked
+for none is the answer and goes to stdout; everything else is narration and
+goes to stderr. So `zen meta … > out.md` holds the answer alone, the same way
+`zen run` does.
+
+Which model, highest first: `--model`, `ZENERA_META_MODEL` in the shell, the
+same in the project's `.env`, `~/.zenera/neo/meta.json` (`zen meta model <ref>`),
+then the project's `agents.yaml` `model:`. The first three and the last are
+free - `.env` is read for the keyring anyway and only fills gaps, so the shell
+beats the file without a line of code. The store exists because the model a
+coding agent runs on is a personal choice about a tool, like a key, and
+`agents.yaml` is a committed decision about the project's own agents. `zen meta
+model` with no argument prints the whole chain with the winner marked, because
+the question that gets asked is not _what model_ but _why that one_.
+
+Below all of them is a last resort that is not an error: the best model known
+for the first provider holding a key. A first `zen meta` on a machine with one
+key should run, and the agent is pointed at the project's own specification, so
+the deep tier is what it falls back to rather than the cheap one. The choice is
+announced on stderr with the command that overrides it, since a model picked
+for you is only acceptable if you can see it happen.
+
+One sharp edge: copilot offers its tools as OpenAI _custom_ tools, which the
+completions API rejects outright - `400 Invalid value: 'custom'`. Only the
+responses API accepts them, so the wire API follows the model rather than being
+a flag nobody would know to set.
 
 ## 8. Distribution - the `zen` binary
 

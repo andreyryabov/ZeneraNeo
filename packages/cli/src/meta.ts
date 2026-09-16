@@ -1,0 +1,565 @@
+import { spawn as nodeSpawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { createInterface } from 'node:readline';
+import { invokedAs } from './args.ts';
+import { paths, readJson, writeJson } from './home.ts';
+import { envOf, type KeyEntry, type KeyStore, type Provider } from './keys.ts';
+import { credentialError, cut, cyan, dim, note, red, usageError, write, yellow } from './term.ts';
+
+// ---------------------------------------------------------------------------
+// The meta agent
+//
+// `zen meta` drives GitHub Copilot CLI over a zen project: same project, same
+// keys, same conventions about what is an answer and what is narration. The
+// two vocabularies meet here and nowhere else — a zen model ref and a zen key
+// entry go in, copilot's `COPILOT_*` environment comes out — so there is one
+// place to correct when either side moves.
+//
+// Everything reaches the child through its environment. A key on an argv is
+// readable by every process on the machine, and the whole point of the keyring
+// is that it is not.
+// ---------------------------------------------------------------------------
+
+/** What `copilot help providers` accepts. There is no google or vertex type. */
+type CopilotType = 'openai' | 'anthropic';
+
+export const PROMPT_DIR = '.github/prompts';
+const PROMPT_SUFFIX = '.prompt.md';
+
+// ---------------------------------------------------------------------------
+// The model
+// ---------------------------------------------------------------------------
+
+/** The variable a project's `.env` names it with — a zen ref, not a wire id. */
+export const MODEL_ENV = 'ZENERA_META_MODEL';
+
+export type ModelSource = 'flag' | 'shell' | 'env' | 'store' | 'project' | 'default';
+
+export interface ModelChoice {
+    /** a zen ref: `vertex/gemini-3.8-flash`, or a bare id for the default provider */
+    ref: string;
+    from: ModelSource;
+}
+
+export interface ModelSources {
+    flag?: string;
+    /** `ZENERA_META_MODEL` as it stood before the project's `.env` was folded in */
+    shell?: string;
+    /** the same variable after it was, which is the `.env` answer when they differ */
+    env?: string;
+    stored?: string;
+    /** the project's `agents.yaml` `model:` */
+    project?: string;
+    /** what a held key recommends, when nothing above answered */
+    fallback?: string;
+}
+
+/** Where the answer is looked for, best first. */
+export const ORDER: readonly ModelSource[] = [
+    'flag',
+    'shell',
+    'env',
+    'store',
+    'project',
+    'default',
+];
+
+export function chooseModel(sources: ModelSources): ModelChoice | undefined {
+    const at: Record<ModelSource, string | undefined> = {
+        flag: sources.flag,
+        // `.env` only fills gaps, so an answer that survived it came from the shell
+        shell: sources.shell,
+        env: sources.shell ? undefined : sources.env,
+        store: sources.stored,
+        project: sources.project,
+        default: sources.fallback,
+    };
+    for (const from of ORDER) {
+        const ref = at[from]?.trim();
+        if (ref) {
+            return { ref, from };
+        }
+    }
+    return undefined;
+}
+
+export const SOURCE_LABELS: Record<ModelSource, string> = {
+    flag: '--model',
+    shell: `${MODEL_ENV} (shell)`,
+    env: `${MODEL_ENV} (.env)`,
+    store: 'zen meta model',
+    project: 'agents.yaml model:',
+    default: 'recommended',
+};
+
+// ---------------------------------------------------------------------------
+// What to run when nobody said
+//
+// A first `zen meta` should work on a machine that has a key and nothing else,
+// so the last resort is the best model the keys on hand can buy rather than an
+// error. Deep tier deliberately: this agent is pointed at the project itself,
+// and a cheap model reading a specification is a false economy.
+// ---------------------------------------------------------------------------
+
+/** First of each row is the default; the rest are what `--pick` offers beside it. */
+export const RECOMMENDED: Partial<Record<Provider, readonly string[]>> = {
+    openai: ['gpt-5.6-sol', 'gpt-5.6-terra'],
+    anthropic: ['claude-opus-5', 'claude-sonnet-5'],
+    vertex: ['gemini-3.8-flash', 'gemini-3.5-flash-lite'],
+    google: ['gemini-3.8-flash', 'gemini-3.5-flash-lite'],
+    openrouter: ['anthropic/claude-opus-5', 'openai/gpt-5.6-sol'],
+};
+
+/** Which provider is tried first when several are held. */
+const PREFERENCE: readonly Provider[] = ['anthropic', 'openai', 'vertex', 'google', 'openrouter'];
+
+/** The recommended ref for the first provider with a key, or for `only`. */
+export function defaultRef(store: KeyStore, only?: Provider): string | undefined {
+    for (const provider of only ? [only] : PREFERENCE) {
+        const id = RECOMMENDED[provider]?.[0];
+        if (id && store.active(provider)) {
+            return `${provider}/${id}`;
+        }
+    }
+    return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// The store
+//
+// A model for the meta agent is a personal choice about a tool, like a key and
+// unlike an agent's model, which is committed and shared. So it lives beside
+// the keyring rather than in `agents.yaml`. One file for the whole meta
+// surface: an agent and an effort level can join it without another.
+// ---------------------------------------------------------------------------
+
+export interface MetaFile {
+    version: 1;
+    model?: string;
+}
+
+const EMPTY: MetaFile = { version: 1 };
+
+export const readMeta = (): Promise<MetaFile> => readJson<MetaFile>(paths.meta(), EMPTY);
+
+export function writeMeta(file: MetaFile): void {
+    writeJson(paths.meta(), file);
+}
+
+// ---------------------------------------------------------------------------
+// Refs
+// ---------------------------------------------------------------------------
+
+const PROVIDER_NAMES = new Set<string>(['openai', 'anthropic', 'google', 'vertex', 'openrouter']);
+
+/**
+ * `vertex/gemini-3.8-flash` splits; `gpt-5.6-sol` does not. Only a known provider
+ * counts as a prefix, because `google/gemini-3.8-flash` is also a perfectly good
+ * bare id on an endpoint that speaks publisher names.
+ *
+ * The colon form is the library's own — `openai:gpt-5.6-sol`, and with an api
+ * selector `openai/responses:gpt-5.6-sol` — which is what arrives when the ref
+ * came from `agents.yaml`.
+ */
+export function splitRef(ref: string): { provider?: Provider; id: string } {
+    const colon = ref.indexOf(':');
+    if (colon > 0) {
+        const head = ref.slice(0, colon).split('/')[0];
+        if (PROVIDER_NAMES.has(head)) {
+            return { provider: head as Provider, id: ref.slice(colon + 1) };
+        }
+    }
+    const slash = ref.indexOf('/');
+    if (slash < 0) {
+        return { id: ref };
+    }
+    const head = ref.slice(0, slash);
+    return PROVIDER_NAMES.has(head)
+        ? { provider: head as Provider, id: ref.slice(slash + 1) }
+        : { id: ref };
+}
+
+// ---------------------------------------------------------------------------
+// Wiring
+// ---------------------------------------------------------------------------
+
+const TYPES: Record<Provider, CopilotType> = {
+    openai: 'openai',
+    anthropic: 'anthropic',
+    google: 'openai',
+    vertex: 'openai',
+    openrouter: 'openai',
+};
+
+const BASE_URLS: Partial<Record<Provider, string>> = {
+    openai: 'https://api.openai.com/v1',
+    anthropic: 'https://api.anthropic.com',
+    google: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+    openrouter: 'https://openrouter.ai/api/v1',
+};
+
+/**
+ * Copilot offers its tools as OpenAI *custom* tools, which the completions API
+ * rejects outright — `400 Invalid value: 'custom'`. Only the responses API
+ * takes them, and only the reasoning models serve it, so the wire API follows
+ * the model rather than being a flag nobody would know to set.
+ */
+export function wireApi(provider: Provider, id: string): string | undefined {
+    return provider === 'openai' && /^(gpt-5|o[34])/.test(id) ? 'responses' : undefined;
+}
+
+export interface Wiring {
+    provider: Provider;
+    /** what the model is called on the wire */
+    model: string;
+    /** every `COPILOT_*` name and value, ready to hand to the child */
+    env: Record<string, string>;
+    /** names whose values are secret, for `--secret-env-vars` and for masking */
+    secret: string[];
+    /** anything true but unwelcome: a location that will be slow, a stale default */
+    warnings: string[];
+}
+
+/**
+ * Turns a zen key entry and a model id into copilot's environment.
+ *
+ * `COPILOT_PROVIDER_BASE_URL` is what activates BYOK at all, so every provider
+ * gets one — including OpenAI, whose url copilot would otherwise have reached
+ * through a GitHub account we are deliberately not using.
+ */
+export function wire(store: KeyStore, entry: KeyEntry, id: string): Wiring {
+    const provider = entry.provider as Provider;
+    const env: Record<string, string> = {};
+    const secret: string[] = [];
+    const warnings: string[] = [];
+
+    env.COPILOT_PROVIDER_TYPE = TYPES[provider];
+    env.COPILOT_MODEL = id;
+
+    if (provider === 'vertex') {
+        const project = store.projectOf(entry)?.id;
+        if (!project) {
+            throw credentialError(
+                `no GCP project on ${entry.provider}/${entry.name}`,
+                'set one: zen key add vertex --project <id>',
+            );
+        }
+        const location = entry.location?.trim() || 'global';
+        if (location === 'global') {
+            warnings.push('location `global` adds about ten seconds of cold start');
+        }
+        env.COPILOT_PROVIDER_BASE_URL = `https://aiplatform.googleapis.com/v1/projects/${project}/locations/${location}/endpoints/openapi`;
+        // Vertex speaks publisher names on the wire and knows nothing of zen's
+        // provider prefix; the bare id stays as the model *id* so copilot can
+        // still match its catalogue for token limits and tool support.
+        env.COPILOT_PROVIDER_WIRE_MODEL = id.includes('/') ? id : `google/${id}`;
+        env.COPILOT_PROVIDER_MODEL_ID = id.includes('/') ? id.slice(id.indexOf('/') + 1) : id;
+    } else {
+        const url = BASE_URLS[provider];
+        if (!url) {
+            throw credentialError(`no BYOK endpoint known for ${provider}`);
+        }
+        env.COPILOT_PROVIDER_BASE_URL = url;
+    }
+
+    const api = wireApi(provider, id);
+    if (api) {
+        env.COPILOT_PROVIDER_WIRE_API = api;
+    }
+
+    if (entry.holds === 'file') {
+        // A Google access token is good for an hour and a session is not, so
+        // copilot is told how to mint one rather than handed one that will be
+        // stale by the time it matters.
+        env.COPILOT_PROVIDER_API_KEY_COMMAND = `${invokedAs('zen')} key token ${entry.provider}`;
+        env[envOf(entry)] = store.fileOf(entry);
+    } else {
+        env.COPILOT_PROVIDER_API_KEY = store.reveal(entry);
+        secret.push('COPILOT_PROVIDER_API_KEY');
+    }
+
+    return { provider, model: env.COPILOT_PROVIDER_WIRE_MODEL ?? id, env, secret, warnings };
+}
+
+/** Values a `--dry-run` may print. A key is four characters and an apology. */
+export function masked(env: Record<string, string>, secret: readonly string[]): string[] {
+    return Object.entries(env)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([name, value]) => `${name}=${secret.includes(name) ? '••••' : value}`);
+}
+
+// ---------------------------------------------------------------------------
+// Stored prompts
+//
+// Copilot reads `AGENTS.md`, `.github/skills/` and `.github/agents/`, but it
+// has no notion of `.github/prompts/*.prompt.md` — the files an editor offers
+// as slash commands. Reading one and handing over its body is the whole of
+// `zen meta run`, and it is why that subcommand exists.
+// ---------------------------------------------------------------------------
+
+/** `/review-project`, `review-project`, `review-project.prompt.md` or a path. */
+export function promptPath(dir: string, name: string): string {
+    const bare = name.replace(/^\//, '');
+    if (bare.includes('/') || bare.endsWith('.md')) {
+        return `${dir}/${bare}`;
+    }
+    return `${dir}/${PROMPT_DIR}/${bare}${PROMPT_SUFFIX}`;
+}
+
+export interface StoredPrompt {
+    name: string;
+    path: string;
+    description?: string;
+    body: string;
+}
+
+/**
+ * Frontmatter is the editor's business — `mode`, `tools`, `description` — and
+ * none of it means anything to copilot, so only the body is sent. `description`
+ * is kept for the one line of narration that says which prompt is running.
+ */
+export function readPrompt(path: string, name: string, text: string): StoredPrompt {
+    let body = text;
+    let description: string | undefined;
+    const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text);
+    if (match) {
+        body = text.slice(match[0].length);
+        const found = /^description:\s*(.+)$/m.exec(match[1]);
+        description = found?.[1].trim().replace(/^['"]|['"]$/g, '');
+    }
+    return { name, path, description, body: body.trim() };
+}
+
+export async function loadPrompt(dir: string, name: string): Promise<StoredPrompt> {
+    const path = promptPath(dir, name);
+    if (!existsSync(path)) {
+        const known = await listPrompts(dir);
+        throw usageError(
+            `no prompt named ${name.replace(/^\//, '')}`,
+            known.length > 0
+                ? `try: ${known.map((p) => `/${p}`).join(', ')}`
+                : `put one in ${PROMPT_DIR}/`,
+        );
+    }
+    return readPrompt(path, name.replace(/^\//, ''), await readFile(path, 'utf8'));
+}
+
+export async function listPrompts(dir: string): Promise<string[]> {
+    const { readdir } = await import('node:fs/promises');
+    try {
+        const names = await readdir(`${dir}/${PROMPT_DIR}`);
+        return names
+            .filter((n) => n.endsWith(PROMPT_SUFFIX))
+            .map((n) => n.slice(0, -PROMPT_SUFFIX.length))
+            .sort();
+    } catch {
+        return [];
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The binary
+// ---------------------------------------------------------------------------
+
+export interface Binary {
+    command: string;
+    args: string[];
+    from: 'path' | 'npx';
+}
+
+/**
+ * A `copilot` already installed is used as it is; otherwise `npx` fetches one.
+ * Note that finding the name on `PATH` is not the same as finding the CLI —
+ * an editor may have put a shim there that installs it on first run — so this
+ * only decides how to launch, never whether it will work.
+ */
+export function locate(has = (cmd: string): boolean => onPath(cmd)): Binary {
+    return has('copilot')
+        ? { command: 'copilot', args: [], from: 'path' }
+        : { command: 'npx', args: ['--yes', '@github/copilot'], from: 'npx' };
+}
+
+function onPath(cmd: string): boolean {
+    const dirs = (process.env.PATH ?? '').split(':').filter(Boolean);
+    return dirs.some((d) => existsSync(`${d}/${cmd}`));
+}
+
+// ---------------------------------------------------------------------------
+// Output
+//
+// Copilot's JSONL is a transcript, not an answer: tool calls, reasoning, model
+// bookkeeping, and — among them — the message it finished with. Re-rendering
+// it is what keeps zen's one rule true, that stdout is the answer and stderr
+// is the story of getting there, so `zen meta … > out.md` holds the answer
+// alone the same way `zen run` does.
+// ---------------------------------------------------------------------------
+
+interface Event {
+    type: string;
+    data?: Record<string, unknown>;
+    [key: string]: unknown;
+}
+
+export interface Outcome {
+    /** the last thing the agent said that was not a preamble to a tool call */
+    answer: string;
+    exitCode: number;
+    sessionId?: string;
+    usage?: Record<string, unknown>;
+    events: Event[];
+}
+
+export interface Sink {
+    answer(text: string): void;
+    narrate(line: string): void;
+    warn(line: string): void;
+}
+
+export const terminalSink: Sink = {
+    answer: (text) => write(text),
+    narrate: (line) => note(line),
+    warn: (line) => note(red(line)),
+};
+
+/**
+ * Folds one event into the outcome and says what, if anything, to show for it.
+ *
+ * `assistant.message` carries both the running commentary and the final word;
+ * what separates them is `toolRequests`, so the last message that asked for no
+ * tool is the answer and the rest are narration.
+ */
+export function absorb(event: Event, out: Outcome, sink: Sink, width: number): void {
+    const data = (event.data ?? {}) as Record<string, unknown>;
+    switch (event.type) {
+        case 'assistant.message': {
+            const content = String(data.content ?? '').trim();
+            const requests = Array.isArray(data.toolRequests) ? data.toolRequests : [];
+            if (requests.length === 0) {
+                out.answer = content;
+            } else if (content) {
+                sink.narrate(dim(cut(content.replace(/\s+/g, ' '), width)));
+            }
+            break;
+        }
+        case 'tool.execution_start': {
+            const args = (data.arguments ?? {}) as Record<string, unknown>;
+            const what = String(args.command ?? args.description ?? data.toolName ?? '');
+            sink.narrate(`${cyan('$')} ${cut(what.replace(/\s+/g, ' '), width - 2)}`);
+            break;
+        }
+        case 'tool.execution_complete': {
+            if (data.success === false) {
+                sink.narrate(dim('  failed'));
+            }
+            break;
+        }
+        case 'session.tools_updated': {
+            if (data.model) {
+                sink.narrate(dim(`model ${String(data.model)}`));
+            }
+            break;
+        }
+        case 'session.error': {
+            sink.warn(String(data.message ?? 'the session failed'));
+            break;
+        }
+        case 'model.call_failure': {
+            const status = data.statusCode ? ` (${String(data.statusCode)})` : '';
+            sink.warn(
+                `${cut(String(data.errorMessage ?? 'the model call failed'), width)}${status}`,
+            );
+            break;
+        }
+        case 'result': {
+            out.exitCode = Number(event.exitCode ?? 0);
+            out.sessionId = event.sessionId as string | undefined;
+            out.usage = event.usage as Record<string, unknown> | undefined;
+            break;
+        }
+        default:
+            break;
+    }
+    out.events.push(event);
+}
+
+// ---------------------------------------------------------------------------
+// Running it
+// ---------------------------------------------------------------------------
+
+export interface Launch {
+    binary: Binary;
+    args: string[];
+    env: Record<string, string>;
+    cwd: string;
+    sink?: Sink;
+    width?: number;
+    /** injected by the tests, which have no copilot and want none */
+    spawn?: typeof nodeSpawn;
+}
+
+export async function launch(opts: Launch): Promise<Outcome> {
+    const sink = opts.sink ?? terminalSink;
+    const width = opts.width ?? Math.max(40, (process.stderr.columns ?? 100) - 4);
+    const start = opts.spawn ?? nodeSpawn;
+    const out: Outcome = { answer: '', exitCode: 0, events: [] };
+
+    const child = start(opts.binary.command, [...opts.binary.args, ...opts.args], {
+        cwd: opts.cwd,
+        env: { ...process.env, ...opts.env },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: false,
+    });
+
+    const stop = (signal: NodeJS.Signals) => (): void => {
+        child.kill(signal);
+    };
+    const onInt = stop('SIGINT');
+    const onTerm = stop('SIGTERM');
+    process.on('SIGINT', onInt);
+    process.on('SIGTERM', onTerm);
+
+    child.stderr?.on('data', (chunk: Buffer) => {
+        const text = chunk.toString().trimEnd();
+        if (text) {
+            sink.narrate(dim(text));
+        }
+    });
+
+    try {
+        const lines = createInterface({ input: child.stdout!, crlfDelay: Infinity });
+        for await (const line of lines) {
+            if (!line.trim()) {
+                continue;
+            }
+            let event: Event;
+            try {
+                event = JSON.parse(line) as Event;
+            } catch {
+                // Not ours to interpret, but losing it is worse than showing it.
+                sink.narrate(line);
+                continue;
+            }
+            absorb(event, out, sink, width);
+        }
+        const code = await new Promise<number>((resolve) => {
+            child.on('close', (value) => resolve(value ?? 0));
+        });
+        if (out.exitCode === 0 && code !== 0) {
+            out.exitCode = code;
+        }
+    } finally {
+        process.off('SIGINT', onInt);
+        process.off('SIGTERM', onTerm);
+    }
+    return out;
+}
+
+/** Non-fatal, said once, because a competing file is a silent override. */
+export function providersWarning(): string | undefined {
+    const configured = process.env.COPILOT_PROVIDERS_CONFIG;
+    const path = configured ?? `${process.env.HOME ?? ''}/.copilot/providers.json`;
+    return existsSync(path)
+        ? yellow(`${path} may override the provider zen just wired`)
+        : undefined;
+}

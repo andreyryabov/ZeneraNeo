@@ -7,6 +7,7 @@ import { inspect } from './inspect.ts';
 import { key } from './key.ts';
 import { list } from './list.ts';
 import { memory } from './memory.ts';
+import { meta } from './meta.ts';
 import { models } from './models.ts';
 import { open } from './open.ts';
 import { run } from './run.ts';
@@ -22,6 +23,7 @@ export const COMMANDS: Record<string, Command> = {
     init,
     list,
     run,
+    meta,
     open,
     key,
     models,
@@ -41,6 +43,7 @@ export const ALIASES: Record<string, string> = {
     model: 'models',
     validate: 'check',
     doctor: 'check',
+    copilot: 'meta',
     report: 'inspect',
     mem: 'memory',
     edit: 'open',

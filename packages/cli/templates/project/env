@@ -3,7 +3,8 @@
 # `zen run` reads this file before it loads the project, and forwards every
 # name in it into the sandbox — so a command the agent runs sees the same
 # variables the run does. Values are forwarded by name, never written onto a
-# command line, and `--no-keys` withholds the whole file.
+# command line, and `--no-keys` withholds the whole file. `zen meta` reads it
+# too, for the one variable below that is addressed to it.
 #
 # Precedence: what is already set in your shell wins, then this file, then the
 # keyring (`zen key add`). So this is the place for what belongs to *this*
@@ -20,3 +21,8 @@
 # OPENAI_API_KEY=
 # ACME_API_TOKEN=
 # ACME_BASE_URL=https://api.example.test
+
+# Which model `zen meta` runs the meta agent on, for this project only. A zen
+# ref — `vertex/gemini-3.8-flash`, `openai/gpt-5.6-sol` — not a provider's wire
+# name. `zen meta model` shows where the answer came from.
+# ZENERA_META_MODEL=

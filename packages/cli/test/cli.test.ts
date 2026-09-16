@@ -49,6 +49,19 @@ import {
     type Provider,
 } from '../src/keys.ts';
 import { classify, probeModels } from '../src/liveness.ts';
+import {
+    absorb,
+    chooseModel,
+    defaultRef,
+    masked,
+    promptPath,
+    readPrompt,
+    splitRef,
+    wire,
+    wireApi,
+    type Outcome,
+    type Sink,
+} from '../src/meta.ts';
 import { engineDisk, ensurePodmanReady, ownedContainers } from '../src/podman.ts';
 import { dirSize, lastUsedAt, projectMounts } from '../src/projects.ts';
 import { scaffold } from '../src/scaffold.ts';
@@ -2228,5 +2241,234 @@ describe('telling a blocked account from a bad key', () => {
         expect(check.state).toBe('unknown');
         expect(check.detail).toMatch(/web page/);
         expect(check.fix).toMatch(/location/);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// zen meta
+// ---------------------------------------------------------------------------
+
+describe('which model the meta agent runs on', () => {
+    it('takes the first answer in order', () => {
+        expect(chooseModel({ flag: 'a', shell: 'b', stored: 'c' })).toEqual({
+            ref: 'a',
+            from: 'flag',
+        });
+        expect(chooseModel({ stored: 'c', project: 'd' })).toEqual({ ref: 'c', from: 'store' });
+        expect(chooseModel({ project: 'd' })).toEqual({ ref: 'd', from: 'project' });
+        expect(chooseModel({})).toBeUndefined();
+    });
+
+    // `.env` only fills gaps, so by the time the variable is read the two
+    // sources are indistinguishable — unless the shell's value was kept from
+    // before the file was folded in, which is the only reason it is.
+    it('tells the shell apart from the project file', () => {
+        expect(chooseModel({ shell: 'x', env: 'x' })).toEqual({ ref: 'x', from: 'shell' });
+        expect(chooseModel({ env: 'y' })).toEqual({ ref: 'y', from: 'env' });
+    });
+
+    it('reads a provider prefix but not a publisher one', () => {
+        expect(splitRef('vertex/gemini-2.5-pro')).toEqual({
+            provider: 'vertex',
+            id: 'gemini-2.5-pro',
+        });
+        expect(splitRef('gpt-5.4')).toEqual({ id: 'gpt-5.4' });
+        // `google/` here is the publisher Vertex expects, not zen's provider.
+        expect(splitRef('anthropic/claude-sonnet-4.5').provider).toBe('anthropic');
+        expect(splitRef('meta-llama/llama-4').provider).toBeUndefined();
+    });
+
+    // The colon form is what arrives from `agents.yaml`, api selector and all.
+    it('reads the library ref form too', () => {
+        expect(splitRef('openai:gpt-5.6-sol')).toEqual({ provider: 'openai', id: 'gpt-5.6-sol' });
+        expect(splitRef('openai/responses:gpt-5.6-sol')).toEqual({
+            provider: 'openai',
+            id: 'gpt-5.6-sol',
+        });
+        expect(splitRef('openrouter:anthropic/claude-opus-5')).toEqual({
+            provider: 'openrouter',
+            id: 'anthropic/claude-opus-5',
+        });
+        // A colon inside an id is not a prefix: this one is an OpenRouter variant.
+        expect(splitRef('inclusionai/ling-3.0-flash-fin:free')).toEqual({
+            id: 'inclusionai/ling-3.0-flash-fin:free',
+        });
+    });
+
+    // A machine with a key and nothing else should still run, so the last
+    // resort is a recommendation rather than an error.
+    it('falls back to what a held key recommends, and loses to anything set', () => {
+        expect(chooseModel({ fallback: 'vertex/gemini-3.8-flash' })).toEqual({
+            ref: 'vertex/gemini-3.8-flash',
+            from: 'default',
+        });
+        expect(chooseModel({ project: 'd', fallback: 'vertex/gemini-3.8-flash' })?.from).toBe(
+            'project',
+        );
+    });
+
+    it('recommends for the first provider holding a key, or for the one named', () => {
+        const held = (...list: Provider[]): KeyStore =>
+            ({
+                active: (p: Provider) => (list.includes(p) ? {} : undefined),
+            }) as unknown as KeyStore;
+
+        expect(defaultRef(held('openai', 'vertex'))).toBe('openai/gpt-5.6-sol');
+        expect(defaultRef(held('vertex'))).toBe('vertex/gemini-3.8-flash');
+        expect(defaultRef(held('openai', 'vertex'), 'vertex')).toBe('vertex/gemini-3.8-flash');
+        expect(defaultRef(held('openai'), 'vertex')).toBeUndefined();
+        expect(defaultRef(held())).toBeUndefined();
+    });
+});
+
+describe('wiring a zen key into copilot', () => {
+    const store = {
+        reveal: () => 'sk-secret-value',
+        fileOf: () => '/keys/vertex.json',
+        projectOf: () => ({ id: 'acme-ai', from: 'stored' as const }),
+    } as unknown as KeyStore;
+
+    const entry = (over: Partial<KeyEntry>): KeyEntry =>
+        ({
+            provider: 'openai',
+            name: 'default',
+            holds: 'secret',
+            value: 'k',
+            addedAt: '2026-01-01T00:00:00.000Z',
+            ...over,
+        }) as KeyEntry;
+
+    // Nothing else turns BYOK on, so a provider whose url copilot already
+    // knows still needs one, or the run quietly goes to a GitHub account.
+    it('always sets a base url, because that is what activates BYOK', () => {
+        for (const provider of ['openai', 'anthropic', 'google', 'openrouter'] as const) {
+            const out = wire(store, entry({ provider }), 'some-model');
+            expect(out.env.COPILOT_PROVIDER_BASE_URL).toMatch(/^https:\/\//);
+        }
+    });
+
+    it('builds the vertex endpoint from the project and location on the key', () => {
+        const out = wire(
+            store,
+            entry({ provider: 'vertex', holds: 'file', location: 'europe-west4' }),
+            'gemini-2.5-pro',
+        );
+        expect(out.env.COPILOT_PROVIDER_BASE_URL).toBe(
+            'https://aiplatform.googleapis.com/v1/projects/acme-ai/locations/europe-west4/endpoints/openapi',
+        );
+        // Vertex speaks publisher names; the bare id stays as the catalogue key.
+        expect(out.env.COPILOT_PROVIDER_WIRE_MODEL).toBe('google/gemini-2.5-pro');
+        expect(out.env.COPILOT_PROVIDER_MODEL_ID).toBe('gemini-2.5-pro');
+        expect(out.warnings).toEqual([]);
+    });
+
+    it('says so when the location will be the slow one', () => {
+        const out = wire(store, entry({ provider: 'vertex', holds: 'file' }), 'gemini-2.5-pro');
+        expect(out.env.COPILOT_PROVIDER_BASE_URL).toContain('/locations/global/');
+        expect(out.warnings.join(' ')).toMatch(/cold start/);
+    });
+
+    // An access token lives an hour and a session does not, so the file form
+    // hands over a command rather than a credential.
+    it('mints a token per request for a file-shaped key, and holds no secret', () => {
+        const out = wire(store, entry({ provider: 'vertex', holds: 'file' }), 'gemini-2.5-pro');
+        expect(out.env.COPILOT_PROVIDER_API_KEY_COMMAND).toMatch(/key token vertex$/);
+        expect(out.env.COPILOT_PROVIDER_API_KEY).toBeUndefined();
+        expect(out.env.GOOGLE_APPLICATION_CREDENTIALS).toBe('/keys/vertex.json');
+        expect(out.secret).toEqual([]);
+    });
+
+    // Copilot offers its tools as OpenAI custom tools, which only the responses
+    // API accepts — a completions model refuses the very first call.
+    it('picks the wire api the model can actually serve', () => {
+        expect(wireApi('openai', 'gpt-5-mini')).toBe('responses');
+        expect(wireApi('openai', 'o4-mini')).toBe('responses');
+        expect(wireApi('openai', 'gpt-4o')).toBeUndefined();
+        expect(wireApi('anthropic', 'claude-sonnet-4.5')).toBeUndefined();
+    });
+
+    it('never lets a secret into something printable', () => {
+        const out = wire(store, entry({ provider: 'openai' }), 'gpt-5.4');
+        expect(out.secret).toEqual(['COPILOT_PROVIDER_API_KEY']);
+        const shown = masked(out.env, out.secret).join('\n');
+        expect(shown).not.toContain('sk-secret-value');
+        expect(shown).toContain('COPILOT_PROVIDER_API_KEY=');
+    });
+});
+
+describe('a stored prompt', () => {
+    it('accepts the four ways one gets named', () => {
+        expect(promptPath('/p', '/review')).toBe('/p/.github/prompts/review.prompt.md');
+        expect(promptPath('/p', 'review')).toBe('/p/.github/prompts/review.prompt.md');
+        expect(promptPath('/p', 'notes.md')).toBe('/p/notes.md');
+        expect(promptPath('/p', 'agents/prompts/x.md')).toBe('/p/agents/prompts/x.md');
+    });
+
+    // Frontmatter is the editor's business; copilot is handed the body alone.
+    it('sends the body and keeps the description for the narration', () => {
+        const found = readPrompt(
+            '/p/x.prompt.md',
+            'x',
+            '---\nmode: agent\ndescription: Review it.\n---\n\nDo the thing.\n',
+        );
+        expect(found.body).toBe('Do the thing.');
+        expect(found.description).toBe('Review it.');
+    });
+
+    it('leaves a file without frontmatter alone', () => {
+        const found = readPrompt('/p/x.prompt.md', 'x', 'Just this.\n');
+        expect(found.body).toBe('Just this.');
+        expect(found.description).toBeUndefined();
+    });
+});
+
+describe('re-rendering copilot output', () => {
+    const run = (events: object[]): { out: Outcome; said: string[]; shown: string[] } => {
+        const said: string[] = [];
+        const shown: string[] = [];
+        const sink: Sink = {
+            answer: (t) => shown.push(t),
+            narrate: (l) => said.push(l),
+            warn: (l) => said.push(l),
+        };
+        const out: Outcome = { answer: '', exitCode: 0, events: [] };
+        for (const event of events) {
+            absorb(event as never, out, sink, 80);
+        }
+        return { out, said, shown };
+    };
+
+    // `assistant.message` carries both the running commentary and the last
+    // word. What separates them is whether it asked for a tool.
+    it('keeps the message that asked for no tool as the answer', () => {
+        const { out, said } = run([
+            { type: 'assistant.message', data: { content: 'Looking.', toolRequests: [{ a: 1 }] } },
+            {
+                type: 'tool.execution_start',
+                data: { toolName: 'bash', arguments: { command: 'ls' } },
+            },
+            { type: 'assistant.message', data: { content: 'Three files.', toolRequests: [] } },
+            { type: 'result', exitCode: 0, sessionId: 's1' },
+        ]);
+        expect(out.answer).toBe('Three files.');
+        expect(out.sessionId).toBe('s1');
+        expect(said.join('\n')).toContain('Looking.');
+        expect(said.join('\n')).toContain('ls');
+        // The answer is never narrated; it is the thing stdout is for.
+        expect(said.join('\n')).not.toContain('Three files.');
+    });
+
+    it('takes the exit code from the result event', () => {
+        const { out } = run([
+            { type: 'session.error', data: { message: 'no' } },
+            { type: 'result', exitCode: 1 },
+        ]);
+        expect(out.exitCode).toBe(1);
+    });
+
+    it('ignores an event it does not know rather than inventing a line', () => {
+        const { out, said } = run([{ type: 'session.something_new', data: { x: 1 } }]);
+        expect(said).toEqual([]);
+        expect(out.events).toHaveLength(1);
     });
 });

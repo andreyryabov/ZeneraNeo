@@ -465,6 +465,7 @@ remove resources beyond the current project.
 | `key`     | The credential keyring - add, check, switch, remove.                 |
 | `models`  | What this machine can use - list, search, test, pick.                |
 | `run`     | Runs the project - the TUI on a terminal, a single answer otherwise. |
+| `meta`    | Runs the meta agent over the project - the one that edits it.        |
 | `inspect` | Opens or rebuilds a run's `report.html`.                             |
 | `memory`  | What the agents remember - size, listing, one node, or a whole page. |
 | `check`   | Validates the project and every file it names, and asks the models.  |
@@ -538,6 +539,61 @@ an accident.
 | `3`       | invalid project      |
 | `4`       | no usable credential |
 | `5`       | sandbox unavailable  |
+
+## The meta agent - the agent that works on the project
+
+`zen run` runs the agents your project describes. `zen meta` runs an agent _over_
+the project: a coding agent rooted at the project directory, which reads
+`SPECIFICATION.md`, changes `agents.yaml`, the prompts and the skills, and runs
+whatever commands it needs to check itself - on the keys already in your
+keyring, and not on anybody's subscription. It is the loop your editor's chat
+panel drives, as a command you can put in a script.
+
+```sh
+zen meta "what does this project do?"
+zen meta acme "review the last commit" --allow-all
+zen meta prompts                             # which /<name> prompts this project has
+zen meta run /review-project --allow-all     # .github/prompts/review-project.prompt.md
+zen meta run acme /sync-with-spec agents/triage.md
+git diff | zen meta "what broke?"
+zen meta --dry-run "hello"                   # what would run, secrets masked
+```
+
+The answer goes to stdout and the progress to stderr, like everything else here,
+so `zen meta "…" > out.md` keeps the answer alone.
+
+`zen meta run /<name>` is the part an editor cannot do for you from a script.
+The prompts under `.github/prompts/` - `/sync-with-spec`, `/review-project` -
+are what a chat panel offers as slash commands, and nothing outside an editor
+reads them. zen reads one, drops the frontmatter and sends the body - so the
+same prompt runs from the editor, from a terminal and from CI.
+
+A terminal has no menu dropping down as you type a slash, so
+`zen meta prompts` lists what this project holds, each with its description.
+`zen meta run` with no name asks the same question interactively.
+
+### Which model it runs on
+
+```sh
+zen meta model                            # the whole chain, with the winner marked
+zen meta model vertex/gemini-3.8-flash    # for every project on this machine
+zen meta model --local openai/gpt-5.6-sol # for this project only, via its .env
+zen meta model --pick                     # choose from providers you hold a key for
+```
+
+Highest first: `--model`, `ZENERA_META_MODEL` in the shell, the same variable in
+the project's `.env`, `zen meta model`, then the project's `agents.yaml`
+`model:`. When none of them answers, a key does: the best model zen knows of
+for the first provider you hold one for, named on stderr as it starts, so a
+fresh machine needs a key and nothing else.
+The store is separate from `agents.yaml` on purpose - the model a coding agent
+runs on is a personal choice about a tool, like a key, where `agents.yaml` is a
+committed decision about the project's own agents.
+
+Not every model works. The meta agent declares its tools in a form only the
+reasoning APIs accept, so use a reasoning model - `gpt-5.6-sol`,
+`claude-opus-5`, `gemini-3.8-flash`. Those three are also what it falls back
+to, and what `zen meta model --pick` offers.
 
 ## Credentials
 

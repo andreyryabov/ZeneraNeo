@@ -580,11 +580,62 @@ function shellQuote(value: string): string {
     return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
+/**
+ * One credential on stdout, alone, for a tool that wants a fresh one before
+ * every request rather than an export that goes stale — `zen meta` hands this
+ * to copilot as `COPILOT_PROVIDER_API_KEY_COMMAND`.
+ *
+ * A stored secret is simply printed. A service-account file is exchanged for
+ * an OAuth access token, which is the part worth having a command for: those
+ * last an hour, and a session does not.
+ */
+const token: Sub = async (ctx, args) => {
+    const { positionals } = parse(args, {}, 'zen key token <provider>[/name]');
+    const { provider, name } = parseRef(positionals[0] ?? 'vertex');
+    const store = await KeyStore.open();
+    const entry = name ? store.find(provider, name) : store.active(provider);
+    if (!entry) {
+        throw credentialError(`no ${provider} key`, `add one: zen key add ${provider}`);
+    }
+    if (entry.holds === 'secret') {
+        write(store.reveal(entry));
+        return;
+    }
+    const { GoogleAuth } = await import('google-auth-library');
+    const auth = new GoogleAuth({
+        keyFile: store.fileOf(entry),
+        scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+    });
+    const access = await (await auth.getClient()).getAccessToken();
+    if (!access.token) {
+        throw credentialError(
+            `${keyId(entry)} minted no token`,
+            'check the service account is still enabled',
+        );
+    }
+    if (ctx.json) {
+        json({ key: keyId(entry), token: access.token });
+        return;
+    }
+    write(access.token);
+};
+
 // ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
 
-const SUBS: Record<string, Sub> = { ls, list: ls, add, use, check, rm, remove: rm, show, env };
+const SUBS: Record<string, Sub> = {
+    ls,
+    list: ls,
+    add,
+    use,
+    check,
+    rm,
+    remove: rm,
+    show,
+    env,
+    token,
+};
 
 export const key: Command = {
     summary: 'The credential store: add, choose, verify and export API keys.',
@@ -608,6 +659,7 @@ export const key: Command = {
         '  zen key rm <provider>/<name>      Forget one.',
         '  zen key show <ref> [--reveal]     Masked by default.',
         '  zen key env [provider …]          Shell exports, for other tools.',
+        '  zen key token [ref]               One credential on stdout, minted now.',
     ],
     run: async (ctx) => {
         const [name, ...rest] = ctx.args;
