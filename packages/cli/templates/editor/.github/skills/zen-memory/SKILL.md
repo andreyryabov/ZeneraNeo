@@ -197,8 +197,9 @@ below.
 └── .lock           held while a run is writing; a dead pid's lock is stale
 ```
 
-It is project state, not source, and it is not committed. The directory is
-mounted **read-only** at `/memory` in the agent's namespace.
+It is committed with the project - everything but `.lock`, which is runtime
+state. The directory is mounted **read-only** at `/memory` in the agent's
+namespace.
 
 ## Designing a memory strategy
 
@@ -620,7 +621,7 @@ agents:
 | The `memory_*` tools are missing                    | No `memory:` on the agent. They come from the binding, never from `tools:`                                 |
 | `zen memory` says the project has none              | Neither a `memory:` block nor an agent binding - nothing is opened and no directory is made                |
 | Recall finds a memory only when reworded            | No embedder. `zen memory stats` says `embedding none`                                                      |
-| Recall finds nothing after changing the embedder    | Refused rather than mixed - a manifest records the model. Re-embed or change it back                       |
+| Recall finds nothing after changing the embedder    | Refused rather than mixed - a manifest records the model. Change it back, or start a new memory            |
 | Vectors fewer than nodes                            | Some nodes were committed with no embedder; they are only reachable by term overlap                        |
 | The graph fills with restated requests              | The commit rule is not in a prompt or skill. State the "would a later run redo this" test                  |
 | An agent greps `/memory` or reads `graph.json`      | The house-rules block is missing from `agents/memory-instructions.md` - the system prompt never forbids it |

@@ -92,7 +92,7 @@ export class MemoryStore {
                 throw new MemoryError(
                     `this memory was embedded with ${a.model} (${a.dimensions}d), ` +
                         `but ${b.model} (${b.dimensions}d) is configured`,
-                    're-embed it with `zen memory reembed`, or restore the original model',
+                    'restore the original model, or start a new memory',
                 );
             }
         }
@@ -127,7 +127,7 @@ export class MemoryStore {
                 throw new MemoryError(
                     `this memory was embedded with ${held.model} (${held.dimensions}d), ` +
                         `but ${embedding.model} (${embedding.dimensions}d) is configured`,
-                    're-embed it with `zen memory reembed`, or restore the original model',
+                    'restore the original model, or start a new memory',
                 );
             }
             return;

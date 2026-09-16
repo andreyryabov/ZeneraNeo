@@ -2,10 +2,10 @@
 # None of it is source.
 sessions/
 
-# Memory is worth keeping: `graph.json` and `files/` are what the agents
-# learned, and they diff. The vectors are not — they are derived from the
-# graph and can be rebuilt with `zen memory reembed`.
-memory/vectors.*
+# Memory is worth keeping: `graph.json`, `files/` and the vectors are what the
+# agents learned. The vectors are binary, but nothing rebuilds them from the
+# graph, so a clone without them recalls by term overlap until every node is
+# written again. Only the lock is runtime state.
 memory/.lock
 
 # Scratch, inside the workspace so the sandbox can reach it.
