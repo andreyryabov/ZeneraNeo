@@ -30,8 +30,10 @@ export type Vendor = 'gemini' | 'openai' | 'anthropic' | 'openrouter';
 export type Tier = 'fast' | 'thinking' | 'deep';
 
 /**
- * The model ids are the ones the live test suites exercise, so a demo failing
- * on a vendor is a demo problem rather than a stale id.
+ * A tier changes the model, not just the dial: a router turn wants the cheapest
+ * thing that can follow an instruction, and a synthesis turn wants the best one
+ * the vendor has. The `fast` row is the id the live test suites exercise, so a
+ * demo failing there is a demo problem rather than a stale id.
  */
 export const PRESETS: Record<Vendor, Record<Tier, ModelSpec>> = {
     gemini: {
@@ -43,14 +45,14 @@ export const PRESETS: Record<Vendor, Record<Tier, ModelSpec>> = {
         },
         thinking: {
             provider: 'vertex',
-            model: 'gemini-3.5-flash-lite',
+            model: 'gemini-3.8-flash',
             thinkingLevel: 'low',
             includeThoughts: true,
         },
         deep: {
             provider: 'vertex',
-            model: 'gemini-3.5-flash-lite',
-            thinkingLevel: 'medium',
+            model: 'gemini-3.8-flash',
+            thinkingLevel: 'high',
             includeThoughts: true,
         },
     },
@@ -58,30 +60,31 @@ export const PRESETS: Record<Vendor, Record<Tier, ModelSpec>> = {
         fast: {
             provider: 'openai',
             api: 'responses',
-            model: 'gpt-5.4-nano',
+            model: 'gpt-5.6-luna',
             reasoningEffort: 'minimal',
         },
         thinking: {
             provider: 'openai',
             api: 'responses',
-            model: 'gpt-5.4-nano',
+            model: 'gpt-5.6-terra',
             reasoningEffort: 'low',
             reasoningSummary: 'auto',
         },
         deep: {
             provider: 'openai',
             api: 'responses',
-            model: 'gpt-5.4-nano',
-            reasoningEffort: 'medium',
+            model: 'gpt-5.6-sol',
+            reasoningEffort: 'high',
             reasoningSummary: 'auto',
         },
     },
     anthropic: {
         fast: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001', maxTokens: 2048 },
-        thinking: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001', maxTokens: 4096 },
-        deep: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001', maxTokens: 8192 },
+        thinking: { provider: 'anthropic', model: 'claude-sonnet-5', maxTokens: 4096 },
+        deep: { provider: 'anthropic', model: 'claude-opus-5', maxTokens: 8192 },
     },
     openrouter: {
+        // The free model stays on the cheap tier, so `demo:all` costs nothing there.
         fast: {
             provider: 'openrouter',
             model: 'inclusionai/ling-3.0-flash-fin:free',
@@ -89,12 +92,12 @@ export const PRESETS: Record<Vendor, Record<Tier, ModelSpec>> = {
         },
         thinking: {
             provider: 'openrouter',
-            model: 'inclusionai/ling-3.0-flash-fin:free',
+            model: 'openai/gpt-5.6-luna',
             reasoningEffort: 'medium',
         },
         deep: {
             provider: 'openrouter',
-            model: 'inclusionai/ling-3.0-flash-fin:free',
+            model: 'anthropic/claude-opus-5',
             reasoningEffort: 'high',
         },
     },
