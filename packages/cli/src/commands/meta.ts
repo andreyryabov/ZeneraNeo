@@ -48,7 +48,7 @@ import {
     writeAll,
 } from '../term.ts';
 
-const USAGE = 'zen meta [project] [prompt] [options]';
+const USAGE = 'zen meta run [project] [prompt] [options]';
 
 const VERBS = new Set(['model', 'run', 'prompts']);
 
@@ -77,8 +77,9 @@ export const meta: Command = {
     usage: USAGE,
     details: [
         'Forms:',
-        '  zen meta [project] [prompt]              ask it something',
+        '  zen meta run [project] "<question>"      ask it something',
         '  zen meta run [project] /<name> [words]   run a stored prompt',
+        '  zen meta run [project]                   pick one of its stored prompts',
         '  zen meta prompts [project]               list the stored prompts',
         '  zen meta model [ref]                     show or set the model it uses',
         '',
@@ -119,15 +120,15 @@ export const meta: Command = {
         'will not answer is never stored. --force skips that.',
         '',
         'Examples:',
-        '  zen meta "what does this project do?"',
-        '  zen meta acme "review the last commit" --allow-all',
+        '  zen meta run "what does this project do?"',
+        '  zen meta run acme "review the last commit" --allow-all',
         '  zen meta prompts',
         '  zen meta run /review-project --allow-all',
         '  zen meta run acme /sync-with-spec agents/triage.md',
-        '  git diff | zen meta "what broke?"',
+        '  git diff | zen meta run "what broke?"',
         '  zen meta model vertex/gemini-3.8-flash',
         '  zen meta model --pick',
-        '  zen meta --dry-run "hello"',
+        '  zen meta run --dry-run "hello"',
     ],
     run: async (ctx) => {
         const { values, positionals } = parse<Flags>(
@@ -181,15 +182,21 @@ export const meta: Command = {
         if (verb === 'prompts') {
             return await prompts(ctx, values, args);
         }
-        return await ask(ctx, values, positionals);
+        throw usageError(
+            first === undefined ? 'nothing to run' : 'a prompt goes through `run`',
+            `try: zen meta run ${positionals.map(requote).join(' ') || '"what does this project do?"'}`,
+        );
     },
 };
+
+/** Words the shell would have split are shown back the way they were typed. */
+const requote = (s: string): string => (/\s/.test(s) ? JSON.stringify(s) : s);
 
 // ---------------------------------------------------------------------------
 // Which project
 //
-// `zen meta acme "…"` is what gets typed before anyone finds --project, and a
-// project name is a bare word where a prompt is a sentence — the same reading
+// `zen meta run acme "…"` is what gets typed before anyone finds --project, and
+// a project name is a bare word where a prompt is a sentence — the same reading
 // `zen run` gives its first positional, for the same reason.
 // ---------------------------------------------------------------------------
 
@@ -208,60 +215,41 @@ async function where(
 }
 
 // ---------------------------------------------------------------------------
-// zen meta [project] [prompt]
-// ---------------------------------------------------------------------------
-
-async function ask(ctx: Context, values: Flags, positionals: string[]): Promise<void> {
-    const { project, rest } = await where(ctx, values.project, positionals);
-    const piped = await readStdin();
-    const prompt = (values.prompt ?? rest.join(' ')).trim() || piped;
-    if (!prompt) {
-        // Having just been made to name a project, being told the invocation was
-        // wrong is a dead end — the stored prompts are the next thing to offer.
-        const names = isInteractive() && !ctx.json ? await listPrompts(project.dir) : [];
-        if (names.length > 0) {
-            return await runPrompt(ctx, values, project, await menu(names), []);
-        }
-        // Dropping the project from the hint reads as a correction of the part
-        // that was already right.
-        const named = rest.length < positionals.length ? ` ${project.name}` : '';
-        throw usageError(
-            'nothing to ask',
-            `try: zen meta${named} "what does this project do?" — or zen meta${named} prompts`,
-        );
-    }
-    await go(ctx, values, project, prompt);
-}
-
-// ---------------------------------------------------------------------------
-// zen meta run [project] /<name> [words...]
+// zen meta run [project] [/<name>|<question>] [words...]
 //
 // The leading slash is a marker, not decoration: with it there is nothing to
 // guess, because the project is whatever came before and the extra words are
-// whatever came after, even when a project and a prompt share a name.
+// whatever came after, even when a project and a prompt share a name. Without
+// one the words are the question itself.
 // ---------------------------------------------------------------------------
 
 async function stored(ctx: Context, values: Flags, args: string[]): Promise<void> {
     const slash = args.findIndex((a) => a.startsWith('/'));
     let head: string[];
     let name: string | undefined;
-    let extra: string[];
+    let rest: string[];
     if (slash >= 0) {
         head = args.slice(0, slash);
         name = args[slash];
-        extra = args.slice(slash + 1);
+        rest = args.slice(slash + 1);
     } else if (args[0] !== undefined && (await Projects.find(args[0]))) {
         head = [args[0]];
-        name = args[1];
-        extra = args.slice(2);
+        rest = args.slice(1);
     } else {
         head = [];
-        name = args[0];
-        extra = args.slice(1);
+        rest = args;
     }
 
     const { project } = await where(ctx, values.project, head);
-    await runPrompt(ctx, values, project, name ?? (await pickPrompt(ctx, project.dir)), extra);
+    if (name) {
+        return await runPrompt(ctx, values, project, name, rest);
+    }
+    const question = (values.prompt ?? rest.join(' ')).trim() || (await readStdin());
+    if (question) {
+        return await go(ctx, values, project, question);
+    }
+    // Nothing said and nothing piped: the stored prompts are what is left to offer.
+    return await runPrompt(ctx, values, project, await pickPrompt(ctx, project), []);
 }
 
 async function runPrompt(
@@ -279,22 +267,22 @@ async function runPrompt(
     await go(ctx, values, project, prompt);
 }
 
-async function pickPrompt(ctx: Context, dir: string): Promise<string> {
-    const names = await listPrompts(dir);
+async function pickPrompt(ctx: Context, project: Projects.Project): Promise<string> {
+    const names = await listPrompts(project.dir);
     if (names.length === 0) {
-        throw usageError('no stored prompts here', 'put one in .github/prompts/');
+        throw usageError(
+            'nothing to run',
+            `try: zen meta run ${project.name} "what does this project do?"`,
+        );
     }
     if (!isInteractive() || ctx.json) {
         throw usageError('which prompt?', `try: ${names.map((n) => `/${n}`).join(', ')}`);
     }
-    return await menu(names);
-}
-
-const menu = (names: string[]): Promise<string> =>
-    choose(
+    return await choose(
         'Which prompt?',
         names.map((n) => ({ label: `/${n}`, value: n })),
     );
+}
 
 // ---------------------------------------------------------------------------
 // zen meta prompts [project]
