@@ -1096,10 +1096,16 @@ OPENAI_API_KEY=...
 ANTHROPIC_API_KEY=...
 GOOGLE_APPLICATION_CREDENTIALS=./.keys/vertex.json
 EXA_API_KEY=...
+ZENERA_META_MODEL=vertex/gemini-3.8-flash
 ```
 
 Never commit. Never inline a key into `agents.yaml` - use `${VAR}`. Never print a
 key in a log line, a test fixture, or a chat message.
+
+`ZENERA_META_MODEL` is the exception that is not a credential: it names the model
+`zen meta` runs the meta agent on in this project, as a zen ref. It is here
+rather than in `agents.yaml` because it is a choice about a tool, not about the
+project's own agents. `zen meta model` prints where the answer came from.
 
 ### 3.11 `assets/`
 
