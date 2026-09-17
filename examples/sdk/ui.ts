@@ -1,12 +1,16 @@
+import {
+    renderRunReport,
+    type AgentEvent,
+    type AgentRunner,
+    type AgentState,
+    type JoinNode,
+    type PayloadResolver,
+    type RunResult,
+    type RunStream,
+} from '#neo';
 import boxen from 'boxen';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import pc from 'picocolors';
-import type { AgentEvent, RunStream } from '../packages/neo/src/events.ts';
-import { renderRunReport } from '../packages/neo/src/inspect/index.ts';
-import type { PayloadResolver } from '../packages/neo/src/payload.ts';
-import type { AgentRunner } from '../packages/neo/src/runner.ts';
-import type { AgentState, RunResult } from '../packages/neo/src/state.ts';
-import type { JoinNode } from '../packages/neo/src/trajectory.ts';
 
 // ---------------------------------------------------------------------------
 // Shared reporting harness for the examples
@@ -20,7 +24,7 @@ import type { JoinNode } from '../packages/neo/src/trajectory.ts';
 /** Loads the repo-root `.env` (OPENAI_API_KEY and friends), if present. */
 export function loadEnv(): void {
     try {
-        process.loadEnvFile(new URL('../.env', import.meta.url));
+        process.loadEnvFile(new URL('../../.env', import.meta.url));
     } catch {
         console.warn('no .env found — copy .env.example to .env');
     }
@@ -93,7 +97,7 @@ export function code(title: string, body: string): void {
 
 export const secs = (ms: number): string => `${(ms / 1000).toFixed(1)}s`;
 
-/** Inlines a local file as a base64 data URL, resolved against `examples/`. */
+/** Inlines a local file as a base64 data URL, resolved against `examples/sdk/`. */
 export async function dataUrl(path: string, mimeType: string): Promise<string> {
     const bytes = await readFile(new URL(path, import.meta.url));
     return `data:${mimeType};base64,${bytes.toString('base64')}`;
@@ -104,7 +108,7 @@ export async function dataUrl(path: string, mimeType: string): Promise<string> {
 // ---------------------------------------------------------------------------
 
 /** Scratch output, gitignored: `npm run clean` takes it away. */
-const OUT_DIR = new URL('../.out/', import.meta.url);
+const OUT_DIR = new URL('../../.out/', import.meta.url);
 
 /**
  * Writes the run's HTML report and says where it landed. Every demo ends with

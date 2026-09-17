@@ -5,19 +5,19 @@ import pc from 'picocolors';
 import { PRESETS, type Vendor } from './models.ts';
 
 // ---------------------------------------------------------------------------
-// The launcher behind every `npm run demo:*`
+// The launcher behind `npm run demo -- <name>`
 //
 // Nothing here is part of the library. The demos pick their model through
 // ./models.ts, which reads `DEMO_VENDOR`; this script is the one place that
 // *asks* for it. Run a demo without saying which vendor and it offers the
 // list; answer once and every child process in the batch inherits the choice,
-// so `npm run demo:all` prompts once rather than eight times.
+// so `npm run demo -- all` prompts once rather than eight times.
 //
-//   npm run demo:simple                    # asks, when the terminal can ask
-//   DEMO_VENDOR=openai npm run demo:simple # already answered, no prompt
+//   npm run demo -- simple                    # asks, when the terminal can ask
+//   DEMO_VENDOR=openai npm run demo -- simple # already answered, no prompt
 // ---------------------------------------------------------------------------
 
-/** Script name (as spelled in `demo:<name>`) -> the file it runs. */
+/** Demo name (as spelled on the command line) -> the file it runs. */
 const DEMOS: Record<string, string> = {
     simple: 'demo.ts',
     fanout: 'fanout.ts',
@@ -92,7 +92,7 @@ function run(file: string, vendor: Vendor): Promise<number> {
 const requested = process.argv.slice(2);
 const names = requested.length === 1 && requested[0] === 'all' ? Object.keys(DEMOS) : requested;
 if (names.length === 0) {
-    console.error(`usage: node examples/run.ts <${Object.keys(DEMOS).join('|')}|all>`);
+    console.error(`usage: node examples/sdk/run.ts <${Object.keys(DEMOS).join('|')}|all>`);
     process.exit(2);
 }
 for (const name of names) {
