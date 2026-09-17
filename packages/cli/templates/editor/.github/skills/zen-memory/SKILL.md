@@ -364,6 +364,40 @@ lands at `<project>/memory/files/<id>.<ext>` and appears to the agent as:
 | Mount     | `/memory`, **read-only**                                         |
 | Extension | preserved, because it decides how the file runs and renders      |
 
+### The agent has to be able to write the file first
+
+`memory_commit` **copies** a file that already exists. It is not an upload
+channel and it cannot create one. So everything too big for a node's `text` - a
+script, a config, an assembled passage - depends on the agent having a tool that
+puts bytes in the **workspace**, and an agent with none can only ever commit
+text no matter how much the memory design leans on `file` nodes.
+
+| The agent's `tools:`         | Can it commit a `file`?                                                 |
+| ---------------------------- | ----------------------------------------------------------------------- |
+| `write_file` / `apply_patch` | Yes. Write it, then name the same path                                  |
+| `run_command` only           | Yes, but only under `/workspace` - a heredoc into `/tmp` is unreachable |
+| Neither                      | No. Everything worth keeping has to fit on one line of `text`           |
+
+The workspace is the only tree that round-trips, because it is the only
+writable one. `/assets`, `/skills` and `/memory` resolve as well - they are
+mounts the file tools know by name - but they are **read-only**, so nothing can
+be put there to be remembered. Every other absolute path is real to
+`run_command` and outside the workspace root, so a file written to `/tmp` comes
+back as:
+
+```
+error: outside the workspace: /tmp/report.py
+```
+
+A bare error carrying none of the `hint` the other memory refusals do, because
+containment is a workspace answer rather than a memory one.
+
+This is the trap in a `tools:` list trimmed to `run_command` alone: the shell
+can create the file, so `file` nodes look supported, but nothing in the agent's
+context ever uses workspace vocabulary and the model has no reason to prefer
+`/workspace` over `/tmp`. Either give it the file tools, or say in its prompt
+that work it means to keep goes in `/workspace`.
+
 Reusing one is the point of keeping it:
 
 ```
@@ -606,6 +640,9 @@ agents:
 - [ ] Every agent that should learn has a `memory:` binding - the top-level
       block alone enables nothing.
 - [ ] `access: full` appears at most once.
+- [ ] Any agent the design expects to commit `file` nodes can write to the
+      workspace - `write_file`/`apply_patch`, or `run_command` with `/workspace`
+      named in its prompt. Nothing else round-trips.
 - [ ] `sees`/`writes` exist because an agent would be **misled** by the other
       slice, not merely because it does not need it.
 - [ ] `autoRecall: false` on any agent whose user message is a payload.
@@ -630,6 +667,8 @@ agents:
 | A wrong memory keeps coming back                    | It was edited instead of superseded, or superseded in the wrong direction - the **new** node is the source |
 | An agent cannot see a node you can                  | Its `audience` is not in that agent's `sees`. Invisible and missing are the same thing, on purpose         |
 | "this agent cannot remember files"                  | The agent has no workspace, so a path cannot be resolved. Commit without `file`                            |
+| `error: outside the workspace: /tmp/…`              | The file is real to the shell and outside the only tree memory reads. Write it under `/workspace`          |
+| Long content arrives as `text`, never as a `file`   | The agent has no tool that writes to the workspace, so it has no path to name                              |
 | A remembered file will not run                      | It is not self-contained - it referenced the workspace it was written in                                   |
 | Recollections are large and unhelpful               | `autoRecall.limit` is too high, or node texts describe answers rather than questions                       |
 | The model recalls a route the API no longer has     | Nothing re-checks memory against a rebuilt index. Supersede, and require verification                      |
