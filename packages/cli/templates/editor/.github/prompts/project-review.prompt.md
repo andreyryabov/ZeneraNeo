@@ -1,5 +1,4 @@
 ---
-mode: agent
 description: Review the project against the checklist before committing.
 ---
 

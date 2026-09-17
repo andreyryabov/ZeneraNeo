@@ -778,10 +778,18 @@ groups - the workspace tools (§3.6), the sandbox tools (§3.7) and the web tool
 the machine, so `tools:` is the whole permission model: an agent that does not
 name a tool cannot use it, whatever its prompt says.
 
-Two rules follow:
+Three rules follow:
 
 - **Grant the narrowest set the job needs.** An agent that only reviews should
   not be holding the tools that overwrite files.
+- **Grant by group, then subtract.** Write `workspace:*` and take away what this
+  agent must not have - not a hand-picked list of names. The tools in a group are
+  designed to be used together, and a list assembled one name at a time leaves out
+  the companion the model reaches for next: `write_file` without `apply_patch`
+  turns every one-line edit into a whole-file rewrite, and `read_file` without
+  `list_dir` and `find_files` leaves it guessing at paths. A group also tracks the
+  runtime - a tool added to it later reaches the agent, where an enumerated list
+  silently stays behind.
 - **Say in the prompt when to reach for what.** A granted tool the prompt never
   mentions is used at the model's discretion, which is not the same as never.
 
@@ -840,6 +848,13 @@ line above it. Quote a lone `'*'`: unquoted, YAML reads it as an alias and
 refuses the file. `workspace:*` needs no quoting. There is no name globbing -
 `read_*` is an unknown tool, because a selector should track a declared set, not
 a naming habit.
+
+Both agents above are written the way to write them: **the group, minus the
+exceptions**. `tools: [read_file, write_file]` is the shape to avoid - it reads
+as a considered decision and is usually an incomplete one, since the tool that
+makes the granted one usable is the tool that was left out. Subtracting says
+which capability is being withheld, which is the thing a reviewer needs to check
+and the thing the next tool added to the group will not quietly defeat.
 
 `zen run --read-only` withholds the four mutating tools whatever `agents.yaml`
 asks for: the deployment overriding the repository, as everywhere else.
@@ -1940,6 +1955,10 @@ candidates; these are the judgements to make about each one)**
 **Tools**
 
 - [ ] Every agent holds the narrowest set its job needs
+- [ ] Every `tools:` list is a group selector minus its exceptions, not an
+      enumeration of individual names - §3.5
+- [ ] No agent holds `write_file` without `apply_patch`, or `read_file` without
+      `list_dir` and `find_files`
 - [ ] An agent that only reads is not holding `write_file`, `apply_patch`,
       `move_file` or `delete_file` - subtract them from `workspace:*`
 - [ ] `sandbox:*` is granted only where a shell is actually needed
