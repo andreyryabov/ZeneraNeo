@@ -13,7 +13,8 @@
     "private": true,
     "type": "module",
     "workspaces": [
-        "packages/*"
+        "packages/*",
+        "examples/*"
     ],
     "engines": {
         "node": ">=24"
@@ -37,24 +38,13 @@
         "release:check": "npm run format:check && npm run typecheck && npx vitest run --exclude '**/live-*' && npm pack --dry-run $(node scripts/release.mjs workspaces)",
         "release:publish": "npm publish --access public $(node scripts/release.mjs workspaces)",
         "check:node": "node -e \"if (+process.versions.node.split('.')[0] < 24) { console.error('Node >=24 required (running ' + process.version + '). Run: nvm use'); process.exit(1); }\"",
-        "demo": "bash -c '. ~/.nvm/nvm.sh && nvm exec --silent 24 node examples/run.ts \"$@\"' --",
-        "demo:simple": "npm run demo --silent -- simple",
-        "demo:fanout": "npm run demo --silent -- fanout",
-        "demo:triage": "npm run demo --silent -- triage",
-        "demo:review": "npm run demo --silent -- review",
-        "demo:inspect": "npm run demo --silent -- inspect",
-        "demo:handbook": "npm run demo --silent -- handbook",
-        "demo:locked": "npm run demo --silent -- locked",
-        "demo:project": "npm run demo --silent -- project",
-        "demo:all": "npm run demo --silent -- all"
+        "demo": "npm run demo --silent -w examples/sdk --"
     },
     "devDependencies": {
         "@types/node": "^24.0.0",
         "@types/react": "^19.2.18",
         "@vitest/coverage-v8": "^4.1.11",
-        "boxen": "^8.0.1",
         "markdown-dataset": "0.1.0",
-        "picocolors": "^1.1.1",
         "prettier": "^3.9.6",
         "typescript": "^5.9.3",
         "vitest": "^4.1.11"

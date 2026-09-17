@@ -7,7 +7,7 @@ own: everything it does is assembly.
 
 See [agents-yaml.md](agents-yaml.md) for the configuration reference,
 [specification.md](specification.md) for the loop that maintains all of it, and
-`examples/project.ts` for a runnable version of everything below.
+`examples/sdk/project.ts` for a runnable version of everything below.
 
 ## Layout
 

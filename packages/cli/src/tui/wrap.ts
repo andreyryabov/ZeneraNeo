@@ -166,7 +166,7 @@ export function branchRows(count: number, allowance: number): number {
 /**
  * How wide the answer is drawn. A line of prose spanning a 200-column terminal
  * is measurably harder to read than one that stops, which is why every demo in
- * `examples/` puts its answer in a box of bounded width — the terminal is the
+ * `examples/sdk/` puts its answer in a box of bounded width — the terminal is the
  * page, not the paragraph.
  */
 export function answerWidth(columns: number): number {
