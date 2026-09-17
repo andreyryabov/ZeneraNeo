@@ -18,6 +18,7 @@ import {
     write,
     yellow,
 } from './term.ts';
+import { answerWidth, segmentsOf, wrap } from './tui/wrap.ts';
 
 // ---------------------------------------------------------------------------
 // The meta agent
@@ -571,6 +572,41 @@ export function windowSink(rows = WINDOW_ROWS): Sink {
         },
         close: erase,
     };
+}
+
+/**
+ * The answer in the same box `zen run` draws it in: bounded width, rounded
+ * rule, fenced blocks kept as they were written.
+ *
+ * Redirected output gets the text and nothing else — `zen meta run ... > out.md`
+ * is meant to produce a file you can read, not one with a border down its side.
+ */
+export function answerBox(text: string, columns = process.stdout.columns ?? 80): string[] {
+    if (!process.stdout.isTTY) {
+        return text.split('\n');
+    }
+    const outer = answerWidth(columns);
+    const inner = outer - 4;
+    const body: string[] = [];
+    for (const segment of segmentsOf(text)) {
+        if (segment.code) {
+            // Indentation is the meaning of a fenced block, so it is cut rather
+            // than reflowed.
+            body.push(dim(`\u250c\u2500${segment.title ? ` ${segment.title}` : ''}`));
+            body.push(...segment.lines.map((l) => `${dim('\u2502')} ${cut(l, inner - 2)}`));
+            body.push(dim('\u2514\u2500'));
+        } else {
+            body.push(...wrap(segment.lines.join('\n'), inner));
+        }
+    }
+    const rule = BOX.h.repeat(outer - 2);
+    return [
+        '',
+        dim(`${BOX.tl}${rule}${BOX.tr}`),
+        ...body.map((l) => `${dim(BOX.v)} ${pad(l, inner)} ${dim(BOX.v)}`),
+        dim(`${BOX.bl}${rule}${BOX.br}`),
+        '',
+    ];
 }
 
 // ---------------------------------------------------------------------------

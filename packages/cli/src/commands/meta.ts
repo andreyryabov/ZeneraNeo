@@ -6,6 +6,7 @@ import { ensureHome } from '../home.ts';
 import { assertOwner, KeyStore, PROVIDERS, type Provider } from '../keys.ts';
 import { probeModel } from '../liveness.ts';
 import {
+    answerBox,
     chooseModel,
     defaultRef,
     launch,
@@ -467,10 +468,9 @@ async function go(
                 answerFile: outcome.answer ? log.answerPath : undefined,
             });
         } else if (outcome.answer) {
-            write(outcome.answer);
+            writeAll(answerBox(outcome.answer));
             // After the answer, not before: it is the thing you click once you
             // have read enough to want it in an editor.
-            note();
             note(cyan(log.answerPath));
         }
 
