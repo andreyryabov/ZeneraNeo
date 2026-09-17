@@ -1,0 +1,76 @@
+# Specification
+
+What this project is for. The files around it are the implementation; where the
+two disagree, this one wins.
+
+## Purpose
+
+Carry out work inside a workspace on request — read it, change it, run
+something in it — and report what was done in enough detail to be checked.
+
+## Scope
+
+- One request at a time, in one workspace, with the person who asked it present.
+- No schedule, no queue, nothing that outlives the session it was asked in.
+
+## Models
+
+- `openai:gpt-5.4-mini` — one model for the whole project, used by every agent.
+- Named once in `agents.yaml` so it can be swapped in one place. Nothing here
+  depends on which model it is; a project that later needs a cheaper model for
+  one job adds a second alias rather than scattering the choice.
+
+## Setup
+
+- Run once, before any session: whatever has to exist before work can start —
+  an index built, a document fetched, a file generated.
+- `scripts/_setup.sh` is the one command that does it, and `scripts/<name>.sh`
+  are the steps it runs in order. A step is safe to run twice and reports
+  `skipped` the second time.
+- Currently: no steps. Nothing has to be prepared before a run.
+
+## Agents
+
+- `default` — the entry point and the only agent; nobody to hand work to.
+    - Establishes what it is looking at before it acts: reads a file before
+      changing it, runs a command rather than predicting its output.
+    - Remembers what it worked out, so a later session starts from it rather
+      than from nothing.
+
+## Tools and boundaries
+
+- Files — read, search, create, edit, move, delete. The workspace is the only
+  writable thing, symlinks included.
+- Shell — commands run in the container, on that same workspace.
+- Memory — a graph of what earlier runs established, recalled before new
+  questions and added to deliberately. What goes in it, and what does not, is
+  `agents/memory-instructions.md`.
+- `assets/` is reference material, and read-only.
+- Web — search and read a page. Anything taken from one is attributed to the
+  page it came from.
+
+## Environment
+
+- Memory: `memory/`, kept with the project and committed except for its
+  vectors, which are derived.
+- Sandbox: built from `sandbox/Dockerfile`, persists between runs, and can
+  reach the network. What the work always needs belongs in the image, not in an
+  instruction that reinstalls it on every run.
+
+## Testing
+
+- `zen check` passes: the project loads, and every model, tool and skill an
+  agent is given resolves. It says nothing about whether the prose is right.
+- `scripts/_setup.sh` run twice in a row reports every step `skipped` the
+  second time.
+- A run against a real request: the workspace holds the change described, and
+  the reply's account of it matches what is on disk.
+
+## Done means
+
+- The change asked for is in the workspace, or the question is answered from
+  what is actually in it.
+- Every claim about a command is one that was run and whose output was read.
+- The reply names what changed, file by file, and says what it deliberately did
+  not do.
+- An answer that cannot be produced honestly is a refusal with the reason.
