@@ -53,12 +53,13 @@ import {
     absorb,
     chooseModel,
     defaultRef,
+    footerCells,
     masked,
     misspelledProvider,
     promptPath,
     readPrompt,
-    shimmer,
     splitRef,
+    toneAt,
     wire,
     wireApi,
     type Outcome,
@@ -67,7 +68,7 @@ import {
 import { engineDisk, ensurePodmanReady, ownedContainers } from '../src/podman.ts';
 import { dirSize, lastUsedAt, projectMounts } from '../src/projects.ts';
 import { scaffold } from '../src/scaffold.ts';
-import { bytes, CliError, cut, EXIT, keysIn, pad, plain, table } from '../src/term.ts';
+import { bytes, CliError, cut, EXIT, keysIn, pad, table } from '../src/term.ts';
 import {
     answerWidth,
     BOX_CHROME,
@@ -393,34 +394,62 @@ describe('cutting a styled line', () => {
     });
 });
 
-describe('the working row', () => {
-    const label = '  working … 12s';
-    // Where the crest is, counted in visible columns rather than in the string.
-    const crest = (frame: number): number => {
-        const drawn = shimmer(label, frame, true);
-        const head = drawn.indexOf('\u001b[1;38;5;231m');
-        return plain(drawn.slice(0, head)).length;
-    };
+describe('the waiting border', () => {
+    // A box 40 wide with 6 rows of narration: the ring is the two rules plus
+    // the two sides, and it is one ring rather than four runs.
+    const span = 2 * 40 + 2 * 6;
+    const brightest = 6;
 
-    it('changes nothing a terminal would count as width', () => {
-        for (const frame of [0, 1, 7, 26, 99]) {
-            expect(plain(shimmer(label, frame, true))).toBe(label);
-            expect(plain(pad(shimmer(label, frame, true), 40))).toHaveLength(40);
+    it('lights the crest where the head is', () => {
+        for (const head of [0, 5, 41, span - 1]) {
+            expect(toneAt(head, head, span)).toBe(brightest);
         }
     });
 
-    it('moves the crest to the right, a column a frame', () => {
-        expect(crest(3)).toBe(3);
-        expect(crest(4)).toBe(4);
-        expect(crest(5)).toBe(5);
+    it('drags a tail behind the crest and leaves the rest at rest', () => {
+        const head = 60;
+        expect(toneAt(head - 2, head, span)).toBe(brightest - 1);
+        expect(toneAt(head - 4, head, span)).toBe(brightest - 2);
+        expect(toneAt(head - 40, head, span)).toBe(0);
+        // Ahead of the crest is border the wave has not reached yet.
+        expect(toneAt(head + 1, head, span)).toBe(0);
     });
 
-    it('comes round again, so a long wait keeps waving', () => {
-        expect(shimmer(label, 0, true)).toBe(shimmer(label, [...label].length + 12, true));
+    it('rounds the corners without a seam, because the ring has no end', () => {
+        // A crest two cells past the start has its tail on the last cells of
+        // the ring — the left side, which is drawn bottom to top.
+        expect(toneAt(span - 1, 1, span)).toBe(brightest - 1);
+        expect(toneAt(0, span, span)).toBe(brightest);
+    });
+});
+
+describe('the waiting label', () => {
+    const cells = (label: string, width = 40): string[] => footerCells(label, width);
+
+    it('is a rule of exactly the width, label or no label', () => {
+        expect(cells('')).toHaveLength(40);
+        expect(cells('Working... 12s')).toHaveLength(40);
+        expect(cells('Working... 1200s')).toHaveLength(40);
     });
 
-    it('is the plain label where there is no colour to have', () => {
-        expect(shimmer(label, 4, false)).toBe(label);
+    it('keeps the corners, so the box is still a box', () => {
+        const drawn = cells('Working... 12s');
+        expect(drawn[0]).toBe('\u2570');
+        expect(drawn.at(-1)).toBe('\u256f');
+    });
+
+    it('sets the label near the left corner rather than centred', () => {
+        expect(cells('Working... 12s').join('')).toContain('\u2570\u2500 Working... 12s ');
+    });
+
+    it('cuts a label too long for the rule instead of widening it', () => {
+        const drawn = cells('x'.repeat(80));
+        expect(drawn).toHaveLength(40);
+        expect(drawn.join('')).toContain(`\u2500 ${'x'.repeat(34)} `);
+    });
+
+    it('is a plain rule when there is nothing to wait for', () => {
+        expect(cells('').join('')).toBe(`\u2570${'\u2500'.repeat(38)}\u256f`);
     });
 });
 

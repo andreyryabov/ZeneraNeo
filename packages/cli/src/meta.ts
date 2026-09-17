@@ -490,7 +490,7 @@ export const WINDOW_ROWS = 8;
 
 const BOX = { tl: '╭', tr: '╮', bl: '╰', br: '╯', h: '─', v: '│' };
 
-/** How often the status row is redrawn — the wave's frame, not the clock's. */
+/** How often the border is redrawn — the wave's frame, not the clock's. */
 export const FRAME_MS = 80;
 
 // Dimmest first, crest last. Written as escapes rather than `styleText` because
@@ -506,36 +506,64 @@ const WAVE = [
 ];
 const RESET = '\u001b[0m';
 
-/** Blank columns past the end, so a sweep reads as a pass and not a loop. */
-const WAVE_GAP = 12;
+/** Cells each tone of the tail covers, so the crest reads as a band, not a dot. */
+const WAVE_TAIL = 2;
+
+/** Cells the crest travels per frame — a lap of a wide window in a few seconds. */
+export const WAVE_STEP = 3;
 
 /**
- * One frame of a bright crest travelling left to right through the text.
+ * How brightly one cell of the border is lit, given where the crest has got to.
  *
- * Waiting is the whole of what the status row says, and a number that changes
- * once a second says it badly — a still frame is what a hung run looks like.
- * The visible text is untouched, so the width the box aligns to does not move:
- * the colour is entirely escape codes, which `pad` and `cut` already discount.
+ * `position` counts clockwise from the top left corner, so one index walks the
+ * whole ring and the wave rounds the corners without a seam. Everything the
+ * tail has passed sits at the dimmest tone, which is the border's resting
+ * colour: the ring is always drawn, only the crest moves.
  */
-export function shimmer(text: string, frame: number, on = styled()): string {
-    if (!on) {
-        return text;
-    }
-    const chars = [...text];
-    const head = frame % (chars.length + WAVE_GAP);
+export function toneAt(position: number, head: number, span: number): number {
+    const behind = (((head - position) % span) + span) % span;
+    const step = Math.floor(behind / WAVE_TAIL);
+    return step < WAVE.length ? WAVE.length - 1 - step : 0;
+}
+
+/**
+ * A run of border cells, coloured by the wave and emitting an escape only where
+ * the tone changes — a frame of the whole ring is a handful of them.
+ *
+ * `from` is the ring position of the first cell and `step` which way round the
+ * ring the cells run, because the bottom rule is printed left to right while
+ * the ring travels it right to left.
+ */
+function lit(cells: string[], from: number, step: number, head: number, span: number): string {
     let out = '';
     let tone = -1;
-    for (let i = 0; i < chars.length; i++) {
-        // The crest sits on the head and the tail drags behind it, to the left.
-        const behind = head - i;
-        const step = behind >= 0 && behind < WAVE.length ? WAVE.length - 1 - behind : 0;
-        if (step !== tone) {
-            out += WAVE[step];
-            tone = step;
+    for (let i = 0; i < cells.length; i++) {
+        const next = toneAt(from + i * step, head, span);
+        if (next !== tone) {
+            out += WAVE[next];
+            tone = next;
         }
-        out += chars[i];
+        out += cells[i];
     }
     return `${out}${RESET}`;
+}
+
+/**
+ * The bottom rule as cells, with the status label set into it near the left.
+ *
+ * Waiting belongs to the frame rather than to the narration: a row of its own
+ * costs a step of what the agent is doing every time, and it settles just
+ * under the last line, which is where the eye already is. Near the left, where
+ * reading starts, and not so near that it displaces the corner.
+ */
+export function footerCells(label: string, width: number): string[] {
+    const room = width - 6;
+    const text = label && room > 0 ? [...label].slice(0, room) : [];
+    const cells = text.length > 0 ? [BOX.bl, BOX.h, ' ', ...text, ' '] : [BOX.bl];
+    while (cells.length < width - 1) {
+        cells.push(BOX.h);
+    }
+    return [...cells, BOX.br];
 }
 
 /**
@@ -558,10 +586,10 @@ export function windowSink(rows = WINDOW_ROWS): Sink {
         return terminalSink;
     }
     const kept: string[] = [];
-    let tail = '';
+    const colour = styled();
+    let label = '';
+    let head = 0;
     let painted = 0;
-    let tailPainted = false;
-    let lastInner = 0;
 
     // The frame must stay under the viewport: a block taller than the screen
     // scrolls its own top away, and then the cursor-up erase falls short and
@@ -577,34 +605,47 @@ export function windowSink(rows = WINDOW_ROWS): Sink {
         }
     };
 
-    // Every row must be one row: a wrapped line breaks the cursor arithmetic.
-    const row = (line: string, inner: number): string =>
-        `${cyan(BOX.v)} ${pad(cut(line, inner), inner)} ${cyan(BOX.v)}`;
+    /** The whole frame, border lit by the wave, every row exactly one row. */
+    const frameOf = (show: string[], inner: number): string[] => {
+        const width = inner + 4;
+        // Clockwise from the top left: across the top, down the right, back
+        // along the bottom, up the left. One ring, so one index addresses it.
+        const span = 2 * width + 2 * show.length;
+        const top = [BOX.tl, ...Array<string>(width - 2).fill(BOX.h), BOX.tr];
+        const bottom = footerCells(label, width);
+        const edge = (position: number): string =>
+            colour ? lit([BOX.v], position, 1, head, span) : cyan(BOX.v);
+        return [
+            colour ? lit(top, 0, 1, head, span) : cyan(top.join('')),
+            ...show.map(
+                (line, r) =>
+                    `${edge(span - 1 - r)} ${pad(cut(line, inner), inner)} ${edge(width + r)}`,
+            ),
+            colour
+                ? lit(bottom, 2 * width + show.length - 1, -1, head, span)
+                : cyan(bottom.join('')),
+        ];
+    };
 
     const paint = (): void => {
-        erase();
-        // slice(-0) is the whole array, so a window with no room for narration
-        // has to be spelled out.
-        const room = height() - (tail ? 1 : 0);
-        const show = room > 0 ? kept.slice(-room) : [];
-        if (tail) {
-            show.push(tail);
-        }
-        if (show.length === 0) {
-            tailPainted = false;
+        const show = kept.slice(-height());
+        if (show.length === 0 && label === '') {
+            erase();
             return;
         }
-        const inner = innerOf();
-        const rule = BOX.h.repeat(inner + 2);
-        const framed = [
-            cyan(`${BOX.tl}${rule}${BOX.tr}`),
-            ...show.map((l) => row(l, inner)),
-            cyan(`${BOX.bl}${rule}${BOX.br}`),
-        ];
-        process.stderr.write(framed.map((l) => `${l}\n`).join(''));
-        painted = framed.length;
-        tailPainted = tail !== '';
-        lastInner = inner;
+        // The wave wants a frame to run round before there is anything to say.
+        const lines = frameOf(show.length > 0 ? show : [''], innerOf());
+        if (painted === lines.length) {
+            // Erasing before a repaint is what flickers; overwriting in place
+            // does not, and at frame rate the whole border has to be redrawn.
+            process.stderr.write(
+                `\u001b[${painted}A${lines.map((l) => `\r${l}\u001b[0K\n`).join('')}`,
+            );
+            return;
+        }
+        erase();
+        process.stderr.write(lines.map((l) => `${l}\n`).join(''));
+        painted = lines.length;
     };
 
     return {
@@ -625,16 +666,8 @@ export function windowSink(rows = WINDOW_ROWS): Sink {
             paint();
         },
         status: (line) => {
-            const inner = innerOf();
-            // Redrawing the whole frame at frame rate flickers, so once the row
-            // is on screen only the row is rewritten: two up to reach it past
-            // the bottom rule, two back down to where the cursor was resting.
-            const inPlace = line !== '' && painted > 0 && tailPainted && inner === lastInner;
-            tail = line;
-            if (inPlace) {
-                process.stderr.write(`\u001b[2A\r${row(line, inner)}\u001b[0K\u001b[2B\r`);
-                return;
-            }
+            label = line;
+            head += WAVE_STEP;
             paint();
         },
         close: erase,
@@ -842,10 +875,9 @@ export async function launch(opts: Launch): Promise<Outcome> {
     // The first model call says nothing for as long as it takes, and silence
     // after the model line is indistinguishable from a hang.
     const began = Date.now();
-    let frame = 0;
     const beat = setInterval(() => {
         const seconds = Math.round((Date.now() - began) / 1000);
-        sink.status?.(shimmer(`  Working... ${seconds}s`, frame++));
+        sink.status?.(`Working... ${seconds}s`);
     }, FRAME_MS);
     beat.unref();
 
