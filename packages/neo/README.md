@@ -166,7 +166,7 @@ of surfacing three turns into a run as a confused model.
 [docs/projects.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/projects.md) ·
 [docs/agents-yaml.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/agents-yaml.md)
 · and
-[`examples/`](https://github.com/andreyryabov/ZeneraNeo/tree/main/examples) for
+[`examples/sdk/`](https://github.com/andreyryabov/ZeneraNeo/tree/main/examples/sdk) for
 eight worked demos, from a single agent to a project loaded entirely from a
 folder.
 

@@ -160,7 +160,7 @@ function Answer({ text }: { text: string }): React.ReactElement {
     const { stdout } = useStdout();
     const width = answerWidth(stdout?.columns ?? 80);
     const segments = segmentsOf(text);
-    // Bounded, like every answer in `examples/`: prose that runs the width of a
+    // Bounded, like every answer in `examples/sdk/`: prose that runs the width of a
     // wide terminal is a worse read than prose that stops, and the box is also
     // what separates the answer from the machinery that produced it.
     return (
@@ -841,7 +841,7 @@ interface BranchBox {
 /**
  * A fan-out, demultiplexed into one box per branch. Interleaving eight
  * branches' calls into a single list is not a picture of parallel work, it is
- * eight pictures shuffled together; a box per branch is what `examples/board.ts`
+ * eight pictures shuffled together; a box per branch is what `examples/sdk/board.ts`
  * gets right and what makes the shape of the fork legible at a glance.
  *
  * A box shows the last few calls the branch made and whatever it has in flight,
