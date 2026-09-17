@@ -1,7 +1,4 @@
-import { InMemoryPayloadStore } from '../packages/neo/src/payload-stores/in-memory.ts';
-import { AgentRunner } from '../packages/neo/src/runner.ts';
-import { turns } from '../packages/neo/src/state.ts';
-import { tool } from '../packages/neo/src/types.ts';
+import { AgentRunner, InMemoryPayloadStore, tool, turns } from '#neo';
 // Which vendor and how much thinking — shared by every demo. See ./models.ts.
 import { model as pick } from './models.ts';
 // Terminal rendering — the harness every example shares. See ./ui.ts.

@@ -1,9 +1,6 @@
+import { InMemoryPayloadStore, loadProject, tool, turns } from '#neo';
 import { relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { InMemoryPayloadStore } from '../packages/neo/src/payload-stores/in-memory.ts';
-import { loadProject } from '../packages/neo/src/project/index.ts';
-import { turns } from '../packages/neo/src/state.ts';
-import { tool } from '../packages/neo/src/types.ts';
 // Terminal rendering — the harness every example shares. See ./ui.ts.
 import { banner, box, line, loadEnv, report, stats, step } from './ui.ts';
 

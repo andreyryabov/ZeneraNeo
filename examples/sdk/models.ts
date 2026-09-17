@@ -1,5 +1,4 @@
-import type { Model } from '../packages/neo/src/model.ts';
-import { createModel, type ModelSpec } from '../packages/neo/src/models/factory.ts';
+import { createModel, type Model, type ModelSpec } from '#neo';
 
 // ---------------------------------------------------------------------------
 // One place where the demos pick a model
@@ -10,10 +9,10 @@ import { createModel, type ModelSpec } from '../packages/neo/src/models/factory.
 // a *tier* — how much thinking the step deserves — and the vendor is chosen
 // once, from the environment:
 //
-//   npm run demo:all                        # gemini (default)
-//   DEMO_VENDOR=openai     npm run demo:all
-//   DEMO_VENDOR=anthropic  npm run demo:all
-//   DEMO_VENDOR=openrouter npm run demo:all
+//   npm run demo -- all                        # gemini (default)
+//   DEMO_VENDOR=openai     npm run demo -- all
+//   DEMO_VENDOR=anthropic  npm run demo -- all
+//   DEMO_VENDOR=openrouter npm run demo -- all
 //
 // The one demo this does not cover is ./project.ts: its models are declared in
 // assets/project/agents.yaml, because that is the point of that example.
@@ -84,7 +83,7 @@ export const PRESETS: Record<Vendor, Record<Tier, ModelSpec>> = {
         deep: { provider: 'anthropic', model: 'claude-opus-5', maxTokens: 8192 },
     },
     openrouter: {
-        // The free model stays on the cheap tier, so `demo:all` costs nothing there.
+        // The free model stays on the cheap tier, so `demo -- all` costs nothing there.
         fast: {
             provider: 'openrouter',
             model: 'inclusionai/ling-3.0-flash-fin:free',
