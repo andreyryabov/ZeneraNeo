@@ -165,7 +165,7 @@ Memory changes what the system is, so it belongs in `SPECIFICATION.md`: that
 agents remember between sessions, what kind of thing is worth keeping, who may
 read whose, and what must never be written down. The scaffolded specification
 lists memory under **Out of scope** for exactly this reason - moving it out of
-that list is the change, and `/sync-with-spec` does the wiring. See
+that list is the change, and `/spec-sync-project` does the wiring. See
 [specification.md](specification.md).
 
 ## Further

@@ -249,7 +249,7 @@ steps in it yet - and adds the path to `projects.json`.
 project that was just scaffolded: every line of it is implemented by something
 next to it, and everything implemented is in it. It is there to be replaced,
 but until it is it is true, which is what makes it a template worth reading
-rather than a heading list. `/sync-with-spec` then works from the first edit
+rather than a heading list. `/spec-sync-project` then works from the first edit
 onwards, because there is already a specification to diverge from.
 
 `.spec-sync/baseline/` and `.spec-sync/history/` are made empty for it to write
@@ -701,7 +701,7 @@ its own transcript too.
 
 **It knows what `.github/prompts/` is.** Copilot reads `AGENTS.md`,
 `.github/skills/` and `.github/agents/`, but not the `*.prompt.md` files an
-editor offers as slash commands. `zen meta run /review-project` reads one,
+editor offers as slash commands. `zen meta run /project-review` reads one,
 drops the frontmatter, and sends the body - which is how the same prompt runs
 from the editor and from a script. Nothing on a terminal drops a menu down as
 you type a slash, so `zen meta prompts` lists them and a bare `zen meta run`

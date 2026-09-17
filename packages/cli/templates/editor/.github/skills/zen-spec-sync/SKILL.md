@@ -1,6 +1,6 @@
 ---
 name: zen-spec-sync
-description: Running `/sync-with-spec` as an incremental pass - the committed `.spec-sync` baseline of what the last pass applied, how to scope a pass from the specification and feedback diffs and from what moved in the project itself, the four checks a narrow pass may never skip, the iteration history format, and why the baseline is written last. Load before every `/sync-with-spec`, including the first one on a project that has no baseline yet.
+description: Running `/spec-sync-project` as an incremental pass - the committed `.spec-sync` baseline of what the last pass applied, how to scope a pass from the specification and feedback diffs and from what moved in the project itself, the four checks a narrow pass may never skip, the iteration history format, and why the baseline is written last. Load before every `/spec-sync-project`, including the first one on a project that has no baseline yet.
 ---
 
 # Syncing a project with its specification, one change at a time
@@ -84,7 +84,7 @@ editing anything, and report it in the chat as the pass's scope.
 2. **The `SPECIFICATION-FEEDBACK.md` diff.** The file is a questionnaire the
    human answers by ticking one answer's `[ ]` box or deleting the answers they
    do not want. A question that has moved under `✅ Answered` was folded into the
-   specification by `/update-spec-from-feedback`, and its **Still to implement**
+   specification by `/spec-apply-feedback`, and its **Still to implement**
    line is the work. A question with a box marked `[x]`, or one answer left
    under it, and no `✅` entry was answered and never folded in - implement it,
    put its text into `SPECIFICATION.md`, and say so. A new question someone else

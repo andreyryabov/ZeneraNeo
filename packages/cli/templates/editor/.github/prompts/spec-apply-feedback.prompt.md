@@ -12,7 +12,7 @@ answered.
 You change two files and no others: `SPECIFICATION.md` and
 `SPECIFICATION-FEEDBACK.md`. You implement nothing - not a prompt, not a skill,
 not `agents.yaml`. Making the project match the specification is
-`/sync-with-spec`, which runs after this.
+`/spec-sync-project`, which runs after this.
 
 ## 1. Read both files before editing either
 
@@ -83,7 +83,7 @@ put it where the line above the block says it goes.
   edits rather than trusting the line numbers you read at the start.
 
 Nothing outside `SPECIFICATION.md` changes here. If an answer's text implies an
-agent, a tool grant, a script or a skill, that is the next `/sync-with-spec`
+agent, a tool grant, a script or a skill, that is the next `/spec-sync-project`
 pass's work, and saying so is all you do about it.
 
 ## 4. Mark the question answered
@@ -108,7 +108,7 @@ order:
   the specification to be true again, or `Nothing - the project already does
 this.`
 
-That last line is what the next `/sync-with-spec` works from, so write it as
+That last line is what the next `/spec-sync-project` works from, so write it as
 work, not as a summary.
 
 Then bring the top of the file back into step: the opening paragraph's count of
@@ -124,7 +124,7 @@ answer you think is wrong is still the answer; say why in the chat and leave the
 text alone.
 
 Do not run `zen check`, `scripts/_setup.sh` or anything under `.spec-sync/`. The
-baseline moves at the end of a `/sync-with-spec` pass and nowhere else -
+baseline moves at the end of a `/spec-sync-project` pass and nowhere else -
 committing it here would record a specification as applied that nothing has
 implemented yet.
 
@@ -138,5 +138,5 @@ In the chat:
 - what is still open, split into: more than one answer left, more than one box
   marked, every answer rejected, and could not be applied because the place it
   names is gone
-- then, in one line: send `/sync-with-spec` to make the project match the
+- then, in one line: send `/spec-sync-project` to make the project match the
   specification you have just changed.

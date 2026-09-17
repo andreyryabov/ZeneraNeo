@@ -177,7 +177,7 @@ export const init: Command = {
         '',
         'SPECIFICATION.md states what the project is for and what it may do,',
         'and describes the one that was just written. Say what you are building',
-        'there, then run /sync-with-spec in your editor to make the rest match.',
+        'there, then run /spec-sync-project in your editor to make the rest match.',
         '',
         'The default agent gets the file tools and a sandboxed shell, plus',
         '`exa:*` when the keyring holds an Exa key. It keeps a memory of its',

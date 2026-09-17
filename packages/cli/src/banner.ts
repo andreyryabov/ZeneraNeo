@@ -1,5 +1,4 @@
-import { styleText } from 'node:util';
-import { dim, note } from './term.ts';
+import { dim, note, styled } from './term.ts';
 
 // ---------------------------------------------------------------------------
 // The banner
@@ -74,9 +73,6 @@ function big(word: string): string[] {
 /** A wordmark rather than a sentence, so the letters are set apart. */
 const spaced = (s: string): string => [...s.toUpperCase()].join(' ');
 
-/** Whether anything should be coloured at all — `styleText`'s own answer. */
-const styling = (): boolean => styleText('dim', '.') !== '.';
-
 const RESET = '\u001b[0m';
 
 /** A stroke and the bevel that shades it, one step darker in the same hue. */
@@ -97,13 +93,13 @@ const isStroke = (run: string): boolean => /[█▀▄]/.test(run);
  * and the shadow reads as part of the stroke.
  */
 const paint = (text: string, tone: Tone): string =>
-    styling()
+    styled()
         ? text.replace(RUNS, (run) => `${isStroke(run) ? tone.face : tone.shade}${run}${RESET}`)
         : text;
 
 /** The wordmark has no bevel to shade, so it is all face. */
 const flat = (text: string, tone: Tone): string =>
-    styling() ? `${tone.face}${text}${RESET}` : text;
+    styled() ? `${tone.face}${text}${RESET}` : text;
 
 export interface BannerText {
     /** drawn white */

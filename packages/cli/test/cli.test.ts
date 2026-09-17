@@ -57,6 +57,7 @@ import {
     misspelledProvider,
     promptPath,
     readPrompt,
+    shimmer,
     splitRef,
     wire,
     wireApi,
@@ -66,7 +67,7 @@ import {
 import { engineDisk, ensurePodmanReady, ownedContainers } from '../src/podman.ts';
 import { dirSize, lastUsedAt, projectMounts } from '../src/projects.ts';
 import { scaffold } from '../src/scaffold.ts';
-import { bytes, CliError, cut, EXIT, keysIn, pad, table } from '../src/term.ts';
+import { bytes, CliError, cut, EXIT, keysIn, pad, plain, table } from '../src/term.ts';
 import {
     answerWidth,
     BOX_CHROME,
@@ -389,6 +390,37 @@ describe('cutting a styled line', () => {
     it('leaves a line that already fits exactly as it was', () => {
         const styled = `${'\u001b[1m'}short${'\u001b[22m'}`;
         expect(cut(styled, 80)).toBe(styled);
+    });
+});
+
+describe('the working row', () => {
+    const label = '  working … 12s';
+    // Where the crest is, counted in visible columns rather than in the string.
+    const crest = (frame: number): number => {
+        const drawn = shimmer(label, frame, true);
+        const head = drawn.indexOf('\u001b[1;38;5;231m');
+        return plain(drawn.slice(0, head)).length;
+    };
+
+    it('changes nothing a terminal would count as width', () => {
+        for (const frame of [0, 1, 7, 26, 99]) {
+            expect(plain(shimmer(label, frame, true))).toBe(label);
+            expect(plain(pad(shimmer(label, frame, true), 40))).toHaveLength(40);
+        }
+    });
+
+    it('moves the crest to the right, a column a frame', () => {
+        expect(crest(3)).toBe(3);
+        expect(crest(4)).toBe(4);
+        expect(crest(5)).toBe(5);
+    });
+
+    it('comes round again, so a long wait keeps waving', () => {
+        expect(shimmer(label, 0, true)).toBe(shimmer(label, [...label].length + 12, true));
+    });
+
+    it('is the plain label where there is no colour to have', () => {
+        expect(shimmer(label, 4, false)).toBe(label);
     });
 });
 
@@ -1174,6 +1206,27 @@ describe('the scaffold', () => {
         expect(report.sandbox.dockerfile).toBe('sandbox/Dockerfile');
     });
 
+    /**
+     * A prompt's filename is the slash command the editor offers, so renaming
+     * one unbinds every mention of it in the help text, the docs and the
+     * skills without breaking anything that compiles.
+     */
+    it('ships the prompts the editor offers as slash commands', () => {
+        const dir = join(root, 'prompts');
+        mkdirSync(dir, { recursive: true });
+        const written = scaffold({ dir, model: 'gpt-4o' });
+
+        for (const name of [
+            'project-review.prompt.md',
+            'spec-apply-feedback.prompt.md',
+            'spec-sync-project.prompt.md',
+        ]) {
+            const path = join('.github', 'prompts', name);
+            expect(written.editor).toContain(path);
+            expect(readFileSync(join(dir, path), 'utf8').trim()).not.toBe('');
+        }
+    });
+
     /** It is the project's file once written, and editing it is the point. */
     it('leaves an edited Dockerfile alone', () => {
         const dir = join(root, 'edited');
@@ -1254,7 +1307,7 @@ describe('the scaffold', () => {
     });
 
     /**
-     * The record `/sync-with-spec` works from: two directories the project
+     * The record `/spec-sync-project` works from: two directories the project
      * commits, empty because what marks a completed pass is the manifest
      * inside them, and the script that writes it — executable, and at the path
      * the prompt tells the agent to run.
@@ -1275,7 +1328,7 @@ describe('the scaffold', () => {
         expect(statSync(join(dir, script)).mode & 0o777).toBe(0o755);
         // The prompt sends the agent to that path, so the two have to agree.
         expect(
-            readFileSync(join(dir, '.github', 'prompts', 'sync-with-spec.prompt.md'), 'utf8'),
+            readFileSync(join(dir, '.github', 'prompts', 'spec-sync-project.prompt.md'), 'utf8'),
         ).toContain(script);
 
         // Called from anywhere, and honest about a project that has never had
@@ -1331,7 +1384,7 @@ describe('the scaffold', () => {
         }
         // The prompt sends the agent to the entry point, so the two must agree.
         expect(
-            readFileSync(join(dir, '.github', 'prompts', 'review-project.prompt.md'), 'utf8'),
+            readFileSync(join(dir, '.github', 'prompts', 'project-review.prompt.md'), 'utf8'),
         ).toContain(entry);
 
         const run = (script: string) =>

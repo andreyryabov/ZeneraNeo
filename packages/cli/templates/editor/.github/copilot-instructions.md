@@ -117,7 +117,7 @@ without losing anything. Never paraphrase the reference into prose of your own.
 See §5.3.
 
 A project with a `SPECIFICATION.md` carries one more: **`.spec-sync/` records
-what the last `/sync-with-spec` pass applied**, and the `zen-spec-sync` skill is
+what the last `/spec-sync-project` pass applied**, and the `zen-spec-sync` skill is
 loaded before running that prompt, whether or not a baseline exists yet. The
 state is committed, because a record only the last machine has is not a record.
 Two things to watch for, neither of which `zen check` reports: a baseline that
@@ -218,7 +218,7 @@ my-project/
 │   ├── prompts/*.prompt.md       tasks you invoke by name
 │   └── skills/*/SKILL.md         reference the editor loads on demand
 ├── .env                          this project's environment - NEVER committed
-├── .spec-sync/                   what the last /sync-with-spec applied - §0.1
+├── .spec-sync/                   what the last /spec-sync-project applied - §0.1
 ├── agents.yaml                   who exists, what they may reach for
 ├── agents/
 │   ├── instructions.md            house rules, prepended to every agent

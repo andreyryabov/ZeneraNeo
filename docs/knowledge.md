@@ -192,7 +192,7 @@ never leaves a half-built index where a whole one should be. Nothing watches the
 corpus: rebuild when the documents change.
 
 Say in `SPECIFICATION.md` that the project has a document index, what is in it,
-and which agents may read it - then `/sync-with-spec` maintains the skill, the
+and which agents may read it - then `/spec-sync-project` maintains the skill, the
 tool grant and the setup step for you. See
 [specification.md](specification.md).
 

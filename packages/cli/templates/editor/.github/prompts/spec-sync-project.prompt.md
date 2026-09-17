@@ -172,7 +172,7 @@ nothing to raise, say so in the chat and do not create the file.
 **It is a questionnaire, and answering it must take one gesture.** Every
 question carries two to four written-out answers, each with a `[ ]` box in its
 heading. The reader marks the box of the one they want - `[x]` - and deletes the
-others, then sends `/update-spec-from-feedback`, which folds what survived into
+others, then sends `/spec-apply-feedback`, which folds what survived into
 `SPECIFICATION.md`. Either gesture alone is enough, and the file says so in
 every question.
 
@@ -190,7 +190,7 @@ Two rules that come before everything else in this section:
 The file opens with one short paragraph: how many questions are open, and how to
 answer them - put an `x` in the box of the answer you want, delete the answers
 you do not want, or replace them all with a sentence of your own, then send
-`/update-spec-from-feedback`. Then a contents list, one line per question: its
+`/spec-apply-feedback`. Then a contents list, one line per question: its
 number as an anchor link, the question in under ten words, and what is built in
 the meantime. Then the questions, grouped under these headings, omitting any
 heading with no questions. The file is scanned before it is read, so keep the
@@ -212,7 +212,7 @@ emoji on every heading:
 ## ✅ Answered - folded into the specification
 ```
 
-`✅` is written by `/update-spec-from-feedback`, not by you. Leave what is there
+`✅` is written by `/spec-apply-feedback`, not by you. Leave what is there
 alone except to strike an entry this pass has actually implemented, and say in
 the chat which ones you closed.
 
@@ -329,7 +329,7 @@ retires with it.
 Read the feedback diff from §0 before writing: a question the human answered
 since the last pass is work to close, not a question to ask again. If a question
 has a box marked `[x]`, or one answer left under it, and no `✅` entry, the
-reader answered it and never ran `/update-spec-from-feedback` - implement that
+reader answered it and never ran `/spec-apply-feedback` - implement that
 answer, fold its text into `SPECIFICATION.md` yourself, and say so in the chat.
 
 ## 6. Run `scripts/_setup.sh` and watch it finish

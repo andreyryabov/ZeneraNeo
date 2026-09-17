@@ -7,7 +7,7 @@
 #
 # What it prints is findings. What it cannot see — whether an agent has one job,
 # whether a description is a condition, whether a fact belongs in a skill — is
-# the rest of /review-project, and the reason that prompt still exists.
+# the rest of /project-review, and the reason that prompt still exists.
 #
 # Every step runs even when an earlier one fails: a review that stops at the
 # first problem is one somebody has to run four times. The exit code is 1 if

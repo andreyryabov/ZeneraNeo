@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# The committed record of what the last completed /sync-with-spec pass applied.
+# The committed record of what the last completed /spec-sync-project pass applied.
 #
 #   snapshot.sh status    full | incremental | tampered, and what differs
 #   snapshot.sh diff      the difference the next pass has to work

@@ -84,7 +84,7 @@ zen init my-project
 zen open my-project
 ```
 
-Describe the system in `SPECIFICATION.md`, then run `/sync-with-spec` from your
+Describe the system in `SPECIFICATION.md`, then run `/spec-sync-project` from your
 editor's agent chat. It generates and updates the system. Use `zen check` to
 verify it, `zen run` to exercise it, and `zen inspect` to examine the resulting
 trajectory and improvement opportunities.

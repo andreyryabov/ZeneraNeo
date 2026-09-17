@@ -57,6 +57,12 @@ export const green = (s: string): string => styleText('green', s);
 export const yellow = (s: string): string => styleText('yellow', s);
 export const cyan = (s: string): string => styleText('cyan', s);
 
+/**
+ * Whether anything should be coloured at all — `styleText`'s own answer, asked
+ * by the places that write escape codes directly and so cannot inherit it.
+ */
+export const styled = (): boolean => styleText('dim', '.') !== '.';
+
 /** Visible width — style codes must not count towards column alignment. */
 // eslint-disable-next-line no-control-regex
 const ANSI = /\u001b\[[0-9;]*m/g;

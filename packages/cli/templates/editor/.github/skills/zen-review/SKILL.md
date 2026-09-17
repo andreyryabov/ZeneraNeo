@@ -1,6 +1,6 @@
 ---
 name: zen-review
-description: Checking a project before committing - the four mechanical checks `/review-project` makes before any judgement (`zen check`, the §2.5 path sweep, the memory house-rules copy, the spec-sync record), what each one owns, what their exit codes mean, and what deliberately has no check because no tool can make it. Load before running `/review-project`, before saying a project is ready, and whenever a review finding needs verifying rather than restating.
+description: Checking a project before committing - the four mechanical checks `/project-review` makes before any judgement (`zen check`, the §2.5 path sweep, the memory house-rules copy, the spec-sync record), what each one owns, what their exit codes mean, and what deliberately has no check because no tool can make it. Load before running `/project-review`, before saying a project is ready, and whenever a review finding needs verifying rather than restating.
 ---
 
 # Reviewing a project
@@ -104,7 +104,7 @@ Not because it would be hard, but because the answer would be wrong:
 - **Whether the newest spec-sync history entry is honest.** A pass can claim
   anything; only reading the diff says whether it did it.
 
-That list is `/review-project`, and §9 of the copilot instructions is the long
+That list is `/project-review`, and §9 of the copilot instructions is the long
 form. Run the script first so the prompt is spent on this.
 
 ## Where these scripts live, and why edits to them vanish

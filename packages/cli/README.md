@@ -125,7 +125,7 @@ In the editor, describe the job in `SPECIFICATION.md`, then send this in the
 agent chat:
 
 ```
-/sync-with-spec
+/spec-sync-project
 ```
 
 It creates the specialists, responsibilities, tool access and handoffs the job
@@ -156,7 +156,7 @@ session and uses the current directory as the workspace, with write access.
 `--session`, `--workspace` and `--read-only` override that.
 
 To change what the system does, update `SPECIFICATION.md` and send
-`/sync-with-spec` again. The next section explains that workflow in detail.
+`/spec-sync-project` again. The next section explains that workflow in detail.
 
 ## You write the specification; a coding agent writes the system
 
@@ -202,15 +202,15 @@ In the window that opens:
 
 1. **Edit `SPECIFICATION.md`** - what the system is for, which agents exist,
    what each may reach for, and what _done_ means.
-2. **Open the chat panel and send `/sync-with-spec`.** It reads the
+2. **Open the chat panel and send `/spec-sync-project`.** It reads the
    specification and every file implementing it, works out the difference in
    both directions, and changes the smallest thing that closes each gap.
 3. **Answer `SPECIFICATION-FEEDBACK.md`**, which it writes for anything it could
    not do without guessing. Every question carries two to four written-out
    answers, each with a `[ ]` box: tick one, delete the ones you do not want, or
    write your own in their place.
-4. **Send `/update-spec-from-feedback`.** It folds the answers you chose into
-   `SPECIFICATION.md` - never into a prompt - and then `/sync-with-spec` again.
+4. **Send `/spec-apply-feedback`.** It folds the answers you chose into
+   `SPECIFICATION.md` - never into a prompt - and then `/spec-sync-project` again.
 
 Back in the terminal: `zen check`, then `zen run`.
 
@@ -221,16 +221,16 @@ They are prompt files under `.github/prompts/`, which VS Code and its forks
 offer as chat slash-commands. Both `zen init` and `zen open` write them fresh,
 so they never go stale - and edits to them do not survive.
 
-| In chat                      | Does                                                             |
-| ---------------------------- | ---------------------------------------------------------------- |
-| `/sync-with-spec`            | Makes every file match `SPECIFICATION.md`, both directions.      |
-| `/update-spec-from-feedback` | Folds your answers in `SPECIFICATION-FEEDBACK.md` into the spec. |
-| `/review-project`            | Reads the project as a reviewer would, and reports.              |
-| `/new-agent`                 | Adds an agent - prompt, wiring and hand-offs.                    |
-| `/new-skill`                 | Adds a skill under `agents/skills/`.                             |
+| In chat                | Does                                                             |
+| ---------------------- | ---------------------------------------------------------------- |
+| `/spec-sync-project`   | Makes every file match `SPECIFICATION.md`, both directions.      |
+| `/spec-apply-feedback` | Folds your answers in `SPECIFICATION-FEEDBACK.md` into the spec. |
+| `/project-review`      | Reads the project as a reviewer would, and reports.              |
+| `/new-agent`           | Adds an agent - prompt, wiring and hand-offs.                    |
+| `/new-skill`           | Adds a skill under `agents/skills/`.                             |
 
 In an editor that does not support prompt files, paste the contents of
-`.github/prompts/sync-with-spec.prompt.md` into its chat instead - it is only a
+`.github/prompts/spec-sync-project.prompt.md` into its chat instead - it is only a
 prompt. Alongside them, `.github/copilot-instructions.md` is the standing brief
 that explains this runtime to whatever agent is reading, and
 `.github/skills/zen-cli/` is the CLI's own reference for it.
@@ -240,7 +240,7 @@ that explains this runtime to whatever agent is reading, and
 ### The self-improving loop
 
 ```
-edit SPECIFICATION.md → /sync-with-spec → zen check → zen run
+edit SPECIFICATION.md → /spec-sync-project → zen check → zen run
         ↑                                                  ↓
         └───── refine the spec <-──── zen inspect <-───────┘
 ```
@@ -299,7 +299,7 @@ Read a codebase and leave a short written note about it in the workspace.
 - Every claim in it comes from a file that was actually read.
 ```
 
-Send `/sync-with-spec` in the editor's chat. It writes `agents.yaml` - who
+Send `/spec-sync-project` in the editor's chat. It writes `agents.yaml` - who
 exists, and what each may reach for:
 
 ```yaml
@@ -553,8 +553,8 @@ panel drives, as a command you can put in a script.
 zen meta run "what does this project do?"
 zen meta run acme "review the last commit"
 zen meta prompts                             # which /<name> prompts this project has
-zen meta run /review-project                 # .github/prompts/review-project.prompt.md
-zen meta run acme /sync-with-spec agents/triage.md
+zen meta run /project-review                 # .github/prompts/project-review.prompt.md
+zen meta run acme /spec-sync-project agents/triage.md
 git diff | zen meta run "what broke?" --allow-tool read
 zen meta run --dry-run "hello"               # what would run, secrets masked
 ```
@@ -584,7 +584,7 @@ kept beside it as `.tmp/logs/meta.<when>.md`, named again once it has printed -
 a terminal turns that into something you click.
 
 `zen meta run /<name>` is the part an editor cannot do for you from a script.
-The prompts under `.github/prompts/` - `/sync-with-spec`, `/review-project` -
+The prompts under `.github/prompts/` - `/spec-sync-project`, `/project-review` -
 are what a chat panel offers as slash commands, and nothing outside an editor
 reads them. zen reads one, drops the frontmatter and sends the body - so the
 same prompt runs from the editor, from a terminal and from CI.

@@ -14,6 +14,7 @@ import {
     pad,
     plain,
     red,
+    styled,
     usageError,
     write,
     yellow,
@@ -354,7 +355,7 @@ export function masked(env: Record<string, string>, secret: readonly string[]): 
 // `zen meta run`, and it is why that subcommand exists.
 // ---------------------------------------------------------------------------
 
-/** `/review-project`, `review-project`, `review-project.prompt.md` or a path. */
+/** `/project-review`, `project-review`, `project-review.prompt.md` or a path. */
 export function promptPath(dir: string, name: string): string {
     const bare = name.replace(/^\//, '');
     if (bare.includes('/') || bare.endsWith('.md')) {
@@ -489,6 +490,54 @@ export const WINDOW_ROWS = 8;
 
 const BOX = { tl: '╭', tr: '╮', bl: '╰', br: '╯', h: '─', v: '│' };
 
+/** How often the status row is redrawn — the wave's frame, not the clock's. */
+export const FRAME_MS = 80;
+
+// Dimmest first, crest last. Written as escapes rather than `styleText` because
+// a named colour has no ramp, which is also why `styled()` has to be asked.
+const WAVE = [
+    '\u001b[0;38;5;24m',
+    '\u001b[0;38;5;31m',
+    '\u001b[0;38;5;38m',
+    '\u001b[0;38;5;45m',
+    '\u001b[0;38;5;51m',
+    '\u001b[1;38;5;159m',
+    '\u001b[1;38;5;231m',
+];
+const RESET = '\u001b[0m';
+
+/** Blank columns past the end, so a sweep reads as a pass and not a loop. */
+const WAVE_GAP = 12;
+
+/**
+ * One frame of a bright crest travelling left to right through the text.
+ *
+ * Waiting is the whole of what the status row says, and a number that changes
+ * once a second says it badly — a still frame is what a hung run looks like.
+ * The visible text is untouched, so the width the box aligns to does not move:
+ * the colour is entirely escape codes, which `pad` and `cut` already discount.
+ */
+export function shimmer(text: string, frame: number, on = styled()): string {
+    if (!on) {
+        return text;
+    }
+    const chars = [...text];
+    const head = frame % (chars.length + WAVE_GAP);
+    let out = '';
+    let tone = -1;
+    for (let i = 0; i < chars.length; i++) {
+        // The crest sits on the head and the tail drags behind it, to the left.
+        const behind = head - i;
+        const step = behind >= 0 && behind < WAVE.length ? WAVE.length - 1 - behind : 0;
+        if (step !== tone) {
+            out += WAVE[step];
+            tone = step;
+        }
+        out += chars[i];
+    }
+    return `${out}${RESET}`;
+}
+
 /**
  * Narration held to a fixed number of rows that rewrite themselves in place.
  *
@@ -511,12 +560,15 @@ export function windowSink(rows = WINDOW_ROWS): Sink {
     const kept: string[] = [];
     let tail = '';
     let painted = 0;
+    let tailPainted = false;
+    let lastInner = 0;
 
     // The frame must stay under the viewport: a block taller than the screen
     // scrolls its own top away, and then the cursor-up erase falls short and
     // strands a copy of every repaint. The two border rows count towards it.
     const height = (): number => Math.max(1, Math.min(rows, (process.stderr.rows ?? 24) - 4));
     const columns = (): number => Math.max(20, (process.stderr.columns ?? 80) - 1);
+    const innerOf = (): number => columns() - 4;
 
     const erase = (): void => {
         if (painted > 0) {
@@ -524,6 +576,10 @@ export function windowSink(rows = WINDOW_ROWS): Sink {
             painted = 0;
         }
     };
+
+    // Every row must be one row: a wrapped line breaks the cursor arithmetic.
+    const row = (line: string, inner: number): string =>
+        `${cyan(BOX.v)} ${pad(cut(line, inner), inner)} ${cyan(BOX.v)}`;
 
     const paint = (): void => {
         erase();
@@ -535,18 +591,20 @@ export function windowSink(rows = WINDOW_ROWS): Sink {
             show.push(tail);
         }
         if (show.length === 0) {
+            tailPainted = false;
             return;
         }
-        // Every row must be one row: a wrapped line breaks the cursor arithmetic.
-        const inner = columns() - 4;
+        const inner = innerOf();
         const rule = BOX.h.repeat(inner + 2);
         const framed = [
             cyan(`${BOX.tl}${rule}${BOX.tr}`),
-            ...show.map((l) => `${cyan(BOX.v)} ${pad(cut(l, inner), inner)} ${cyan(BOX.v)}`),
+            ...show.map((l) => row(l, inner)),
             cyan(`${BOX.bl}${rule}${BOX.br}`),
         ];
         process.stderr.write(framed.map((l) => `${l}\n`).join(''));
         painted = framed.length;
+        tailPainted = tail !== '';
+        lastInner = inner;
     };
 
     return {
@@ -567,7 +625,16 @@ export function windowSink(rows = WINDOW_ROWS): Sink {
             paint();
         },
         status: (line) => {
+            const inner = innerOf();
+            // Redrawing the whole frame at frame rate flickers, so once the row
+            // is on screen only the row is rewritten: two up to reach it past
+            // the bottom rule, two back down to where the cursor was resting.
+            const inPlace = line !== '' && painted > 0 && tailPainted && inner === lastInner;
             tail = line;
+            if (inPlace) {
+                process.stderr.write(`\u001b[2A\r${row(line, inner)}\u001b[0K\u001b[2B\r`);
+                return;
+            }
             paint();
         },
         close: erase,
@@ -775,9 +842,11 @@ export async function launch(opts: Launch): Promise<Outcome> {
     // The first model call says nothing for as long as it takes, and silence
     // after the model line is indistinguishable from a hang.
     const began = Date.now();
+    let frame = 0;
     const beat = setInterval(() => {
-        sink.status?.(cyan(`  working … ${Math.round((Date.now() - began) / 1000)}s`));
-    }, 1000);
+        const seconds = Math.round((Date.now() - began) / 1000);
+        sink.status?.(shimmer(`  Working... ${seconds}s`, frame++));
+    }, FRAME_MS);
     beat.unref();
 
     child.stderr?.on('data', (chunk: Buffer) => {

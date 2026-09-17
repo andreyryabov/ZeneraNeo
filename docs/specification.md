@@ -30,30 +30,30 @@ Then, in that window:
 
 1. **Edit `SPECIFICATION.md`.** What the system is for, which agents exist, what
    each may reach for, and what _done_ means.
-2. **Open the chat panel and send `/sync-with-spec`.**
+2. **Open the chat panel and send `/spec-sync-project`.**
 3. **Answer `SPECIFICATION-FEEDBACK.md`.** It is a questionnaire: every question
    carries two to four written-out answers, each with a `[ ]` box. Put an `x` in
    the box of the one you want, delete the ones you do not, or write your own in
    their place - any of those is an answer.
-4. **Send `/update-spec-from-feedback`.** It folds the answers you chose into
+4. **Send `/spec-apply-feedback`.** It folds the answers you chose into
    `SPECIFICATION.md` - which is why you never edit a prompt to fix a
-   specification problem - and then `/sync-with-spec` again.
+   specification problem - and then `/spec-sync-project` again.
 
 Back in the terminal: `zen check`, `scripts/_setup.sh`, `zen run`.
 
 `zen init` installs five prompt files under `.github/prompts/`, which VS Code
 and its forks offer as chat slash-commands:
 
-| In chat                      | Does                                                             |
-| ---------------------------- | ---------------------------------------------------------------- |
-| `/sync-with-spec`            | Makes every file match `SPECIFICATION.md`, both directions.      |
-| `/update-spec-from-feedback` | Folds your answers in `SPECIFICATION-FEEDBACK.md` into the spec. |
-| `/review-project`            | Reads the project as a reviewer would, and reports.              |
-| `/new-agent`                 | Adds an agent - prompt, wiring and hand-offs.                    |
-| `/new-skill`                 | Adds a skill under `agents/skills/`.                             |
+| In chat                | Does                                                             |
+| ---------------------- | ---------------------------------------------------------------- |
+| `/spec-sync-project`   | Makes every file match `SPECIFICATION.md`, both directions.      |
+| `/spec-apply-feedback` | Folds your answers in `SPECIFICATION-FEEDBACK.md` into the spec. |
+| `/project-review`      | Reads the project as a reviewer would, and reports.              |
+| `/new-agent`           | Adds an agent - prompt, wiring and hand-offs.                    |
+| `/new-skill`           | Adds a skill under `agents/skills/`.                             |
 
 In an editor with no support for prompt files, paste the contents of
-`.github/prompts/sync-with-spec.prompt.md` into its chat instead - it is only a
+`.github/prompts/spec-sync-project.prompt.md` into its chat instead - it is only a
 prompt, and it says everything it needs about where to look.
 
 ## The loop
@@ -61,11 +61,11 @@ prompt, and it says everything it needs about where to look.
 ```
 edit SPECIFICATION.md
         ↓
-/sync-with-spec          make the files match it
+/spec-sync-project       make the files match it
         ↓
 SPECIFICATION-FEEDBACK.md   what it could not do without guessing:
         ↓                   tick one answer per question
-/update-spec-from-feedback  the ones you chose become the spec
+/spec-apply-feedback        the ones you chose become the spec
         ↓
 zen check                the project still loads
         ↓
@@ -82,9 +82,9 @@ the specification, after which the prompt edit follows from it. Prompts patched
 directly drift away from the document that is supposed to describe them, and a
 project whose specification is no longer true is a project with no specification.
 
-### `/sync-with-spec`
+### `/spec-sync-project`
 
-`zen init` installs `.github/prompts/sync-with-spec.prompt.md`, so the command
+`zen init` installs `.github/prompts/spec-sync-project.prompt.md`, so the command
 is available in your editor's chat from the first minute - type `/` in the chat
 panel and it is in the list. It is a long prompt and worth reading once; in
 outline it:
@@ -116,12 +116,12 @@ outline it:
 Read the feedback file first, every time. It is the shortest description of what
 your specification does not yet say.
 
-### `/update-spec-from-feedback`
+### `/spec-apply-feedback`
 
 Answering the feedback file is a tick or a delete. Under every question are two
 to four answers, each headed by a `[ ]` box: mark one `[x]`, or delete the ones
 you do not want, or - where none of them is right - replace them with a sentence
-of your own. Then `/update-spec-from-feedback` takes the answer you chose, puts
+of your own. Then `/spec-apply-feedback` takes the answer you chose, puts
 its text into `SPECIFICATION.md` at the line the answer names, and moves the
 question to an `✅ Answered` section recording what was chosen and what still
 has to be built for the specification to be true.
@@ -129,7 +129,7 @@ has to be built for the specification to be true.
 It edits those two files and nothing else. A question with two answers still
 under it and no box ticked has not been answered, and it is left alone; a
 question with none left means you rejected them all, and it asks you what would
-fit rather than inventing a fifth. Send `/sync-with-spec` afterwards - the
+fit rather than inventing a fifth. Send `/spec-sync-project` afterwards - the
 specification has changed, and the project has not yet caught up.
 
 ## Writing a specification an agent can implement
@@ -210,7 +210,7 @@ leave the project runnable and `scripts/_setup.sh` re-runnable.
 `zen check` validates the project - that it loads, that every model reference
 resolves, that every agent's tools and handoffs exist, that the sandbox is
 buildable. It says nothing about whether the prose is any good, which is what
-the review pass in `/sync-with-spec` is for. Run it before the setup script and
+the review pass in `/spec-sync-project` is for. Run it before the setup script and
 again after the changes.
 
 ## Further
