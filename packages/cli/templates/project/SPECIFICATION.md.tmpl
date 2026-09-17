@@ -13,6 +13,22 @@ something in it — and report what was done in enough detail to be checked.
 - One request at a time, in one workspace, with the person who asked it present.
 - No schedule, no queue, nothing that outlives the session it was asked in.
 
+## Models
+
+- `{{modelRef}}` — one model for the whole project, used by every agent.
+- Named once in `agents.yaml` so it can be swapped in one place. Nothing here
+  depends on which model it is; a project that later needs a cheaper model for
+  one job adds a second alias rather than scattering the choice.
+
+## Setup
+
+- Run once, before any session: whatever has to exist before work can start —
+  an index built, a document fetched, a file generated.
+- `scripts/_setup.sh` is the one command that does it, and `scripts/<name>.sh`
+  are the steps it runs in order. A step is safe to run twice and reports
+  `skipped` the second time.
+- Currently: no steps. Nothing has to be prepared before a run.
+
 ## Agents
 
 - `default` — the entry point and the only agent; nobody to hand work to.
@@ -34,13 +50,20 @@ something in it — and report what was done in enough detail to be checked.
 
 ## Environment
 
-- Model: `{{modelRef}}`, one for the whole project.
 - Memory: `memory/`, kept with the project and committed except for its
   vectors, which are derived.
 - Sandbox: built from `sandbox/Dockerfile`, persists between runs, and can
   reach the network. What the work always needs belongs in the image, not in an
   instruction that reinstalls it on every run.
-- Setup: none. `scripts/_setup.sh` is where a step would go, and it has none.
+
+## Testing
+
+- `zen check` passes: the project loads, and every model, tool and skill an
+  agent is given resolves. It says nothing about whether the prose is right.
+- `scripts/_setup.sh` run twice in a row reports every step `skipped` the
+  second time.
+- A run against a real request: the workspace holds the change described, and
+  the reply's account of it matches what is on disk.
 
 ## Done means
 
