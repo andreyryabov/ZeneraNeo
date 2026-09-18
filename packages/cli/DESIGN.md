@@ -292,8 +292,8 @@ silently merging into someone's source tree. The project name defaults to the
 directory's, and `--name` overrides it; a name already in the registry pointing
 somewhere else is a usage error, not a silent overwrite.
 
-The files it lists are the project's own. The editor's - `.vscode/settings.json`
-and the `.github/` tree - are written too but not printed: they are plumbing for
+The files it lists are the project's own. The editor's - `.vscode/` and the
+`.github/` tree - are written too but not printed: they are plumbing for
 a tool that may not even be installed, and there are more of them than there are
 of the project, so listing them buries what was actually made.
 
@@ -332,6 +332,20 @@ one to be running agents in either.
 It is written over whatever was there. Unlike the rest of the project, this
 file is not the user's: it states how the editor is to treat a directory the
 agents write into, and a stale copy of that answer is worse than none.
+
+Beside it goes `.vscode/agents.schema.json`, a JSON Schema for `agents.yaml`,
+and the `yaml.schemas` setting that binds the two - so the file everything else
+in the project is configured from gets completion, hover documentation and an
+unknown key underlined as it is typed, rather than at the next `zen check`. The
+schema is written by hand rather than derived from the loader's zod schema,
+because what makes it worth having is the prose: zod holds none of it - the
+descriptions are JSDoc comments - and `agents[].memory` is a `preprocess` whose
+`memory: true` shorthand no converter keeps. What a hand-written file cannot do
+is notice a key being added to the runtime, so `packages/cli/test/schema.test.ts`
+compares the two key for key and enum for enum. A `.vscode/extensions.json`
+recommends `redhat.vscode-yaml`, without which the setting is inert; nothing
+breaks when it is not installed, and the editor is the only thing that ever
+reads any of this. `zen check` remains the authority on whether a project loads.
 
 ### 5.2 `zen list`
 
@@ -376,8 +390,8 @@ Failing that, macOS keeps applications where they can be found. A bundle in
 directory go to the platform opener - and on macOS that is Finder, which is the
 symptom this design is arranged to avoid.
 
-Before the window opens, the editor files from `init` - `.vscode/settings.json`
-and the `.github/` tree - are written into the directory being opened. An editor
+Before the window opens, the editor files from `init` - `.vscode/` and the
+`.github/` tree - are written into the directory being opened. An editor
 reads only the folder it was opened on, and a project may predate either of them
 or the version of it this `zen` ships, so the moment it is about to be read is
 the moment to put the current one there. Every file is named in the narration,

@@ -28,7 +28,7 @@ export const open: Command = {
         'Editor: --editor, then $ZENERA_EDITOR, then the editor this terminal',
         'belongs to, then $VISUAL or $EDITOR, then a known editor on PATH or',
         'installed, then the platform opener.',
-        'The editor files `zen init` writes (.vscode/settings.json and the',
+        'The editor files `zen init` writes (.vscode/ and the',
         '.github/ tree) are refreshed in the directory being opened; edits to',
         'them do not survive.',
         'VS Code and its forks are launched with --disable-workspace-trust so',
