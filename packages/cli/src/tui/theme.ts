@@ -13,10 +13,11 @@
 // unreadable on dark and invisible on paper. What is left is the handful of
 // accents that ANSI *does* let a light theme get wrong, so those swap.
 //
-// Dim is spent on *chrome* — box rules, clocks, the footer's numbers — and no
-// longer on content. Tool rows are most of what is on screen, and dimming them
-// put the bulk of the transcript one step from unreadable: the whole thing read
-// as too dark. They are content, so they get the foreground like content does.
+// Dim is spent on *chrome* and on the machinery: box rules, clocks, the
+// footer's numbers, and the call rows that say how an answer was arrived at.
+// What the agent actually said is drawn at full weight in the terminal's own
+// foreground, so a transcript read top to bottom reads as prose with the work
+// annotated beside it — not as one undifferentiated wall.
 //
 // Note what is *not* here: no hex, no 256-colour ramps, no attempt at a brand.
 // A palette that ignores the user's scheme is worse on both schemes than one
@@ -25,8 +26,15 @@
 
 export type Appearance = 'dark' | 'light';
 
-/** The roles a line can play in the transcript. */
-export type Kind = 'you' | 'agent' | 'tool' | 'note' | 'error';
+/**
+ * The roles a line can play in the transcript.
+ *
+ * `text` is what the agent said on its way somewhere — prose between one batch
+ * of calls and the next — and `agent` is the answer it finished on, which is
+ * the only one that gets a box. Reasoning is not among them: it is progress,
+ * and progress that has finished is worth no rows at all.
+ */
+export type Kind = 'you' | 'text' | 'agent' | 'tool' | 'note' | 'error';
 
 export interface LineStyle {
     /** `undefined` means the terminal's own foreground. */
@@ -49,6 +57,12 @@ export interface Theme {
      */
     readonly thinking: LineStyle;
     /**
+     * The three things a turn spends time on. One word in the footer says which,
+     * and it is read at a glance from across a desk — so the word changing is
+     * backed by the colour changing, not left to be spelled out.
+     */
+    readonly phase: Record<'reasoning' | 'waiting' | 'working', string>;
+    /**
      * Branch colours, cycled in order of first sight. A fan-out is the one
      * place where colour carries information rather than decoration: eight
      * branches reporting at once are only separable if they are told apart.
@@ -60,17 +74,22 @@ const DARK: Theme = {
     appearance: 'dark',
     line: {
         you: { color: 'cyan' },
+        text: {},
         agent: {},
-        // Never dim, and never `gray`: bright black is already the faintest
-        // colour a terminal has, and either one puts the bulk of the
-        // transcript a step from unreadable.
-        tool: {},
+        // A call is the machinery, not the work: the transcript is read for
+        // what the agent said, and the rows saying how it found out are a
+        // margin note beside that. One step quieter, never two — `gray` on top
+        // of this would put them out of reach altogether.
+        tool: { dim: true },
         note: { color: 'cyan' },
         error: { color: 'red' },
     },
     accent: 'cyan',
     warn: 'yellow',
-    thinking: { color: 'magenta' },
+    // Bright: the gist is one line among many and plain `magenta` on black is
+    // the darkest of the six.
+    thinking: { color: 'magentaBright' },
+    phase: { reasoning: 'magenta', waiting: 'yellow', working: 'cyan' },
     lanes: ['cyan', 'green', 'yellow', 'blue', 'red', 'magenta'],
 };
 
@@ -81,14 +100,18 @@ const LIGHT: Theme = {
     appearance: 'light',
     line: {
         you: { color: 'blue' },
+        text: {},
         agent: {},
-        tool: {},
+        tool: { dim: true },
         note: { color: 'blue' },
         error: { color: 'red' },
     },
     accent: 'blue',
     warn: 'magenta',
     thinking: { color: 'magenta' },
+    // No yellow: `waiting` takes blue and `working` green, which are the two
+    // that survive paper.
+    phase: { reasoning: 'magenta', waiting: 'blue', working: 'green' },
     // No cyan or yellow: on paper they are barely darker than the paper.
     lanes: ['blue', 'green', 'red', 'magenta'],
 };

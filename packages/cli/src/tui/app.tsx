@@ -25,10 +25,12 @@ import {
     budgetOf,
     CHROME_ROWS,
     clip,
-    readable,
+    describeCall,
+    gistOf,
     segmentsOf,
-    THINKING_CHROME,
+    summarise,
     THINKING_ROWS,
+    TIME_COL,
     windowOf,
 } from './wrap.ts';
 
@@ -42,15 +44,32 @@ import {
 // It is a *view*. Every turn goes through `Engine.run`, exactly as the one-shot
 // path does, so a session started here is indistinguishable from one started in
 // a script — nothing is recorded only when someone is watching.
+//
+// The shape of a turn on screen is the shape of the agent loop, in the order it
+// happened: what the model said, then the calls that decision led to, then what
+// it said next. Everything before the answer is history the moment it lands, so
+// it goes into the scrollback and stays there; only what is still in flight
+// repaints, at the bottom, above the footer. The earlier layout put the
+// streaming answer *below* calls that had already finished, which read as two
+// unrelated logs racing each other.
+//
+// Reasoning is the exception: it is drawn live, above the work it decided on,
+// and replaced when the next model call opens. It never reaches the scrollback
+// — a summary of how the model got somewhere is worth watching and is not worth
+// re-reading, and the full chain is in the trajectory and the run's report.
 // ---------------------------------------------------------------------------
 
 interface Line {
     key: string;
     kind: Kind;
-    /** Drawn ahead of `text` at full weight: the name of the thing the row is about. */
+    /** Drawn ahead of `text`: the verb a call row is scanned by. */
     lead?: string;
     text: string;
     detail?: string;
+    /** How long a call took, drawn in its own column ahead of everything. */
+    time?: string;
+    /** A blank row before this one, which is how a run of calls is bounded. */
+    gap?: boolean;
 }
 
 /**
@@ -65,8 +84,9 @@ const isBanner = (item: Item): item is { key: 'banner' } => item.key === 'banner
 
 const MARK: Record<Kind, string> = {
     you: '›',
+    text: ' ',
     agent: ' ',
-    tool: '·',
+    tool: ' ',
     note: ' ',
     error: '!',
 };
@@ -120,9 +140,6 @@ const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', 
 /** Redraw cadence for the activity region, independent of events. */
 const FRAME_MS = 100;
 
-/** How long after the last delta reasoning is still called live. */
-const SETTLE_MS = 800;
-
 // The theme is decided once, before the first frame, and never changes while
 // the app is up — a terminal does not repaint its own scheme underneath us.
 // A context rather than props only because every part of the view wants it.
@@ -130,40 +147,132 @@ const ThemeContext = React.createContext<Theme>(THEMES.dark);
 const useTheme = (): Theme => useContext(ThemeContext);
 
 function Row({ line }: { line: Line }): React.ReactElement {
-    const style = useTheme().line[line.kind];
+    const theme = useTheme();
+    const style = theme.line[line.kind];
+    if (line.kind === 'you') {
+        return <Input text={line.text} />;
+    }
+    if (line.kind === 'tool') {
+        return <Call line={line} />;
+    }
+    if (line.kind === 'text' || line.kind === 'agent') {
+        return <Answer text={line.text} boxed={line.kind === 'agent'} />;
+    }
     return (
-        <Box flexDirection="row" marginTop={line.kind === 'you' ? 1 : 0}>
+        <Box flexDirection="row">
             <Text color={style.color} dimColor={style.dim}>
                 {MARK[line.kind]}{' '}
             </Text>
             <Box flexDirection="column">
-                {line.kind === 'agent' ? (
-                    <Answer text={line.text} />
-                ) : (
-                    // The lead is what the eye scans for down the left edge, so
-                    // it carries the weight the row's text does not. Nested
-                    // rather than one string: Ink dims a whole Text or none of it.
-                    <Text>
-                        {line.lead ? <Text color={style.color} bold>{`${line.lead} `}</Text> : null}
-                        <Text color={style.color} dimColor={style.dim} bold={line.kind === 'you'}>
-                            {line.text}
-                        </Text>
-                    </Text>
-                )}
+                <Text color={style.color} dimColor={style.dim}>
+                    {line.text}
+                </Text>
                 {line.detail ? <Text dimColor>{line.detail}</Text> : null}
             </Box>
         </Box>
     );
 }
 
-function Answer({ text }: { text: string }): React.ReactElement {
+/**
+ * The question, framed and labelled.
+ *
+ * It is the one thing on screen the person wrote, and scrolled past it is what
+ * everything below it is an answer to — so it gets a rule rather than a caret,
+ * in the accent, with the text itself left in the terminal's own foreground.
+ * The label is in the top rule because a frame with a name needs no legend.
+ */
+function Input({ text }: { text: string }): React.ReactElement {
+    const theme = useTheme();
+    const { stdout } = useStdout();
+    const width = Math.max(INPUT_LABEL.length + 8, answerWidth(stdout?.columns ?? 80));
+    return (
+        <Box flexDirection="column" width={width} marginY={1}>
+            <Text wrap="truncate-end">
+                <Text color={theme.accent}>{'\u256d\u2500 '}</Text>
+                <Text color={theme.accent} bold>
+                    {INPUT_LABEL}
+                </Text>
+                <Text color={theme.accent}>
+                    {` ${'\u2500'.repeat(width - INPUT_LABEL.length - 5)}\u256e`}
+                </Text>
+            </Text>
+            {/* Ink owns the other three sides: it measures the text by display
+                width, which padding it by hand does not. */}
+            <Box
+                flexDirection="column"
+                borderStyle="round"
+                borderColor={theme.accent}
+                borderTop={false}
+                paddingX={1}
+            >
+                <Text>{plain(text)}</Text>
+            </Box>
+        </Box>
+    );
+}
+
+const INPUT_LABEL = '[input]';
+
+/** C0 controls, which a paste carries and which move the cursor where it was not sent. */
+const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
+
+/** A pasted prompt, reduced to what a terminal can be trusted to draw in place. */
+function plain(text: string): string {
+    return text.replace(/\r\n?/g, '\n').replace(/\t/g, '    ').replace(CONTROL, '').trim();
+}
+
+/**
+ * One finished call: how long it took, what it did, and what came back.
+ *
+ * Time first, because it is the one column that lines up down the page and the
+ * one number worth scanning for. Nothing in the row is lifted out of the dim —
+ * a call is read when it is looked for, not while the prose around it is.
+ * The blank row is spent on the *first* call after something else, so a batch
+ * of them reads as one block rather than a ladder.
+ */
+function Call({ line }: { line: Line }): React.ReactElement {
+    return (
+        <Box marginTop={line.gap ? 1 : 0}>
+            <Text wrap="truncate-end" dimColor>
+                <Text>{`  ${(line.time ?? '').padStart(TIME_COL)}  `}</Text>
+                <Text>{line.lead}</Text>
+                <Text>{line.text ? ` ${line.text}` : ''}</Text>
+                <Text>{line.detail ? `  ${line.detail}` : ''}</Text>
+            </Text>
+        </Box>
+    );
+}
+
+/**
+ * Prose the agent wrote, at the width a paragraph is worth reading at.
+ *
+ * Only the last one is boxed. A turn says several things on its way to an
+ * answer and boxing each of them turns the transcript into a stack of frames;
+ * the box means *this is the answer*, and it only means that if it is rare.
+ */
+function Answer({ text, boxed }: { text: string; boxed: boolean }): React.ReactElement {
     const { stdout } = useStdout();
     const width = answerWidth(stdout?.columns ?? 80);
     const segments = segmentsOf(text);
+    const body = segments.map((s, i) =>
+        s.code ? (
+            <Box key={i} flexDirection="column">
+                <Text dimColor>{`\u250c\u2500${s.title ? ` ${s.title}` : ''}`}</Text>
+                {s.lines.map((l, j) => (
+                    <Box key={j} flexDirection="row">
+                        <Text dimColor>{'\u2502 '}</Text>
+                        <Text wrap="truncate-end">{l || ' '}</Text>
+                    </Box>
+                ))}
+                <Text dimColor>{'\u2514\u2500'}</Text>
+            </Box>
+        ) : (
+            <Text key={i}>{s.lines.join('\n')}</Text>
+        ),
+    );
     // Bounded, like every answer in `examples/sdk/`: prose that runs the width of a
-    // wide terminal is a worse read than prose that stops, and the box is also
-    // what separates the answer from the machinery that produced it.
-    return (
+    // wide terminal is a worse read than prose that stops.
+    return boxed ? (
         <Box
             flexDirection="column"
             width={width}
@@ -172,22 +281,11 @@ function Answer({ text }: { text: string }): React.ReactElement {
             paddingX={1}
             marginY={1}
         >
-            {segments.map((s, i) =>
-                s.code ? (
-                    <Box key={i} flexDirection="column">
-                        <Text dimColor>{`\u250c\u2500${s.title ? ` ${s.title}` : ''}`}</Text>
-                        {s.lines.map((l, j) => (
-                            <Box key={j} flexDirection="row">
-                                <Text dimColor>{'\u2502 '}</Text>
-                                <Text wrap="truncate-end">{l || ' '}</Text>
-                            </Box>
-                        ))}
-                        <Text dimColor>{'\u2514\u2500'}</Text>
-                    </Box>
-                ) : (
-                    <Text key={i}>{s.lines.join('\n')}</Text>
-                ),
-            )}
+            {body}
+        </Box>
+    ) : (
+        <Box flexDirection="column" width={width} paddingLeft={GUTTER} marginTop={1}>
+            {body}
         </Box>
     );
 }
@@ -246,6 +344,8 @@ function App({ engine, options, theme }: Props): React.ReactElement {
     /** Model calls in the turn now running, and what answered the last one. */
     const [step, setStep] = useState(0);
     const [model, setModel] = useState<string | undefined>(undefined);
+    /** Whether a trunk model call is open, which is what the shimmer means. */
+    const [musing, setMusing] = useState(false);
 
     // In flight, and therefore not in the transcript yet. Refs, because the
     // activity region below is redrawn by the frame timer regardless.
@@ -258,8 +358,18 @@ function App({ engine, options, theme }: Props): React.ReactElement {
     // exact figure replaces it when the turn lands.
     const spent = useRef(zeroUsage());
     const startedAt = useRef(0);
-    /** When reasoning text last arrived, which is the only proof it is still coming. */
-    const flowing = useRef(0);
+
+    // The two streams, mirrored in refs.
+    //
+    // State is what draws them; the ref is what any other event can read. Both
+    // are settled by something that happens *later* — prose is committed to the
+    // scrollback when the turn moves on to a call, reasoning when the model
+    // call it belongs to lands — and an event handler reading state would be
+    // reading whatever the last render closed over.
+    const said = useRef('');
+    const mind = useRef('');
+    /** The last prose committed, so the answer is not printed twice. */
+    const told = useRef('');
 
     const stopping = useRef<AbortController | undefined>(undefined);
     const seq = useRef(0);
@@ -349,6 +459,7 @@ function App({ engine, options, theme }: Props): React.ReactElement {
               Date.now(),
               columns - GUTTER,
               lane,
+              spin,
               branchRows(branches.current.size, allowance),
           )
         : [];
@@ -356,39 +467,26 @@ function App({ engine, options, theme }: Props): React.ReactElement {
     // business — it has a box saying so — and the trunk, having forked, is
     // waiting at the join.
     const mine = busy ? trunkCallsOf(running.current, branches.current) : [];
-    const trunkRows = busy ? trunkRowsOf(mine, Date.now(), columns - GUTTER - 2) : [];
+    const trunkRows = busy ? trunkRowsOf(mine, Date.now(), columns - GUTTER - 2, spin) : [];
     // Priced as far as it has got. Read during render, so the frame timer is
     // what advances the clock.
     const inflight = busy
         ? { usage: spent.current, durationMs: Date.now() - startedAt.current }
         : undefined;
-    // Reasoning survives the call that produced it, because it is why the tool
-    // now running is running. That makes settled text indistinguishable from
-    // live text unless the difference is drawn, and a paragraph that has quietly
-    // stopped moving reads as a hang.
-    const streaming = busy && Date.now() - flowing.current < SETTLE_MS;
-    // A settled block collapses to its opening line. It still says why the work
-    // now running is running, but it stops holding six rows of a paragraph that
-    // finished a minute ago — during a fan-out the trunk makes no call of its
-    // own, so nothing clears it and it reads as hung.
-    const budget = budgetOf(
-        rows,
-        activityHeight(boxes, trunkRows),
-        thinking ? (streaming ? THINKING_ROWS : 1) : 0,
-    );
+    // Up from the first reasoning token until the step arrives at prose or a
+    // call, which is when what it was deciding stops being the news.
+    const streaming = busy && thinking !== '';
+    const budget = budgetOf(rows, activityHeight(boxes, trunkRows), streaming ? THINKING_ROWS : 0);
     const fitted = fitActivity(boxes, trunkRows, budget.activity);
     // How tall the region actually needs to be, mirroring what the three blocks
-    // below draw.
-    const thinkingRows =
-        thinking && budget.thinking
-            ? (streaming ? windowOf(thinking, columns - GUTTER, budget.thinking).length : 1) +
-              THINKING_CHROME
-            : 0;
-    const liveRows = live ? windowOf(live, answerWidth(columns) - 4, budget.live).length : 0;
+    // below draw. The answer keeps a blank row above it, so what it is separated
+    // from is whatever the last call left on screen.
+    const textRows = Math.max(1, budget.live - 1);
+    const liveRows = live ? windowOf(live, answerWidth(columns) - 4, textRows).length + 1 : 0;
     const wanted =
         activityHeight(fitted.boxes, fitted.trunk) +
         (fitted.hidden ? 1 : 0) +
-        thinkingRows +
+        (streaming ? budget.thinking : 0) +
         liveRows;
     // A turn opens against the prompt and grows up from it, one row at a time,
     // the way anything else printed to a terminal does. Reserving the whole
@@ -397,18 +495,54 @@ function App({ engine, options, theme }: Props): React.ReactElement {
     // still never rides back up: what a block gives back is left as slack.
     grown.current = busy ? Math.min(budget.total, Math.max(grown.current, wanted)) : 0;
 
-    const push = useCallback((kind: Kind, text: string, detail?: string, lead?: string): void => {
-        setLines((prev) => [...prev, { key: `${seq.current++}`, kind, lead, text, detail }]);
-    }, []);
+    const push = useCallback(
+        (kind: Kind, text: string, detail?: string, lead?: string, time?: string): void => {
+            setLines((prev) => [
+                ...prev,
+                {
+                    key: `${seq.current++}`,
+                    kind,
+                    lead,
+                    text,
+                    detail,
+                    time,
+                    // Only the call that opens a run of them is worth a blank
+                    // row: the gap says *the prose stopped here*, and repeating
+                    // it between siblings says nothing.
+                    gap: kind === 'tool' && prev[prev.length - 1]?.kind !== 'tool',
+                },
+            ]);
+        },
+        [],
+    );
+
+    /**
+     * Commit whatever the model has said so far to the scrollback.
+     *
+     * Called when the turn moves on to something else — a call, a fork, a
+     * handoff — because that is the moment the prose stops being *what is
+     * arriving* and becomes *what was said before this*. Prose that is never
+     * followed by a call is the answer, so it is still on screen when the turn
+     * lands, and the boxed answer replaces it in place.
+     */
+    const settle = useCallback((): void => {
+        const text = said.current.trim();
+        said.current = '';
+        setLive('');
+        if (text) {
+            told.current = text;
+            push('text', text);
+        }
+    }, [push]);
 
     // Deltas arrive far faster than a terminal can usefully redraw, so text is
     // accumulated in one string and React coalesces the repaints. The finished
     // answer replaces it in one piece when the turn lands.
     //
-    // Reasoning is accumulated the same way but never enters `lines`: it is a
-    // progress indicator, not part of the conversation. The full chain is in
-    // the trajectory (`LlmCallNode.thinking`) and the run's report, so nothing
-    // is lost when it is cleared at the start of the next model call.
+    // Reasoning is accumulated the same way and dropped when its model call
+    // lands: the whole chain is in the trajectory (`LlmCallNode.thinking`) and
+    // the run's report, and a summary of how an answer was reached is worth
+    // watching happen and not worth a row once it has.
     const onEvent = useCallback(
         (event: AgentEvent): void => {
             if (!isCheckpoint(event)) {
@@ -427,13 +561,21 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                         return;
                     }
                     if (!event.branch) {
-                        flowing.current = Date.now();
-                        setThinking((prev) => prev + event.delta);
+                        mind.current += event.delta;
+                        setThinking(mind.current);
                     }
                     return;
                 }
                 if (event.type === 'text_delta' && !event.branch) {
-                    setLive((prev) => prev + event.delta);
+                    // Whichever of prose or a call the step arrives at first
+                    // retires the gist; the content streaming under a heading
+                    // does not, which is why the heading holds still.
+                    if (mind.current) {
+                        mind.current = '';
+                        setThinking('');
+                    }
+                    said.current += event.delta;
+                    setLive(said.current);
                 }
                 return;
             }
@@ -447,18 +589,35 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                             b.thinking = '';
                         }
                     } else {
+                        // A step that answered without calling anything leaves
+                        // its gist up; this is where it goes.
+                        mind.current = '';
                         setThinking('');
+                        setMusing(true);
                         setStep((n) => n + 1);
                     }
                     break;
                 case 'after_llm_call':
                     // Branches included: they are what this turn is spending on.
                     spent.current = addUsage(spent.current, event.node.usage);
-                    if (!from) {
-                        setModel(event.node.model);
+                    if (from) {
+                        break;
                     }
+                    setModel(event.node.model);
+                    // The gist stays until the call it decided on goes out. Only
+                    // the shimmer stops, because nothing is arriving any more.
+                    setMusing(false);
                     break;
                 case 'before_tool_call':
+                    // Everything the model said on the way to this call is now
+                    // history, and history belongs above the call, not below it.
+                    // The gist goes with it: the call is what it decided on, so
+                    // the row saying so supersedes the row explaining it.
+                    if (!from) {
+                        settle();
+                        mind.current = '';
+                        setThinking('');
+                    }
                     running.current.set(event.call.callId, {
                         callId: event.call.callId,
                         name: event.call.name,
@@ -493,11 +652,16 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                     // difference between knowing a tool ran and knowing what
                     // the agent did. Both are previews already; a whole file
                     // read belongs in the report, not in the scrollback.
+                    const view = describeCall(node.name, call?.args ?? '');
                     push(
                         'tool',
-                        clip(readable(call?.args ?? ''), columns - node.name.length - 5),
-                        detailOf(node, from, columns - 4),
-                        node.name,
+                        clip(
+                            view.subject,
+                            Math.max(20, columns - view.verb.length - TIME_COL - 10),
+                        ),
+                        detailOf(node, columns - 4),
+                        view.verb,
+                        durationOf(node.durationMs) ?? '',
                     );
                     break;
                 }
@@ -509,19 +673,18 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                         b.agent = event.to;
                         break;
                     }
+                    settle();
                     setAgent(event.to);
                     push('note', `→ ${event.to}`, `handed off from ${event.from}`);
                     break;
                 }
                 case 'before_fork':
-                    // Whatever the trunk was reasoning about, forking is the
-                    // conclusion it reached. It makes no call of its own until
-                    // the join, so nothing else would clear it and it would sit
-                    // there for the length of the fork looking hung.
+                    // A fork is what the trunk concluded, so whatever it was
+                    // saying is finished as far as the screen is concerned.
                     if (from) {
                         break;
                     }
-                    setThinking('');
+                    settle();
                     push(
                         'note',
                         `⑂ ${event.node.branches.length} branches`,
@@ -544,16 +707,21 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                 case 'branch_finished': {
                     const b = branches.current.get(event.child.name);
                     branches.current.delete(event.child.name);
-                    const spent = b ? ` · ${durationOf(Date.now() - b.startedAt) ?? ''}` : '';
-                    const did = b ? ` · ${b.steps} steps · ${b.tools} tools` : '';
-                    push('tool', `⑂ ${event.child.name}`, `${event.status}${spent}${did}`);
+                    const did = b ? `${b.steps} steps · ${b.tools} tools` : '';
+                    push(
+                        'tool',
+                        event.child.name,
+                        [event.status, did].filter(Boolean).join(' · '),
+                        '⑂ branch',
+                        b ? (durationOf(Date.now() - b.startedAt) ?? '') : '',
+                    );
                     break;
                 }
                 default:
                     break;
             }
         },
-        [columns, push],
+        [columns, push, settle],
     );
 
     const submit = useCallback(
@@ -593,7 +761,11 @@ function App({ engine, options, theme }: Props): React.ReactElement {
             setBusy(true);
             setLive('');
             setThinking('');
+            said.current = '';
+            mind.current = '';
+            told.current = '';
             setStep(0);
+            setMusing(false);
             grown.current = 0;
             spent.current = zeroUsage();
             startedAt.current = Date.now();
@@ -605,7 +777,15 @@ function App({ engine, options, theme }: Props): React.ReactElement {
             void (async () => {
                 try {
                     const outcome = await Engine.run(engine, text, onEvent, controller.signal);
-                    push('agent', outcome.text);
+                    // The answer is what the turn ended on, and it is normally
+                    // still on screen unboxed — nothing followed it, so nothing
+                    // committed it. Boxing it here replaces it in place. It is
+                    // only skipped when the last thing the model said was
+                    // already filed as prose, which is what an aborted turn
+                    // looks like: the text is above the call it was cut off at.
+                    if (outcome.text.trim() && outcome.text.trim() !== told.current) {
+                        push('agent', outcome.text);
+                    }
                     // The previous total is the only thing that can say what
                     // this turn cost, and reading it out of the updater is what
                     // makes that true regardless of when the turn lands.
@@ -629,6 +809,9 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                     setBusy(false);
                     setLive('');
                     setThinking('');
+                    setMusing(false);
+                    said.current = '';
+                    mind.current = '';
                     running.current.clear();
                     branches.current.clear();
                     stopping.current = undefined;
@@ -698,21 +881,18 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                     overflow="hidden"
                 >
                     <Branches boxes={fitted.boxes} spin={spin} columns={columns} />
-                    <Activity rows={fitted.trunk} hidden={fitted.hidden} />
 
-                    {thinking && budget.thinking ? (
-                        <Thinking
-                            text={thinking}
-                            columns={columns}
-                            rows={budget.thinking}
-                            spin={spin}
-                            live={streaming}
-                        />
+                    {/* Above the work it decided on, which is the order it
+                        happened in. */}
+                    {streaming && budget.thinking ? (
+                        <Reasoning text={thinking} columns={columns} frame={frame} live={musing} />
                     ) : null}
+
+                    <Activity rows={fitted.trunk} hidden={fitted.hidden} />
 
                     {/* The answer as it arrives, in the terminal's own
                         foreground: it is the text, not a highlight on it. */}
-                    {live ? <Live text={live} columns={columns} rows={budget.live} /> : null}
+                    {live ? <Streaming text={live} columns={columns} rows={textRows} /> : null}
                 </Box>
 
                 <Footer
@@ -726,8 +906,7 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                     model={model}
                     stats={stats}
                     inflight={inflight}
-                    reasoning={streaming}
-                    columns={columns}
+                    reasoning={musing && streaming}
                 />
 
                 {busy ? null : (
@@ -817,15 +996,25 @@ const GUTTER = 2;
 // that has started, which has no line yet because it has no outcome yet.
 // ---------------------------------------------------------------------------
 
-/** One row of it: something in flight, and how long it has been. */
+/**
+ * One row of it: something in flight, and how long it has been.
+ *
+ * The columns are the committed transcript's columns — mark, elapsed, verb,
+ * subject — so a call crossing from *running* to *ran* does not move sideways.
+ * The mark is the two columns a finished row leaves blank, which is where the
+ * spinner goes.
+ */
 interface ActivityRow {
     key: string;
-    label: string;
-    detail: string;
+    /** the spinner while it runs, a tick once it has returned */
+    mark: string;
+    /** elapsed or final, right-aligned into the time column */
+    time: string;
+    /** the verb, carrying what weight a dim row can give */
+    lead: string;
+    text: string;
     /** its branch's lane, absent on the trunk */
     color?: string;
-    /** a call that has already come back, kept as the branch's recent history */
-    past?: boolean;
     /** what the branch is reasoning about rather than something it called */
     thinking?: boolean;
 }
@@ -859,47 +1048,68 @@ function branchBoxesOf(
     now: number,
     width: number,
     lane: (name?: string) => string | undefined,
+    spin: string,
     share: number,
 ): BranchBox[] {
     const boxes: BranchBox[] = [];
+    const room = (w: number): number => Math.max(12, w - TIME_COL - 8);
     for (const b of branches.values()) {
         // What it is reasoning about, kept to one row: a box is a status line
         // per branch, not a second transcript.
-        const gist = b.thinking.trim() ? gistOf(b.thinking, width - 6) : '';
-        const room = Math.max(1, gist ? share - 1 : share);
+        const gist = b.thinking.trim() ? gistOf(b.thinking, width - TIME_COL - 6) : '';
+        const budget = Math.max(1, gist ? share - 1 : share);
         const live: ActivityRow[] = [];
         for (const t of tools.values()) {
-            if (t.branch === b.name && live.length < room) {
-                const detail = `  ${secs(now - t.startedAt)}`;
+            if (t.branch === b.name && live.length < budget) {
+                const view = describeCall(t.name, t.args);
                 live.push({
                     key: `t:${t.callId}`,
-                    label: clip(`${t.name} ${readable(t.args)}`, width - detail.length - 2),
-                    detail,
+                    mark: spin,
+                    time: secs(now - t.startedAt),
+                    lead: view.verb,
+                    text: clip(view.subject, room(width) - view.verb.length),
                 });
             }
         }
         // Oldest of the calls that still fit, so the newest is always the row
         // nearest the one running.
-        const past = b.done.slice(Math.max(0, b.done.length - (room - live.length)));
-        const rows = [
+        const past = b.done.slice(Math.max(0, b.done.length - (budget - live.length)));
+        const rows: ActivityRow[] = [
             ...past.map((d) => {
-                const detail = `  ${d.failed ? 'failed' : (durationOf(d.ms) ?? '')}`;
+                const view = describeCall(d.name, d.args);
                 return {
                     key: `d:${d.callId}`,
-                    label: clip(`✓ ${d.name} ${readable(d.args)}`, width - detail.length - 2),
-                    detail,
-                    past: true,
+                    mark: d.failed ? '✗' : '✓',
+                    time: d.failed ? 'failed' : (durationOf(d.ms) ?? ''),
+                    lead: view.verb,
+                    text: clip(view.subject, room(width) - view.verb.length),
                 };
             }),
             // Between the calls it made and the one it is making: the reasoning
             // is what got it from one to the other.
             ...(gist
-                ? [{ key: `g:${b.name}`, label: `… ${gist}`, detail: '', thinking: true }]
+                ? [
+                      {
+                          key: `g:${b.name}`,
+                          mark: '✻',
+                          time: '',
+                          lead: '',
+                          text: gist,
+                          thinking: true,
+                      },
+                  ]
                 : []),
             ...live,
         ];
         if (!rows.length) {
-            rows.push({ key: `w:${b.name}`, label: 'thinking…', detail: '', thinking: true });
+            rows.push({
+                key: `w:${b.name}`,
+                mark: '✻',
+                time: '',
+                lead: '',
+                text: 'thinking…',
+                thinking: true,
+            });
         }
         boxes.push({
             name: b.name,
@@ -924,13 +1134,20 @@ function trunkCallsOf(
 }
 
 /** What the trunk itself has in flight. It is one thread, so it gets no box. */
-function trunkRowsOf(calls: readonly Running[], now: number, width: number): ActivityRow[] {
+function trunkRowsOf(
+    calls: readonly Running[],
+    now: number,
+    width: number,
+    spin: string,
+): ActivityRow[] {
     return calls.map((t) => {
-        const detail = `  ${secs(now - t.startedAt)}`;
+        const view = describeCall(t.name, t.args);
         return {
             key: `t:${t.callId}`,
-            label: clip(`${t.name} ${readable(t.args)}`, width - detail.length),
-            detail,
+            mark: spin,
+            time: secs(now - t.startedAt),
+            lead: view.verb,
+            text: clip(view.subject, Math.max(12, width - TIME_COL - view.verb.length - 6)),
         };
     });
 }
@@ -996,13 +1213,7 @@ function Branches({
                         {b.rows.map((r) => (
                             <Text key={r.key} wrap="truncate-end">
                                 <Text color={b.color}>{'│ '}</Text>
-                                <Text
-                                    color={r.thinking ? theme.thinking.color : undefined}
-                                    dimColor={r.thinking ? theme.thinking.dim : undefined}
-                                >
-                                    {r.label}
-                                </Text>
-                                <Text dimColor>{r.detail}</Text>
+                                <Work key={r.key} row={r} />
                             </Text>
                         ))}
                         <Text dimColor>{'╰─'}</Text>
@@ -1010,6 +1221,28 @@ function Branches({
                 );
             })}
         </Box>
+    );
+}
+
+/**
+ * A row of work in the same shape the transcript will keep it in.
+ *
+ * `mark` occupies the two columns a committed row leaves blank, so the spinner
+ * sits where nothing will be once the call returns and the time, verb and
+ * subject never move.
+ */
+function Work({ row }: { row: ActivityRow }): React.ReactElement {
+    const theme = useTheme();
+    if (row.thinking) {
+        return <Text color={theme.thinking.color}>{`${row.mark} ${row.text}`}</Text>;
+    }
+    return (
+        <Text dimColor>
+            <Text color={row.color}>{`${row.mark} `}</Text>
+            <Text>{`${row.time.padStart(TIME_COL)}  `}</Text>
+            <Text color={row.color}>{row.lead}</Text>
+            <Text>{row.text ? ` ${row.text}` : ''}</Text>
+        </Text>
     );
 }
 
@@ -1027,9 +1260,7 @@ function Activity({
         <Box flexDirection="column" height={rows.length + (hidden ? 1 : 0)} overflow="hidden">
             {rows.map((r) => (
                 <Text key={r.key} wrap="truncate-end">
-                    <Text dimColor>{'  '}</Text>
-                    <Text color={r.color}>{r.label}</Text>
-                    <Text dimColor>{r.detail}</Text>
+                    <Work row={r} />
                 </Text>
             ))}
             {hidden ? (
@@ -1071,79 +1302,58 @@ interface StreamProps {
     rows: number;
 }
 
-/** A reasoning summary's own headings, which arrive as markdown. */
-const HEADING = /^\s*(?:#{1,6}\s*)?\*\*(.+?)\*\*[:.]?\s*$/;
-
-const TITLE = 'reasoning';
-
 /**
- * Reasoning is dim prose sitting between dim tool rows and a dim footer, with
- * nothing to say where it starts or stops — so it reads as part of whatever is
- * above it, and it never leaves the bottom of the screen. A rule at each end
- * gives it an edge. Round, to tell live chrome from the square fences an answer
- * puts around code.
+ * Where the model has got to, in one line.
+ *
+ * A reasoning summary is a heading, not a document. Six rows of it pushed the
+ * answer down the screen and asked to be read at the same time as the text
+ * arriving below it, and once the deltas stopped there was nothing to say the
+ * paragraph had finished — a block that had quietly settled read as a hang.
+ *
+ * So the stream is drawn as its gist, and the shimmer is the proof it is
+ * moving. The line outlives the call that wrote it — it is why the calls below
+ * it are being made, and a gist that vanished with its own model call was on
+ * screen for a fraction of the work it explains — but the shimmer stops, so a
+ * settled thought is never mistaken for an arriving one.
  */
-/** Where a settled block got to: its last heading, or failing that its opening. */
-function gistOf(text: string, width: number): string {
-    const lines = text.split('\n');
-    for (let i = lines.length - 1; i >= 0; i--) {
-        const head = HEADING.exec(lines[i] ?? '');
-        if (head?.[1]) {
-            return clip(head[1], width);
-        }
-    }
-    return clip(text, width);
-}
-
-function Thinking({
+function Reasoning({
     text,
     columns,
-    rows,
-    spin,
+    frame,
     live,
-}: StreamProps & { spin: string; live: boolean }): React.ReactElement {
+}: {
+    text: string;
+    columns: number;
+    frame: number;
+    live: boolean;
+}): React.ReactElement {
     const theme = useTheme();
-    // Settled, the block is down to one row, and the tail of a paragraph is a
-    // fragment ("ports.") rather than a summary. The last heading the model
-    // wrote is the shortest true account of where it got to.
-    const shown = live ? windowOf(text, columns - GUTTER, rows) : [gistOf(text, columns - GUTTER)];
-    // Ink truncates rather than wraps, so an over-wide rule clips instead of
-    // costing the block a row it was not given.
-    const dashes = Math.max(0, columns - TITLE.length - (live ? 6 : 4));
-    const { color, dim } = theme.thinking;
+    const gist = gistOf(text, columns - GUTTER - 2);
     return (
-        <Box flexDirection="column" height={shown.length + THINKING_CHROME} overflow="hidden">
+        <Box height={1} paddingLeft={GUTTER} overflow="hidden">
             <Text wrap="truncate-end">
-                <Text dimColor>{'╭─ '}</Text>
-                <Text color={color}>{TITLE}</Text>
-                {live ? <Text color={color}>{` ${spin}`}</Text> : null}
-                <Text dimColor>{` ${'─'.repeat(dashes)}`}</Text>
+                {live ? (
+                    <Shimmer text={gist} frame={frame} color={theme.thinking.color} />
+                ) : (
+                    <Text color={theme.thinking.color}>{gist}</Text>
+                )}
             </Text>
-            {shown.map((row, i) => {
-                // Not italic, and not dim: dim italic on a dark terminal is the
-                // least legible thing available, and this is meant to be read.
-                // Its own hue is what separates it from the tool rows instead.
-                const head = HEADING.exec(row);
-                return (
-                    <Text key={i} wrap="truncate-end">
-                        <Text color={color}>{'│ '}</Text>
-                        <Text color={color} dimColor={dim} bold={head !== null}>
-                            {head ? head[1] : row}
-                        </Text>
-                    </Text>
-                );
-            })}
-            <Text dimColor>{'╰─'}</Text>
         </Box>
     );
 }
 
-function Live({ text, columns, rows }: StreamProps): React.ReactElement {
+function Streaming({ text, columns, rows }: StreamProps): React.ReactElement {
     // The same width the finished answer will take, so landing it reflows
     // nothing: what is on screen is what stays there.
     const shown = windowOf(text, answerWidth(columns) - 4, rows);
     return (
-        <Box flexDirection="column" paddingLeft={GUTTER} height={shown.length} overflow="hidden">
+        <Box
+            flexDirection="column"
+            paddingLeft={GUTTER}
+            marginTop={1}
+            height={shown.length}
+            overflow="hidden"
+        >
             {shown.map((row, i) => (
                 <Text key={i} wrap="truncate-end">
                     {row}
@@ -1219,7 +1429,6 @@ function Footer({
     stats,
     inflight,
     reasoning,
-    columns,
 }: {
     agent: string;
     busy: boolean;
@@ -1232,8 +1441,8 @@ function Footer({
     model?: string;
     stats: Stats;
     inflight?: { usage: TokenUsage; durationMs: number };
+    /** Reasoning tokens are what is arriving right now. */
     reasoning: boolean;
-    columns: number;
 }): React.ReactElement {
     const theme = useTheme();
     // Who before what. The agent is the subject of the sentence, and in a
@@ -1243,43 +1452,31 @@ function Footer({
         ...(model ? [model] : []),
         'esc to stop',
     ].join(' · ');
-    // The argument is what identifies a generic tool — `run_command` is every
-    // shell command there is — but the activity row above carries it in full,
-    // so the footer takes it only when there is width to say something useful.
-    const first = running[0];
-    const room = columns - agent.length - aside.length - 12;
+    // One word for what the turn is spending its time on, and the three are
+    // different kinds of waiting: the model is composing, the model is
+    // reasoning about what to compose, or the model is not running at all and
+    // something else is. What the call actually is belongs to the row above,
+    // which has the width to say it.
+    const phase = running.length || forked ? 'waiting' : reasoning ? 'reasoning' : 'working';
     const what =
-        running.length > 1
-            ? `running ${running.length} tools`
-            : first
-              ? room >= 24
-                  ? clip(`${first.name} ${readable(first.args)}`, room)
-                  : `running ${first.name}`
-              : forked
+        phase !== 'waiting'
+            ? phase
+            : running.length > 1
+              ? `waiting on ${running.length} tools`
+              : forked && !running.length
                 ? // Having forked, the trunk has nothing of its own to do. The
                   // boxes above say what the branches are doing.
                   `waiting on ${forked} ${forked === 1 ? 'branch' : 'branches'}`
-                : reasoning
-                  ? 'reasoning'
-                  : 'thinking';
-    // A clip has already ended it with one.
-    const status = what.endsWith('…') ? what : `${what}…`;
-    // Nothing of its own in flight means the word above is about reasoning, so
-    // it takes the same hue the reasoning block does.
-    const musing = !running.length && !forked;
+                : 'waiting';
+    const hue = theme.phase[phase];
     return (
         <Box flexDirection="column" marginTop={1}>
             <Box>
                 <Text color={theme.accent}>{agent}</Text>
                 {busy ? (
-                    <Text color={musing ? theme.thinking.color : theme.warn}>
+                    <Text color={hue}>
                         {'  '}
-                        {spin}{' '}
-                        <Shimmer
-                            text={status}
-                            frame={frame}
-                            color={musing ? theme.thinking.color : theme.warn}
-                        />
+                        {spin} <Shimmer text={`${what}…`} frame={frame} color={hue} />
                     </Text>
                 ) : null}
                 {busy ? <Text dimColor>{`  ${aside}`}</Text> : null}
@@ -1345,18 +1542,20 @@ function secs(ms: number): string {
     return `${(ms / 1000).toFixed(1)}s`;
 }
 
-/** What a finished tool call has to say for itself, under its own name. */
+/**
+ * What a finished tool call has to say for itself.
+ *
+ * The duration has its own column on the row now, and the branch has its own
+ * box, so what is left is the outcome: `summarise` reads the fields that matter
+ * for the tools the runtime ships and falls back to the raw preview for the
+ * ones it does not know.
+ */
 function detailOf(
-    node: { isError: boolean; durationMs?: number; result: { preview?: string } },
-    branch: string | undefined,
+    node: { isError: boolean; name: string; result: { preview?: string } },
     width: number,
 ): string {
-    const parts = [
-        ...(branch ? [`⑂ ${branch}`] : []),
-        ...(node.isError ? ['failed'] : []),
-        ...(durationOf(node.durationMs) ? [durationOf(node.durationMs) as string] : []),
-        ...(node.result.preview ? [readable(node.result.preview)] : []),
-    ];
+    const said = summarise(node.name, node.result.preview ?? '');
+    const parts = [...(node.isError ? ['failed'] : []), ...(said ? [said] : [])];
     // One row. Two left a six-character orphan under most results, and a
     // preview is already a preview: the whole of it is a click away in the
     // report, and a wall of it here buries the next answer.
