@@ -160,14 +160,10 @@ function Row({ line }: { line: Line }): React.ReactElement {
     }
     return (
         <Box flexDirection="row">
-            <Text color={style.color} dimColor={style.dim}>
-                {MARK[line.kind]}{' '}
-            </Text>
+            <Text color={style.color}>{MARK[line.kind]} </Text>
             <Box flexDirection="column">
-                <Text color={style.color} dimColor={style.dim}>
-                    {line.text}
-                </Text>
-                {line.detail ? <Text dimColor>{line.detail}</Text> : null}
+                <Text color={style.color}>{line.text}</Text>
+                {line.detail ? <Text color={theme.chrome.color}>{line.detail}</Text> : null}
             </Box>
         </Box>
     );
@@ -225,15 +221,16 @@ function plain(text: string): string {
  * One finished call: how long it took, what it did, and what came back.
  *
  * Time first, because it is the one column that lines up down the page and the
- * one number worth scanning for. Nothing in the row is lifted out of the dim —
+ * one number worth scanning for. Nothing in the row is lifted out of the grey —
  * a call is read when it is looked for, not while the prose around it is.
  * The blank row is spent on the *first* call after something else, so a batch
  * of them reads as one block rather than a ladder.
  */
 function Call({ line }: { line: Line }): React.ReactElement {
+    const theme = useTheme();
     return (
         <Box marginTop={line.gap ? 1 : 0}>
-            <Text wrap="truncate-end" dimColor>
+            <Text wrap="truncate-end" color={theme.chrome.color}>
                 <Text>{`  ${(line.time ?? '').padStart(TIME_COL)}  `}</Text>
                 <Text>{line.lead}</Text>
                 <Text>{line.text ? ` ${line.text}` : ''}</Text>
@@ -251,20 +248,23 @@ function Call({ line }: { line: Line }): React.ReactElement {
  * the box means *this is the answer*, and it only means that if it is rare.
  */
 function Answer({ text, boxed }: { text: string; boxed: boolean }): React.ReactElement {
+    const theme = useTheme();
     const { stdout } = useStdout();
     const width = answerWidth(stdout?.columns ?? 80);
     const segments = segmentsOf(text);
     const body = segments.map((s, i) =>
         s.code ? (
             <Box key={i} flexDirection="column">
-                <Text dimColor>{`\u250c\u2500${s.title ? ` ${s.title}` : ''}`}</Text>
+                <Text
+                    color={theme.chrome.color}
+                >{`\u250c\u2500${s.title ? ` ${s.title}` : ''}`}</Text>
                 {s.lines.map((l, j) => (
                     <Box key={j} flexDirection="row">
-                        <Text dimColor>{'\u2502 '}</Text>
+                        <Text color={theme.chrome.color}>{'\u2502 '}</Text>
                         <Text wrap="truncate-end">{l || ' '}</Text>
                     </Box>
                 ))}
-                <Text dimColor>{'\u2514\u2500'}</Text>
+                <Text color={theme.chrome.color}>{'\u2514\u2500'}</Text>
             </Box>
         ) : (
             <Text key={i}>{s.lines.join('\n')}</Text>
@@ -277,7 +277,7 @@ function Answer({ text, boxed }: { text: string; boxed: boolean }): React.ReactE
             flexDirection="column"
             width={width}
             borderStyle="round"
-            borderDimColor
+            borderColor={theme.chrome.color}
             paddingX={1}
             marginY={1}
         >
@@ -946,10 +946,10 @@ function Header({
                         {started.created ? ' new session' : ' continuing'}
                     </Text>
                 ) : null}
-                <Text dimColor> {engine.session.id}</Text>
+                <Text color={theme.chrome.color}> {engine.session.id}</Text>
                 {readOnly ? <Text color={theme.warn}> read-only</Text> : null}
             </Box>
-            <Text dimColor>
+            <Text color={theme.chrome.color}>
                 {started ? `${started.freshWorkspace ? 'new directory' : 'workspace'} ` : ''}
                 {display(engine.workspace)}
                 {model ? ` · ${model}` : ''}
@@ -1204,11 +1204,13 @@ function Branches({
                 return (
                     <Box key={b.name} flexDirection="column" height={BOX_CHROME + b.rows.length}>
                         <Text wrap="truncate-end">
-                            <Text dimColor>{'╭─ '}</Text>
+                            <Text color={theme.chrome.color}>{'╭─ '}</Text>
                             <Text color={b.color}>{b.title}</Text>
                             <Text color={b.color}>{` ${spin}`}</Text>
-                            <Text dimColor>{`  ${b.stats} `}</Text>
-                            <Text dimColor>{'─'.repeat(Math.max(0, columns - used))}</Text>
+                            <Text color={theme.chrome.color}>{`  ${b.stats} `}</Text>
+                            <Text color={theme.chrome.color}>
+                                {'─'.repeat(Math.max(0, columns - used))}
+                            </Text>
                         </Text>
                         {b.rows.map((r) => (
                             <Text key={r.key} wrap="truncate-end">
@@ -1216,7 +1218,7 @@ function Branches({
                                 <Work key={r.key} row={r} />
                             </Text>
                         ))}
-                        <Text dimColor>{'╰─'}</Text>
+                        <Text color={theme.chrome.color}>{'╰─'}</Text>
                     </Box>
                 );
             })}
@@ -1237,7 +1239,7 @@ function Work({ row }: { row: ActivityRow }): React.ReactElement {
         return <Text color={theme.thinking.color}>{`${row.mark} ${row.text}`}</Text>;
     }
     return (
-        <Text dimColor>
+        <Text color={theme.chrome.color}>
             <Text color={row.color}>{`${row.mark} `}</Text>
             <Text>{`${row.time.padStart(TIME_COL)}  `}</Text>
             <Text color={row.color}>{row.lead}</Text>
@@ -1253,6 +1255,7 @@ function Activity({
     rows: ActivityRow[];
     hidden: number;
 }): React.ReactElement | null {
+    const theme = useTheme();
     if (!rows.length && !hidden) {
         return null;
     }
@@ -1264,7 +1267,9 @@ function Activity({
                 </Text>
             ))}
             {hidden ? (
-                <Text dimColor>{`  + ${hidden} more ${hidden === 1 ? 'branch' : 'branches'}`}</Text>
+                <Text color={theme.chrome.color}>
+                    {`  + ${hidden} more ${hidden === 1 ? 'branch' : 'branches'}`}
+                </Text>
             ) : null}
         </Box>
     );
@@ -1375,8 +1380,9 @@ const SWEEP_GAP = 6;
  * The spinner is proof the process is alive, but it is chrome and the eye
  * reads the word beside it — a word that never moves is what a hung run looks
  * like. The wave is weight rather than hue because the theme has no ramp to
- * spend: dim at rest, the terminal's own weight at the crest, and the word
- * keeps whatever colour its role gave it.
+ * spend: a short bold crest travels through the word, and the word keeps
+ * whatever colour its role gave it. The trough is the word's own weight, not
+ * `dim` — a hue with `dim` over it is what Apple Terminal renders as nothing.
  */
 function Shimmer({
     text,
@@ -1403,12 +1409,7 @@ function Shimmer({
                 // The crest sits on the head and the tail drags behind it.
                 const behind = head - i;
                 return (
-                    <Text
-                        key={i}
-                        color={color}
-                        bold={behind === 0}
-                        dimColor={behind < 0 || behind > 2}
-                    >
+                    <Text key={i} color={color} bold={behind >= 0 && behind <= 2}>
                         {ch}
                     </Text>
                 );
@@ -1479,10 +1480,10 @@ function Footer({
                         {spin} <Shimmer text={`${what}…`} frame={frame} color={hue} />
                     </Text>
                 ) : null}
-                {busy ? <Text dimColor>{`  ${aside}`}</Text> : null}
+                {busy ? <Text color={theme.chrome.color}>{`  ${aside}`}</Text> : null}
             </Box>
             {inflight ? (
-                <Text dimColor>
+                <Text color={theme.chrome.color}>
                     {'this turn'.padEnd(LABEL)}
                     {tokens(inflight.usage)}
                     {` · ${secs(inflight.durationMs)}`}
@@ -1490,7 +1491,7 @@ function Footer({
             ) : (
                 <>
                     {stats.turn ? (
-                        <Text dimColor>
+                        <Text color={theme.chrome.color}>
                             {'last turn'.padEnd(LABEL)}
                             {tokens(stats.turn)}
                             {stats.durationMs === undefined
@@ -1498,7 +1499,7 @@ function Footer({
                                 : ` · ${durationOf(stats.durationMs) ?? ''}`}
                         </Text>
                     ) : null}
-                    <Text dimColor>
+                    <Text color={theme.chrome.color}>
                         {'session'.padEnd(LABEL)}
                         {tokens(stats.session)}
                         {stats.calls
