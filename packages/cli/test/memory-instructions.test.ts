@@ -1,0 +1,208 @@
+import {
+    MEMORY_COMMIT_TOOL,
+    MEMORY_FORGET_TOOL,
+    MEMORY_LOAD_TOOL,
+    MEMORY_SEARCH_TOOL,
+    renderRecollection,
+    type MemoryNode,
+    type Recollection,
+} from '@zenera/neo';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterAll, describe, expect, it } from 'vitest';
+import { scaffold } from '../src/scaffold.ts';
+import { validateProject, type Finding } from '../src/validate.ts';
+
+// ---------------------------------------------------------------------------
+// The memory house rules
+//
+// `agents/memory-instructions.md` is the only place memory is explained to a
+// model: the runtime composes the preference block and nothing else, so text
+// that has fallen behind the code is not caught by a compiler, a type or a
+// missing import. It used to be a template literal in `packages/neo`, where
+// renaming a tool broke the build. These tests are what replaced that.
+//
+// Two things are checked. That every tool the document names exists and every
+// tool that exists is named — a rename is otherwise silent. And that the layout
+// it describes is the layout `renderRecollection` emits, by rendering one and
+// reading the claims off the prose beside it.
+// ---------------------------------------------------------------------------
+
+const TEMPLATE = fileURLToPath(
+    new URL('../templates/project/agents/memory-instructions.md', import.meta.url),
+);
+
+const REFERENCE = join('.github', 'skills', 'zen-memory', 'references', 'memory-instructions.md');
+
+const rules = readFileSync(TEMPLATE, 'utf8');
+
+const TOOLS = [MEMORY_SEARCH_TOOL, MEMORY_LOAD_TOOL, MEMORY_COMMIT_TOOL, MEMORY_FORGET_TOOL];
+
+describe('the tools the house rules name', () => {
+    it('all exist', () => {
+        const named = new Set(rules.match(/memory_[a-z_]+/g) ?? []);
+        named.delete('memory_');
+        expect([...named].filter((n) => !TOOLS.includes(n))).toEqual([]);
+    });
+
+    it('cover every memory tool there is, so a new one is not left undocumented', () => {
+        expect(TOOLS.filter((t) => !rules.includes(t))).toEqual([]);
+    });
+
+    it('gate writing on having the tool, since the file is read by agents that cannot', () => {
+        const gate = rules.slice(0, rules.indexOf('## What belongs in it'));
+        expect(gate).toContain(MEMORY_COMMIT_TOOL);
+        expect(gate).toContain(MEMORY_FORGET_TOOL);
+    });
+});
+
+/**
+ * The prose describes a layout that lives in another package. Nothing but this
+ * stops the renderer moving and the document staying behind, still confidently
+ * telling the model to look for something that is no longer there.
+ */
+describe('the house rules match what the renderer emits', () => {
+    const T0 = '2025-01-01T00:00:00.000Z';
+
+    const node = (id: string, kind: string, extra: Partial<MemoryNode> = {}): MemoryNode => ({
+        id,
+        kind,
+        text: 'risk report generator',
+        audience: ['*'],
+        createdAt: T0,
+        updatedAt: T0,
+        lastUsedAt: T0,
+        useCount: 0,
+        revision: 1,
+        ...extra,
+    });
+
+    const rec: Recollection = {
+        nodes: [
+            { node: node('T1', 'task'), score: 0.9, seed: true },
+            {
+                node: node('F1', 'file', {
+                    file: {
+                        path: '/memory/F1.py',
+                        bytes: 4312,
+                        sha256: 'a'.repeat(64),
+                        format: 'py',
+                    },
+                }),
+                score: 0,
+                seed: false,
+                via: { from: 'T1', relation: 'PRODUCED', outbound: true },
+            },
+        ],
+        edges: [{ source: 'T1', target: 'F1', relation: 'PRODUCED' }],
+        seeds: ['T1'],
+        truncated: false,
+    };
+
+    const out = renderRecollection(rec, { now: Date.parse(T0) });
+
+    it('claims the block is tagged, and it is', () => {
+        expect(rules).toContain('<memory-recollection>');
+        expect(out.startsWith('<memory-recollection>')).toBe(true);
+    });
+
+    it('claims a matched root reads `score kind id`, and it does', () => {
+        expect(rules).toContain('`score kind id`');
+        expect(out).toContain('0.90  task  T1');
+    });
+
+    it('claims an unmatched root carries `--`, and it does', () => {
+        expect(rules).toContain('`--`');
+        const only: Recollection = {
+            ...rec,
+            nodes: [{ node: node('T1', 'task'), score: 0, seed: false }],
+            edges: [],
+            seeds: [],
+        };
+        expect(renderRecollection(only, { now: Date.parse(T0) })).toContain('--  task  T1');
+    });
+
+    it('claims an arrow names the relation, and it does', () => {
+        expect(rules).toContain('\u2192produced');
+        expect(rules).toContain('\u2190informed');
+        expect(out).toContain('  \u2192produced  file  F1');
+    });
+
+    it('claims a file shows path, size and use, and it does', () => {
+        expect(rules).toContain('/memory/<id>.<ext>');
+        expect(out).toContain('/memory/F1.py \u00b7 4.2 KB \u00b7 unused');
+    });
+
+    it('claims indentation is the graph, and the child is indented under its parent', () => {
+        const [root, , child] = out.split('\n').slice(1);
+        expect(root?.startsWith('0.90')).toBe(true);
+        expect(child?.startsWith('  \u2192')).toBe(true);
+    });
+
+    // The number is written out in three places in the prose and nowhere in a
+    // header the document can import, so it is the one most likely to drift.
+    it('states the clip length the renderer actually applies', () => {
+        const stated = [...rules.matchAll(/(\d+) characters/g)].map((m) => Number(m[1]));
+        expect(stated.length).toBeGreaterThan(0);
+        expect(new Set(stated).size).toBe(1);
+
+        const clip = stated[0]!;
+        const long: Recollection = {
+            ...rec,
+            nodes: [
+                {
+                    node: node('T1', 'task', { text: 'x'.repeat(clip + 50) }),
+                    score: 0.9,
+                    seed: true,
+                },
+            ],
+            edges: [],
+        };
+        const line = renderRecollection(long, { now: Date.parse(T0), tagged: false })
+            .split('\n')
+            .find((l) => l.includes('x'));
+        expect(line?.trim().length).toBe(clip);
+    });
+});
+
+describe('the copies a scaffold leaves behind', () => {
+    const dirs: string[] = [];
+
+    afterAll(() => {
+        for (const dir of dirs) {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('are byte-identical to the template and to each other', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'zen-mem-rules-'));
+        dirs.push(dir);
+        scaffold({ dir, model: 'openai:gpt-5', embedding: 'openai:text-embedding-3-small' });
+
+        expect(readFileSync(join(dir, 'agents', 'memory-instructions.md'), 'utf8')).toBe(rules);
+        expect(readFileSync(join(dir, REFERENCE), 'utf8')).toBe(rules);
+    });
+
+    // Nothing else notices the loss: the project still loads and the tools are
+    // still granted, so the check has to be the thing that fails the build.
+    it('are what stops `zen check` failing on uninstructed memory', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'zen-mem-check-'));
+        dirs.push(dir);
+        scaffold({ dir, model: 'openai:gpt-5', embedding: 'openai:text-embedding-3-small' });
+
+        const uninstructed = async (): Promise<Finding | undefined> => {
+            const report = await validateProject({ dir });
+            return report.findings.find((f) => f.code === 'memory.uninstructed');
+        };
+
+        expect(await uninstructed()).toBeUndefined();
+
+        rmSync(join(dir, 'agents', 'memory-instructions.md'));
+        expect((await uninstructed())?.severity).toBe('error');
+
+        writeFileSync(join(dir, 'agents', 'memory-instructions.md'), '');
+        expect((await uninstructed())?.severity).toBe('error');
+    });
+});

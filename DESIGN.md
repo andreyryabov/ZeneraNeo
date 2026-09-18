@@ -828,10 +828,15 @@ The schema is mechanics. The policy - what survives a join, that a branch cannot
 be corrected once it starts, which `context` mode fits which shape of work -
 lives in `forkInstructions()` (`src/fork.ts`), pushed into the system prompt by
 `derivedPrompt` under the same condition that offers the tool: a fork binding,
-and `forkDepth < maxForkDepth`. Same seam as `memoryInstructions`, and for the
-same reason - it is per-run policy, not per-call argument documentation, so
-stating it once in the cacheable prefix costs less than restating it in every
-tool schema the model reads.
+and `forkDepth < maxForkDepth`. It is per-run policy, not per-call argument
+documentation, so stating it once in the cacheable prefix costs less than
+restating it in every tool schema the model reads.
+
+Memory used to work the same way, and no longer does: how to use the graph is a
+document the project owns (`agents/memory-instructions.md`), prepended as house
+rules and gating its own advice on the tools the reader holds. `derivedPrompt`
+composes only the preference block, which cannot be static because each line
+carries a live node id.
 
 ### 10.2 Data model
 

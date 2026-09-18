@@ -50,7 +50,10 @@ memory nowhere opens no store and creates no directory.
 `zen init` writes both halves, so a scaffolded project remembers from its first
 run: the block, `memory: true` on the default agent, and
 `agents/memory-instructions.md` - the house rules that tell an agent how to use
-the store, copied from the `zen-memory` skill the same command installs.
+the store, copied from the `zen-memory` skill the same command installs. That
+file is the whole of what a model is told about memory; the runtime adds the
+preference block and nothing else, so `zen check` fails a project that switches
+memory on without it.
 
 **Give it an embedding.** Without one, recall falls back to term overlap, which
 finds a memory phrased the way the query was and misses the rest. The width is

@@ -3,7 +3,7 @@ import { Agent, AgentRegistry, handoffTarget, handoffTool } from './agent.ts';
 import type { PendingToolCall } from './events.ts';
 import { FORK_DESCRIPTION, forkInstructions, forkParameters } from './fork.ts';
 import { systemClock, type IdClock } from './ids.ts';
-import { memoryInstructions, renderPreferences } from './memory/instructions.ts';
+import { renderPreferences } from './memory/render.ts';
 import { memoryTools } from './memory/tools.ts';
 import type { MemoryOpSpec, MemoryRecallSpec } from './memory/types.ts';
 import type { ModelRequest, ModelResponse } from './model.ts';
@@ -403,12 +403,17 @@ function toSchema(t: ToolSchema): ToolSchema {
 }
 
 /**
- * Prompt text the runtime owns rather than the author: how to use memory, the
- * user's standing preferences, the skill index and the `final_output`
- * instruction. Most used to be appended inside `buildRequest`, which meant part
- * of the system prompt existed in no node and showed up in no audit. Composed
- * in now, always last, so the volatile tail never invalidates the cacheable
- * prefix.
+ * Prompt text the runtime owns rather than the author: the user's standing
+ * preferences, the skill index and the `final_output` instruction. Most used to
+ * be appended inside `buildRequest`, which meant part of the system prompt
+ * existed in no node and showed up in no audit. Composed in now, always last,
+ * so the volatile tail never invalidates the cacheable prefix.
+ *
+ * How to *use* memory is not here: it is the project's own house rules, in
+ * `agents/memory-instructions.md`, so that one document is the only place it is
+ * written. An agent with memory tools and no such file gets the tool schemas
+ * and nothing else - `zen check` warns about it, the runtime does not invent a
+ * replacement.
  */
 async function derivedPrompt<TCtx>(
     agent: Agent<TCtx>,
@@ -422,7 +427,6 @@ async function derivedPrompt<TCtx>(
         // because preferences change at most once in a run and
         // `applySystemPrompt` is keyed on the rendered bytes, so a commit
         // re-renders the prefix once rather than every turn.
-        out.push(memoryInstructions(memory));
         out.push(renderPreferences(env.services.memory.preferences(memory.sees)));
     }
     if (agent.skills?.discovery === 'index') {
