@@ -9,6 +9,8 @@
 // distinguishing is a `CliError` carrying its exit code.
 // ---------------------------------------------------------------------------
 
+import type { BannerText } from './banner.ts';
+
 export interface Context {
     readonly args: readonly string[];
     readonly json: boolean;
@@ -21,6 +23,8 @@ export interface Command {
     readonly usage: string;
     /** lines printed under the usage line by `zen help <command>` */
     readonly details?: readonly string[];
+    /** printed instead of the `zen` banner, so the sub-brand shows through */
+    readonly banner?: BannerText;
     /**
      * Answers `--help` itself, for a command whose arguments select a page the
      * frame cannot see. Without it the frame prints this command's own page.

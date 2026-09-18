@@ -70,7 +70,7 @@ async function main(argv: readonly string[]): Promise<number> {
         name === 'rag' && ['docs', 'schema'].includes(rest[0]) && rest[1] === 'search';
     const interactive = rest.includes('--interactive');
     if (!json && (!ragSearch || interactive)) {
-        const brand = external && hasExternal(external) ? external.banner : undefined;
+        const brand = external && hasExternal(external) ? external.banner : command?.banner;
         printBanner(brand ?? NEO_BANNER, { full: ragSearch && interactive });
     }
 

@@ -80,6 +80,7 @@ interface Flags {
 export const meta: Command = {
     summary: 'Run the meta agent over this project, on your own keys.',
     usage: USAGE,
+    banner: { head: 'Zenera', accent: 'Meta', subtitle: 'Meta Agent' },
     details: [
         'Forms:',
         '  zen meta run [project] "<question>"      ask it something',
