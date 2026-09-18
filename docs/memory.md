@@ -53,7 +53,10 @@ run: the block, `memory: true` on the default agent, and
 the store, copied from the `zen-memory` skill the same command installs. That
 file is the whole of what a model is told about memory; the runtime adds the
 preference block and nothing else, so `zen check` fails a project that switches
-memory on without it.
+memory on without it. The file is ours rather than the project's - it describes
+the runtime, not your agents - so `zen check --fix` writes the current text
+back, over a copy that is missing, emptied or left behind by an upgrade. Project
+policy about memory goes beside it, in a topic file of your own.
 
 **Give it an embedding.** Without one, recall falls back to term overlap, which
 finds a memory phrased the way the query was and misses the rest. The width is

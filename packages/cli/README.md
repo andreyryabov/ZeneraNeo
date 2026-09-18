@@ -377,6 +377,12 @@ clones it types `zen init repo-notes` once - a directory that is already a
 project is registered, not rebuilt, and nothing in it is touched - and the name
 is a command on their machine too.
 
+When a newer `zen` is installed, `zen check --fix` brings a project's copies of
+_our_ files up to date: the memory and tool house rules under `agents/`, and the
+`.vscode/` and `.github/` trees. They restate how the version in hand behaves,
+so a copy left behind by an upgrade is worse than none. Nothing that describes
+_your_ project is touched.
+
 ## A project is a folder
 
 Prompts, agent wiring, skills and tool selections are all files - Markdown and

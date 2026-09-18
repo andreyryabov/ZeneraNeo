@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
-import { scaffold } from '../src/scaffold.ts';
+import { refreshShared, scaffold, SHARED_RULES } from '../src/scaffold.ts';
 import { validateProject, type Finding } from '../src/validate.ts';
 
 // ---------------------------------------------------------------------------
@@ -204,5 +204,34 @@ describe('the copies a scaffold leaves behind', () => {
 
         writeFileSync(join(dir, 'agents', 'memory-instructions.md'), '');
         expect((await uninstructed())?.severity).toBe('error');
+    });
+
+    // The other half of `keep: true`: a scaffold never overwrites, which is
+    // right for the files a project makes its own and wrong for these.
+    it('are what `refreshShared` puts back, edits and all', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'zen-mem-fix-'));
+        dirs.push(dir);
+        scaffold({ dir, model: 'openai:gpt-5', embedding: 'openai:text-embedding-3-small' });
+
+        const own = join(dir, 'agents', 'instructions.md');
+        const mine = 'these are mine\n';
+        writeFileSync(own, mine);
+        for (const rel of SHARED_RULES) {
+            writeFileSync(join(dir, rel), 'drifted\n');
+        }
+
+        const written = refreshShared(dir);
+
+        expect(written.slice(0, SHARED_RULES.length)).toEqual([...SHARED_RULES]);
+        expect(written).toContain(REFERENCE);
+        expect(readFileSync(join(dir, 'agents', 'memory-instructions.md'), 'utf8')).toBe(rules);
+        expect(readFileSync(join(dir, 'agents', 'tools-instructions.md'), 'utf8')).not.toBe(
+            'drifted\n',
+        );
+        // The project's own house rules are not ours to replace.
+        expect(readFileSync(own, 'utf8')).toBe(mine);
+
+        const report = await validateProject({ dir });
+        expect(report.findings.some((f) => f.code === 'memory.uninstructed')).toBe(false);
     });
 });

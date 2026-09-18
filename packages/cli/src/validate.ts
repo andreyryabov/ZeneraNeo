@@ -458,7 +458,7 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
                 message:
                     'memory is on, but nothing tells an agent how to use it — the memory_* ' +
                     'tools are granted with only their schemas to explain them',
-                fix: `cp .github/skills/zen-memory/references/${basename(MEMORY_RULES)} ${MEMORY_RULES}`,
+                fix: 'zen check --fix, which writes the current rules back',
             });
         }
     }
