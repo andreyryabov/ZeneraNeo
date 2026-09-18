@@ -48,6 +48,22 @@ const TEMPLATE = '.tmpl';
 /** How to use the memory graph: a house rules file, landing under `agents/`. */
 const MEMORY_RULES = join('agents', 'memory-instructions.md');
 
+/** How tools are called: the same, and equally not the project's to maintain. */
+const TOOL_RULES = join('agents', 'tools-instructions.md');
+
+/**
+ * The project files that are ours rather than the project's.
+ *
+ * Everything else under `templates/project/` describes *this project* and is
+ * written once. These two describe *this version of `zen`* — how the memory
+ * graph works, how its tools are called — and land under `agents/` only
+ * because that is where house rules have to be to reach a prompt. A copy that
+ * has fallen behind the runtime is worse than none, so `zen check --fix`
+ * replaces them, and nothing in them is worth editing in place: project policy
+ * on either subject goes in a topic file of its own beside them.
+ */
+export const SHARED_RULES: readonly string[] = [MEMORY_RULES, TOOL_RULES];
+
 /** The same bytes, kept in the `zen-memory` skill to restore or diff against. */
 const MEMORY_REFERENCE = join(
     '.github',
@@ -245,6 +261,28 @@ export function editorFiles(dir: string): string[] {
     copyFileSync(join(TEMPLATES, 'project', MEMORY_RULES), reference);
     written.push(MEMORY_REFERENCE);
 
+    return written;
+}
+
+/**
+ * Replaces every file in a project that nobody is meant to be maintaining:
+ * `SHARED_RULES` in the project tree, and the editor tree whole. Returns the
+ * relative paths written, project files first.
+ *
+ * This is the other half of `keep: true`. A scaffold never overwrites, which is
+ * right for the files a project goes on to make its own and wrong for the ones
+ * that only ever restate how this version of `zen` behaves — those a project
+ * upgrades into, and before this there was no way to get them except by hand.
+ */
+export function refreshShared(dir: string): string[] {
+    const written: string[] = [];
+    for (const rel of SHARED_RULES) {
+        const path = join(dir, rel);
+        mkdirSync(dirname(path), { recursive: true });
+        copyFileSync(join(TEMPLATES, 'project', rel), path);
+        written.push(rel);
+    }
+    written.push(...editorFiles(dir));
     return written;
 }
 

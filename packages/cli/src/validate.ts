@@ -234,6 +234,8 @@ const CONFIG_NAMES = ['agents.yaml', 'agents.yml', 'agents/agents.yaml', 'agents
 const AGENTS_DIR = 'agents';
 const HOUSE_RULES = 'agents/instructions.md';
 const INSTRUCTIONS_SUFFIX = '-instructions.md';
+/** The only place memory is explained to a model; the runtime composes none of it. */
+const MEMORY_RULES = 'agents/memory-instructions.md';
 const PROMPTS_DIR = 'agents/prompts';
 const SKILLS_DIR = 'agents/skills';
 const SKILL_FILE = 'SKILL.md';
@@ -439,6 +441,26 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
                 'no house rules, which is allowed: every agent then runs on its own role ' +
                 'prompt alone, with nothing shared between them',
         });
+    }
+
+    // The runtime composes the preference block and nothing else, so this file
+    // is the whole of what an agent is told about memory. Without it the tools
+    // are still granted and still callable, with only their schemas to go on -
+    // which is not a project that works less well, it is one that will write
+    // the graph wrong and cannot be told otherwise.
+    if (config.agents.some((a) => a.memory) || config.memory) {
+        const path = join(root, MEMORY_RULES);
+        if (!existsSync(path) || empty(path)) {
+            add({
+                severity: 'error',
+                code: 'memory.uninstructed',
+                where: MEMORY_RULES,
+                message:
+                    'memory is on, but nothing tells an agent how to use it — the memory_* ' +
+                    'tools are granted with only their schemas to explain them',
+                fix: 'zen check --fix, which writes the current rules back',
+            });
+        }
     }
 
     // -----------------------------------------------------------------------

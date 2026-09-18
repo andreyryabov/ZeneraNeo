@@ -70,8 +70,10 @@ import { dirSize, lastUsedAt, projectMounts } from '../src/projects.ts';
 import { scaffold } from '../src/scaffold.ts';
 import { bytes, CliError, cut, EXIT, keysIn, pad, table } from '../src/term.ts';
 import {
+    ACTIVITY_ROWS,
     answerWidth,
     BOX_CHROME,
+    BRANCH_MIN,
     BRANCH_ROWS,
     branchRows,
     budgetOf,
@@ -532,7 +534,7 @@ describe('dividing the frame', () => {
     });
 
     it('caps what is in flight rather than the answer', () => {
-        expect(budgetOf(40, 20, 0).activity).toBe(16);
+        expect(budgetOf(48, 30, 0).activity).toBe(ACTIVITY_ROWS);
         expect(budgetOf(24, 20, 0).activity).toBe(15);
         expect(budgetOf(24, 2, 0).activity).toBe(2);
         expect(budgetOf(24, 0, 0).activity).toBe(0);
@@ -544,21 +546,26 @@ describe('dividing the frame', () => {
 });
 
 describe('sharing the frame between branches', () => {
-    it('spends the allowance on being complete rather than detailed', () => {
-        // Whatever the width of the fork, the boxes fit in what they were given.
+    it('never gives a box more than it can draw', () => {
         for (const count of [1, 2, 3, 4, 6, 8]) {
             const each = branchRows(count, 12);
-            expect(each).toBeGreaterThanOrEqual(1);
+            expect(each).toBeGreaterThanOrEqual(BRANCH_MIN);
             expect(each).toBeLessThanOrEqual(BRANCH_ROWS);
-            if (count * (BOX_CHROME + 1) <= 12) {
-                expect(count * (BOX_CHROME + each)).toBeLessThanOrEqual(12);
-            }
         }
     });
 
-    it('always leaves a branch one row, so a wide fork is cut rather than emptied', () => {
-        expect(branchRows(8, 12)).toBe(1);
-        expect(branchRows(1, 0)).toBe(1);
+    it('divides the allowance while every box can still be read', () => {
+        // Two branches in the whole allowance can each afford the full detail;
+        // three share it down to the floor, and a fork wider than that is cut
+        // by `fitActivity` rather than flattened to a label apiece.
+        expect(branchRows(2, ACTIVITY_ROWS)).toBe(BRANCH_ROWS);
+        expect(branchRows(3, ACTIVITY_ROWS)).toBe(BRANCH_MIN);
+        expect(3 * (BOX_CHROME + branchRows(3, ACTIVITY_ROWS))).toBeLessThanOrEqual(ACTIVITY_ROWS);
+    });
+
+    it('keeps a box legible rather than complete, and nothing at all for none', () => {
+        expect(branchRows(8, 12)).toBe(BRANCH_MIN);
+        expect(branchRows(1, 0)).toBe(BRANCH_MIN);
         expect(branchRows(0, 12)).toBe(0);
     });
 });

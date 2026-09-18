@@ -1,9 +1,14 @@
 # Memory
 
 This project has a memory: a graph of what earlier runs worked out, kept with
-the project rather than with the session. It is reached **only** through the
-`memory_*` tools - `memory_search` to find, `memory_load` to read,
-`memory_commit` to write.
+the project rather than with the session, and shared with every other agent that
+can see it. It is reached **only** through the `memory_*` tools - `memory_search`
+to find, `memory_load` to read.
+
+Not every agent may write to it. Read what follows against the tools you
+actually have: if `memory_commit` is not among them, everything under
+[Updating it](#updating-it) is not yours to do, and if `memory_forget` is not
+among them, neither is [Forgetting](#forgetting).
 
 It exists to make the next run cheaper. Work that cost something - a long
 investigation, a fan-out of searches, a build, an invocation found by trial -
@@ -93,6 +98,30 @@ its own source.
 160 characters. `memory_load` is what reads a node whole, by id - load anything
 you are going to rely on.
 
+### The shape of a recollection
+
+A recollection arrives in a `<memory-recollection>` block, and it is a subgraph
+rather than a ranked list - the links are as much of the answer as the nodes. It
+is an outline, and the indentation is the graph.
+
+A line at the left margin reads `score kind id` and is something the search
+matched; a root the walk reached rather than matched carries `--` where the
+score would be. A line indented under it reads `<arrow>relation kind id` and is
+a neighbour: `→produced` means the line above produced this one, `←informed`
+means this one informed the line above. A neighbour the search matched in its
+own right carries its score too, after the arrow.
+
+Under each header, indented further, is that node's text. A `file` node carries
+one line more, above the text: the path under `/memory` to open or run, its
+size, and how often it has been read.
+
+A line beginning `+` is a link to an id already shown above, for an edge the
+outline could not nest. It never points forward, so resolving one only ever
+means looking back up the block.
+
+Text is clipped at 160 characters - copy an id into `memory_load` to read a node
+whole. `memory_search` finds ids; it does not return contents.
+
 A remembered file appears at `/memory/<id>.<ext>`. Open it or run it, but arrive
 at that path through `memory_load`, never by looking around in the directory.
 
@@ -169,7 +198,14 @@ from opening the sources to find out what they actually said.
 Then the rules for writing it down:
 
 **Commit the whole subgraph in one call.** A script with no record of what asked
-for it, or a fact with nothing that acts on it, is a memory nobody can use.
+for it, or a fact with nothing that acts on it, is a memory nobody can use. Refs
+resolve only within a single `memory_commit`, so a subgraph split across calls
+arrives without its links.
+
+**Do not re-commit what a search already returned.** A node that says what one
+already in memory says is folded into it, and its existing id comes back under
+your ref - so the links you asked for still land, on the memory that was already
+there.
 
 **Say where the content came from.** This is what lets an incomplete
 recollection be continued instead of believed:
@@ -276,3 +312,24 @@ without destroying the record of why it changed.
 **Ask whether it will still be true next month.** Memory has no expiry and no
 reviewer. A durable fact about this project survives; a fact about this
 afternoon's state is how a graph becomes confidently wrong.
+
+### Preferences
+
+A `preference` is a standing instruction from the user, and it is not recalled
+like everything else: every preference you can see is rendered into a
+`<memory-preferences>` block at the start of every later run, each with its id.
+They apply unless that run's request contradicts them.
+
+So commit one only when the user's own words generalise - "always", "from now
+on", "I prefer", "never". A single request being fulfilled is not a standing
+instruction, and one committed by mistake is in every future prompt until
+something supersedes it.
+
+To change one, commit the replacement and link it to the id shown in that block
+with `SUPERSEDES`.
+
+### Forgetting
+
+Forget only what is wrong and has no successor. A superseded memory is already
+hidden from recall and should stay for the history, so `memory_forget` is for
+what should never have been written, not for what has been replaced.

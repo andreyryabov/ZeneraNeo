@@ -723,12 +723,15 @@ their ids:
 </memory-preferences>
 ```
 
-The prompt is also where the agent is told how to read a recollection and when
-committing is worthwhile; that text is derived from `access`, so an agent that
-cannot write is never told how. Because it all lands in the cached prefix rather
-than in the conversation, it costs once per run rather than once per turn, and
-the id is what lets the model replace a preference with `SUPERSEDES` instead of
-quietly ignoring it.
+How to read a recollection and when committing is worthwhile is not in this
+block: it is the project's own house rules, in `agents/memory-instructions.md`,
+which are prepended to every agent's prompt. The runtime composes the preference
+block and nothing else, so a project that deletes that file leaves its agents
+with the `memory_*` schemas and no explanation - `zen check` fails it as
+`memory.uninstructed`. Because it all lands in the cached prefix rather than in
+the conversation, it costs once per run rather than once per turn, and the id is
+what lets the model replace a preference with `SUPERSEDES` instead of quietly
+ignoring it.
 
 Preferences are deliberately left out of ordinary recall results - they are in
 the prompt already, and repeating them would state the same instruction twice in

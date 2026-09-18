@@ -7,6 +7,7 @@ import { KeyStore } from '../keys.ts';
 import { duration } from '../narrate.ts';
 import { Registry } from '../projects.ts';
 import { project as resolveProject } from '../resolve.ts';
+import { refreshShared } from '../scaffold.ts';
 import {
     bold,
     count,
@@ -33,10 +34,11 @@ import {
 } from '../validate.ts';
 
 const USAGE =
-    'zen check [name|dir] [--project <name|dir>] [--no-sandbox] [--no-models] [--strict] [--quiet]';
+    'zen check [name|dir] [--project <name|dir>] [--fix] [--no-sandbox] [--no-models] [--strict] [--quiet]';
 
 interface Flags {
     project?: string;
+    fix?: boolean;
     'no-sandbox'?: boolean;
     'no-models'?: boolean;
     strict?: boolean;
@@ -87,6 +89,14 @@ export const check: Command = {
         'Unlike a run, it does not stop at the first problem — the report lists',
         'everything it found, each with a code and the fix for it.',
         '',
+        '--fix rewrites the files that are ours rather than the project\u2019s: the',
+        'memory and tool house rules under agents/, and the editor tree',
+        '(.vscode/ and .github/). They restate how this version of zen behaves,',
+        'so a copy left behind by an upgrade is worse than none — they are',
+        'replaced whether or not they were edited, and the report that follows is',
+        'of the project as repaired. Nothing else is touched: agents.yaml, the',
+        'prompts, the specification and agents/instructions.md are yours.',
+        '',
         'The argument is a directory if one is there and a registered project',
         'name otherwise; with neither, the project you are standing in.',
         '',
@@ -98,6 +108,7 @@ export const check: Command = {
             ctx.args,
             {
                 project: { type: 'string' },
+                fix: { type: 'boolean' },
                 'no-sandbox': { type: 'boolean' },
                 'no-models': { type: 'boolean' },
                 strict: { type: 'boolean' },
@@ -115,6 +126,12 @@ export const check: Command = {
         // read here and handed to the check rather than looked up inside it.
         const entry = (await Registry.open()).findPath(dir);
         const name = entry?.name ?? basename(dir);
+
+        // Before the report rather than after it, so what it says is true of
+        // the files that are there now and the exit code answers the repaired
+        // project. A fix that left an error behind in the output would be read
+        // as a fix that failed.
+        const fixed = values.fix ? refreshShared(dir) : [];
 
         // Materialised first, so the credential verdicts are the ones a run
         // would reach: a key in the environment and a key in the keyring are
@@ -143,11 +160,13 @@ export const check: Command = {
         bar.done();
 
         if (ctx.json) {
-            json(report);
+            json({ ...report, fixed });
         } else if (values.quiet) {
+            writeAll(fixedLines(fixed));
             writeAll(findingLines(report.findings));
             write(verdict(report, Boolean(values.strict)));
         } else {
+            writeAll(fixedLines(fixed));
             writeAll(render(report));
         }
 
@@ -392,6 +411,22 @@ function agentBlock(agent: AgentReport): string[] {
         rows.push(['    sandbox', 'overrides the project container']);
     }
     return [head, ...table(rows)];
+}
+
+/**
+ * What `--fix` replaced, said before the report so the two read in the order
+ * they happened. Silent when nothing was asked for, so the only difference
+ * between `zen check` and `zen check --fix` on a healthy project is these lines.
+ */
+function fixedLines(fixed: readonly string[]): string[] {
+    if (fixed.length === 0) {
+        return [];
+    }
+    return [
+        `${bold('Replaced')} ${dim(`${count(fixed.length, 'file')} \u2014 ours, not the project's`)}`,
+        ...fixed.map((f) => `  ${green('wrote')} ${f}`),
+        '',
+    ];
 }
 
 /**

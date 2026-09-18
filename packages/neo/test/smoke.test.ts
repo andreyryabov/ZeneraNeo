@@ -463,6 +463,15 @@ describe('smoke', () => {
     it('records one system prompt for an agent that only has memory', async () => {
         const dir = mkdtempSync(join(tmpdir(), 'neo-smoke-pref2-'));
         const memory = new MemoryIndex({ store: await MemoryStore.open(dir) });
+        memory.graph.add(
+            {
+                id: 'PREF1',
+                kind: 'preference',
+                text: 'always report findings as a table',
+                audience: ['*'],
+            },
+            '2025-01-01T00:00:00.000Z',
+        );
         const model = new RuleModel(() => say('ok'));
         const runner = new AgentRunner({ model, memory });
         runner.agent({
@@ -478,7 +487,10 @@ describe('smoke', () => {
                 res.state.trajectory,
                 runner.services.payloads,
             );
-            expect(system).toContain('memory-recollection');
+            expect(system).toContain('memory-preferences');
+            // How to use the graph is the project's house rules, not the
+            // runtime's: an SDK agent with no such document gets the schemas.
+            expect(system).not.toContain('memory-recollection');
             expect(system).not.toContain('memory_commit');
         } finally {
             memory.store.release();

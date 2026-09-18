@@ -3,25 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MemoryIndex } from '../src/memory/index.ts';
-import {
-    memoryInstructions,
-    PREFERENCES_TAG,
-    renderPreferences,
-} from '../src/memory/instructions.ts';
 import { recall } from '../src/memory/recall.ts';
-import { renderRecollection } from '../src/memory/render.ts';
+import { PREFERENCES_TAG, renderPreferences } from '../src/memory/render.ts';
 import { MemoryStore } from '../src/memory/store.ts';
-import type { MemoryNode, Recollection, ResolvedMemoryBinding } from '../src/memory/types.ts';
+import type { MemoryNode, Recollection } from '../src/memory/types.ts';
 
 const T0 = '2025-01-01T00:00:00.000Z';
 const T1 = '2025-06-01T00:00:00.000Z';
 const NOW = Date.parse('2026-01-01T00:00:00.000Z');
-
-const binding = (access: ResolvedMemoryBinding['access'], sees = ['*']): ResolvedMemoryBinding => ({
-    access,
-    sees,
-    writes: ['*'],
-});
 
 let dir: string;
 let index: MemoryIndex;
@@ -34,31 +23,6 @@ beforeEach(async () => {
 afterEach(() => {
     index.store.release();
     rmSync(dir, { recursive: true, force: true });
-});
-
-describe('memory instructions', () => {
-    it('tells a read-only agent how to read and nothing about writing', () => {
-        const text = memoryInstructions(binding('read'));
-        expect(text).toContain('memory-recollection');
-        expect(text).not.toContain('memory_commit');
-        expect(text).not.toContain('memory_forget');
-    });
-
-    it('adds the commit policy once the agent can write', () => {
-        const text = memoryInstructions(binding('read-write'));
-        expect(text).toContain('memory_commit');
-        expect(text).toContain('SUPERSEDES');
-        expect(text).not.toContain('memory_forget');
-    });
-
-    it('adds the forget policy only at full access', () => {
-        expect(memoryInstructions(binding('full'))).toContain('memory_forget');
-    });
-
-    it('never names the audience labels the agent happens to hold', () => {
-        const text = memoryInstructions(binding('full', ['*', 'triage']));
-        expect(text).not.toContain('triage');
-    });
 });
 
 describe('the preference block', () => {
@@ -166,75 +130,5 @@ describe('the vocabulary', () => {
             store.release();
             rmSync(own, { recursive: true, force: true });
         }
-    });
-});
-
-/**
- * The instructions describe a layout that lives in another file. Nothing but a
- * test stops the renderer moving and the prose staying behind, still confidently
- * telling the model to look for something that is no longer there.
- */
-describe('the instructions match what the renderer emits', () => {
-    const node = (id: string, kind: string, extra: Partial<MemoryNode> = {}): MemoryNode => ({
-        id,
-        kind,
-        text: 'risk report generator',
-        audience: ['*'],
-        createdAt: T0,
-        updatedAt: T0,
-        lastUsedAt: T0,
-        useCount: 0,
-        revision: 1,
-        ...extra,
-    });
-
-    const rec: Recollection = {
-        nodes: [
-            { node: node('T1', 'task'), score: 0.9, seed: true },
-            {
-                node: node('F1', 'file', {
-                    file: {
-                        path: '/memory/F1.py',
-                        bytes: 4312,
-                        sha256: 'a'.repeat(64),
-                        format: 'py',
-                    },
-                }),
-                score: 0,
-                seed: false,
-                via: { from: 'T1', relation: 'PRODUCED', outbound: true },
-            },
-        ],
-        edges: [{ source: 'T1', target: 'F1', relation: 'PRODUCED' }],
-        seeds: ['T1'],
-        truncated: false,
-    };
-
-    const prose = memoryInstructions(binding('read'));
-    const out = renderRecollection(rec, { now: Date.parse(T0) });
-
-    it('claims a root reads `score kind id`, and it does', () => {
-        expect(prose).toContain('`score kind id`');
-        expect(out).toContain('0.90  task  T1');
-    });
-
-    it('claims an arrow names the relation, and it does', () => {
-        expect(prose).toContain('\u2192produced');
-        expect(out).toContain('  \u2192produced  file  F1');
-    });
-
-    it('claims a file shows its path under /memory, and it does', () => {
-        expect(prose).toContain('/memory');
-        expect(out).toContain('/memory/F1.py · 4.2 KB · unused');
-    });
-
-    it('claims indentation is the graph, and the child is indented under its parent', () => {
-        const [root, , child] = out.split('\n').slice(1);
-        expect(root?.startsWith('0.90')).toBe(true);
-        expect(child?.startsWith('  \u2192')).toBe(true);
-    });
-
-    it('states each id once, so nothing has to be matched across halves', () => {
-        expect(out.match(/\bT1\b/g)?.length).toBe(1);
     });
 });

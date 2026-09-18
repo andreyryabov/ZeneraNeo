@@ -128,8 +128,9 @@ two.
 | `run`     | Runs the project - the TUI on a terminal, one shot otherwise (§7).         |
 | `meta`    | Runs the meta agent over the project, on the keyring (§7.5).               |
 | `inspect` | Opens or rebuilds a run's `report.html`.                                   |
-| `memory`  | The memory graph from outside the agents (§9.3).                           |
+| `memory`  | The memory graph from outside the agents (§10).                            |
 | `check`   | Reports on the project in full: files, wiring, credentials, models (§9.2). |
+|           | `--fix` rewrites the files a project copies but does not own (§9.3).       |
 | `sandbox` | Checks and prepares the container command-line tools run in (§9).          |
 | `cache`   | What work has been kept, and getting rid of it (§4.2).                     |
 | `version` | CLI, library and Node versions.                                            |
@@ -931,7 +932,29 @@ an interrupted check is still a useful one; a refusal is an **error** because
 every run will meet the same answer, and silence is a **warning** because that is
 the network's fault and not the project's. `--no-models` skips it.
 
-### 9.3 Where the disk goes
+### 9.3 `--fix`, and what a project does not own
+
+A check is a reader, and `--fix` is the one thing it writes. It is here rather
+than behind a verb of its own because the set it may touch is narrow enough to
+state in a sentence: the files a project holds a copy of without owning them -
+`agents/memory-instructions.md`, `agents/tools-instructions.md`, and the
+`.vscode/` and `.github/` trees. Every one of them documents _this version of
+`zen`_ rather than this project, so the current text is the only one worth
+having and a copy left behind by an upgrade is worse than none. They are
+replaced whether or not they were edited, and the report is taken afterwards,
+so its exit code answers the repaired project.
+
+This is the other half of `keep: true` in
+[scaffold.ts](packages/cli/src/scaffold.ts). A scaffold never overwrites, which
+is right for `agents.yaml`, the prompts, the specification and
+`agents/instructions.md` - the project's own house rules, whose template says
+"replace this with yours" - and wrong for the two that only restate how the
+runtime behaves. Before `--fix` there was no way to upgrade them except by
+hand, which is why `agents/memory-instructions.md` was also copied into the
+`zen-memory` skill's `references/`: somewhere to `diff` against. That copy is
+still written, and is now a second opinion rather than the only route back.
+
+### 9.4 Where the disk goes
 
 A container is per _session_, not per project, so a project worked on for a
 week has a container per session it ran and `persist: true` keeps every one of

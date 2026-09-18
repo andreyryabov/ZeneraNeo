@@ -30,11 +30,19 @@ import {
 //
 // No SUPERSEDES arrow can appear on the ordinary path: recall drops the node
 // one points at, so the edge loses an endpoint before it reaches here. It shows
-// up only under `stale`, which is the audit view, and `memory/instructions.ts`
-// therefore does not teach the model to look for one.
+// up only under `stale`, which is the audit view, and the house rules in
+// `agents/memory-instructions.md` therefore do not teach the model to look for
+// one.
+//
+// The preferences block is here too. It is the other thing the runtime renders
+// out of the graph for a model to read, and it exists for the one reason a
+// static document cannot cover it: each line carries a live id, without which a
+// preference can be read but not superseded.
 // ---------------------------------------------------------------------------
 
 export const RECOLLECTION_TAG = 'memory-recollection';
+
+export const PREFERENCES_TAG = 'memory-preferences';
 
 /** Enough to judge relevance; the model calls `memory_load` for the rest. */
 const TEXT_CLIP = 160;
@@ -269,4 +277,24 @@ function used(node: MemoryNode, now: number): string {
     const days = Math.floor((now - Date.parse(node.lastUsedAt)) / 86_400_000);
     const ago = days <= 0 ? 'today' : days === 1 ? 'yesterday' : `${days}d ago`;
     return `used ${node.useCount}\u00d7, ${ago}`;
+}
+
+export function renderPreferences(nodes: readonly MemoryNode[]): string {
+    if (!nodes.length) {
+        return '';
+    }
+    const lines = nodes.map((n) => `- ${oneLine(n.text)} [${n.id}]`);
+    return [
+        `<${PREFERENCES_TAG}>`,
+        "Standing instructions from earlier runs. They apply unless this run's",
+        'request contradicts them; to change one, commit the replacement and link',
+        'it to the id here with SUPERSEDES.',
+        ...lines,
+        `</${PREFERENCES_TAG}>`,
+    ].join('\n');
+}
+
+/** Never clipped: half an instruction is a different instruction. */
+function oneLine(text: string): string {
+    return text.replace(/\s+/g, ' ').trim();
 }

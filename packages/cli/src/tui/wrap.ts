@@ -98,8 +98,8 @@ export const CHROME_ROWS = 7;
 export const THINKING_ROWS = 1;
 
 /** How much of the frame the work in flight may take. A branch is a box now,
- *  not a row, so a fan-out of two costs fourteen of these. */
-export const ACTIVITY_ROWS = 16;
+ *  not a row, so a fan-out of two costs twenty-two of these. */
+export const ACTIVITY_ROWS = 24;
 
 /** The width of the elapsed-time column every call row is drawn behind. */
 export const TIME_COL = 5;
@@ -138,8 +138,19 @@ export function budgetOf(rows: number, activity: number, thinking: number): Budg
     return { activity: shown, thinking: tail, live: rest - tail, total };
 }
 
-/** The rows a branch box may spend on its own calls and its reasoning. */
-export const BRANCH_ROWS = 5;
+/** The rows a branch box may spend on its own calls, prose and reasoning. */
+export const BRANCH_ROWS = 9;
+
+/**
+ * The fewest a box is worth drawing at.
+ *
+ * One row per branch fit more of them on screen and said nothing about any of
+ * them: a box holding a single call is a label, and the reason it is a box at
+ * all is that what a branch just did and said is why it is doing this. Below
+ * six rows there is no *what it just did* — so a fork too wide to give every
+ * branch six is cut to the ones that fit and counted, which is `fitActivity`.
+ */
+export const BRANCH_MIN = 6;
 
 /** Rows a branch box spends on chrome: the title rule and the closing one. */
 export const BOX_CHROME = 2;
@@ -149,16 +160,14 @@ export const BOX_CHROME = 2;
  * activity region has to divide between them.
  *
  * Every branch gets the same number, because they are the same kind of thing
- * and a fan-out is read across, not down. A wide fork spends its rows on being
- * complete rather than on being detailed: eight branches showing one call each
- * is a picture of the fork, eight rows of one branch is not.
+ * and a fan-out is read across, not down.
  */
 export function branchRows(count: number, allowance: number): number {
     if (count <= 0) {
         return 0;
     }
     const each = Math.floor(Math.max(0, allowance) / count) - BOX_CHROME;
-    return Math.max(1, Math.min(BRANCH_ROWS, each));
+    return Math.max(BRANCH_MIN, Math.min(BRANCH_ROWS, each));
 }
 
 /**

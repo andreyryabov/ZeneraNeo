@@ -65,6 +65,15 @@ const userMemory = new MemoryIndex({
     store: await MemoryStore.open(mkdtempSync(join(tmpdir(), 'neo-demo-memory-'))),
 });
 
+// How to use the graph is not something the runtime supplies: a `zen` project
+// carries it as house rules in `agents/memory-instructions.md`, and an SDK
+// embedder writes its own. Without this an agent gets the tool schemas alone.
+const MEMORY_RULES = `Memory is a graph shared with other agents, and it outlives this run. Search it
+before paying for anything expensive, and commit what a later run would
+otherwise have to work out again — in one call, with the artifact and what
+explains it together. Never edit a memory to correct it: commit the new one and
+link it to the old with SUPERSEDES.`;
+
 /** Curated instruction bundles the agent can pull in on demand. */
 const travelSkills = new StaticSkillProvider(
     [
@@ -102,7 +111,7 @@ async function test() {
         description: 'Breaks a task into concrete steps and answers with the plan.',
         // Instructions may be a string or a function of the run context.
         instructions: (ctx) =>
-            `You are a planner for user ${ctx.userId}. Answer with a concrete day-by-day plan.`,
+            `You are a planner for user ${ctx.userId}. Answer with a concrete day-by-day plan.\n\n${MEMORY_RULES}`,
         tools: [getWeather],
         // 'index' injects the skill list into the prompt; the agent pulls the
         // full body of a skill on demand instead of paying for it up front.
