@@ -2102,3 +2102,17 @@ Update it when:
 
 Do not let it grow without pruning. When a section is only true of one agent, it
 belongs in that agent's prompt, not here.
+---
+
+## 13. Function calling rules
+
+Before every tool call, write **one line** saying what you are about to do and
+why. One line per call, in front of it - not a plan for the whole turn, and not
+a summary afterwards.
+
+- Say the intent and the reason, not the tool's name or its arguments:
+  _"Reading `agents.yaml` to see which agents hold `sandbox:*`."_
+- When several calls go out together, write one line covering the batch.
+- Keep it to a sentence. If it needs two, the call needs splitting, not the
+  sentence.
+- Do not narrate the result in the same line - the tool answers that.
