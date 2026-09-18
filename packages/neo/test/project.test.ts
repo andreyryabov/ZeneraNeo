@@ -129,19 +129,6 @@ describe('project layout', () => {
         ]);
     });
 
-    /** The old layout still runs; `zen check` is what asks for the move. */
-    it('still reads a legacy INSTRUCTIONS.md, ahead of the rest', async () => {
-        const p = await loadProject(
-            project({ ...MINIMAL, 'INSTRUCTIONS.md': 'From before the move.' }),
-        );
-        const instructions = p.registry.get('solo').instructions as { src: string }[];
-        expect(instructions.map((i) => i.src)).toEqual([
-            'INSTRUCTIONS.md',
-            'agents/instructions.md',
-            'agents/prompts/solo.md',
-        ]);
-    });
-
     it('falls back to agents/prompts/<name>.md when `system` is absent', async () => {
         const p = await loadProject(
             project({
@@ -481,7 +468,7 @@ describe('validation', () => {
     });
 
     it('reports a missing configuration file', async () => {
-        await expect(loadProject(project({ 'INSTRUCTIONS.md': 'x' }))).rejects.toThrow(
+        await expect(loadProject(project({ 'README.md': 'x' }))).rejects.toThrow(
             /no project configuration/,
         );
     });

@@ -234,7 +234,6 @@ const CONFIG_NAMES = ['agents.yaml', 'agents.yml', 'agents/agents.yaml', 'agents
 const AGENTS_DIR = 'agents';
 const HOUSE_RULES = 'agents/instructions.md';
 const INSTRUCTIONS_SUFFIX = '-instructions.md';
-const LEGACY_HOUSE_RULES = 'INSTRUCTIONS.md';
 const PROMPTS_DIR = 'agents/prompts';
 const SKILLS_DIR = 'agents/skills';
 const SKILL_FILE = 'SKILL.md';
@@ -244,9 +243,9 @@ const ASSETS_DIR = 'assets';
 const REFERABLE = /^[a-z0-9]+(?:[-_][a-z0-9]+)*$/;
 
 /**
- * Mirrors `readHouseRules` in the loader, in the same order: the legacy file
- * first, then `agents/instructions.md`, then every
- * `agents/<topic>-instructions.md` by filename.
+ * Mirrors `readHouseRules` in the loader, in the same order:
+ * `agents/instructions.md`, then every `agents/<topic>-instructions.md` by
+ * filename.
  */
 function houseRules(root: string): string[] {
     const found: string[] = [];
@@ -255,7 +254,6 @@ function houseRules(root: string): string[] {
             found.push(rel);
         }
     };
-    take(LEGACY_HOUSE_RULES);
     take(HOUSE_RULES);
     const dir = join(root, AGENTS_DIR);
     if (!existsSync(dir) || !statSync(dir).isDirectory()) {
@@ -440,18 +438,6 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
             message:
                 'no house rules, which is allowed: every agent then runs on its own role ' +
                 'prompt alone, with nothing shared between them',
-        });
-    }
-    if (rules.includes(LEGACY_HOUSE_RULES)) {
-        add({
-            severity: 'warning',
-            code: 'house-rules.legacy',
-            where: LEGACY_HOUSE_RULES,
-            message:
-                `${LEGACY_HOUSE_RULES} is where the house rules used to live. It is still ` +
-                `read, and still first, but the layout now keeps them under ${AGENTS_DIR}/ ` +
-                'so a project can have more than one of them',
-            fix: `move it to ${HOUSE_RULES}, or fold it into the ${AGENTS_DIR}/*${INSTRUCTIONS_SUFFIX} files already there`,
         });
     }
 

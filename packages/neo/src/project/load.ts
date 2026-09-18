@@ -110,8 +110,6 @@ const CONFIG_NAMES = ['agents.yaml', 'agents.yml', 'agents/agents.yaml', 'agents
 const HOUSE_RULES = 'agents/instructions.md';
 /** Every other `agents/<topic>-instructions.md`, in filename order. */
 const INSTRUCTIONS_SUFFIX = '-instructions.md';
-/** Where the house rules used to live. Still read, so an old project still runs. */
-const LEGACY_HOUSE_RULES = 'INSTRUCTIONS.md';
 
 /** A project's declaration, before anything is assembled from it. */
 export interface ProjectSource {
@@ -344,9 +342,6 @@ function readHouseRules(root: string): PromptPart[] {
             rules.push(promptFile(path, 'house_rules', rel));
         }
     };
-    // First, because it is the oldest and most general thing the project says:
-    // anything added under `agents/` during a migration layers on top of it.
-    take(LEGACY_HOUSE_RULES);
     take(HOUSE_RULES);
     for (const name of topics(root)) {
         take(`${AGENTS_DIR}/${name}`);

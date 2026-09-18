@@ -33,8 +33,6 @@ checked too. A word that is neither is a usage error (exit 2), not a report.
   rather than ignored.
 - Every file the configuration names is on disk and non-empty: the house rules
   under `agents/`, each agent's prompt, each skill's `SKILL.md`, each asset glob.
-  A root `INSTRUCTIONS.md` is still read, and reported as something to move to
-  `agents/instructions.md`.
 - Hand-offs and forks name agents that exist, and no agent hands off to itself.
 - Tool selectors resolve against the real tool set, including a skill's own
   `tools:` frontmatter.

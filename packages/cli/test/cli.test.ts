@@ -1027,23 +1027,6 @@ describe('the project check', () => {
         );
     });
 
-    /** The old layout still runs, so this is a warning and never an error. */
-    it('asks for a root INSTRUCTIONS.md to be moved', async () => {
-        const dir = project({
-            'INSTRUCTIONS.md': 'House rules, where they used to live.\n',
-            'agents.yaml': 'version: 1\nmodel: gpt-4o\nagents:\n  - name: solo\n',
-            'agents/prompts/solo.md': 'Be useful.\n',
-        });
-        const report = await validateProject({ dir });
-
-        const legacy = report.findings.find((f) => f.code === 'house-rules.legacy');
-        expect(legacy?.severity).toBe('warning');
-        expect(legacy?.fix).toContain('agents/instructions.md');
-        expect(errors(report)).toEqual([]);
-        expect(codes(report)).not.toContain('house-rules.missing');
-        expect(report.agents[0].instructions[0]).toBe('INSTRUCTIONS.md');
-    });
-
     it('reports every broken reference, not the first', async () => {
         const dir = project({
             'agents.yaml':

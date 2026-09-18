@@ -247,8 +247,7 @@ The config is found by name, in order: `agents.yaml`, `agents.yml`,
 
 The house rules are `agents/instructions.md` plus every
 `agents/<topic>-instructions.md`, read in filename order and prepended to every
-agent (§3.2). A project written before the move keeps its `INSTRUCTIONS.md` in
-the root; that still loads, and `zen check` says to move it.
+agent (§3.2).
 
 ### 2.2 Variants
 

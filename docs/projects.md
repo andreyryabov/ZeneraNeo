@@ -134,10 +134,6 @@ Shared context before the specific job - which also puts the stable half of the
 prompt in front, where a cache can reuse it. All of them are optional; an agent
 with neither simply has no instructions.
 
-A project written against the old layout, with `INSTRUCTIONS.md` in the root, is
-still read - that file takes the first position. `zen check` reports it as
-something to move.
-
 ## Paths
 
 Every path a project file names goes through one chokepoint. A project is data

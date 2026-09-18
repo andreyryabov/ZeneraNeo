@@ -15,7 +15,7 @@ loadEnv();
 // This one keeps nothing in the source: both agents are assembled from files
 // under ./assets/handbook, and so are their skills.
 //
-//   assets/handbook/INSTRUCTIONS.md               shared by both agents
+//   assets/handbook/instructions.md               shared by both agents
 //   assets/handbook/triage.md                     one agent's own brief
 //   assets/handbook/resolver.md                   the other's
 //   assets/handbook/skills/shipping_delays/SKILL.md   instructions alone
@@ -92,16 +92,16 @@ const handbookSkills = new FileSkillProvider({
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-    banner('Prompts on disk', 'two agents, one shared INSTRUCTIONS.md, skills from files');
+    banner('Prompts on disk', 'two agents, one shared instructions.md, skills from files');
 
     // Read once, used by both agents. Same bytes, same content hash, so the
     // report shows one document feeding two prompts rather than two copies.
     //
     // The third argument is the name the model is told, written onto the block
-    // as `<house_rules src="INSTRUCTIONS.md">`. Deliberately not the path read
+    // as `<house_rules src="instructions.md">`. Deliberately not the path read
     // from: that one is absolute, and a home directory in the prompt gives two
     // machines two different cache prefixes for the same text.
-    const house = promptFile(doc('INSTRUCTIONS.md'), 'house_rules', 'INSTRUCTIONS.md');
+    const house = promptFile(doc('instructions.md'), 'house_rules', 'instructions.md');
 
     const runner = new AgentRunner({
         model: pick('thinking'),
