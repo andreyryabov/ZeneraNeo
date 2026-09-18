@@ -77,9 +77,11 @@ import {
     budgetOf,
     CHROME_ROWS,
     clip,
+    describeCall,
+    gistOf,
     readable,
     segmentsOf,
-    THINKING_CHROME,
+    summarise,
     THINKING_ROWS,
     windowOf,
     wrap,
@@ -488,9 +490,8 @@ describe('dividing the frame', () => {
     // Same bug, one level up: three blocks now share the rows below the
     // scrollback, and their total is the thing that must not exceed the
     // viewport. Anything else on screen is `Static`, which never repaints.
-    // A reasoning block also draws the two rules that box it in.
     const height = (b: { activity: number; thinking: number; live: number }): number =>
-        b.activity + b.thinking + b.live + (b.thinking ? THINKING_CHROME : 0);
+        b.activity + b.thinking + b.live;
 
     it('never hands out more rows than the terminal has', () => {
         for (const rows of [1, 2, 6, 7, 8, 12, 24, 60]) {
@@ -513,17 +514,21 @@ describe('dividing the frame', () => {
         }
     });
 
-    it('drops a reasoning block too cramped to be worth boxing', () => {
-        // Two rows to give away cannot carry a rule, a line and a rule.
-        expect(budgetOf(9, 0, THINKING_ROWS).thinking).toBe(0);
-        expect(budgetOf(9, 0, THINKING_ROWS).live).toBe(2);
-        expect(budgetOf(11, 0, THINKING_ROWS).thinking).toBe(1);
+    it('drops the reasoning line rather than the answer', () => {
+        // Two rows to give away go to the answer first: the gist is a heading
+        // for text that is about to arrive, and a heading with nothing under
+        // it is worth less than the thing itself.
+        expect(budgetOf(9, 0, THINKING_ROWS)).toMatchObject({ thinking: 1, live: 1 });
+        expect(budgetOf(8, 2, THINKING_ROWS)).toMatchObject({ activity: 0, thinking: 1, live: 1 });
     });
 
-    it('gives a settled reasoning block only the rows it asks for', () => {
-        expect(budgetOf(24, 0, THINKING_ROWS).thinking).toBe(6);
+    it('never spends more than a row on reasoning', () => {
+        // However much arrives, and whatever the caller asks for: it is a
+        // heading, and the whole chain is in the report.
+        expect(budgetOf(24, 0, THINKING_ROWS).thinking).toBe(1);
         expect(budgetOf(24, 0, 1).thinking).toBe(1);
-        expect(budgetOf(24, 0, 1).live).toBe(14);
+        expect(budgetOf(24, 0, 1).live).toBe(16);
+        expect(budgetOf(24, 0, 0).live).toBe(17);
     });
 
     it('caps what is in flight rather than the answer', () => {
@@ -599,6 +604,113 @@ describe('reading a tool payload', () => {
 
     it('keeps a non-string value as written', () => {
         expect(readable('{"names":["docs_index"]}')).toBe('["docs_index"]');
+    });
+});
+
+describe('saying what a call is doing', () => {
+    // A transcript row has one line to say what the agent did, and the tool's
+    // own name next to its serialised arguments is the least readable way to
+    // spend it.
+
+    it('gives a known tool a verb and the argument that identifies it', () => {
+        expect(describeCall('run_command', '{"command":"npm test"}')).toEqual({
+            verb: 'run',
+            subject: 'npm test',
+        });
+        expect(describeCall('read_file', '{"path":"src/index.ts","start":1}')).toEqual({
+            verb: 'read',
+            subject: 'src/index.ts',
+        });
+    });
+
+    it('names a few items and counts more than a few', () => {
+        const two = '{"nodes":[{"name":"alpha"},{"name":"beta"}]}';
+        expect(describeCall('memory_commit', two).subject).toBe('alpha, beta');
+        const three = '{"nodes":[{"name":"a"},{"name":"b"},{"name":"c"}]}';
+        expect(describeCall('memory_commit', three).subject).toBe('3 nodes');
+    });
+
+    it('counts an array of plain strings too', () => {
+        expect(describeCall('memory_forget', '{"ids":["n1"]}').subject).toBe('n1');
+        expect(describeCall('skill_load', '{"names":["a","b","c","d"]}').subject).toBe('4 skills');
+    });
+
+    it('reads the files out of a patch rather than the patch', () => {
+        const patch =
+            '{"patch":"*** Begin Patch\\n*** Update File: src/a.ts\\n@@\\n-x\\n+y\\n' +
+            '*** Add File: src/b.ts\\n"}';
+        expect(describeCall('apply_patch', patch)).toEqual({
+            verb: 'patch',
+            subject: 'src/a.ts, src/b.ts',
+        });
+        expect(
+            describeCall(
+                'apply_patch',
+                '{"patch":"*** Update File: a\\n*** Update File: b\\n*** Delete File: c\\n"}',
+            ).subject,
+        ).toBe('3 files');
+    });
+
+    it('draws a move as where it went', () => {
+        expect(describeCall('move_file', '{"from":"a.ts","to":"b.ts"}').subject).toBe(
+            'a.ts → b.ts',
+        );
+    });
+
+    it('reads a handoff off the tool name, since there is one per agent', () => {
+        expect(describeCall('transfer_to_docs_searcher', '{}')).toEqual({
+            verb: 'hand off to',
+            subject: 'docs_searcher',
+        });
+    });
+
+    it('falls back to the name and the payload for a tool it does not know', () => {
+        expect(describeCall('lookup_invoice', '{"id":"INV-9"}')).toEqual({
+            verb: 'lookup_invoice',
+            subject: 'INV-9',
+        });
+    });
+});
+
+describe('saying what came back', () => {
+    it('lets an error have the whole row', () => {
+        expect(summarise('run_command', '{"exit_code":1,"error":"no such file"}')).toBe(
+            'no such file',
+        );
+    });
+
+    it('counts a listing rather than naming the first two of forty', () => {
+        expect(summarise('list_dir', '{"path":"/src","entries":["a.ts","b.ts","c.ts"]}')).toBe(
+            '3 entries',
+        );
+    });
+
+    it('takes the field that says how it went', () => {
+        expect(summarise('run_command', '{"exit_code":0,"stdout":"ok"}')).toBe('exit code 0');
+        expect(summarise('read_file', '{"path":"a.ts","lines":120}')).toBe('lines 120');
+    });
+
+    it('shows the payload for a tool it does not know', () => {
+        expect(summarise('lookup_invoice', '{"total":"42.00"}')).toBe('42.00');
+    });
+});
+
+describe('the gist of a reasoning stream', () => {
+    it('takes the last heading, which is where the model got to', () => {
+        const text = '**Reading the config**\nsome prose\n**Checking the ports**\nmore prose';
+        expect(gistOf(text, 60)).toBe('Checking the ports');
+    });
+
+    it('falls back to the raw tokens when nothing is marked up', () => {
+        expect(gistOf('just thinking about the problem', 60)).toBe(
+            'just thinking about the problem',
+        );
+    });
+
+    it('is always one row', () => {
+        const text = `**A**\n${'word '.repeat(400)}`;
+        expect(gistOf(text, 40)).not.toContain('\n');
+        expect(gistOf(text, 40).length).toBeLessThanOrEqual(40);
     });
 });
 
