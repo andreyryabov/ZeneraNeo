@@ -877,7 +877,7 @@ export async function launch(opts: Launch): Promise<Outcome> {
     const began = Date.now();
     const beat = setInterval(() => {
         const seconds = Math.round((Date.now() - began) / 1000);
-        sink.status?.(`Working... ${seconds}s`);
+        sink.status?.(`working: ${seconds}s`);
     }, FRAME_MS);
     beat.unref();
 

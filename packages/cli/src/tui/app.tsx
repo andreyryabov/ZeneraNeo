@@ -719,6 +719,7 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                     agent={agent}
                     busy={busy}
                     spin={spin}
+                    frame={frame}
                     running={mine}
                     forked={branches.current.size}
                     step={step}
@@ -1155,10 +1156,62 @@ function Live({ text, columns, rows }: StreamProps): React.ReactElement {
 /** The label column the two number rows line up behind. */
 const LABEL = 10;
 
+/** Frames the crest spends past the end, so a sweep reads as a pass, not a loop. */
+const SWEEP_GAP = 6;
+
+/**
+ * A crest of weight travelling through a word, left to right.
+ *
+ * The spinner is proof the process is alive, but it is chrome and the eye
+ * reads the word beside it — a word that never moves is what a hung run looks
+ * like. The wave is weight rather than hue because the theme has no ramp to
+ * spend: dim at rest, the terminal's own weight at the crest, and the word
+ * keeps whatever colour its role gave it.
+ */
+function Shimmer({
+    text,
+    frame,
+    color,
+}: {
+    text: string;
+    frame: number;
+    color?: string;
+}): React.ReactElement {
+    const chars = [...text];
+    // A new word is a new thing to say, so the sweep starts over on it rather
+    // than picking the crest up wherever the last word had got to.
+    const begun = useRef(frame);
+    const said = useRef(text);
+    if (said.current !== text) {
+        said.current = text;
+        begun.current = frame;
+    }
+    const head = (frame - begun.current) % (chars.length + SWEEP_GAP);
+    return (
+        <Text>
+            {chars.map((ch, i) => {
+                // The crest sits on the head and the tail drags behind it.
+                const behind = head - i;
+                return (
+                    <Text
+                        key={i}
+                        color={color}
+                        bold={behind === 0}
+                        dimColor={behind < 0 || behind > 2}
+                    >
+                        {ch}
+                    </Text>
+                );
+            })}
+        </Text>
+    );
+}
+
 function Footer({
     agent,
     busy,
     spin,
+    frame,
     running,
     forked,
     step,
@@ -1171,6 +1224,7 @@ function Footer({
     agent: string;
     busy: boolean;
     spin: string;
+    frame: number;
     running: Running[];
     /** branches out on a fork, which is what the trunk is waiting on */
     forked: number;
@@ -1220,7 +1274,12 @@ function Footer({
                 {busy ? (
                     <Text color={musing ? theme.thinking.color : theme.warn}>
                         {'  '}
-                        {spin} {status}
+                        {spin}{' '}
+                        <Shimmer
+                            text={status}
+                            frame={frame}
+                            color={musing ? theme.thinking.color : theme.warn}
+                        />
                     </Text>
                 ) : null}
                 {busy ? <Text dimColor>{`  ${aside}`}</Text> : null}
