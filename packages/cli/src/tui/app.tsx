@@ -906,8 +906,7 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                     model={model}
                     stats={stats}
                     inflight={inflight}
-                    reasoning={musing}
-                    columns={columns}
+                    reasoning={musing && streaming}
                 />
 
                 {busy ? null : (
@@ -1432,7 +1431,6 @@ function Footer({
     stats,
     inflight,
     reasoning,
-    columns,
 }: {
     agent: string;
     busy: boolean;
@@ -1445,8 +1443,8 @@ function Footer({
     model?: string;
     stats: Stats;
     inflight?: { usage: TokenUsage; durationMs: number };
+    /** Reasoning tokens are what is arriving right now. */
     reasoning: boolean;
-    columns: number;
 }): React.ReactElement {
     const theme = useTheme();
     // Who before what. The agent is the subject of the sentence, and in a
@@ -1456,44 +1454,31 @@ function Footer({
         ...(model ? [model] : []),
         'esc to stop',
     ].join(' · ');
-    // The argument is what identifies a generic tool — `run_command` is every
-    // shell command there is — but the activity row above carries it in full,
-    // so the footer takes it only when there is width to say something useful.
-    const first = running[0];
-    const room = columns - agent.length - aside.length - 12;
-    const view = first ? describeCall(first.name, first.args) : undefined;
+    // One word for what the turn is spending its time on, and the three are
+    // different kinds of waiting: the model is composing, the model is
+    // reasoning about what to compose, or the model is not running at all and
+    // something else is. What the call actually is belongs to the row above,
+    // which has the width to say it.
+    const phase = running.length || forked ? 'waiting' : reasoning ? 'reasoning' : 'working';
     const what =
-        running.length > 1
-            ? `running ${running.length} tools`
-            : view
-              ? room >= 24
-                  ? clip(`${view.verb} ${view.subject}`, room)
-                  : view.verb
-              : forked
+        phase !== 'waiting'
+            ? phase
+            : running.length > 1
+              ? `waiting on ${running.length} tools`
+              : forked && !running.length
                 ? // Having forked, the trunk has nothing of its own to do. The
                   // boxes above say what the branches are doing.
                   `waiting on ${forked} ${forked === 1 ? 'branch' : 'branches'}`
-                : reasoning
-                  ? 'reasoning'
-                  : 'thinking';
-    // A clip has already ended it with one.
-    const status = what.endsWith('…') ? what : `${what}…`;
-    // Nothing of its own in flight means the word above is about reasoning, so
-    // it takes the same hue the reasoning block does.
-    const musing = !running.length && !forked;
+                : 'waiting';
+    const hue = theme.phase[phase];
     return (
         <Box flexDirection="column" marginTop={1}>
             <Box>
                 <Text color={theme.accent}>{agent}</Text>
                 {busy ? (
-                    <Text color={musing ? theme.thinking.color : theme.warn}>
+                    <Text color={hue}>
                         {'  '}
-                        {spin}{' '}
-                        <Shimmer
-                            text={status}
-                            frame={frame}
-                            color={musing ? theme.thinking.color : theme.warn}
-                        />
+                        {spin} <Shimmer text={`${what}…`} frame={frame} color={hue} />
                     </Text>
                 ) : null}
                 {busy ? <Text dimColor>{`  ${aside}`}</Text> : null}

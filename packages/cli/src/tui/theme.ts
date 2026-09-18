@@ -57,6 +57,12 @@ export interface Theme {
      */
     readonly thinking: LineStyle;
     /**
+     * The three things a turn spends time on. One word in the footer says which,
+     * and it is read at a glance from across a desk — so the word changing is
+     * backed by the colour changing, not left to be spelled out.
+     */
+    readonly phase: Record<'reasoning' | 'waiting' | 'working', string>;
+    /**
      * Branch colours, cycled in order of first sight. A fan-out is the one
      * place where colour carries information rather than decoration: eight
      * branches reporting at once are only separable if they are told apart.
@@ -81,6 +87,7 @@ const DARK: Theme = {
     accent: 'cyan',
     warn: 'yellow',
     thinking: { color: 'magenta' },
+    phase: { reasoning: 'magenta', waiting: 'yellow', working: 'cyan' },
     lanes: ['cyan', 'green', 'yellow', 'blue', 'red', 'magenta'],
 };
 
@@ -100,6 +107,9 @@ const LIGHT: Theme = {
     accent: 'blue',
     warn: 'magenta',
     thinking: { color: 'magenta' },
+    // No yellow: `waiting` takes blue and `working` green, which are the two
+    // that survive paper.
+    phase: { reasoning: 'magenta', waiting: 'blue', working: 'green' },
     // No cyan or yellow: on paper they are barely darker than the paper.
     lanes: ['blue', 'green', 'red', 'magenta'],
 };
