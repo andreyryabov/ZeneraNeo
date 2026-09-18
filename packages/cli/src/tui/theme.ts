@@ -86,7 +86,9 @@ const DARK: Theme = {
     },
     accent: 'cyan',
     warn: 'yellow',
-    thinking: { color: 'magenta' },
+    // Bright: the gist is one line among many and plain `magenta` on black is
+    // the darkest of the six.
+    thinking: { color: 'magentaBright' },
     phase: { reasoning: 'magenta', waiting: 'yellow', working: 'cyan' },
     lanes: ['cyan', 'green', 'yellow', 'blue', 'red', 'magenta'],
 };

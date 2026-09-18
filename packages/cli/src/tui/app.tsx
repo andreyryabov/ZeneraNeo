@@ -1333,11 +1333,9 @@ function Reasoning({
         <Box height={1} paddingLeft={GUTTER} overflow="hidden">
             <Text wrap="truncate-end">
                 {live ? (
-                    <Shimmer text={gist} frame={frame} color={theme.thinking.color} />
+                    <Shimmer text={gist} frame={frame} color={theme.thinking.color} dim={false} />
                 ) : (
-                    <Text color={theme.thinking.color} dimColor>
-                        {gist}
-                    </Text>
+                    <Text color={theme.thinking.color}>{gist}</Text>
                 )}
             </Text>
         </Box>
@@ -1384,10 +1382,13 @@ function Shimmer({
     text,
     frame,
     color,
+    dim = true,
 }: {
     text: string;
     frame: number;
     color?: string;
+    /** Off-crest weight. Chrome rests dim; anything carrying words does not. */
+    dim?: boolean;
 }): React.ReactElement {
     const chars = [...text];
     // A new word is a new thing to say, so the sweep starts over on it rather
@@ -1409,7 +1410,7 @@ function Shimmer({
                         key={i}
                         color={color}
                         bold={behind === 0}
-                        dimColor={behind < 0 || behind > 2}
+                        dimColor={dim && (behind < 0 || behind > 2)}
                     >
                         {ch}
                     </Text>
