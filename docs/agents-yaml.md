@@ -7,6 +7,12 @@ The schema is **strict**: an unknown key is an error, not a value silently
 ignored. Failures are reported as `agents.yaml: agents[1].skills.discovery - …`,
 naming the path rather than dumping a JSON blob.
 
+Everything below is also a JSON Schema, which `zen init` and `zen open` write to
+`.vscode/agents.schema.json` and point the editor at - so with the
+`redhat.vscode-yaml` extension installed, a key is completed, documented on
+hover and underlined when it is wrong as it is typed. It is an editor aid; the
+loader is the authority, and `zen check` is how to ask it.
+
 See [projects.md](projects.md) for the folder around this file.
 
 ## Skeleton

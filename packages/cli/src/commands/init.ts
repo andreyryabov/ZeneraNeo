@@ -167,7 +167,7 @@ export const init: Command = {
         'Writes SPECIFICATION.md, agents.yaml, agents/ (house rules, the memory',
         'rules and one role prompt) and scripts/, then records the directory so',
         '`zen list` and `zen open` can find it by name. Editor files',
-        '(.vscode/settings.json and the .github/ tree) are written alongside,',
+        '(.vscode/ and the .github/ tree) are written alongside,',
         'replacing any already there.',
         '',
         'A directory that is already a project is adopted rather than rebuilt:',

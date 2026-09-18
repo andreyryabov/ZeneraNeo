@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 //
 //   templates/project/   the project's own files. Written once and edited from
 //                        then on, so anything already there is left alone.
-//   templates/editor/    ours: `.vscode/settings.json` and the `.github/` tree,
+//   templates/editor/    ours: the `.vscode/` and `.github/` trees,
 //                        which describe this version of `zen` to the editor and
 //                        are replaced every time.
 //   templates/parts/     fragments spliced into a template above.

@@ -122,7 +122,7 @@ export const meta: Command = {
         'Nothing it needs is put on a command line: every credential reaches it',
         'through the environment, where other processes cannot read it.',
         '',
-        'The editor files `zen init` writes (.vscode/settings.json and the .github/',
+        'The editor files `zen init` writes (.vscode/ and the .github/',
         'tree) are refreshed in the project first, the way `zen open` refreshes',
         'them: the agent is about to read that brief, and it describes this version',
         'of zen. Edits to them do not survive.',

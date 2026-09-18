@@ -31,6 +31,7 @@ sessions/                       empty
 .env                            this project's environment, git-ignored
 .gitignore
 .vscode/settings.json           editor files
+.vscode/agents.schema.json      what validates agents.yaml as you type it
 .github/                        copilot instructions, prompts, this skill
 ```
 
@@ -46,9 +47,16 @@ which of the two it is, and `… fix` does the copy.
 
 The project's own files are never overwritten - `--force` is what allows
 writing into an occupied directory, and the files already there stay. The
-editor files are the exception: `.vscode/settings.json` and the `.github/` tree
-are ours and are replaced on every `init` and every `zen open`, so edits to them
-do not survive.
+editor files are the exception: `.vscode/` and the `.github/` tree are ours and
+are replaced on every `init` and every `zen open`, so edits to them do not
+survive.
+
+`.vscode/agents.schema.json` describes `agents.yaml` to the editor, so an
+unknown key is underlined where it is typed and every key carries its
+documentation on hover. It needs the `redhat.vscode-yaml` extension, which
+`.vscode/extensions.json` recommends. It is an editor aid and nothing else: it
+is rewritten from the version of `zen` in hand, and `zen check` is still what
+says whether a project loads.
 
 The default agent gets the file tools and a sandboxed shell, plus `exa:*` when
 the keyring holds an Exa key. It also gets memory: the store is scaffolded in
@@ -102,7 +110,7 @@ The editor is chosen in this order: `--editor`, `$ZENERA_EDITOR`, the editor
 this terminal belongs to, `$VISUAL` or `$EDITOR`, a known editor on `PATH` or
 installed, then the platform opener.
 
-Opening refreshes the editor files (`.vscode/settings.json` and the `.github/`
+Opening refreshes the editor files (`.vscode/` and the `.github/`
 tree) in the directory being opened. VS Code and its forks are launched with
 `--disable-workspace-trust`, so the settings written there apply to the new
 window immediately rather than after a prompt.

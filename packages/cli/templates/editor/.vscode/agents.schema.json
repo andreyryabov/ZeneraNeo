@@ -1,0 +1,611 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "$id": "https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/packages/cli/templates/editor/.vscode/agents.schema.json",
+    "title": "Zenera Neo agents.yaml",
+    "description": "Who exists in this project, what they may reach for, and which model answers for them. Written by `zen init` and replaced by every `zen init` and `zen open`, so it describes the version of `zen` in hand. The runtime is the authority: `zen check` reads the project the way a run does.",
+    "type": "object",
+    "required": ["agents"],
+    "additionalProperties": false,
+    "properties": {
+        "version": {
+            "description": "Schema version. There is one.",
+            "const": 1,
+            "default": 1
+        },
+        "default": {
+            "description": "The agent a run starts at. Wins over any agent's `default: true`.",
+            "$ref": "#/$defs/name"
+        },
+        "providers": {
+            "description": "Named connections: where requests go, and what credentials sign them. Declaring one is what lets a project hold two keys for the same vendor — the key is named once here, and models point at the name. The built-in kinds work without being declared.",
+            "type": "object",
+            "propertyNames": { "$ref": "#/$defs/name" },
+            "additionalProperties": { "$ref": "#/$defs/provider" }
+        },
+        "provider": {
+            "description": "The provider a bare model id belongs to, when the id carries no `<provider>:` prefix. Defaults to `openai`.",
+            "$ref": "#/$defs/name"
+        },
+        "models": {
+            "description": "Named model configurations, referred to by `model:` anywhere below. A name is either a shorthand reference or the object form, which is what gives reasoning and token knobs somewhere to live.",
+            "type": "object",
+            "propertyNames": { "$ref": "#/$defs/name" },
+            "additionalProperties": {
+                "oneOf": [{ "$ref": "#/$defs/modelRef" }, { "$ref": "#/$defs/modelSpec" }]
+            }
+        },
+        "model": {
+            "description": "The model an agent uses when it does not pin its own. Change it here and the whole project moves.",
+            "$ref": "#/$defs/modelRef"
+        },
+        "embeddings": {
+            "description": "Named vectorisers, referred to by `embedding:` here and under `memory:`.",
+            "type": "object",
+            "propertyNames": { "$ref": "#/$defs/name" },
+            "additionalProperties": {
+                "oneOf": [{ "$ref": "#/$defs/modelRef" }, { "$ref": "#/$defs/embeddingSpec" }]
+            }
+        },
+        "embedding": {
+            "description": "The vectoriser handed back when one is asked for by no name.",
+            "$ref": "#/$defs/modelRef"
+        },
+        "skills": {
+            "description": "Skill directories, relative to the project root, merged into one catalog. `agents/skills` by convention, so this is only for a catalog kept somewhere else or shared between projects.",
+            "oneOf": [
+                { "type": "string", "minLength": 1 },
+                { "type": "array", "items": { "type": "string", "minLength": 1 } }
+            ]
+        },
+        "assets": {
+            "description": "Reference material, mounted read-only at /assets for every agent. `assets/` by convention, so this is only for material kept elsewhere in the project.",
+            "type": "string",
+            "minLength": 1,
+            "default": "assets"
+        },
+        "sandbox": {
+            "description": "The container `run_command` and the other shell tools execute in.",
+            "$ref": "#/$defs/sandbox"
+        },
+        "memory": {
+            "description": "The one graph every agent's `memory:` binding is a view onto. An agent that opts in without this block gets the defaults; a project that mentions memory nowhere opens no store at all.",
+            "$ref": "#/$defs/memoryConfig"
+        },
+        "agents": {
+            "description": "At least one. The first is the entry point unless `default:` says otherwise.",
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/agent" }
+        }
+    },
+    "$defs": {
+        "name": {
+            "description": "Lower-case words joined by `-` or `_`. Names reach the model as part of `transfer_to_<name>` and reach the file system as directory names, so they are unambiguous in both.",
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:[-_][a-z0-9]+)*$"
+        },
+        "modelRef": {
+            "description": "A key into `models:`, or the shorthand — `gpt-4o`, `openai:o3`, `openai/responses:o3`, `openrouter:anthropic/claude-sonnet-4.5`. The prefix is the provider name, not the vendor.",
+            "type": "string",
+            "minLength": 1
+        },
+        "apiKey": {
+            "description": "The key itself, or `${VAR}`. Wins over any environment lookup. Substitution happens when the model is built, so a configuration nothing uses never demands a key.",
+            "type": "string",
+            "minLength": 1
+        },
+        "apiKeyEnv": {
+            "description": "The environment variable holding the key. Defaults to the kind's conventional name — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`.",
+            "type": "string",
+            "minLength": 1
+        },
+        "baseURL": {
+            "description": "The endpoint, or `${VAR}` — for gateways and compatible endpoints.",
+            "type": "string",
+            "minLength": 1
+        },
+        "baseURLEnv": {
+            "description": "The environment variable holding the base url.",
+            "type": "string",
+            "minLength": 1
+        },
+        "provider": {
+            "description": "A connection, not a model. One client is built per name and shared, so five agents on one key open one connection pool.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "kind": {
+                    "description": "Which protocol, and so which SDK and adapter. Each vendor's own SDK is used rather than its OpenAI-compatible endpoint, which drops thinking budgets and cache accounting. `openai-compatible` is the shim — vLLM, a self-hosted gateway. Defaults to `openai`.",
+                    "type": "string",
+                    "enum": [
+                        "openai",
+                        "google",
+                        "vertex",
+                        "anthropic",
+                        "openrouter",
+                        "openai-compatible"
+                    ],
+                    "default": "openai"
+                },
+                "apiKey": { "$ref": "#/$defs/apiKey" },
+                "apiKeyEnv": { "$ref": "#/$defs/apiKeyEnv" },
+                "baseURL": { "$ref": "#/$defs/baseURL" },
+                "baseURLEnv": { "$ref": "#/$defs/baseURLEnv" },
+                "project": {
+                    "description": "vertex only — the GCP project id the endpoint is addressed by.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "location": {
+                    "description": "vertex only — a region, or `global`.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "headers": {
+                    "description": "Sent on every request: gateway routing, attribution, api versions.",
+                    "type": "object",
+                    "propertyNames": { "type": "string", "minLength": 1 },
+                    "additionalProperties": { "type": "string" }
+                },
+                "timeoutMs": {
+                    "description": "Per-request timeout, in milliseconds.",
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                },
+                "maxRetries": {
+                    "description": "Extra attempts on a 429, a 408 or a 5xx, waiting 1s then 2s, 4s, 8s — doubling up to a minute, and honouring `Retry-After`. Retrying happens at the transport, so a retried call is one that never started. `0` fails fast.",
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 4
+                },
+                "concurrency": {
+                    "description": "Ceiling on embedding requests in flight on this connection. The working number is discovered from the provider's own refusals; this only caps how high it may climb, for a key something else also needs quota from.",
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                }
+            }
+        },
+        "routing": {
+            "description": "openrouter only — which upstream provider serves a request. Named `routing` because `provider:` here already means the connection.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "order": {
+                    "description": "Providers to try first. A preference, not a restriction.",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": { "type": "string", "minLength": 1 }
+                },
+                "only": {
+                    "description": "Restricts serving to these, rather than merely preferring them.",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": { "type": "string", "minLength": 1 }
+                },
+                "ignore": {
+                    "description": "Providers that may never serve this request.",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": { "type": "string", "minLength": 1 }
+                },
+                "sort": {
+                    "description": "`price`, `throughput`, `latency`, `exacto`. A plain string because OpenRouter adds to the set continuously.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "allowFallbacks": {
+                    "description": "May OpenRouter go beyond `order`. On unless set false.",
+                    "type": "boolean",
+                    "default": true
+                },
+                "requireParameters": {
+                    "description": "Skip a provider that would silently drop a parameter rather than serve it.",
+                    "type": "boolean"
+                },
+                "dataCollection": {
+                    "description": "Whether a provider that trains on requests may serve this one.",
+                    "type": "string",
+                    "enum": ["allow", "deny"]
+                },
+                "quantizations": {
+                    "description": "`int4` `int8` `fp4` `mxfp4` `nvfp4` `fp6` `fp8` `mxfp8` `fp16` `bf16` `fp32`.",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": { "type": "string", "minLength": 1 }
+                },
+                "zdr": {
+                    "description": "Zero-data-retention endpoints only.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "modelSpec": {
+            "description": "A named model configuration. The object form is what carries the knobs a shorthand cannot.",
+            "type": "object",
+            "required": ["model"],
+            "additionalProperties": false,
+            "properties": {
+                "provider": {
+                    "description": "A name from `providers:`, or a built-in kind.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "api": {
+                    "description": "OpenAI protocol only — the other kinds speak one api, so naming this on a Gemini, Claude or OpenRouter model is an error rather than a field to ignore.",
+                    "type": "string",
+                    "enum": ["chat", "responses"]
+                },
+                "model": {
+                    "description": "The id the api is sent, without a provider prefix.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "apiKey": { "$ref": "#/$defs/apiKey" },
+                "apiKeyEnv": { "$ref": "#/$defs/apiKeyEnv" },
+                "baseURL": { "$ref": "#/$defs/baseURL" },
+                "baseURLEnv": { "$ref": "#/$defs/baseURLEnv" },
+                "reasoningEffort": {
+                    "description": "`minimal`, `low`, `medium`, `high` — a plain string on purpose: the vendor's accepted set changes faster than this file would, and the request that carries a bad value is the authority on rejecting it.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "reasoningSummary": {
+                    "description": "How much of the reasoning is summarised back.",
+                    "type": "string",
+                    "enum": ["auto", "concise", "detailed"]
+                },
+                "store": {
+                    "description": "OpenAI responses api — whether the provider keeps the conversation.",
+                    "type": "boolean"
+                },
+                "maxTokens": {
+                    "description": "anthropic only — the output cap its api requires.",
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                },
+                "thinkingBudgetTokens": {
+                    "description": "anthropic only — the extended thinking budget.",
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                },
+                "thinkingBudget": {
+                    "description": "gemini only — 2.5 takes a token budget.",
+                    "type": "integer"
+                },
+                "thinkingLevel": {
+                    "description": "gemini only — 3 takes a level instead of a budget.",
+                    "type": "string",
+                    "enum": ["minimal", "low", "medium", "high"]
+                },
+                "includeThoughts": {
+                    "description": "gemini only — whether thought summaries come back.",
+                    "type": "boolean"
+                },
+                "routing": {
+                    "description": "openrouter only — who serves the request.",
+                    "$ref": "#/$defs/routing"
+                },
+                "fallbacks": {
+                    "description": "openrouter only — which models to try when no permitted provider can serve this one.",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": { "type": "string", "minLength": 1 }
+                },
+                "serviceTier": {
+                    "description": "What the request is worth: which queue the provider puts it in.",
+                    "type": "string",
+                    "enum": ["auto", "default", "fast", "flex", "priority", "scale"]
+                }
+            }
+        },
+        "embeddingSpec": {
+            "description": "A vectoriser. Deliberately much smaller than a model: an embedding call has no conversation, no tools and no reasoning, so a connection, an id and a width is all there is to say.",
+            "type": "object",
+            "required": ["model"],
+            "additionalProperties": false,
+            "properties": {
+                "provider": {
+                    "description": "A name from `providers:`, or a built-in kind.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "model": {
+                    "description": "The id the api is sent, without a provider prefix.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "apiKey": { "$ref": "#/$defs/apiKey" },
+                "apiKeyEnv": { "$ref": "#/$defs/apiKeyEnv" },
+                "baseURL": { "$ref": "#/$defs/baseURL" },
+                "baseURLEnv": { "$ref": "#/$defs/baseURLEnv" },
+                "dimensions": {
+                    "description": "Truncate to this width, where the model supports it. The width a store uses is learned from the first response, and changing it afterwards is refused rather than silently mixing two vector spaces.",
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                },
+                "title": {
+                    "description": "gemini only — a document title the retrieval task type takes into account.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "maxBatch": {
+                    "description": "Texts per request. Defaults to what the model is known to accept, so setting it is for a gateway whose caps are not the vendor's.",
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                },
+                "maxBatchTokens": {
+                    "description": "Tokens per request, for the same reason as `maxBatch`.",
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                },
+                "routing": {
+                    "description": "openrouter only — who serves the request.",
+                    "$ref": "#/$defs/routing"
+                }
+            }
+        },
+        "skillsBinding": {
+            "description": "Which of the catalog this agent sees, and how it is offered — as an index of names and descriptions, as a search tool, or not at all. An agent with no `skills:` key is offered the whole catalog as an index.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "provider": {
+                    "description": "Skill provider id; defaults to the project's sole provider.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "discovery": {
+                    "description": "`index` lists names and descriptions in the prompt, `search` gives a tool to look them up, `none` offers nothing — which needs a `preload:`, or the agent can reach no skill at all.",
+                    "type": "string",
+                    "enum": ["index", "search", "none"],
+                    "default": "index"
+                },
+                "allow": {
+                    "description": "Restricts the catalog this agent sees. Absent means all of it; `[]` means none.",
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/name" }
+                },
+                "preload": {
+                    "description": "Activated before the first call of every turn this agent owns, so they sit in the cached prefix rather than arriving mid-run.",
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/name" }
+                },
+                "maxIndexEntries": {
+                    "description": "Cap on how many skills the index lists.",
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                }
+            }
+        },
+        "forkBinding": {
+            "description": "Parallel sub-agents. The `fork` tool is gated on this binding existing, not on what it holds — so `true` and `{}` say the same thing, and an agent that never mentions `fork:` is never offered the tool.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "agents": {
+                    "description": "Agents a branch may run. Absent means any registered agent; `[]` would read as none while meaning only itself, so it is refused.",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": { "$ref": "#/$defs/name" }
+                },
+                "maxBranches": {
+                    "description": "How wide one call may fan out. `1` allows delegation but no fan-out; `0` would make every call the model could write fail, so it is refused.",
+                    "type": "integer",
+                    "minimum": 1
+                }
+            }
+        },
+        "memoryBinding": {
+            "description": "What this agent may do with the project's one memory graph, and which slice of it it can see. `sees` and `writes` are here rather than in a tool schema on purpose: an agent that could name its own audience could read another agent's slice just by asking for it.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "access": {
+                    "description": "Which tools the agent is offered: `read` is search and load, `read-write` adds commit, `full` adds forget.",
+                    "type": "string",
+                    "enum": ["read", "read-write", "full"],
+                    "default": "read-write"
+                },
+                "sees": {
+                    "description": "Audience labels this agent may read, on top of the public slice. `*` is public and always readable, so this can only widen.",
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/name" }
+                },
+                "writes": {
+                    "description": "Labels it may put on what it writes.",
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/name" }
+                },
+                "autoRecall": {
+                    "description": "Recall before a turn that follows new user input — not before every call, which costs tokens and defeats prompt caching for a marginal gain. `false` leaves the agent the tools and lets it decide when to look.",
+                    "default": true,
+                    "oneOf": [
+                        { "type": "boolean" },
+                        {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "limit": {
+                                    "description": "How many seeds a recall starts from.",
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "default": 5
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        "memoryConfig": {
+            "description": "Where the project's memory lives, and what vectorises it.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "dir": {
+                    "description": "Relative to the project root. Committed with the project — everything but the lock.",
+                    "type": "string",
+                    "minLength": 1,
+                    "default": "memory"
+                },
+                "embedding": {
+                    "description": "A name from `embeddings:`. Set it: without one, recall ranks by term overlap, which finds a memory phrased the way the question happened to be phrased and misses the rest.",
+                    "$ref": "#/$defs/modelRef"
+                },
+                "kinds": {
+                    "description": "Replaces the node vocabulary — `task`, `plan`, `fact`, `snippet`, `file`, `operation`, `preference`. A wider vocabulary is a vaguer one, and a kind nothing else understands is one no other agent can search for. `preference` is always available whatever this says.",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": { "$ref": "#/$defs/name" }
+                },
+                "relations": {
+                    "description": "Replaces the edge vocabulary — `PRODUCED`, `CALLS`, `SUPERSEDES`, `INFORMED`.",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": { "$ref": "#/$defs/name" }
+                }
+            }
+        },
+        "build": {
+            "description": "A Dockerfile to build instead of an image to pull, for the case `image:` cannot serve: a project that needs two runtimes, or a pinned toolchain, and would otherwise have its agents reinstall it on every run.",
+            "type": "object",
+            "required": ["dockerfile"],
+            "additionalProperties": false,
+            "properties": {
+                "dockerfile": {
+                    "description": "Path to the Dockerfile, relative to the project root.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "context": {
+                    "description": "What the build may COPY from. The Dockerfile's own directory by default.",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "sandbox": {
+            "description": "The container command-line tools run in. Everything here is a resource decision — which image, how much of the machine, whether the network is reachable — because those are the decisions that differ between a laptop and CI and cannot be baked into an image.",
+            "type": "object",
+            "additionalProperties": false,
+            "not": {
+                "description": "`image:` and `build:` cannot both be set — a Dockerfile names its own base in its FROM line, so one of the two would be silently ignored.",
+                "required": ["image", "build"]
+            },
+            "properties": {
+                "image": {
+                    "description": "The image to pull, e.g. `docker.io/library/python:3.13-slim`.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "build": {
+                    "description": "A Dockerfile to build, instead of an image to pull.",
+                    "$ref": "#/$defs/build"
+                },
+                "cpus": {
+                    "description": "Fractional cores the container may use.",
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                },
+                "memory": {
+                    "description": "MiB the container may use.",
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                },
+                "network": {
+                    "description": "`none` is the honest answer for a container that only has to read the workspace.",
+                    "type": "string",
+                    "enum": ["bridge", "none", "host"]
+                },
+                "workdir": {
+                    "description": "Where the workspace is mounted, and the default working directory.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "timeout": {
+                    "description": "Seconds one command may take before it is killed.",
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                },
+                "user": {
+                    "description": "uid, name or `uid:gid`. Unset means the image's own user.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "persist": {
+                    "description": "Keep the container between sessions rather than throwing it away, so what an agent installs for itself is still there next time. Otherwise only the workspace and the home directory survive.",
+                    "type": "boolean"
+                },
+                "env": {
+                    "description": "Host variables to forward, by name. Only names: a value never appears in this file, so a repository never carries one. Model credentials go through `keys:` instead, which is one switch rather than a second silent door.",
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1 }
+                },
+                "keys": {
+                    "description": "Whether the model credentials reach the sandbox. On by default, because the scaffolded image installs `zen` itself. Turning it off is the honest answer for a project whose agents write code they then execute: the container runs whatever the model wrote.",
+                    "type": "boolean",
+                    "default": true
+                }
+            }
+        },
+        "agent": {
+            "description": "An agent is an instruction, a model, a set of tools and what it can know on demand — plus who it may hand off to, and whether it may fork. There is no hidden orchestration layer.",
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+                "name": {
+                    "description": "Also the name of its prompt file, `agents/prompts/<name>.md`, which is picked up by convention.",
+                    "$ref": "#/$defs/name"
+                },
+                "description": {
+                    "description": "What a sibling's `transfer_to_<name>` tool tells the model. This is what routes work, so write it as the condition for handing over rather than as a job title.",
+                    "type": "string"
+                },
+                "system": {
+                    "description": "Path to a markdown file, relative to the project root. Only needed when the prompt is not at `agents/prompts/<name>.md`.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "model": {
+                    "description": "Pins this agent's model. Without one it uses the project's.",
+                    "$ref": "#/$defs/modelRef"
+                },
+                "tools": {
+                    "description": "Tool names and selectors: `workspace:*` is every file tool, `sandbox:*` the shell, `exa:*` web search and page reading. Subtract from a group with a leading `-`.",
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1 },
+                    "examples": [
+                        ["workspace:*", "sandbox:*"],
+                        ["workspace:*", "-delete_file"]
+                    ]
+                },
+                "handoffs": {
+                    "description": "Agents this one may transfer control to, by name. Plain names: a hand-off carries no configuration, so there is nothing an object form could hold.",
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/name" }
+                },
+                "skills": {
+                    "description": "Which skills this agent sees, and how. Absent means the whole catalog as an index; `allow: []` binds none.",
+                    "$ref": "#/$defs/skillsBinding"
+                },
+                "fork": {
+                    "description": "Parallel sub-agents. `true` is the unrestricted form; the tool is offered only when this key is present.",
+                    "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/forkBinding" }]
+                },
+                "memory": {
+                    "description": "The shared memory graph. `true` is the whole feature working the obvious way — read and write, with auto-recall on. Drop the key and this agent never sees the store.",
+                    "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/memoryBinding" }]
+                },
+                "sandbox": {
+                    "description": "Overrides on the project's sandbox. An agent that overrides nothing shares the container with everyone else; one that names its own image gets its own.",
+                    "$ref": "#/$defs/sandbox"
+                },
+                "default": {
+                    "description": "The entry point, when no top-level `default:` names one.",
+                    "type": "boolean"
+                }
+            }
+        }
+    }
+}
