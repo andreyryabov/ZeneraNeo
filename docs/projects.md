@@ -18,6 +18,7 @@ my-project/
     agents/
         instructions.md              house rules, prepended to every agent
         memory-instructions.md       more of them, one topic at a time
+        tools-instructions.md        how tools are called
         prompts/
             intake.md                one agent's own brief
             adjuster.md

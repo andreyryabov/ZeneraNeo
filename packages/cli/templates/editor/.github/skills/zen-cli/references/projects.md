@@ -22,6 +22,7 @@ zenera.json                     { version, name }
 agents.yaml                     the configuration
 agents/instructions.md          house rules, prepended to every agent
 agents/memory-instructions.md   more of them, about the memory store
+agents/tools-instructions.md    more of them, about how tools are called
 agents/prompts/default.md       the default agent's prompt
 agents/skills/                  empty, for skills
 assets/README.md

@@ -223,6 +223,7 @@ my-project/
 ├── agents/
 │   ├── instructions.md            house rules, prepended to every agent
 │   ├── memory-instructions.md     more of them - any `<topic>-instructions.md`
+│   ├── tools-instructions.md      and more - how tools are called
 │   ├── prompts/
 │   │   ├── intake.md             one agent's own brief
 │   │   └── adjuster.md
