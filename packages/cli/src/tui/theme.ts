@@ -198,6 +198,7 @@ async function queryBackground(timeoutMs = 300): Promise<Appearance | undefined>
     let timer: NodeJS.Timeout | undefined;
     let settled = false;
     let seen = '';
+    let found: Appearance | undefined;
 
     return await new Promise<Appearance | undefined>((resolve) => {
         const finish = (result: Appearance | undefined): void => {
@@ -221,20 +222,25 @@ async function queryBackground(timeoutMs = 300): Promise<Appearance | undefined>
             resolve(result);
         };
 
+        // The DA1 is sent second and answered second, so it is the end of the
+        // conversation whether or not the colour came back. Settling on the
+        // colour alone leaves the DA1 in the pipe, and it surfaces a moment
+        // later as `[?64;1;2;...c` typed into the prompt.
         const onData = (chunk: Buffer): void => {
             seen += chunk.toString('latin1');
             const m = REPLY.exec(seen);
             if (m) {
-                finish(appearanceOf(m[1]!, m[2]!, m[3]!));
-            } else if (DA1.test(seen) || seen.length > 256) {
-                finish(undefined);
+                found = appearanceOf(m[1]!, m[2]!, m[3]!);
+            }
+            if (DA1.test(seen) || seen.length > 256) {
+                finish(found);
             }
         };
 
         stdin.setRawMode(true);
         stdin.resume();
         stdin.on('data', onData);
-        timer = setTimeout(() => finish(undefined), timeoutMs);
+        timer = setTimeout(() => finish(found), timeoutMs);
         timer.unref?.();
         stdout.write(QUERY);
     });
