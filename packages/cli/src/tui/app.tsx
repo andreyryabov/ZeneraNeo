@@ -53,9 +53,10 @@ import {
 // streaming answer *below* calls that had already finished, which read as two
 // unrelated logs racing each other.
 //
-// Reasoning is the exception: it is drawn live and then thrown away. A summary
-// of how the model got somewhere is worth watching and is not worth re-reading,
-// and the full chain is in the trajectory and the run's report either way.
+// Reasoning is the exception: it is drawn live, above the work it decided on,
+// and replaced when the next model call opens. It never reaches the scrollback
+// — a summary of how the model got somewhere is worth watching and is not worth
+// re-reading, and the full chain is in the trajectory and the run's report.
 // ---------------------------------------------------------------------------
 
 interface Line {
@@ -89,9 +90,6 @@ const MARK: Record<Kind, string> = {
     note: ' ',
     error: '!',
 };
-
-/** Reasoning, which is only ever drawn live. */
-const THINK_MARK = '✻';
 
 // ---------------------------------------------------------------------------
 // What is happening right now
@@ -346,6 +344,8 @@ function App({ engine, options, theme }: Props): React.ReactElement {
     /** Model calls in the turn now running, and what answered the last one. */
     const [step, setStep] = useState(0);
     const [model, setModel] = useState<string | undefined>(undefined);
+    /** Whether a trunk model call is open, which is what the shimmer means. */
+    const [musing, setMusing] = useState(false);
 
     // In flight, and therefore not in the transcript yet. Refs, because the
     // activity region below is redrawn by the frame timer regardless.
@@ -473,15 +473,16 @@ function App({ engine, options, theme }: Props): React.ReactElement {
     const inflight = busy
         ? { usage: spent.current, durationMs: Date.now() - startedAt.current }
         : undefined;
-    // Reasoning is committed to the scrollback as one line when its model call
-    // lands, so anything still here belongs to a call that has not answered
-    // yet: it is live by construction, and there is no settled state to draw.
+    // Up from the first reasoning token until the step arrives at prose or a
+    // call, which is when what it was deciding stops being the news.
     const streaming = busy && thinking !== '';
     const budget = budgetOf(rows, activityHeight(boxes, trunkRows), streaming ? THINKING_ROWS : 0);
     const fitted = fitActivity(boxes, trunkRows, budget.activity);
     // How tall the region actually needs to be, mirroring what the three blocks
-    // below draw.
-    const liveRows = live ? windowOf(live, answerWidth(columns) - 4, budget.live).length : 0;
+    // below draw. The answer keeps a blank row above it, so what it is separated
+    // from is whatever the last call left on screen.
+    const textRows = Math.max(1, budget.live - 1);
+    const liveRows = live ? windowOf(live, answerWidth(columns) - 4, textRows).length + 1 : 0;
     const wanted =
         activityHeight(fitted.boxes, fitted.trunk) +
         (fitted.hidden ? 1 : 0) +
@@ -566,6 +567,13 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                     return;
                 }
                 if (event.type === 'text_delta' && !event.branch) {
+                    // Whichever of prose or a call the step arrives at first
+                    // retires the gist; the content streaming under a heading
+                    // does not, which is why the heading holds still.
+                    if (mind.current) {
+                        mind.current = '';
+                        setThinking('');
+                    }
                     said.current += event.delta;
                     setLive(said.current);
                 }
@@ -581,6 +589,11 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                             b.thinking = '';
                         }
                     } else {
+                        // A step that answered without calling anything leaves
+                        // its gist up; this is where it goes.
+                        mind.current = '';
+                        setThinking('');
+                        setMusing(true);
                         setStep((n) => n + 1);
                     }
                     break;
@@ -591,19 +604,19 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                         break;
                     }
                     setModel(event.node.model);
-                    // Reasoning is progress, and progress is only worth the
-                    // screen while it is happening: the call it belonged to has
-                    // landed, so the line goes rather than settling into the
-                    // transcript. The chain itself is in the trajectory and the
-                    // report, where it can be read in full.
-                    mind.current = '';
-                    setThinking('');
+                    // The gist stays until the call it decided on goes out. Only
+                    // the shimmer stops, because nothing is arriving any more.
+                    setMusing(false);
                     break;
                 case 'before_tool_call':
                     // Everything the model said on the way to this call is now
                     // history, and history belongs above the call, not below it.
+                    // The gist goes with it: the call is what it decided on, so
+                    // the row saying so supersedes the row explaining it.
                     if (!from) {
                         settle();
+                        mind.current = '';
+                        setThinking('');
                     }
                     running.current.set(event.call.callId, {
                         callId: event.call.callId,
@@ -752,6 +765,7 @@ function App({ engine, options, theme }: Props): React.ReactElement {
             mind.current = '';
             told.current = '';
             setStep(0);
+            setMusing(false);
             grown.current = 0;
             spent.current = zeroUsage();
             startedAt.current = Date.now();
@@ -795,6 +809,7 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                     setBusy(false);
                     setLive('');
                     setThinking('');
+                    setMusing(false);
                     said.current = '';
                     mind.current = '';
                     running.current.clear();
@@ -866,17 +881,18 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                     overflow="hidden"
                 >
                     <Branches boxes={fitted.boxes} spin={spin} columns={columns} />
-                    <Activity rows={fitted.trunk} hidden={fitted.hidden} />
 
-                    {/* Above the text it is about to produce, which is where
-                        it will sit in the transcript once the call lands. */}
+                    {/* Above the work it decided on, which is the order it
+                        happened in. */}
                     {streaming && budget.thinking ? (
-                        <Reasoning text={thinking} columns={columns} frame={frame} />
+                        <Reasoning text={thinking} columns={columns} frame={frame} live={musing} />
                     ) : null}
+
+                    <Activity rows={fitted.trunk} hidden={fitted.hidden} />
 
                     {/* The answer as it arrives, in the terminal's own
                         foreground: it is the text, not a highlight on it. */}
-                    {live ? <Streaming text={live} columns={columns} rows={budget.live} /> : null}
+                    {live ? <Streaming text={live} columns={columns} rows={textRows} /> : null}
                 </Box>
 
                 <Footer
@@ -890,7 +906,7 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                     model={model}
                     stats={stats}
                     inflight={inflight}
-                    reasoning={streaming}
+                    reasoning={musing}
                     columns={columns}
                 />
 
@@ -1296,29 +1312,34 @@ interface StreamProps {
  * paragraph had finished — a block that had quietly settled read as a hang.
  *
  * So the stream is drawn as its gist, and the shimmer is the proof it is
- * moving: this line only exists while a model call is open, and it goes when
- * that call lands. Nothing of it reaches the transcript — what the model
- * decided is the call it made next, which has a row of its own.
+ * moving. The line outlives the call that wrote it — it is why the calls below
+ * it are being made, and a gist that vanished with its own model call was on
+ * screen for a fraction of the work it explains — but the shimmer stops, so a
+ * settled thought is never mistaken for an arriving one.
  */
 function Reasoning({
     text,
     columns,
     frame,
+    live,
 }: {
     text: string;
     columns: number;
     frame: number;
+    live: boolean;
 }): React.ReactElement {
     const theme = useTheme();
+    const gist = gistOf(text, columns - GUTTER - 2);
     return (
-        <Box height={1} overflow="hidden">
+        <Box height={1} paddingLeft={GUTTER} overflow="hidden">
             <Text wrap="truncate-end">
-                <Text color={theme.thinking.color}>{`${THINK_MARK} `}</Text>
-                <Shimmer
-                    text={gistOf(text, columns - 4)}
-                    frame={frame}
-                    color={theme.thinking.color}
-                />
+                {live ? (
+                    <Shimmer text={gist} frame={frame} color={theme.thinking.color} />
+                ) : (
+                    <Text color={theme.thinking.color} dimColor>
+                        {gist}
+                    </Text>
+                )}
             </Text>
         </Box>
     );
@@ -1329,7 +1350,13 @@ function Streaming({ text, columns, rows }: StreamProps): React.ReactElement {
     // nothing: what is on screen is what stays there.
     const shown = windowOf(text, answerWidth(columns) - 4, rows);
     return (
-        <Box flexDirection="column" paddingLeft={GUTTER} height={shown.length} overflow="hidden">
+        <Box
+            flexDirection="column"
+            paddingLeft={GUTTER}
+            marginTop={1}
+            height={shown.length}
+            overflow="hidden"
+        >
             {shown.map((row, i) => (
                 <Text key={i} wrap="truncate-end">
                     {row}
