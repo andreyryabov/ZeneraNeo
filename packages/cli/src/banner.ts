@@ -1,4 +1,4 @@
-import { dim, note, styled } from './term.ts';
+import { appearance, dim, note, styled, type Appearance } from './term.ts';
 
 // ---------------------------------------------------------------------------
 // The banner
@@ -75,13 +75,23 @@ const spaced = (s: string): string => [...s.toUpperCase()].join(' ');
 
 const RESET = '\u001b[0m';
 
-/** A stroke and the bevel that shades it, one step darker in the same hue. */
+/**
+ * A stroke and the bevel that shades it, one step darker in the same hue.
+ *
+ * The head word is the terminal's own ink, so it has one per background: near
+ * white raised off grey, or near black embossed into it. The accent does not
+ * — it is the brand, it is the same orange on both, and it is the only word
+ * here that is allowed not to care what it is printed on.
+ */
 interface Tone {
     face: string;
     shade: string;
 }
 
-const HEAD: Tone = { face: '\u001b[1;38;5;231m', shade: '\u001b[0;38;5;244m' };
+const HEADS: Record<Appearance, Tone> = {
+    dark: { face: '\u001b[1;38;5;231m', shade: '\u001b[0;38;5;244m' },
+    light: { face: '\u001b[1;38;5;235m', shade: '\u001b[0;38;5;245m' },
+};
 
 /** One per sub-brand, so two of them are told apart before the word is read. */
 const ACCENTS = {
@@ -137,19 +147,20 @@ export function bannerLines(text: BannerText, columns = process.stderr.columns |
     // inside a styled string cannot be trimmed away later.
     const accent = big(text.accent).map((row) => row.trimEnd());
     const tone = ACCENTS[text.hue ?? 'orange'];
+    const ink = HEADS[appearance()];
     const margin = ' '.repeat(INDENT);
     const width = INDENT + head[0].length + GAP + Math.max(...accent.map((row) => row.length));
 
     if (width > columns) {
         return [
-            `${margin}${flat(text.head.toUpperCase(), HEAD)} ${flat(text.accent.toUpperCase(), tone)}`,
+            `${margin}${flat(text.head.toUpperCase(), ink)} ${flat(text.accent.toUpperCase(), tone)}`,
             `${margin}${dim(spaced(text.subtitle))}`,
         ];
     }
 
     const lines: string[] = [];
     for (let r = 0; r < HEIGHT; r++) {
-        lines.push(`${margin}${paint(head[r], HEAD)}${' '.repeat(GAP)}${paint(accent[r], tone)}`);
+        lines.push(`${margin}${paint(head[r], ink)}${' '.repeat(GAP)}${paint(accent[r], tone)}`);
     }
     // Rules on both sides, centred under the art: the subtitle is a caption,
     // and without them a short line of spaced capitals floats.

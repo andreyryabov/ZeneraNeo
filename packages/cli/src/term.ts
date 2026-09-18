@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 import { styleText } from 'node:util';
 
@@ -47,11 +48,104 @@ export const credentialError = (m: string, hint?: string): CliError =>
     new CliError(m, EXIT.credentials, hint);
 
 // ---------------------------------------------------------------------------
+// Light and dark
+//
+// Every colour below has to work on somebody else's background, and the two
+// sources that can be read without a conversation are read here: what the user
+// said, and what the terminal exports. The OSC 11 handshake that `tui/theme.ts`
+// runs needs raw mode and a round trip, which is not a price `zen --help`
+// should pay — so this is the synchronous half, and the TUI layers the ask on
+// top of it.
+//
+// Apple Terminal is here because it exports nothing, answers nothing, and
+// ships a *white* default profile: without it the guess below was wrong for
+// every out-of-the-box Terminal.app on a Mac, which is most of them.
+// ---------------------------------------------------------------------------
+
+export type Appearance = 'dark' | 'light';
+
+/** One grey per background. The only 256-colour indices in the CLI. */
+export const CHROME: Record<Appearance, number> = { dark: 245, light: 242 };
+
+let sniffed: Appearance | undefined;
+
+/** What the terminal looks like, as far as can be known without asking it. */
+export function appearance(): Appearance {
+    sniffed ??= fromEnv() ?? fromColorFgBg() ?? fromAppleTerminal() ?? 'dark';
+    return sniffed;
+}
+
+function fromEnv(): Appearance | undefined {
+    const v = process.env['ZENERA_THEME']?.trim().toLowerCase();
+    return v === 'dark' || v === 'light' ? v : undefined;
+}
+
+/**
+ * `COLORFGBG` is `fg;bg` or `fg;<something>;bg`; the background is the last
+ * field. Anything non-numeric (notably `default`) tells us nothing.
+ */
+function fromColorFgBg(): Appearance | undefined {
+    const parts = process.env['COLORFGBG']?.split(';');
+    const bg = parts?.[parts.length - 1];
+    if (bg === undefined || !/^\d+$/.test(bg)) {
+        return undefined;
+    }
+    const n = Number(bg);
+    return n === 7 || n >= 9 ? 'light' : 'dark';
+}
+
+/** The shipped Apple Terminal profiles that are paper rather than ink. */
+const APPLE_LIGHT = new Set(['basic', 'man page', 'novel', 'silver aerogel']);
+
+/**
+ * Ask `defaults` which profile Terminal.app opens with. A subprocess during
+ * startup is a real cost, so it is paid last, once per process, and only on
+ * the one terminal that leaves us nothing else to go on. A custom profile is
+ * not in the table and falls through to the guess.
+ */
+function fromAppleTerminal(): Appearance | undefined {
+    if (process.env['TERM_PROGRAM'] !== 'Apple_Terminal') {
+        return undefined;
+    }
+    try {
+        const name = execFileSync(
+            'defaults',
+            ['read', 'com.apple.Terminal', 'Default Window Settings'],
+            { encoding: 'utf8', timeout: 300, stdio: ['ignore', 'pipe', 'ignore'] },
+        )
+            .trim()
+            .toLowerCase();
+        return APPLE_LIGHT.has(name) ? 'light' : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Styling
 // ---------------------------------------------------------------------------
 
 export const bold = (s: string): string => styleText('bold', s);
-export const dim = (s: string): string => styleText('dim', s);
+
+/**
+ * One step quieter, which is half of everything this tool prints: paths,
+ * counts, hints, the second column of every table.
+ *
+ * A stated grey rather than SGR 2. `dim` is not a colour, it is a request, and
+ * how far it is honoured is the terminal's own business — iTerm2 takes a step,
+ * Apple Terminal goes most of the way to the background and takes the quiet
+ * half of the output with it.
+ */
+export const dim = (s: string): string => {
+    if (!styled()) {
+        return s;
+    }
+    const open = `\u001b[38;5;${CHROME[appearance()]}m`;
+    // A colour nested inside closes with `39m`, which would drop the grey for
+    // whatever follows it.
+    return `${open}${s.replaceAll('\u001b[39m', `\u001b[39m${open}`)}\u001b[39m`;
+};
+
 export const red = (s: string): string => styleText('red', s);
 export const green = (s: string): string => styleText('green', s);
 export const yellow = (s: string): string => styleText('yellow', s);
