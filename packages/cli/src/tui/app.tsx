@@ -127,6 +127,8 @@ type Note =
 interface Branch {
     name: string;
     agent: string;
+    /** what history it started from, which is the fork's doing rather than its own */
+    context: string;
     startedAt: number;
     /** model calls, which is what a branch's progress is measured in */
     steps: number;
@@ -358,6 +360,8 @@ function App({ engine, options, theme }: Props): React.ReactElement {
     // activity region below is redrawn by the frame timer regardless.
     const running = useRef(new Map<string, Running>());
     const branches = useRef(new Map<string, Branch>());
+    /** The context mode of the fork now open; `branch_started` does not carry it. */
+    const context = useRef('inherit');
     const lane = useLanes(theme);
 
     // What the turn now running has cost so far, summed per model call rather
@@ -727,6 +731,11 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                     break;
                 }
                 case 'before_fork':
+                    // Naming the branches here said nothing a box below does
+                    // not say better, under the work it is doing. The one
+                    // thing a box cannot say for itself is what it started
+                    // from, so the fork leaves it for the boxes to carry.
+                    context.current = event.node.contextMode;
                     // A fork is what the trunk concluded, so whatever it was
                     // saying is finished as far as the screen is concerned.
                     if (from) {
@@ -735,9 +744,8 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                     settle();
                     push(
                         'note',
-                        `⑂ ${event.node.branches.length} branches`,
-                        `${event.node.branches.map((b) => b.name).join(', ')} · context ${
-                            event.node.contextMode
+                        `⑂ ${event.node.branches.length} ${
+                            event.node.branches.length === 1 ? 'branch' : 'branches'
                         }`,
                     );
                     break;
@@ -745,6 +753,7 @@ function App({ engine, options, theme }: Props): React.ReactElement {
                     branches.current.set(event.child.name, {
                         name: event.child.name,
                         agent: event.childState.agentName,
+                        context: context.current,
                         startedAt: Date.now(),
                         steps: 0,
                         tools: 0,
@@ -1078,7 +1087,9 @@ interface BranchBox {
     name: string;
     color?: string;
     title: string;
-    /** what it has done, drawn in the title rule */
+    /** what it started from, drawn beside the title */
+    context: string;
+    /** what it has done, drawn in the closing rule */
     stats: string;
     /** how long it has been at it, drawn in the closing rule */
     elapsed: string;
@@ -1202,6 +1213,7 @@ function branchBoxesOf(
             name: b.name,
             color: lane(b.name),
             title: `${b.name}${b.agent ? ` · ${b.agent}` : ''}`,
+            context: `context ${b.context}`,
             stats:
                 `${b.steps} ${b.steps === 1 ? 'step' : 'steps'}` +
                 (b.tools ? `  ${b.tools} ${b.tools === 1 ? 'tool' : 'tools'}` : ''),
@@ -1299,6 +1311,10 @@ function Branches({
         <Box flexDirection="column">
             {boxes.map((b) => {
                 const title = clip(b.title, Math.max(1, columns - 10));
+                // The name is the branch's; the context is the fork's doing,
+                // so it is set after the spinner in the chrome's own grey
+                // rather than lifted into the lane with the name.
+                const said = `${title} ${spin}  ${b.context}`;
                 // Who it is heads the box; what it has done and how long it has
                 // been doing it close it. A count belongs with the clock, and a
                 // name reads better without two numbers after it.
@@ -1311,9 +1327,10 @@ function Branches({
                         <Text wrap="truncate-end" color={edge}>
                             <Text>{'╭─ '}</Text>
                             <Text bold>{title}</Text>
-                            <Text>{` ${spin} `}</Text>
+                            <Text>{` ${spin}`}</Text>
+                            <Text color={theme.chrome.color}>{`  ${b.context} `}</Text>
                             <Text>
-                                {'─'.repeat(Math.max(0, columns - title.length - 7))}
+                                {'─'.repeat(Math.max(0, columns - said.length - 5))}
                                 {'╮'}
                             </Text>
                         </Text>
