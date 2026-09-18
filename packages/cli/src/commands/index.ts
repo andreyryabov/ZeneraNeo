@@ -82,7 +82,7 @@ export const EXTERNAL: Record<string, External> = {
         summary: 'A mock API from an openapi/swagger document.',
         usage: 'zen faker <serve|build|cache> [spec...]',
         install: 'npm i -g @zenera/faker',
-        banner: { head: 'Zenera', accent: 'Faker', subtitle: 'Mock API Server' },
+        banner: { head: 'Zenera', accent: 'Faker', subtitle: 'Mock API Server', hue: 'mint' },
     },
     rag: {
         package: '@zenera/rag',

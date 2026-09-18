@@ -82,7 +82,15 @@ interface Tone {
 }
 
 const HEAD: Tone = { face: '\u001b[1;38;5;231m', shade: '\u001b[0;38;5;244m' };
-const ACCENT: Tone = { face: '\u001b[1;38;5;208m', shade: '\u001b[0;38;5;130m' };
+
+/** One per sub-brand, so two of them are told apart before the word is read. */
+const ACCENTS = {
+    orange: { face: '\u001b[1;38;5;208m', shade: '\u001b[0;38;5;130m' },
+    cyan: { face: '\u001b[1;38;5;51m', shade: '\u001b[0;38;5;37m' },
+    mint: { face: '\u001b[1;38;5;121m', shade: '\u001b[0;38;5;78m' },
+} as const satisfies Record<string, Tone>;
+
+export type Hue = keyof typeof ACCENTS;
 
 /** Runs of stroke and runs of bevel, alternating; spaces stay unstyled. */
 const RUNS = /[█▀▄]+|[^█▀▄ ]+/g;
@@ -108,6 +116,8 @@ export interface BannerText {
     accent: string;
     /** the line underneath, dim */
     subtitle: string;
+    /** which neon to use. Default: orange, the `zen` mark. */
+    hue?: Hue;
 }
 
 export interface PrintBannerOptions {
@@ -126,19 +136,20 @@ export function bannerLines(text: BannerText, columns = process.stderr.columns |
     // Trimmed: the widest accent row is the banner's right edge, and a pad left
     // inside a styled string cannot be trimmed away later.
     const accent = big(text.accent).map((row) => row.trimEnd());
+    const tone = ACCENTS[text.hue ?? 'orange'];
     const margin = ' '.repeat(INDENT);
     const width = INDENT + head[0].length + GAP + Math.max(...accent.map((row) => row.length));
 
     if (width > columns) {
         return [
-            `${margin}${flat(text.head.toUpperCase(), HEAD)} ${flat(text.accent.toUpperCase(), ACCENT)}`,
+            `${margin}${flat(text.head.toUpperCase(), HEAD)} ${flat(text.accent.toUpperCase(), tone)}`,
             `${margin}${dim(spaced(text.subtitle))}`,
         ];
     }
 
     const lines: string[] = [];
     for (let r = 0; r < HEIGHT; r++) {
-        lines.push(`${margin}${paint(head[r], HEAD)}${' '.repeat(GAP)}${paint(accent[r], ACCENT)}`);
+        lines.push(`${margin}${paint(head[r], HEAD)}${' '.repeat(GAP)}${paint(accent[r], tone)}`);
     }
     // Rules on both sides, centred under the art: the subtitle is a caption,
     // and without them a short line of spaced capitals floats.
