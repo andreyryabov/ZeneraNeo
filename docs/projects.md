@@ -131,6 +131,24 @@ project that switches memory off deletes one file rather than editing around a
 section. Filename order, because it is the only order that is the same on every
 machine.
 
+A document that is only about one capability can say so, and then reaches only
+the agents that have it:
+
+```markdown
+---
+requires: [fork]
+---
+
+Branches run at once and can exchange nothing...
+```
+
+`requires:` takes a list, and all of it has to hold. The vocabulary is closed -
+`fork`, `memory`, `memory-write`, `memory-forget` - and a name outside it is a
+load error rather than a rule that silently never fires. There is no `not`: a
+rule for agents _without_ a capability is a rule about the rest of the project,
+which is what `agents/instructions.md` is for. A document with no frontmatter is
+unconditional, which is the usual case.
+
 Shared context before the specific job - which also puts the stable half of the
 prompt in front, where a cache can reuse it. All of them are optional; an agent
 with neither simply has no instructions.

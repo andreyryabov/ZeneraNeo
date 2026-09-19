@@ -3,6 +3,7 @@ import { basename, join, relative, resolve, sep } from 'node:path';
 import { Agent, AgentRegistry, type ForkOptions } from '../agent.ts';
 import type { Embedder } from '../embedding.ts';
 import { RunStream } from '../events.ts';
+import { frontmatter, toList } from '../frontmatter.ts';
 import { MemoryIndex } from '../memory/index.ts';
 import { MemoryStore } from '../memory/store.ts';
 import type { MemoryBinding } from '../memory/types.ts';
@@ -14,7 +15,7 @@ import {
     type ProviderSpec,
 } from '../models/factory.ts';
 import type { PayloadStore } from '../payload.ts';
-import { promptFile, type PromptPart } from '../prompt.ts';
+import { promptFile, type PromptPart, type PromptText } from '../prompt.ts';
 import { AgentRunner, type RunnerOptions, type RunOptions } from '../runner.ts';
 import { FileSkillProvider, type SkillDir } from '../skill-providers/file.ts';
 import type { SkillBinding, SkillProvider, SkillSummary } from '../skills.ts';
@@ -331,22 +332,92 @@ function within(root: string, path: string): string {
  * nothing to declare. Order is the filename's, which is the only ordering that
  * is the same on every machine and is visible without opening another file.
  *
+ * The exception a document declares for itself: `requires:` in its frontmatter
+ * names capabilities, and the document then reaches only the agents that have
+ * them. That stays a property of the document rather than of `agents.yaml`
+ * because the condition and the prose it guards are the same edit.
+ *
  * All of it is optional: a one-agent project whose whole prompt is its role
  * file should not need a second, empty document.
  */
-function readHouseRules(root: string): PromptPart[] {
-    const rules: PromptPart[] = [];
+function readHouseRules(root: string): HouseRule[] {
+    const rules: HouseRule[] = [];
     const take = (rel: string): void => {
         const path = join(root, rel);
-        if (existsSync(path)) {
-            rules.push(promptFile(path, 'house_rules', rel));
+        if (!existsSync(path)) {
+            return;
         }
+        const { data, body } = frontmatter(readFileSync(path, 'utf8'));
+        const requires = toList(data.requires);
+        for (const cap of requires) {
+            if (!(cap in CAPABILITIES)) {
+                throw new Error(
+                    `${rel}: unknown capability "${cap}" in requires: ` +
+                        `(known: ${Object.keys(CAPABILITIES).join(', ')})`,
+                );
+            }
+        }
+        // One object per document, shared by every agent it reaches, so the
+        // report says "one document, five prompts" rather than showing five
+        // identical blobs.
+        rules.push({ rel, requires, part: { text: body, path, section: 'house_rules', src: rel } });
     };
     take(HOUSE_RULES);
     for (const name of topics(root)) {
         take(`${AGENTS_DIR}/${name}`);
     }
     return rules;
+}
+
+/** A house-rules document and the conditions its frontmatter declared. */
+interface HouseRule {
+    /** project-relative name, which is the name the model is given */
+    rel: string;
+    requires: string[];
+    part: PromptText;
+}
+
+/**
+ * What `requires:` may name, and what each one means. A closed vocabulary
+ * rather than an expression language: these are the capabilities the runtime
+ * can turn on and off, so the set of useful conditions is finite and knowable,
+ * and a typo is a load error instead of a rule that silently never fires.
+ *
+ * Every entry reads `agents.yaml` and nothing else. In particular none of them
+ * consults the resolved tool set, which is a function of the *state* — a prompt
+ * that varied with it would move the provider's cache prefix mid-run.
+ *
+ * A capability may also contribute a run-time half, returned as `when`: `fork`
+ * does, because the tool is withdrawn at the depth cap and a rule about a tool
+ * the model does not have is a rule it can only be confused by.
+ */
+const CAPABILITIES: Record<string, (spec: AgentConfig) => PromptText['when'] | boolean> = {
+    fork: (spec) => Boolean(spec.fork) && ((_ctx, run) => run.forkDepth < run.maxForkDepth),
+    memory: (spec) => Boolean(spec.memory),
+    'memory-write': (spec) =>
+        spec.memory?.access === 'read-write' || spec.memory?.access === 'full',
+    'memory-forget': (spec) => spec.memory?.access === 'full',
+};
+
+/**
+ * The document as this agent gets it, or `undefined` when its conditions rule
+ * the agent out. Several run-time conditions are met by meeting all of them.
+ */
+function ruleFor(rule: HouseRule, spec: AgentConfig): PromptText | undefined {
+    const gates: NonNullable<PromptText['when']>[] = [];
+    for (const cap of rule.requires) {
+        const resolved = CAPABILITIES[cap](spec);
+        if (!resolved) {
+            return undefined;
+        }
+        if (typeof resolved === 'function') {
+            gates.push(resolved);
+        }
+    }
+    if (!gates.length) {
+        return rule.part;
+    }
+    return { ...rule.part, when: (ctx, run) => gates.every((g) => g(ctx, run)) };
 }
 
 /** `agents/<topic>-instructions.md`, sorted. Subdirectories are not searched. */
@@ -366,8 +437,14 @@ function topics(root: string): string[] {
  * the specific job, and the stable half of the prompt in front where a cache
  * can reuse it.
  */
-function instructionsFor(root: string, spec: AgentConfig, houseRules: PromptPart[]): PromptPart[] {
-    const parts: PromptPart[] = [...houseRules];
+function instructionsFor(root: string, spec: AgentConfig, houseRules: HouseRule[]): PromptPart[] {
+    const parts: PromptPart[] = [];
+    for (const rule of houseRules) {
+        const part = ruleFor(rule, spec);
+        if (part) {
+            parts.push(part);
+        }
+    }
     const role = spec.system
         ? projectFile(root, spec.system, `agents.${spec.name}.system`)
         : join(root, PROMPTS_DIR, `${spec.name}.md`);

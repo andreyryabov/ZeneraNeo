@@ -1,3 +1,7 @@
+---
+requires: [memory]
+---
+
 # Memory
 
 This project has a memory: a graph of what earlier runs worked out, kept with

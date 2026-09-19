@@ -725,13 +725,13 @@ their ids:
 
 How to read a recollection and when committing is worthwhile is not in this
 block: it is the project's own house rules, in `agents/memory-instructions.md`,
-which are prepended to every agent's prompt. The runtime composes the preference
-block and nothing else, so a project that deletes that file leaves its agents
-with the `memory_*` schemas and no explanation - `zen check` fails it as
-`memory.uninstructed`. Because it all lands in the cached prefix rather than in
-the conversation, it costs once per run rather than once per turn, and the id is
-what lets the model replace a preference with `SUPERSEDES` instead of quietly
-ignoring it.
+which carry `requires: [memory]` and so reach exactly the agents that have the
+store. The runtime composes the preference block and nothing else, so a project
+that deletes that file leaves its agents with the `memory_*` schemas and no
+explanation - `zen check` fails it as `memory.uninstructed`. Because it all
+lands in the cached prefix rather than in the conversation, it costs once per
+run rather than once per turn, and the id is what lets the model replace a
+preference with `SUPERSEDES` instead of quietly ignoring it.
 
 Preferences are deliberately left out of ordinary recall results - they are in
 the prompt already, and repeating them would state the same instruction twice in
@@ -1193,9 +1193,12 @@ Nesting is capped independently: a branch may fork again, but only while
 field), so a fan-out cannot recurse without bound.
 
 Declaring the key only makes the tool available. What a fork costs and what
-survives a join is explained to the model in the system prompt - gated on this
-key, so an agent that cannot fork never reads it. What is left to the agent's
-own prompt is _when_, in the terms of its domain.
+survives a join is the project's own house rules, in
+`agents/fork-instructions.md` under `requires: [fork]`, so an agent that cannot
+fork never reads it - and an agent that can, whose project has deleted the file,
+gets the `fork` schema and no explanation. `zen check` fails that as
+`fork.uninstructed`. What is left to the agent's own prompt is _when_, in the
+terms of its domain.
 
 ---
 
@@ -1203,6 +1206,8 @@ own prompt is _when_, in the terms of its domain.
 
 - Unknown key anywhere (strict schema)
 - A name that breaks the name pattern
+- `requires:` in a house-rules document naming something outside `fork`,
+  `memory`, `memory-write`, `memory-forget`
 - `models.<alias>.provider` naming an undeclared provider
 - `agents[].tools` naming a tool not passed to `loadProject`, or a group with
   nothing in it

@@ -222,7 +222,8 @@ my-project/
 ├── agents.yaml                   who exists, what they may reach for
 ├── agents/
 │   ├── instructions.md            house rules, prepended to every agent
-│   ├── memory-instructions.md     more of them - any `<topic>-instructions.md`
+│   ├── fork-instructions.md       more of them - any `<topic>-instructions.md`
+│   ├── memory-instructions.md     and more - how the graph is used
 │   ├── tools-instructions.md      and more - how tools are called
 │   ├── prompts/
 │   │   ├── intake.md             one agent's own brief
@@ -587,6 +588,21 @@ capability**: the memory usage rules (§5.3) are the standard case - they arrive
 when `memory:` is turned on and are deleted when it is turned off, which is a
 whole file rather than a section somebody has to find. Do not split by author,
 by date, or to keep a file short; that is what a skill is for.
+
+A document about one capability can say so in frontmatter, and then reaches only
+the agents that have it:
+
+```markdown
+---
+requires: [fork]
+---
+```
+
+All of the list has to hold. The vocabulary is closed - `fork`, `memory`,
+`memory-write`, `memory-forget` - and anything else is a load error. There is no
+`not`: a rule for agents _without_ a capability is a rule about the rest of the
+project, which is what `agents/instructions.md` is for. No frontmatter means
+unconditional, which is the usual case.
 
 Put in them only what is true for **every** agent:
 
@@ -1299,7 +1315,8 @@ remembered file's path comes from `memory_load` and not from listing `/memory`,
 what a node must carry to be worth having, and that a correction is a
 `SUPERSEDES` edge rather than an edit. It is its own file rather than a section of
 `agents/instructions.md` because it arrives with the `memory:` block and leaves
-with it.
+with it - and it carries `requires: [memory]`, so an agent without the store
+never reads a word of it.
 
 **Leave that file as a pure copy.** Anything this project decides for itself -
 which audience holds what, what must never be written down, what an agent is
@@ -1483,11 +1500,15 @@ agent's prompt which one this work wants:
   lookups.
 
 Declaring `fork:` only makes the tool available. What a fork costs and what
-survives the join is explained to the model by the runtime, in the system prompt
-of every agent holding the key. What is left to you is _when_, in the terms of
-this domain - _"When the request covers more than one region, fork one branch
-per region and merge their findings"_ - or a weaker model will work through the
-list serially and never call it.
+survives the join is in `agents/fork-instructions.md`, which carries
+`requires: [fork]` and so reaches exactly the agents holding the key. That file
+is `zen`'s, not yours - `zen check --fix` replaces it, editing it or carrying an
+older copy is reported as `rules.stale`, and deleting it leaves your forking
+agents with the tool schema alone (`fork.uninstructed`). What is
+left to you is _when_, in the terms of this domain - _"When the request covers
+more than one region, fork one branch per region and merge their findings"_ - or
+a weaker model will work through the list serially and never call it. Project
+policy on forking goes in a topic file of your own beside it.
 
 ### 6.5 Termination
 
@@ -1918,7 +1939,10 @@ Before finishing any change here:
       agent-specific
 - [ ] Nothing duplicated between a house-rules file and an agent prompt
 - [ ] Each `agents/<topic>-instructions.md` is about one capability, and is true
-      of every agent
+      of every agent it reaches - `requires:` if it is about one of them
+- [ ] If any agent has `fork:`, `agents/fork-instructions.md` is present - §6.4
+- [ ] No `rules.stale`: the three files that are `zen`'s rather than yours say
+      what this version of the runtime does, and `zen check --fix` replaces them
 - [ ] Every tool and agent referenced by its exact name
 - [ ] Failure paths stated for every instruction that can fail
 - [ ] No facts, rates or figures embedded in a prompt
@@ -2031,6 +2055,7 @@ candidates; these are the judgements to make about each one)**
 | Loses a detail after a handoff                | Say it in the handoff; check the collapse policy                    |
 | Works through N independent items serially    | `fork:` on that agent, and a prompt line - §6.4                     |
 | Forks when the steps actually depend          | Prompt line: branches cannot see each other                         |
+| Forks a sequence, or loses a branch's working | `agents/fork-instructions.md` is missing or empty - §6.4            |
 | Slow and expensive on trivial cases           | Demote that agent's model tier / reasoning effort                   |
 | Fails only on genuinely hard cases            | Promote that agent's tier, or split the hard path out               |
 | Shows no reasoning while it works             | Turn summaries on for that model - §7.6                             |

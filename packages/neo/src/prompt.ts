@@ -26,6 +26,17 @@ export interface PromptText {
      * different cache prefixes for the same project.
      */
     src?: string;
+    /**
+     * Whether this block belongs in *this* run's prompt at all. False and the
+     * part is skipped entirely — no text, and no entry in `sources`, because a
+     * document the model never read is not a document that fed the prompt.
+     *
+     * It takes the same arguments as the function form of `PromptPart` and for
+     * the same reason: a condition on mutable state would move the cache prefix
+     * mid-run. This is how one shared document can be conditional per agent
+     * while still being read once.
+     */
+    when?: (ctx: unknown, spec: RunSpec) => boolean;
 }
 
 /**
@@ -141,6 +152,9 @@ export async function composePrompt<TCtx>(
         } else if (typeof part === 'function') {
             chunks.push(part(ctx, spec));
         } else {
+            if (part.when && !part.when(ctx, spec)) {
+                continue;
+            }
             if (part.path && part.text) {
                 sources.push({ path: part.path, content: await put(part.text) });
             }

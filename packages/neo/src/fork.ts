@@ -6,64 +6,18 @@ import type { JsonSchema } from './types.ts';
 // The tool schema says what the arguments are; none of it says what survives a
 // join, that a branch cannot be corrected once it starts, or which `context`
 // mode fits which shape of work. That is policy, it is the same for every
-// agent, and it belongs in the system prompt — the only place it can be stated
-// once per run instead of once per call.
+// agent, and it belongs in the system prompt.
 //
-// It goes in through `composePrompt`'s `derived` array, so it sits in the
-// cacheable prefix and is recorded on the `system_prompt` node like every other
-// part of what the model read. The text is gated on the agent holding a fork
-// binding *and* being below the depth cap — the same condition that decides
-// whether the tool is offered at all, because a rule about a tool the model
-// does not have is a rule it can only be confused by.
+// It is not here. It is the project's own house rules, in
+// `agents/fork-instructions.md` under `requires: [fork]`, so the one document
+// is the only place it is written and a project can say something different.
+// An agent with the fork tool and no such file gets the schema and nothing
+// else - `zen check` refuses it, the runtime does not invent a replacement.
 // ---------------------------------------------------------------------------
 
 /**
- * Deliberately not a function of the agent list or the branch cap: both are
- * already on the tool schema, where the provider enforces them during decoding,
- * and naming them twice buys nothing but two places to drift.
- */
-export function forkInstructions(): string {
-    return FORKING;
-}
-
-const FORKING = `Forking runs work in separate conversations and brings back only the answers.
-
-A branch is a run of its own: its own conversation, its own tool calls, its own
-reasoning. None of that returns. What returns is each branch's final answer, as
-the result of your \`fork\` call — so whatever you will need afterwards has to be
-*in* that answer, and the branch only knows it if your instructions say so. Work
-whose value is the trace rather than the conclusion should not be forked at all.
-
-The instructions you write are the entire assignment. A branch cannot ask you a
-question, cannot see what its siblings are doing, and cannot be corrected once
-it starts. Say what it must do, what it must leave alone, and the exact shape of
-what it must hand back.
-
-**One branch is delegation**: the work happens elsewhere and you get the
-conclusion instead of the transcript. Use it when another agent is better suited
-to the job, or when the job would otherwise fill this conversation with material
-you have no use for afterwards — a long file survey, a noisy build loop, an
-exploration down a path that may go nowhere. **Several branches are a fan-out**:
-independent parts of one task, worked at the same time, merged by you. It is the
-same call either way; the number of branches is the only difference.
-
-Do not fork a sequence. Branches run at once and can exchange nothing, so a step
-that needs the step before it has to stay in this conversation.
-
-\`context\` decides what each branch starts from, and you choose it per call:
-- \`inherit\` — everything said here so far. For work that only makes sense
-  against the case as it stands.
-- \`compact\` — the same, without the tool traffic: what was decided, not how it
-  was found out. The usual choice for a wide fan-out.
-- \`none\` — nothing but its own instructions. The cheapest, and the honest one
-  when the assignment is self-contained.
-
-A branch can fail, or answer badly. Its row says which, and what the final
-answer is remains your decision, not the join's.`;
-
-/**
- * Mechanics only — the policy above is in the system prompt of every agent that
- * can call this, so repeating it here would cost tokens in two places at once.
+ * Mechanics only — the policy is in the system prompt of every agent that can
+ * call this, so repeating it here would cost tokens in two places at once.
  */
 export const FORK_DESCRIPTION = [
     'Run work in separate conversations and get back only the answers.',

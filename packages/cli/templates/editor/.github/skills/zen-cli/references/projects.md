@@ -21,7 +21,8 @@ What it writes:
 zenera.json                     { version, name }
 agents.yaml                     the configuration
 agents/instructions.md          house rules, prepended to every agent
-agents/memory-instructions.md   more of them, about the memory store
+agents/fork-instructions.md     more of them, for agents that can fork
+agents/memory-instructions.md   more of them, for agents with the memory store
 agents/tools-instructions.md    more of them, about how tools are called
 agents/prompts/default.md       the default agent's prompt
 agents/skills/                  empty, for skills
@@ -36,9 +37,11 @@ sessions/                       empty
 ```
 
 More house rules can be added by hand: any `agents/<topic>-instructions.md` is
-read too, in filename order, and prepended to every agent. A capability that
-needs standing rules - memory, say - gets its own file rather than another
-section of `agents/instructions.md`. Memory's are not written from scratch:
+read too, in filename order, and prepended to every agent - or, with
+`requires: [<capability>]` in its frontmatter, to every agent that has the
+capability it is about. A capability that needs standing rules - memory, say -
+gets its own file rather than another section of `agents/instructions.md`.
+Memory's are not written from scratch:
 `agents/memory-instructions.md` is the same file as
 `.github/skills/zen-memory/references/memory-instructions.md`, which init puts
 in the project as well, so a copy that was lost or went stale is restored rather

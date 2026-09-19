@@ -4,10 +4,12 @@ import {
     SANDBOX_MOUNT,
     Sandbox,
     exaTools,
+    frontmatter,
     projectRegistry,
     readProjectConfig,
     sandboxTools,
     selectTools,
+    toList,
     workspaceTools,
     type AgentConfig,
     type AnyTool,
@@ -17,7 +19,15 @@ import {
     type Runner,
     type SkillSummary,
 } from '@zenera/neo';
-import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
+import {
+    existsSync,
+    mkdtempSync,
+    readFileSync,
+    readdirSync,
+    realpathSync,
+    rmSync,
+    statSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { auditModels, credentialFor, type DeclaredRole, type ModelIssue } from './audit.ts';
@@ -25,6 +35,7 @@ import { resolveBuild, type ResolvedBuild } from './image.ts';
 import { SHAPES, envNames, form, type KeyStore, type Liveness, type Service } from './keys.ts';
 import { probeModels, type ModelTarget } from './liveness.ts';
 import { BuildError, ensurePodmanReady } from './podman.ts';
+import { staleShared } from './scaffold.ts';
 
 // ---------------------------------------------------------------------------
 // The project check
@@ -236,6 +247,10 @@ const HOUSE_RULES = 'agents/instructions.md';
 const INSTRUCTIONS_SUFFIX = '-instructions.md';
 /** The only place memory is explained to a model; the runtime composes none of it. */
 const MEMORY_RULES = 'agents/memory-instructions.md';
+/** The only place forking is explained to a model; the same holds. */
+const FORK_RULES = 'agents/fork-instructions.md';
+/** The conditioned documents `zen` ships, which land whether or not they apply. */
+const OURS = new Set([MEMORY_RULES, FORK_RULES]);
 const PROMPTS_DIR = 'agents/prompts';
 const SKILLS_DIR = 'agents/skills';
 const SKILL_FILE = 'SKILL.md';
@@ -244,17 +259,35 @@ const ASSETS_DIR = 'assets';
 /** What `allow:` and `preload:` accept, so a skill outside it cannot be named. */
 const REFERABLE = /^[a-z0-9]+(?:[-_][a-z0-9]+)*$/;
 
+/** What `requires:` may name. Mirrors `CAPABILITIES` in the loader. */
+const CAPABILITIES: Record<string, (spec: AgentConfig) => boolean> = {
+    fork: (spec) => Boolean(spec.fork),
+    memory: (spec) => Boolean(spec.memory),
+    'memory-write': (spec) =>
+        spec.memory?.access === 'read-write' || spec.memory?.access === 'full',
+    'memory-forget': (spec) => spec.memory?.access === 'full',
+};
+
+/** A house-rules document as found on disk, with what its frontmatter asked for. */
+interface RuleFile {
+    rel: string;
+    requires: string[];
+}
+
 /**
  * Mirrors `readHouseRules` in the loader, in the same order:
  * `agents/instructions.md`, then every `agents/<topic>-instructions.md` by
- * filename.
+ * filename — each with the `requires:` its frontmatter declared.
  */
-function houseRules(root: string): string[] {
-    const found: string[] = [];
+function houseRules(root: string): RuleFile[] {
+    const found: RuleFile[] = [];
     const take = (rel: string): void => {
-        if (existsSync(join(root, rel))) {
-            found.push(rel);
+        const path = join(root, rel);
+        if (!existsSync(path)) {
+            return;
         }
+        const { data } = frontmatter(readFileSync(path, 'utf8'));
+        found.push({ rel, requires: toList(data.requires) });
     };
     take(HOUSE_RULES);
     const dir = join(root, AGENTS_DIR);
@@ -269,6 +302,16 @@ function houseRules(root: string): string[] {
         take(`${AGENTS_DIR}/${name}`);
     }
     return found;
+}
+
+/**
+ * The documents this agent's prompt actually gets. Unknown capabilities are
+ * reported once, against the file, rather than silently excluding every agent.
+ */
+function rulesFor(rules: RuleFile[], spec: AgentConfig): string[] {
+    return rules
+        .filter((r) => r.requires.every((cap) => CAPABILITIES[cap]?.(spec) ?? true))
+        .map((r) => r.rel);
 }
 
 export async function validateProject(opts: ValidateOptions): Promise<Report> {
@@ -419,7 +462,7 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
     // -----------------------------------------------------------------------
 
     const rules = houseRules(root);
-    for (const rel of rules) {
+    for (const { rel, requires } of rules) {
         record(rel, 'house rules — prepended to every agent prompt', 'file', false);
         if (empty(join(root, rel))) {
             add({
@@ -428,6 +471,32 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
                 where: rel,
                 message: `${rel} is empty, so it contributes nothing but a prompt section`,
                 fix: 'write the rules that hold whichever agent is answering, or delete it',
+            });
+        }
+        for (const cap of requires) {
+            if (!(cap in CAPABILITIES)) {
+                add({
+                    severity: 'error',
+                    code: 'rules.requires.unknown',
+                    where: rel,
+                    message:
+                        `\`requires: ${cap}\` names no capability, so the loader refuses the ` +
+                        'project',
+                    fix: `use one of: ${Object.keys(CAPABILITIES).join(', ')}`,
+                });
+            }
+        }
+        // Ours are copied into every project whether or not it uses the
+        // capability, so an inert one says nothing about the project. One the
+        // project wrote is different: it was written to be read.
+        const reached = config.agents.some((a) => rulesFor([{ rel, requires }], a).length > 0);
+        if (requires.length && !reached && !OURS.has(rel)) {
+            add({
+                severity: 'note',
+                code: 'rules.unreached',
+                where: rel,
+                message: `no agent has ${requires.join(' and ')}, so this document reaches no prompt`,
+                fix: 'relax `requires:`, or give an agent the capability it is written for',
             });
         }
     }
@@ -463,6 +532,47 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
         }
     }
 
+    // The same again for forking, and for the same reason: the runtime used to
+    // compose this block and no longer does, so the file is the whole of what
+    // an agent is told about what survives a join.
+    if (config.agents.some((a) => a.fork)) {
+        const path = join(root, FORK_RULES);
+        if (!existsSync(path) || empty(path)) {
+            add({
+                severity: 'error',
+                code: 'fork.uninstructed',
+                where: FORK_RULES,
+                message:
+                    'an agent can fork, but nothing tells it what a branch can and cannot do — ' +
+                    'the fork tool is granted with only its schema to explain it',
+                fix: 'zen check --fix, which writes the current rules back',
+            });
+        }
+    }
+
+    // Present is not the same as current. These three files are copies of ours
+    // and nobody is meant to be maintaining them, so bytes that differ are an
+    // older `zen`'s — prose about a runtime that has since moved, which reads
+    // exactly as authoritative as the version that is true. The frontmatter
+    // that conditions them arrived this way: every project scaffolded before it
+    // carries a copy that reaches every agent, memory or no memory.
+    for (const rel of staleShared(root)) {
+        // An empty one is already reported, as missing or as empty.
+        if (empty(join(root, rel))) {
+            continue;
+        }
+        add({
+            severity: 'warning',
+            code: 'rules.stale',
+            where: rel,
+            message:
+                `${rel} is not the copy this \`zen\` ships — it came from an older version, ` +
+                'or was edited in place, and either way it describes behaviour that may no ' +
+                'longer be the behaviour',
+            fix: 'zen check --fix, which replaces it; rules of your own belong in a topic file beside it',
+        });
+    }
+
     // -----------------------------------------------------------------------
     // Agents
     // -----------------------------------------------------------------------
@@ -487,7 +597,7 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
     const available = availableTools(root, config);
 
     for (const spec of config.agents) {
-        agents.push(checkAgent(root, config, spec, entry, available, record, add));
+        agents.push(checkAgent(root, config, spec, entry, available, rules, record, add));
     }
 
     checkReturnPaths(config, add);
@@ -761,11 +871,12 @@ function checkAgent(
     spec: AgentConfig,
     entry: string | null,
     available: AnyTool<unknown>[],
+    rules: RuleFile[],
     record: Recorder,
     add: Add,
 ): AgentReport {
     const where = `agents.${spec.name}`;
-    const instructions: string[] = [...houseRules(root)];
+    const instructions: string[] = rulesFor(rules, spec);
 
     // The role prompt: named by `system:`, or found by convention. A named one
     // that is not there is an error — the loader says so too. An absent
