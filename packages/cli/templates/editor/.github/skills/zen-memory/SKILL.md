@@ -114,11 +114,12 @@ leaves the graph half-formed when the model stops early.
 
 `agents/memory-instructions.md` already explains all of this to the agent - how
 to read a recollection, when committing is worthwhile, why correction is a new
-node. It is house rules, so it is prepended to every agent's prompt, and it
-gates its own advice on the tools the reader actually holds. The runtime adds
-the preference block and nothing else. Do not restate any of it in a prompt;
-state project-specific policy instead, and keep the copy byte-identical to the
-reference so `check-instructions.sh` stays meaningful.
+node. It is house rules under `requires: [memory]`, so it reaches exactly the
+agents that have the store and no others, and it gates its own advice on the
+tools the reader actually holds. The runtime adds the preference block and
+nothing else. Do not restate any of it in a prompt; state project-specific
+policy instead, and keep the copy byte-identical to the reference so
+`check-instructions.sh` stays meaningful.
 
 ## How it is organised
 

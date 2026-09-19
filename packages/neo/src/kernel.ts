@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { Agent, AgentRegistry, handoffTarget, handoffTool } from './agent.ts';
 import type { PendingToolCall } from './events.ts';
-import { FORK_DESCRIPTION, forkInstructions, forkParameters } from './fork.ts';
+import { FORK_DESCRIPTION, forkParameters } from './fork.ts';
 import { systemClock, type IdClock } from './ids.ts';
 import { renderPreferences } from './memory/render.ts';
 import { memoryTools } from './memory/tools.ts';
@@ -334,7 +334,13 @@ function forkAgents<TCtx>(state: AgentState, reg: AgentRegistry<TCtx>): string[]
     return known.length ? known : [state.agentName];
 }
 
-/** One condition for the tool and for the prompt block that explains it. */
+/**
+ * The tool is withdrawn at the depth cap, so a branch cannot spawn branches
+ * forever. `agents/fork-instructions.md` is gated on the same two conditions,
+ * from the other side: `requires: [fork]` for the binding, and a `when` on the
+ * depth, because a rule about a tool the model does not have is a rule it can
+ * only be confused by.
+ */
 function canFork<TCtx>(agent: Agent<TCtx>, state: AgentState): boolean {
     return Boolean(agent.fork) && state.spec.forkDepth < state.spec.maxForkDepth;
 }
@@ -413,7 +419,7 @@ function toSchema(t: ToolSchema): ToolSchema {
  * `agents/memory-instructions.md`, so that one document is the only place it is
  * written. An agent with memory tools and no such file gets the tool schemas
  * and nothing else - `zen check` warns about it, the runtime does not invent a
- * replacement.
+ * replacement. Forking is the same, in `agents/fork-instructions.md`.
  */
 async function derivedPrompt<TCtx>(
     agent: Agent<TCtx>,
@@ -445,9 +451,6 @@ async function derivedPrompt<TCtx>(
         if (rendered) {
             out.push(rendered);
         }
-    }
-    if (canFork(agent, state)) {
-        out.push(forkInstructions());
     }
     if (state.spec.outputSchema) {
         out.push(FINAL_OUTPUT_INSTRUCTIONS);

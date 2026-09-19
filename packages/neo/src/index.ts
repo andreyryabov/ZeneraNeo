@@ -5,6 +5,7 @@ export * from './embeddings/index.ts';
 export * from './events.ts';
 export * from './failure.ts';
 export * from './fork.ts';
+export * from './frontmatter.ts';
 export * from './ids.ts';
 export * from './inspect/index.ts';
 export * as Kernel from './kernel.ts';

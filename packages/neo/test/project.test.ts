@@ -214,6 +214,96 @@ describe('project layout', () => {
     });
 });
 
+describe('conditional house rules', () => {
+    const TWO_AGENTS =
+        'agents:\n  - name: trunk\n    fork: true\n    memory: true\n  - name: lens\n';
+
+    const srcs = (p: AgentProject, name: string): string[] =>
+        (p.registry.get(name).instructions as { src: string }[]).map((i) => i.src);
+
+    it('reaches only the agents that have what the document requires', async () => {
+        const p = await loadProject(
+            project({
+                'agents.yaml': TWO_AGENTS,
+                'agents/instructions.md': 'Be terse.',
+                'agents/fork-instructions.md': '---\nrequires: [fork]\n---\nBranches are runs.',
+                'agents/memory-instructions.md': '---\nrequires: [memory]\n---\nNever grep it.',
+            }),
+        );
+        expect(srcs(p, 'trunk')).toEqual([
+            'agents/instructions.md',
+            'agents/fork-instructions.md',
+            'agents/memory-instructions.md',
+        ]);
+        expect(srcs(p, 'lens')).toEqual(['agents/instructions.md']);
+    });
+
+    it('holds every condition a document names, not just the first', async () => {
+        const p = await loadProject(
+            project({
+                'agents.yaml':
+                    'agents:\n  - name: writer\n    memory: true\n' +
+                    '  - name: reader\n    memory:\n      access: read\n',
+                'agents/commit-instructions.md':
+                    '---\nrequires: [memory, memory-write]\n---\nSay what changed.',
+            }),
+        );
+        expect(srcs(p, 'writer')).toEqual(['agents/commit-instructions.md']);
+        expect(srcs(p, 'reader')).toEqual([]);
+    });
+
+    it('leaves a document without frontmatter unconditional, header and all', async () => {
+        const p = await loadProject(
+            project({
+                'agents.yaml': TWO_AGENTS,
+                'agents/instructions.md': '# Rules\n\nBe terse.',
+            }),
+        );
+        const part = (p.registry.get('lens').instructions as { text: string }[])[0];
+        expect(part.text).toBe('# Rules\n\nBe terse.');
+    });
+
+    it('strips the frontmatter from what the model reads', async () => {
+        const p = await loadProject(
+            project({
+                'agents.yaml': TWO_AGENTS,
+                'agents/fork-instructions.md': '---\nrequires: [fork]\n---\n\nBranches are runs.',
+            }),
+        );
+        const part = (p.registry.get('trunk').instructions as { text: string }[])[0];
+        expect(part.text).toBe('Branches are runs.');
+    });
+
+    it('refuses a capability nothing can grant, naming the file', async () => {
+        await expect(
+            loadProject(
+                project({
+                    'agents.yaml': TWO_AGENTS,
+                    'agents/odd-instructions.md': '---\nrequires: [telepathy]\n---\nHm.',
+                }),
+            ),
+        ).rejects.toThrow(/agents\/odd-instructions\.md.*telepathy/s);
+    });
+
+    /**
+     * The other half of the fork gate. The binding is a property of the config
+     * and settles at load; the depth cap is a property of the run, and takes
+     * the tool away without the config changing — so the prose has to go with
+     * it, or the model is told how to use something it has not got.
+     */
+    it('drops the fork rules once the depth cap has taken the tool away', async () => {
+        const p = await loadProject(
+            project({
+                'agents.yaml': 'agents:\n  - name: trunk\n    fork: true\n',
+                'agents/instructions.md': 'Be terse.',
+                'agents/fork-instructions.md': '---\nrequires: [fork]\n---\nBranches are runs.',
+            }),
+        );
+        expect(await systemOf(p)).toContain('Branches are runs.');
+        expect(await systemOf(p, { maxForkDepth: 0 })).not.toContain('Branches are runs.');
+    });
+});
+
 describe('entrypoint', () => {
     const two = (extra = '') => `${extra}agents:\n  - name: first\n  - name: second\n`;
 
@@ -665,6 +755,25 @@ async function toolNames(p: AgentProject): Promise<string[]> {
         },
     };
     await p.runner({ model, stream: false }).run(p.entry, 'hello');
+    return seen;
+}
+
+/** The system prompt the provider would have seen, for the entry agent. */
+async function systemOf(p: AgentProject, opts: { maxForkDepth?: number } = {}): Promise<string> {
+    let seen = '';
+    const model: Model = {
+        id: 'spy',
+        generate: (req: ModelRequest) => {
+            seen = req.system ?? '';
+            return Promise.resolve({
+                text: 'ok',
+                toolCalls: [],
+                stopReason: 'stop' as const,
+                usage: zeroUsage(),
+            });
+        },
+    };
+    await p.runner({ model, stream: false }).run(p.entry, 'hello', opts);
     return seen;
 }
 

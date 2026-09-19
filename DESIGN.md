@@ -826,17 +826,17 @@ Agent opt-in: `AgentOptions.fork?: { agents?: string[]; maxBranches?: number }`.
 
 The schema is mechanics. The policy - what survives a join, that a branch cannot
 be corrected once it starts, which `context` mode fits which shape of work -
-lives in `forkInstructions()` (`src/fork.ts`), pushed into the system prompt by
-`derivedPrompt` under the same condition that offers the tool: a fork binding,
-and `forkDepth < maxForkDepth`. It is per-run policy, not per-call argument
-documentation, so stating it once in the cacheable prefix costs less than
-restating it in every tool schema the model reads.
+is a document the project owns, `agents/fork-instructions.md`, prepended as
+house rules under `requires: [fork]`. It is per-run policy, not per-call
+argument documentation, so stating it once in the cacheable prefix costs less
+than restating it in every tool schema the model reads.
 
-Memory used to work the same way, and no longer does: how to use the graph is a
-document the project owns (`agents/memory-instructions.md`), prepended as house
-rules and gating its own advice on the tools the reader holds. `derivedPrompt`
-composes only the preference block, which cannot be static because each line
-carries a live node id.
+Memory works the same way (`agents/memory-instructions.md`), and both used to be
+template literals in `packages/neo`. `derivedPrompt` composes only the
+preference block, which cannot be static because each line carries a live node
+id. The runtime invents no replacement for either document: an agent that has
+the tool and not the file gets the schema alone, and `zen check` refuses the
+project.
 
 ### 10.2 Data model
 

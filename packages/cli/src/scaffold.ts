@@ -7,7 +7,7 @@ import {
     readFileSync,
     writeFileSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // ---------------------------------------------------------------------------
@@ -51,18 +51,22 @@ const MEMORY_RULES = join('agents', 'memory-instructions.md');
 /** How tools are called: the same, and equally not the project's to maintain. */
 const TOOL_RULES = join('agents', 'tools-instructions.md');
 
+/** How forking behaves: the same again, reaching only agents that declare `fork:`. */
+const FORK_RULES = join('agents', 'fork-instructions.md');
+
 /**
  * The project files that are ours rather than the project's.
  *
  * Everything else under `templates/project/` describes *this project* and is
- * written once. These two describe *this version of `zen`* — how the memory
- * graph works, how its tools are called — and land under `agents/` only
- * because that is where house rules have to be to reach a prompt. A copy that
- * has fallen behind the runtime is worse than none, so `zen check --fix`
- * replaces them, and nothing in them is worth editing in place: project policy
- * on either subject goes in a topic file of its own beside them.
+ * written once. These describe *this version of `zen`* — how the memory graph
+ * works, how its tools are called, what survives a join — and land under
+ * `agents/` only because that is where house rules have to be to reach a
+ * prompt. A copy that has fallen behind the runtime is worse than none, so
+ * `zen check --fix` replaces them, and nothing in them is worth editing in
+ * place: project policy on any of those subjects goes in a topic file of its
+ * own beside them.
  */
-export const SHARED_RULES: readonly string[] = [MEMORY_RULES, TOOL_RULES];
+export const SHARED_RULES: readonly string[] = [FORK_RULES, MEMORY_RULES, TOOL_RULES];
 
 /** The same bytes, kept in the `zen-memory` skill to restore or diff against. */
 const MEMORY_REFERENCE = join(
@@ -248,7 +252,7 @@ export function editorFiles(dir: string): string[] {
     const written = copyTree(join(TEMPLATES, 'editor'), dir, '', {});
 
     // The one file that belongs to both trees. It is a project file first —
-    // house rules prepended to every agent that can see the graph — and it is
+    // house rules reaching every agent that can see the graph — and it is
     // written once and edited from then on, like every other project file. But
     // a project whose copy drifted, or that deleted it and turned memory back
     // on later, needs somewhere to get the current text from, and the editor
@@ -284,6 +288,33 @@ export function refreshShared(dir: string): string[] {
     }
     written.push(...editorFiles(dir));
     return written;
+}
+
+/**
+ * Which of a project's `SHARED_RULES` are not the bytes this `zen` ships.
+ *
+ * The comparison is the whole file rather than anything read out of it,
+ * because there is no reading that would have caught the copies that went
+ * stale in practice: prose describing a tool that was renamed, a section about
+ * behaviour that changed, frontmatter added after the copy was written. All of
+ * it parses, all of it loads, and all of it is wrong. A file that is not there
+ * is not stale — what must exist is checked where it is required, not here.
+ *
+ * Paths come back with forward slashes, the way a report names a file.
+ */
+export function staleShared(dir: string): string[] {
+    const stale: string[] = [];
+    for (const rel of SHARED_RULES) {
+        const path = join(dir, rel);
+        if (!existsSync(path)) {
+            continue;
+        }
+        const ours = readFileSync(join(TEMPLATES, 'project', rel), 'utf8');
+        if (readFileSync(path, 'utf8') !== ours) {
+            stale.push(rel.split(sep).join('/'));
+        }
+    }
+    return stale;
 }
 
 export interface ScaffoldOptions {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { forkInstructions, forkParameters } from '../src/fork.ts';
+import { forkParameters } from '../src/fork.ts';
 import type { Model, ModelRequest, ModelResponse } from '../src/model.ts';
 import { AgentRunner } from '../src/runner.ts';
 import { zeroUsage } from '../src/types.ts';
@@ -58,22 +58,17 @@ describe('fork parameters', () => {
 });
 
 describe('fork instructions', () => {
-    it('reaches the prompt of an agent that can fork', async () => {
+    // The prose lives in the project, in `agents/fork-instructions.md` under
+    // `requires: [fork]` — see `project.test.ts`. A host that builds agents by
+    // hand gets the tool schema and nothing else, exactly as it does for
+    // memory, because the runtime does not invent a replacement.
+    it('are not composed by the runtime', async () => {
         const system = await systemOf({ name: 'lead', instructions: 'LEAD', fork: {} });
-        expect(system).toContain('LEAD');
-        expect(system).toContain(forkInstructions());
+        expect(system).toBe('LEAD');
     });
 
-    it('stays out of the prompt of an agent that cannot', async () => {
+    it('leave the prompt of an agent that cannot fork alone', async () => {
         const system = await systemOf({ name: 'solo', instructions: 'SOLO' });
         expect(system).toBe('SOLO');
-    });
-
-    it('stops once the depth cap has taken the tool away', async () => {
-        const system = await systemOf(
-            { name: 'lead', instructions: 'LEAD', fork: {} },
-            { maxForkDepth: 0 },
-        );
-        expect(system).toBe('LEAD');
     });
 });

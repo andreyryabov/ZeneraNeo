@@ -1,9 +1,11 @@
 import {
+    frontmatter,
     MEMORY_COMMIT_TOOL,
     MEMORY_FORGET_TOOL,
     MEMORY_LOAD_TOOL,
     MEMORY_SEARCH_TOOL,
     renderRecollection,
+    toList,
     type MemoryNode,
     type Recollection,
 } from '@zenera/neo';
@@ -55,6 +57,12 @@ describe('the tools the house rules name', () => {
         const gate = rules.slice(0, rules.indexOf('## What belongs in it'));
         expect(gate).toContain(MEMORY_COMMIT_TOOL);
         expect(gate).toContain(MEMORY_FORGET_TOOL);
+    });
+
+    // The gate above narrows read to write; this one keeps the document away
+    // from an agent with no memory at all, which the prose cannot do.
+    it('are delivered on the capability they are about', () => {
+        expect(toList(frontmatter(rules).data.requires)).toEqual(['memory']);
     });
 });
 
@@ -185,6 +193,17 @@ describe('the copies a scaffold leaves behind', () => {
         expect(readFileSync(join(dir, REFERENCE), 'utf8')).toBe(rules);
     });
 
+    // `requires: [memory]` is only worth writing if the scaffolded agent still
+    // gets the document — an over-tight condition is a silent loss.
+    it('still reach the agent a scaffold turns memory on for', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'zen-mem-reach-'));
+        dirs.push(dir);
+        scaffold({ dir, model: 'openai:gpt-5', embedding: 'openai:text-embedding-3-small' });
+
+        const report = await validateProject({ dir });
+        expect(report.agents[0]?.instructions).toContain('agents/memory-instructions.md');
+    });
+
     // Nothing else notices the loss: the project still loads and the tools are
     // still granted, so the check has to be the thing that fails the build.
     it('are what stops `zen check` failing on uninstructed memory', async () => {
@@ -233,5 +252,30 @@ describe('the copies a scaffold leaves behind', () => {
 
         const report = await validateProject({ dir });
         expect(report.findings.some((f) => f.code === 'memory.uninstructed')).toBe(false);
+    });
+
+    // A copy from before `requires:` existed is the stale one in the wild, and
+    // it is invisible to every other check: it loads, it is not empty, and the
+    // missing condition only makes it reach *more* agents than it should.
+    it('are reported stale when the bytes are an older `zen`\u2019s', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'zen-mem-stale-'));
+        dirs.push(dir);
+        scaffold({ dir, model: 'openai:gpt-5', embedding: 'openai:text-embedding-3-small' });
+
+        const stale = async (): Promise<Finding[]> =>
+            (await validateProject({ dir })).findings.filter((f) => f.code === 'rules.stale');
+
+        expect(await stale()).toEqual([]);
+
+        writeFileSync(
+            join(dir, 'agents', 'memory-instructions.md'),
+            `${frontmatter(rules).body}\n`,
+        );
+        const found = await stale();
+        expect(found.map((f) => f.where)).toEqual(['agents/memory-instructions.md']);
+        expect(found[0]?.severity).toBe('warning');
+
+        refreshShared(dir);
+        expect(await stale()).toEqual([]);
     });
 });

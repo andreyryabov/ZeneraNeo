@@ -1,5 +1,6 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { basename, join, relative, resolve } from 'node:path';
+import { frontmatter, toList } from '../frontmatter.ts';
 import type { Skill, SkillProvider, SkillSummary } from '../skills.ts';
 import { selectTools, type AnyTool } from '../types.ts';
 
@@ -226,45 +227,6 @@ async function readOptional(path: string): Promise<string | undefined> {
         }
         throw err;
     }
-}
-
-/**
- * Deliberately not a YAML parser: `key: value` and flow lists cover what a
- * skill header needs, and a real dependency would buy nothing.
- */
-function frontmatter(raw: string): { data: Record<string, string>; body: string } {
-    const m = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(raw);
-    if (!m) {
-        return { data: {}, body: raw.trim() };
-    }
-    const data: Record<string, string> = {};
-    for (const line of m[1].split(/\r?\n/)) {
-        const i = line.indexOf(':');
-        const key = i < 0 ? '' : line.slice(0, i).trim();
-        if (!key || key.startsWith('#')) {
-            continue;
-        }
-        data[key] = unquote(line.slice(i + 1).trim());
-    }
-    return { data, body: raw.slice(m[0].length).trim() };
-}
-
-function toList(value: string | undefined): string[] {
-    if (!value) {
-        return [];
-    }
-    const inner = value.startsWith('[') && value.endsWith(']') ? value.slice(1, -1) : value;
-    return inner
-        .split(',')
-        .map((v) => unquote(v.trim()))
-        .filter(Boolean);
-}
-
-function unquote(value: string): string {
-    const quoted =
-        (value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"));
-    return quoted && value.length > 1 ? value.slice(1, -1) : value;
 }
 
 function firstLine(body: string): string {

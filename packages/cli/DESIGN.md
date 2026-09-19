@@ -937,22 +937,38 @@ the network's fault and not the project's. `--no-models` skips it.
 A check is a reader, and `--fix` is the one thing it writes. It is here rather
 than behind a verb of its own because the set it may touch is narrow enough to
 state in a sentence: the files a project holds a copy of without owning them -
-`agents/memory-instructions.md`, `agents/tools-instructions.md`, and the
-`.vscode/` and `.github/` trees. Every one of them documents _this version of
-`zen`_ rather than this project, so the current text is the only one worth
-having and a copy left behind by an upgrade is worse than none. They are
-replaced whether or not they were edited, and the report is taken afterwards,
-so its exit code answers the repaired project.
+`agents/fork-instructions.md`, `agents/memory-instructions.md`,
+`agents/tools-instructions.md`, and the `.vscode/` and `.github/` trees. Every
+one of them documents _this version of `zen`_ rather than this project, so the
+current text is the only one worth having and a copy left behind by an upgrade
+is worse than none. They are replaced whether or not they were edited, and the
+report is taken afterwards, so its exit code answers the repaired project.
 
 This is the other half of `keep: true` in
 [scaffold.ts](packages/cli/src/scaffold.ts). A scaffold never overwrites, which
 is right for `agents.yaml`, the prompts, the specification and
 `agents/instructions.md` - the project's own house rules, whose template says
-"replace this with yours" - and wrong for the two that only restate how the
+"replace this with yours" - and wrong for the three that only restate how the
 runtime behaves. Before `--fix` there was no way to upgrade them except by
 hand, which is why `agents/memory-instructions.md` was also copied into the
 `zen-memory` skill's `references/`: somewhere to `diff` against. That copy is
 still written, and is now a second opinion rather than the only route back.
+
+`agents/fork-instructions.md` and `agents/memory-instructions.md` are copied
+into every project, forking or remembering or not, because `--fix` cannot know
+what the project will declare next week. Both carry a `requires:` line, so an
+inert copy reaches no prompt and costs nothing; they are the two files in the
+set the check does not report for going unread.
+
+Being there is not the same as being current, and a stale copy looks like
+nothing at all: it parses, it loads, and it describes a runtime that has since
+moved with exactly the authority of the text that is true. So the check
+compares all three against the ones `--fix` would write and reports
+`rules.stale` for any that differ - the whole file, because no reading of one
+would have caught what actually goes stale in them. The `requires:` lines are
+the case in hand. Every project scaffolded before they existed carries a memory
+document with no condition on it, which still reaches every agent and still
+loads without complaint; the bytes are the only thing that says so.
 
 ### 9.4 Where the disk goes
 
