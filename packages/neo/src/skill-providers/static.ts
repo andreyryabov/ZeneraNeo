@@ -1,4 +1,4 @@
-import type { Skill, SkillProvider, SkillSummary } from '../skills.ts';
+import { unknownSkill, type Skill, type SkillProvider, type SkillSummary } from '../skills.ts';
 import type { AnyTool } from '../types.ts';
 
 /** Skills handed over in code, held in a map. No I/O, no catalog to scan. */
@@ -43,7 +43,7 @@ export class StaticSkillProvider implements SkillProvider {
     async load(name: string, version?: string): Promise<Skill> {
         const s = this.#skills.get(name);
         if (!s) {
-            throw new Error(`unknown skill: ${name}`);
+            throw new Error(unknownSkill(name, await this.list()));
         }
         if (version && s.version && s.version !== version) {
             throw new Error(`skill ${name} is at ${s.version}, ${version} was requested`);

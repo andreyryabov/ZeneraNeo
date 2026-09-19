@@ -333,7 +333,17 @@ export function skillTools<TCtx>(binding: SkillBinding): AnyTool<TCtx>[] {
                     if (summary && !allows(binding, summary)) {
                         throw new Error(`skill "${name}" is not available to this agent`);
                     }
-                    loaded.push(await provider.load(name, summary?.version));
+                    if (!summary) {
+                        // Only over what this agent may see: a suggestion must
+                        // not name a skill the index and `skill_search` hide.
+                        throw new Error(
+                            unknownSkill(
+                                name,
+                                index.filter((s) => allows(binding, s)),
+                            ),
+                        );
+                    }
+                    loaded.push(await provider.load(name, summary.version));
                 }
                 // Two skills may declare the same tool; it is unlocked once.
                 const unlocked = [
@@ -370,4 +380,72 @@ export function skillTools<TCtx>(binding: SkillBinding): AnyTool<TCtx>[] {
         );
     }
     return tools;
+}
+
+// ---------------------------------------------------------------------------
+// Unknown names
+// ---------------------------------------------------------------------------
+
+const CATALOG_IN_ERROR = 30;
+
+/**
+ * A model that misses does not usually misspell: it invents a plausible name
+ * out of something it read, so `memory-policy-instructions` is reaching for
+ * `zen-memory`. Shared words therefore rank above edit distance, and the
+ * catalog is listed either way so the retry needs no further guessing.
+ */
+export function unknownSkill(name: string, catalog: SkillSummary[]): string {
+    const names = catalog.map((s) => s.name);
+    const scored = names
+        .map((n) => ({ n, score: closeness(name, n) }))
+        .filter((c) => c.score > 0)
+        .sort((a, b) => b.score - a.score || a.n.localeCompare(b.n));
+    // Only the equal-best ones: a shared `zen-` prefix makes weak matches of
+    // the whole catalog, and three of those are worse than one good guess.
+    const near = scored
+        .filter((c) => c.score === scored[0]?.score)
+        .slice(0, 3)
+        .map((c) => c.n);
+    const list = names.slice(0, CATALOG_IN_ERROR).join(', ') || 'none';
+    const more = names.length > CATALOG_IN_ERROR ? `, … (${names.length} in all)` : '';
+    return (
+        `unknown skill "${name}"` +
+        (near.length ? ` — did you mean ${near.map((n) => `"${n}"`).join(' or ')}?` : '') +
+        ` (the catalog has: ${list}${more})`
+    );
+}
+
+function closeness(query: string, candidate: string): number {
+    const q = query.toLowerCase();
+    const c = candidate.toLowerCase();
+    if (c.includes(q) || q.includes(c)) {
+        return 4;
+    }
+    const wanted = new Set(words(q));
+    const shared = words(c).filter((w) => wanted.has(w)).length;
+    if (shared) {
+        return 1 + shared;
+    }
+    return distance(q, c) <= 2 ? 1 : 0;
+}
+
+function words(s: string): string[] {
+    return s.split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+}
+
+/** Levenshtein, one row at a time, giving up as soon as the lengths rule it out. */
+function distance(a: string, b: string): number {
+    if (Math.abs(a.length - b.length) > 2) {
+        return 3;
+    }
+    let row = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+        const next = [i];
+        for (let j = 1; j <= b.length; j++) {
+            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+            next[j] = Math.min(next[j - 1] + 1, row[j] + 1, row[j - 1] + cost);
+        }
+        row = next;
+    }
+    return row[b.length];
 }

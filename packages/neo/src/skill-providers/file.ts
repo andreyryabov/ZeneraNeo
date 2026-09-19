@@ -1,7 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { basename, join, relative, resolve } from 'node:path';
 import { frontmatter, toList } from '../frontmatter.ts';
-import type { Skill, SkillProvider, SkillSummary } from '../skills.ts';
+import { unknownSkill, type Skill, type SkillProvider, type SkillSummary } from '../skills.ts';
 import { selectTools, type AnyTool } from '../types.ts';
 
 // ---------------------------------------------------------------------------
@@ -124,7 +124,7 @@ export class FileSkillProvider implements SkillProvider {
     async load(name: string, version?: string): Promise<Skill> {
         const entry = (await this.#scan()).get(name);
         if (!entry) {
-            throw new Error(`unknown skill: ${name}`);
+            throw new Error(unknownSkill(name, await this.list()));
         }
         const { version: found } = entry.summary;
         if (version && found && found !== version) {

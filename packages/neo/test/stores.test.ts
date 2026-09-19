@@ -153,6 +153,20 @@ describe('FileSkillProvider', () => {
         await expect(provider.load('nope')).rejects.toThrow(/unknown skill/);
     });
 
+    /**
+     * A model rarely misspells a name; it invents one out of something it read,
+     * and the word it kept is the way back to the real skill.
+     */
+    it('suggests the skill an invented name was reaching for', async () => {
+        const provider = new FileSkillProvider(dir);
+        await expect(provider.load('budget_travel_policy')).rejects.toThrow(
+            /did you mean "budget_travel"\?.*the catalog has: budget_travel, quick_note/s,
+        );
+        await expect(provider.load('zzzzzzzz')).rejects.toThrow(
+            /unknown skill "zzzzzzzz" \(the catalog has: budget_travel, quick_note\)/,
+        );
+    });
+
     it('unlocks a whole group from frontmatter', async () => {
         const roomService = tool<Record<string, never>>({
             name: 'room_service',
