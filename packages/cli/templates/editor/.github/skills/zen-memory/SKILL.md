@@ -1,6 +1,6 @@
 ---
 name: zen-memory
-description: How agent memory is organised and how to configure it in `agents.yaml` - the `memory:` block, per-agent `access`/`sees`/`writes`/`autoRecall`, the four `memory_*` tools, kinds and relations, how recall ranks and stitches a subgraph, and how to design a memory strategy for a project. Includes the usage rules every memory-enabled project must carry in `agents/memory-instructions.md` (references/memory-instructions.md) and the script that says whether that copy is still current (scripts/check-instructions.sh), what to commit and what never to, how to keep a working file under `/memory` and re-run it later, and how to put memory in front of a `zen rag schema` or `zen rag docs` index so a search that already succeeded once is not paid for again.
+description: How agent memory is organised and how to configure it in `agents.yaml` - the `memory:` block, per-agent `access`/`sees`/`writes`/`autoRecall`, the four `memory_*` tools, kinds and relations, how recall ranks and stitches a subgraph, and how to design a memory strategy for a project. Includes the default usage rules every memory-enabled project must carry in `agents/memory-instructions.md` (references/memory-instructions.md), the script that says whether that copy is still current (scripts/check-instructions.sh), where a project's own customisations go instead (`agents/memory-policy-instructions.md`, under `requires: [memory]`), what to commit and what never to, how to keep a working file under `/memory` and re-run it later, and how to put memory in front of a `zen rag schema` or `zen rag docs` index so a search that already succeeded once is not paid for again.
 ---
 
 # Memory
@@ -332,6 +332,13 @@ Commit one only when the user's own words generalise: "always", "from now on",
 instruction, and a graph full of false preferences is a system prompt nobody
 wrote.
 
+What the user states about themselves is the same kind of node, for the same
+reason - the name to address them by, their role, their timezone, which of
+several environments is theirs. Asking again next run is exactly what the block
+exists to prevent. Credentials and secrets are not preferences, however they
+were offered; `agents/memory-policy-instructions.md` is where a project says so
+in its own terms.
+
 ## Remembering files, and running them again
 
 The workspace is disposable - it may be a container about to be discarded - so a
@@ -505,8 +512,8 @@ An index used by a project needs a skill in that project describing it - see
 index** belongs in that skill, because it is the same subject and it is read at
 the moment the index is. Policy that holds whatever the agent is doing -
 audiences, what must never be written down - goes in
-`agents/memory-policy-instructions.md` instead, which every agent gets whether
-it loads the skill or not.
+`agents/memory-policy-instructions.md` instead, which every agent with the store
+gets whether it loads the skill or not.
 
 ```md
 - Recalled routes are a shortcut, not authority. Confirm with `list_api --name`
@@ -563,11 +570,42 @@ prepended to every agent, in filename order, so this belongs in its own document
 rather than as another section of `agents/instructions.md` - it arrives with
 memory and it leaves with it.
 
-**Keep that file a pure copy.** Project-specific policy - audiences, what must
-never be written down, what an agent commits at the end of a job - goes in
-`agents/memory-policy-instructions.md`, which filename order puts directly after
-it. Then keeping up with a changed reference is the same one command again,
-rather than a hand-patch around prose that has to be preserved.
+### Two files, and which is which
+
+| File                                   | Is                                                                 | Owned by    |
+| -------------------------------------- | ------------------------------------------------------------------ | ----------- |
+| `agents/memory-instructions.md`        | the DEFAULT rules - how the store works, and how any agent uses it | this skill  |
+| `agents/memory-policy-instructions.md` | this PROJECT's customisations on top of them                       | the project |
+
+**Keep the first a pure copy.** It is predefined: it describes this version of
+the runtime, not this project, and `check-instructions.sh` compares it byte for
+byte. Anything edited into it is lost the next time the reference changes.
+
+Everything a project decides for itself goes in the second - audiences, what
+must never be written down, what an agent commits at the end of a job, which
+index a recalled route is checked against. Filename order puts it directly
+after the defaults, so it reads as the exceptions to them. Then keeping up with
+a changed reference is the same one command again, rather than a hand-patch
+around prose that has to be preserved.
+
+**It must open with the same frontmatter**, or it is prepended to every agent in
+the project, including the ones with no store to apply it to:
+
+```md
+---
+requires: [memory]
+---
+
+# Memory policy
+
+- Never commit a customer name or an account id; a `fact` says which tenant
+  shape it was, never whose.
+- ...
+```
+
+`requires: [memory]` is what delivers a topic file on the capability it is
+about. Use `requires: [memory, memory-write]` for a rule only a committing agent
+can act on.
 
 ## Inspecting and repairing it
 
@@ -639,7 +677,8 @@ agents:
 
 - [ ] `.github/skills/zen-memory/scripts/check-instructions.sh` exits zero, so
       `agents/memory-instructions.md` is the reference byte for byte - and
-      project policy lives in `agents/memory-policy-instructions.md`.
+      project policy lives in `agents/memory-policy-instructions.md`, opening
+      with `requires: [memory]`.
 - [ ] `memory.embedding` is set, and was set before the graph had content.
 - [ ] Every agent that should learn has a `memory:` binding - the top-level
       block alone enables nothing.
@@ -657,23 +696,24 @@ agents:
 
 ## When it goes wrong
 
-| Symptom                                             | Cause                                                                                                      |
-| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| The `memory_*` tools are missing                    | No `memory:` on the agent. They come from the binding, never from `tools:`                                 |
-| `zen memory` says the project has none              | Neither a `memory:` block nor an agent binding - nothing is opened and no directory is made                |
-| Recall finds a memory only when reworded            | No embedder. `zen memory stats` says `embedding none`                                                      |
-| Recall finds nothing after changing the embedder    | Refused rather than mixed - a manifest records the model. Change it back, or start a new memory            |
-| Vectors fewer than nodes                            | Some nodes were committed with no embedder; they are only reachable by term overlap                        |
-| The graph fills with restated requests              | The commit rule is not in a prompt or skill. State the "would a later run redo this" test                  |
-| An agent greps `/memory` or reads `graph.json`      | The house-rules block is missing from `agents/memory-instructions.md` - the system prompt never forbids it |
-| A recalled fact cannot be checked or continued      | Nodes were committed with no provenance. The block's "say where it came from" rule is what prevents it     |
-| Recall returns pointers and the run re-reads it all | Content was committed as `text` alone. A node's text describes and locates; the content belongs in a file  |
-| A wrong memory keeps coming back                    | It was edited instead of superseded, or superseded in the wrong direction - the **new** node is the source |
-| An agent cannot see a node you can                  | Its `audience` is not in that agent's `sees`. Invisible and missing are the same thing, on purpose         |
-| "this agent cannot remember files"                  | The agent has no workspace, so a path cannot be resolved. Commit without `file`                            |
-| `error: outside the workspace: /tmp/…`              | The file is real to the shell and outside the only tree memory reads. Write it under `/workspace`          |
-| Long content arrives as `text`, never as a `file`   | The agent has no tool that writes to the workspace, so it has no path to name                              |
-| A remembered file will not run                      | It is not self-contained - it referenced the workspace it was written in                                   |
-| Recollections are large and unhelpful               | `autoRecall.limit` is too high, or node texts describe answers rather than questions                       |
-| The model recalls a route the API no longer has     | Nothing re-checks memory against a rebuilt index. Supersede, and require verification                      |
-| A second run of the same project refuses to start   | The directory lock. A lock whose process is gone is stale and is taken over                                |
+| Symptom                                             | Cause                                                                                                                           |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| The `memory_*` tools are missing                    | No `memory:` on the agent. They come from the binding, never from `tools:`                                                      |
+| `zen memory` says the project has none              | Neither a `memory:` block nor an agent binding - nothing is opened and no directory is made                                     |
+| Recall finds a memory only when reworded            | No embedder. `zen memory stats` says `embedding none`                                                                           |
+| Recall finds nothing after changing the embedder    | Refused rather than mixed - a manifest records the model. Change it back, or start a new memory                                 |
+| Vectors fewer than nodes                            | Some nodes were committed with no embedder; they are only reachable by term overlap                                             |
+| The graph fills with restated requests              | The commit rule is not in a prompt or skill. State the "would a later run redo this" test                                       |
+| Runs do real work and the graph stays empty         | The agent is bound `read`, or nothing names the moments: empty recall then work, before an answer, a handoff or a fork's return |
+| An agent greps `/memory` or reads `graph.json`      | The house-rules block is missing from `agents/memory-instructions.md` - the system prompt never forbids it                      |
+| A recalled fact cannot be checked or continued      | Nodes were committed with no provenance. The block's "say where it came from" rule is what prevents it                          |
+| Recall returns pointers and the run re-reads it all | Content was committed as `text` alone. A node's text describes and locates; the content belongs in a file                       |
+| A wrong memory keeps coming back                    | It was edited instead of superseded, or superseded in the wrong direction - the **new** node is the source                      |
+| An agent cannot see a node you can                  | Its `audience` is not in that agent's `sees`. Invisible and missing are the same thing, on purpose                              |
+| "this agent cannot remember files"                  | The agent has no workspace, so a path cannot be resolved. Commit without `file`                                                 |
+| `error: outside the workspace: /tmp/…`              | The file is real to the shell and outside the only tree memory reads. Write it under `/workspace`                               |
+| Long content arrives as `text`, never as a `file`   | The agent has no tool that writes to the workspace, so it has no path to name                                                   |
+| A remembered file will not run                      | It is not self-contained - it referenced the workspace it was written in                                                        |
+| Recollections are large and unhelpful               | `autoRecall.limit` is too high, or node texts describe answers rather than questions                                            |
+| The model recalls a route the API no longer has     | Nothing re-checks memory against a rebuilt index. Supersede, and require verification                                           |
+| A second run of the same project refuses to start   | The directory lock. A lock whose process is gone is stale and is taken over                                                     |

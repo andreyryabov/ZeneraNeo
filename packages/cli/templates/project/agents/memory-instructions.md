@@ -60,7 +60,7 @@ runs past a line or two, it is content, and content goes in the file.
 | `snippet`    | a few lines of code or configuration                                                 |
 | `file`       | an artifact kept whole - a script to re-run, an answer or passage too big for a text |
 | `operation`  | an external call that was made - endpoint, command, query. The call, not its answer  |
-| `preference` | a standing instruction from the user                                                 |
+| `preference` | a standing instruction from the user, or what they told you about themselves         |
 
 | Relation     | Reads as                                            |
 | ------------ | --------------------------------------------------- |
@@ -154,6 +154,19 @@ Search **before** paying for anything: an investigation, an index query, a
 build, a long command. The point is not to find a pointer - it is to arrive at
 the answer without buying it twice.
 
+Four moments are each worth one search:
+
+| At                                       | Search for                                                             |
+| ---------------------------------------- | ---------------------------------------------------------------------- |
+| a request arriving                       | the request itself, before the first step is planned                   |
+| arriving by handoff, or as a fork branch | the brief you were handed - it is new to you, not to the project       |
+| the point where real work would start    | the question that work would answer, whenever it is more than one call |
+| a dead end mid-run                       | what you now know you are missing, in the words you would ask it in    |
+
+Search the QUESTION, not the turn. Asking the same question again in different
+words is a round trip for an answer you already have; search again when what
+you need to know changes, not when the step does.
+
 One `memory_load` is not cheaper than re-reading the single file a node names.
 It is far cheaper than redoing what produced that node: several documents read
 in sequence, a fan-out of searches, a delegated lookup, a long run. Price a
@@ -199,7 +212,36 @@ the documents and line ranges it was taken from. The pointer says where to look
 and the conclusion says what it meant, but only the passage saves the next run
 from opening the sources to find out what they actually said.
 
-Then the rules for writing it down:
+### When to commit
+
+That test says what is worth keeping. It does not say when to write it down, and
+work that is never written down cost what it cost for nothing.
+
+Two things call for a commit while the run is still going:
+
+- **A search came back empty, or came back beside the point, and you went on to
+  work the answer out anyway.** That gap is the next run's gap too, and you are
+  the only one in a position to close it. It is the usual reason a memory stays
+  useless: every run pays for the same answer, no run writes it down.
+- **Something cost more than a `memory_load` will** - several reads, a fan-out,
+  a build, a long command, a delegated lookup - or produced an artifact that
+  works: a script, a query, a request body, the invocation that finally ran.
+
+And three moments must not pass without one:
+
+| Before                                 | Because                                                           |
+| -------------------------------------- | ----------------------------------------------------------------- |
+| returning your final answer            | the turn ends there, and nothing is written after it              |
+| handing off to another agent           | control moves and does not come back - what you know goes with it |
+| returning to the agent that forked you | only your answer returns; your transcript is dropped at the join  |
+
+Commit a piece of work when it is finished rather than saving all of it for one
+call at the end: a run that is interrupted, or that runs out of room, loses
+whatever was being held back. That is not licence to split one subgraph across
+calls - refs resolve only within a single `memory_commit`, so whatever links
+together is still committed together.
+
+### How to write it down
 
 **Commit the whole subgraph in one call.** A script with no record of what asked
 for it, or a fact with nothing that acts on it, is a memory nobody can use. Refs
@@ -306,8 +348,8 @@ of it again - which is the reading the memory was supposed to buy.
 A body or a result set may still be worth keeping as a SPECIMEN - a shape to
 write against, a case to reproduce. Commit it as a `file` node whose text says
 what was asked, when, and that it is what came back then, never what the data
-is. Keep credentials and personal data out of the store: it outlives the
-session and every later run can read it.
+is. Keep credentials out of the store, along with any personal data the specimen
+did not need: it outlives the session and every later run can read it.
 
 **Correct by superseding, never by editing.** Commit the new node and link it to
 the old one with `SUPERSEDES`. Recall then stops serving the wrong answer
@@ -328,6 +370,15 @@ So commit one only when the user's own words generalise - "always", "from now
 on", "I prefer", "never". A single request being fulfilled is not a standing
 instruction, and one committed by mistake is in every future prompt until
 something supersedes it.
+
+What the user says about THEMSELVES belongs here too, and for the same reason: a
+later run that has to ask again has already lost what the block is for. Their
+name and how they want to be addressed, the role they work in, the timezone
+their dates are in, which of several accounts, environments or repositories is
+theirs, the language or the units they want answers in. Commit what they stated,
+in their own terms - never what you inferred from how they happened to phrase a
+request, and never a credential or a secret, which is not a preference however
+it was offered.
 
 To change one, commit the replacement and link it to the id shown in that block
 with `SUPERSEDES`.

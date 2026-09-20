@@ -101,7 +101,8 @@ show_diff() {
 fix() {
     cp "$REFERENCE" "$COPY"
     echo "wrote: $COPY"
-    echo "note: project policy belongs in agents/memory-policy-instructions.md"
+    echo "note: project policy belongs in agents/memory-policy-instructions.md,"
+    echo "      which must open with '---' / 'requires: [memory]' / '---'"
 }
 
 case "${1:-status}" in
