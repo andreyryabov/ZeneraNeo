@@ -19,6 +19,7 @@ import { resolveTheme, THEMES, type Kind, type Theme } from './theme.ts';
 import {
     ACTIVITY_ROWS,
     answerWidth,
+    blocksOf,
     BOX_CHROME,
     boxWidth,
     BRANCH_ROWS,
@@ -28,11 +29,13 @@ import {
     clip,
     describeCall,
     gistOf,
-    segmentsOf,
     summarise,
     THINKING_ROWS,
     TIME_COL,
+    unmarked,
     windowOf,
+    type Block,
+    type Span,
 } from './wrap.ts';
 
 // ---------------------------------------------------------------------------
@@ -251,6 +254,134 @@ function Call({ line }: { line: Line }): React.ReactElement {
 }
 
 /**
+ * A run of inline markup, drawn as nested children of an unstyled parent.
+ *
+ * Ink styles a whole `<Text>` or none of it, so the weights have to be
+ * separate elements. They are still one text node to the layout, which is what
+ * lets the parent wrap across a `**bold**` without it becoming its own line.
+ */
+function Spans({ spans }: { spans: readonly Span[] }): React.ReactElement {
+    const theme = useTheme();
+    return (
+        <>
+            {spans.map((s, i) => (
+                <Text
+                    key={i}
+                    bold={s.bold === true}
+                    italic={s.italic === true}
+                    underline={s.href !== undefined && s.href !== ''}
+                    {...(s.code ? { color: theme.code.color } : {})}
+                >
+                    {s.text}
+                </Text>
+            ))}
+        </>
+    );
+}
+
+/** Whether a table row is the `|---|:--|` rule under its header. */
+const DIVIDER = /^[\s|:-]+$/;
+
+/**
+ * One block of an answer.
+ *
+ * Verbatim kinds are cut rather than wrapped and carry no styling that could
+ * change a column: a table's alignment is the only thing a table has, and
+ * emphasising a cell would move every cell after it.
+ */
+function BlockView({
+    block,
+    gap,
+    width,
+}: {
+    block: Block;
+    gap: number;
+    width: number;
+}): React.ReactElement {
+    const theme = useTheme();
+    const spans = block.spans ?? [];
+    switch (block.kind) {
+        case 'code':
+            return (
+                <Box flexDirection="column" marginTop={gap}>
+                    <Text
+                        color={theme.chrome.color}
+                    >{`\u250c\u2500${block.title ? ` ${block.title}` : ''}`}</Text>
+                    {(block.lines ?? []).map((l, j) => (
+                        <Box key={j} flexDirection="row">
+                            <Text color={theme.chrome.color}>{'\u2502 '}</Text>
+                            <Text wrap="truncate-end">{l || ' '}</Text>
+                        </Box>
+                    ))}
+                    <Text color={theme.chrome.color}>{'\u2514\u2500'}</Text>
+                </Box>
+            );
+        case 'table':
+            return (
+                <Box flexDirection="column" marginTop={gap}>
+                    {(block.lines ?? []).map((l, j) => (
+                        <Text
+                            key={j}
+                            wrap="truncate-end"
+                            bold={j === 0}
+                            {...(j > 0 && DIVIDER.test(l) ? { color: theme.chrome.color } : {})}
+                        >
+                            {l}
+                        </Text>
+                    ))}
+                </Box>
+            );
+        case 'heading':
+            // One weight, not a ladder of them: a terminal has bold and it has
+            // nothing else, so every level of heading is the same bold and the
+            // nesting is carried by the words.
+            return (
+                <Box marginTop={gap}>
+                    <Text bold>
+                        <Spans spans={spans} />
+                    </Text>
+                </Box>
+            );
+        case 'item':
+            return (
+                <Box flexDirection="row" marginTop={gap} paddingLeft={(block.level ?? 0) * 2}>
+                    <Text color={theme.chrome.color}>{`${block.marker ?? '\u2022'} `}</Text>
+                    <Box flexGrow={1}>
+                        <Text>
+                            <Spans spans={spans} />
+                        </Text>
+                    </Box>
+                </Box>
+            );
+        case 'quote':
+            return (
+                <Box flexDirection="row" marginTop={gap}>
+                    <Text color={theme.chrome.color}>{'\u2502 '}</Text>
+                    <Box flexGrow={1}>
+                        <Text italic>
+                            <Spans spans={spans} />
+                        </Text>
+                    </Box>
+                </Box>
+            );
+        case 'rule':
+            return (
+                <Box marginTop={gap}>
+                    <Text color={theme.chrome.color}>{'\u2500'.repeat(Math.max(3, width))}</Text>
+                </Box>
+            );
+        default:
+            return (
+                <Box marginTop={gap}>
+                    <Text>
+                        <Spans spans={spans} />
+                    </Text>
+                </Box>
+            );
+    }
+}
+
+/**
  * Prose the agent wrote, at the width a paragraph is worth reading at.
  *
  * Only the last one is boxed. A turn says several things on its way to an
@@ -261,33 +392,18 @@ function Answer({ text, boxed }: { text: string; boxed: boolean }): React.ReactE
     const theme = useTheme();
     const { stdout } = useStdout();
     const width = boxWidth(text, stdout?.columns ?? 80);
-    const segments = segmentsOf(text);
-    const body = segments.map((s, i) =>
-        s.code ? (
-            <Box key={i} flexDirection="column">
-                <Text
-                    color={theme.chrome.color}
-                >{`\u250c\u2500${s.title ? ` ${s.title}` : ''}`}</Text>
-                {s.lines.map((l, j) => (
-                    <Box key={j} flexDirection="row">
-                        <Text color={theme.chrome.color}>{'\u2502 '}</Text>
-                        <Text wrap="truncate-end">{l || ' '}</Text>
-                    </Box>
-                ))}
-                <Text color={theme.chrome.color}>{'\u2514\u2500'}</Text>
-            </Box>
-        ) : s.table ? (
-            <Box key={i} flexDirection="column">
-                {s.lines.map((l, j) => (
-                    <Text key={j} wrap="truncate-end">
-                        {l}
-                    </Text>
-                ))}
-            </Box>
-        ) : (
-            <Text key={i}>{s.lines.join('\n')}</Text>
-        ),
-    );
+    const blocks = blocksOf(text);
+    const inner = width - (boxed ? 4 : GUTTER);
+    const body = blocks.map((block, i) => (
+        // Items of one list are one thing; a blank row between them is two
+        // lists, and a list that reads as a list is most of why it was written.
+        <BlockView
+            key={i}
+            block={block}
+            width={inner}
+            gap={i > 0 && !(block.kind === 'item' && blocks[i - 1]?.kind === 'item') ? 1 : 0}
+        />
+    ));
     // Bounded, like every answer in `examples/sdk/`: prose that runs the width of a
     // wide terminal is a worse read than prose that stops.
     return boxed ? (
@@ -502,7 +618,8 @@ function App({ engine, options, theme }: Props): React.ReactElement {
     // below draw. The answer keeps a blank row above it, so what it is separated
     // from is whatever the last call left on screen.
     const textRows = Math.max(1, budget.live - 1);
-    const liveRows = live ? windowOf(live, boxWidth(live, columns) - 4, textRows).length + 1 : 0;
+    const liveWidth = live ? boxWidth(live, columns) - 4 : 0;
+    const liveRows = live ? windowOf(unmarked(live, liveWidth), liveWidth, textRows).length + 1 : 0;
     const wanted =
         activityHeight(fitted.boxes, fitted.trunk) +
         (fitted.hidden ? 1 : 0) +
@@ -1521,7 +1638,16 @@ function Reasoning({
 function Streaming({ text, columns, rows }: StreamProps): React.ReactElement {
     // The same width the finished answer will take, so landing it reflows
     // nothing: what is on screen is what stays there.
-    const shown = windowOf(text, boxWidth(text, columns) - 4, rows);
+    //
+    // Markers are resolved but nothing is styled. This region repaints, and
+    // everything that repaints is measured by `.length` — so the stream gets
+    // the words the answer will have and the weights it will not, which is the
+    // half of the change that can be made without lying about the height.
+    const shown = windowOf(
+        unmarked(text, boxWidth(text, columns) - 4),
+        boxWidth(text, columns) - 4,
+        rows,
+    );
     return (
         <Box
             flexDirection="column"

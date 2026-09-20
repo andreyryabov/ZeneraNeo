@@ -192,13 +192,13 @@ export function answerWidth(columns: number): number {
  */
 export function boxWidth(text: string, columns: number): number {
     let rigid = 0;
-    for (const s of segmentsOf(text)) {
-        if (!s.code && !s.table) {
+    for (const block of blocksOf(text)) {
+        if (!block.lines) {
             continue;
         }
         // A fence is drawn behind a `│ ` gutter; a table row is not.
-        const chrome = s.code ? 6 : 4;
-        for (const line of s.lines) {
+        const chrome = block.kind === 'code' ? 6 : 4;
+        for (const line of block.lines) {
             rigid = Math.max(rigid, line.length + chrome);
         }
     }
@@ -463,57 +463,467 @@ export function gistOf(text: string, width: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Fenced blocks
+// Reading an answer
+//
+// Models write markdown. What used to be read of it was the two constructs a
+// terminal must not REFLOW — the fence and the table — and everything else was
+// printed with its markers showing: an answer arrived as `**Summary**` and
+// `- item`, which is the source, not the document.
+//
+// What is read here is still a subset, and the line is drawn by the invariant
+// at the top of this file rather than by the spec. Block structure comes out as
+// `Block`s for the view to draw with its own boxes, because INK MUST OWN
+// LAYOUT: a renderer that returned its own pre-wrapped, pre-coloured string
+// would make `**x**` nine columns wide to every measurement in this file and
+// one column wide to the terminal — and a frame that miscounts its own height
+// is the one thing Ink cannot erase.
+//
+// Inline markup comes out as `Span`s, which carry their styling BESIDE the
+// text rather than inside it. The width of a row is therefore still the length
+// of its characters, and `boxWidth` cannot be lied to.
+//
+// The scan is one pass and tolerant of anything half-written, because on a
+// stream everything is half-written at some point: a fence with no close, a
+// `**` with no partner. An unmatched marker is emitted as the text it is.
 // ---------------------------------------------------------------------------
 
-/** A run of lines from an answer, and whether it is something that must not be reflowed. */
-export interface Segment {
-    code: boolean;
-    /** a run of `| … |` rows, whose alignment is the whole point of it */
-    table?: boolean;
+/** A run of inline text and what it is. Style rides beside the text, never in it. */
+export interface Span {
+    text: string;
+    bold?: boolean;
+    italic?: boolean;
+    /** an inline code span, taken verbatim and never scanned again */
+    code?: boolean;
+    /** where a link points, when its own text does not say */
+    href?: string;
+}
+
+export type BlockKind = 'paragraph' | 'heading' | 'item' | 'quote' | 'code' | 'table' | 'rule';
+
+/**
+ * One block of an answer.
+ *
+ * `lines` and `spans` are exclusive and say how the block may be drawn: `lines`
+ * is verbatim and must be cut rather than wrapped, `spans` is prose and the
+ * renderer may do as it likes with it.
+ */
+export interface Block {
+    kind: BlockKind;
+    /** `heading`: its depth, 1–6. `item`: how deep it is nested. */
+    level?: number;
     /** the fence's info string, when it had one */
     title?: string;
-    lines: string[];
+    /** what a list item is drawn behind — a bullet, or the number that was written */
+    marker?: string;
+    /** `code` and `table` only, whose alignment is their meaning */
+    lines?: string[];
+    /** every other kind, with its inline markup resolved */
+    spans?: Span[];
 }
+
+// ---------------------------------------------------------------------------
+// Inline
+// ---------------------------------------------------------------------------
+
+/** What a backslash may turn back into ordinary text. */
+const ESCAPABLE = /[\\`*_~[\]()#+\-.!>|]/;
+
+/** Emphasis has to hug its own text, or `2 * 3 * 4` reads as arithmetic in italics. */
+const spacey = (ch: string | undefined): boolean => ch === undefined || /\s/.test(ch);
+
+/** An underscore between word characters is part of the word: `snake_case_name`. */
+const wordy = (ch: string | undefined): boolean => ch !== undefined && /[\p{L}\p{N}]/u.test(ch);
+
+/** Far past anything a model writes, and the thing that stops a pathological nest. */
+const NESTING = 4;
+
+/**
+ * The inline markup of one block, resolved.
+ *
+ * Order is the correctness argument. Code is settled first and never entered
+ * again, which is why this is a scanner and not a chain of replaces: in
+ * "use `[a](b)` syntax" the brackets are prose, and no regex over the whole
+ * string can know that. Everything else recurses on the text between its own
+ * markers, so `**bold with `code` in it**` keeps both.
+ */
+export function inlineOf(text: string, style: Omit<Span, 'text'> = {}, depth = 0): Span[] {
+    const out: Span[] = [];
+    let buffer = '';
+    const keep = (): void => {
+        if (buffer) {
+            out.push({ text: buffer, ...style });
+            buffer = '';
+        }
+    };
+
+    let i = 0;
+    while (i < text.length) {
+        const ch = text[i] as string;
+
+        if (ch === '\\' && ESCAPABLE.test(text[i + 1] ?? '')) {
+            buffer += text[i + 1];
+            i += 2;
+            continue;
+        }
+
+        if (ch === '`') {
+            const span = codeAt(text, i);
+            if (span) {
+                keep();
+                out.push({ text: span.text, ...style, code: true });
+                i = span.end;
+                continue;
+            }
+        }
+
+        if (depth < NESTING && (ch === '[' || (ch === '!' && text[i + 1] === '['))) {
+            const link = linkAt(text, i);
+            if (link) {
+                keep();
+                const inner = { ...style, ...(link.href ? { href: link.href } : {}) };
+                out.push(...inlineOf(link.label, inner, depth + 1));
+                i = link.end;
+                continue;
+            }
+        }
+
+        if (depth < NESTING && (ch === '*' || ch === '_' || ch === '~')) {
+            const marks = ch === '~' ? 2 : Math.min(runOf(text, i, ch), 2);
+            const close = marks === 2 || ch !== '~' ? closingAt(text, i, ch, marks) : undefined;
+            if (close !== undefined) {
+                keep();
+                // Strikethrough has no weight of its own here, so it resolves
+                // to its text: the markers were never meant to be read.
+                const added = ch === '~' ? {} : marks === 2 ? { bold: true } : { italic: true };
+                out.push(
+                    ...inlineOf(text.slice(i + marks, close), { ...style, ...added }, depth + 1),
+                );
+                i = close + marks;
+                continue;
+            }
+        }
+
+        buffer += ch;
+        i += 1;
+    }
+    keep();
+    return out;
+}
+
+/** How many of `ch` run on from `at`. */
+function runOf(text: string, at: number, ch: string): number {
+    let n = 0;
+    while (text[at + n] === ch) {
+        n += 1;
+    }
+    return n;
+}
+
+/**
+ * The code span opening at `at`, or nothing when its backticks never close.
+ *
+ * A run of n backticks closes on a run of exactly n, which is what lets a code
+ * span contain a backtick. One space either side of the content is padding for
+ * that case rather than text, so it comes off.
+ */
+function codeAt(text: string, at: number): { text: string; end: number } | undefined {
+    const run = runOf(text, at, '`');
+    const fence = '`'.repeat(run);
+    let from = at + run;
+    for (;;) {
+        const found = text.indexOf(fence, from);
+        if (found < 0) {
+            return undefined;
+        }
+        if (text[found + run] === '`') {
+            from = found + runOf(text, found, '`');
+            continue;
+        }
+        const body = text.slice(at + run, found);
+        const padded = body.length > 2 && body.startsWith(' ') && body.endsWith(' ');
+        return { text: padded ? body.slice(1, -1) : body, end: found + run };
+    }
+}
+
+/**
+ * Where the emphasis opened at `at` closes, or nothing.
+ *
+ * Two of CommonMark's flanking rules earn their keep and the rest do not: a
+ * marker that opens is followed by something other than a space, one that
+ * closes is preceded by something other than a space. Without them `a * b * c`
+ * is italic and every second multiplication in an answer goes missing.
+ */
+function closingAt(text: string, at: number, ch: string, marks: number): number | undefined {
+    if (spacey(text[at + marks]) || (ch === '_' && wordy(text[at - 1]))) {
+        return undefined;
+    }
+    const mark = ch.repeat(marks);
+    let from = at + marks + 1;
+    while (from < text.length) {
+        const found = text.indexOf(mark, from);
+        if (found < 0) {
+            return undefined;
+        }
+        if (!spacey(text[found - 1]) && !(ch === '_' && wordy(text[found + marks]))) {
+            return found;
+        }
+        from = found + 1;
+    }
+    return undefined;
+}
+
+/** `[label](href)` or `![alt](href)` at `at`, or nothing when it is only a bracket. */
+function linkAt(
+    text: string,
+    at: number,
+): { label: string; href: string; end: number } | undefined {
+    const open = text[at] === '!' ? at + 1 : at;
+    let depth = 0;
+    let close = -1;
+    for (let i = open; i < text.length; i++) {
+        const ch = text[i];
+        if (ch === '\\') {
+            i += 1;
+        } else if (ch === '[') {
+            depth += 1;
+        } else if (ch === ']') {
+            depth -= 1;
+            if (depth === 0) {
+                close = i;
+                break;
+            }
+        }
+    }
+    if (close < 0 || text[close + 1] !== '(') {
+        return undefined;
+    }
+    const end = text.indexOf(')', close + 2);
+    if (end < 0) {
+        return undefined;
+    }
+    // `[label](url "title")` — the title is for a tooltip nothing here has.
+    const target =
+        text
+            .slice(close + 2, end)
+            .trim()
+            .split(/\s+/)[0] ?? '';
+    return {
+        label: text.slice(open + 1, close),
+        href: target.replace(/^<|>$/g, ''),
+        end: end + 1,
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Blocks
+// ---------------------------------------------------------------------------
+
+const FENCE = /^(\s*)(```+|~~~+)\s*(\S*)/;
+const HEADING = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
+const RULE = /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/;
+const QUOTE = /^ {0,3}>\s?(.*)$/;
+const ITEM = /^(\s*)(?:([-*+])|(\d{1,9})[.)])\s+(.*)$/;
 
 /** A markdown table row. Both pipes, so a sentence with one in it is still prose. */
 const TABLE_ROW = /^\s*\|.*\|\s*$/;
 
+/** What a bullet is drawn as, by how deep it is nested. */
+const BULLETS = ['\u2022', '\u25e6', '\u25aa'] as const;
+
+/** Takes back up to `by` columns of indent, and no more than the line has. */
+function dedent(line: string, by: number): string {
+    let n = 0;
+    while (n < by && (line[n] === ' ' || line[n] === '\t')) {
+        n += 1;
+    }
+    return line.slice(n);
+}
+
 /**
- * Splits an answer into what may be wrapped and what may not. Prose is left
- * exactly as it was — the common answer is one piece of it — but a fenced block
- * and a table are the two things a terminal must not reflow: their alignment is
- * their meaning, and wrapping them as prose destroys it.
+ * An answer, as the blocks it is made of.
+ *
+ * Read top down, one line at a time, because that is the order the text
+ * arrives in and a stream must be readable before it is finished. The two
+ * verbatim kinds win over everything: a pipe inside a fence is whatever the
+ * code says it is, and a `#` inside one is a comment, not a heading.
  */
-export function segmentsOf(text: string): Segment[] {
-    const out: Segment[] = [];
-    let current: Segment = { code: false, lines: [] };
-    const flush = (): void => {
-        if (current.lines.length) {
-            out.push(current);
+export function blocksOf(text: string): Block[] {
+    const out: Block[] = [];
+    let prose: { kind: BlockKind; level?: number; marker?: string; lines: string[] } | undefined;
+    let fence: { marker: string; indent: number; title?: string; lines: string[] } | undefined;
+    let table: string[] | undefined;
+
+    const closeProse = (): void => {
+        if (prose) {
+            out.push({
+                kind: prose.kind,
+                ...(prose.level === undefined ? {} : { level: prose.level }),
+                ...(prose.marker === undefined ? {} : { marker: prose.marker }),
+                spans: inlineOf(prose.lines.join('\n').trim()),
+            });
+            prose = undefined;
         }
     };
-    for (const raw of text.split('\n')) {
-        const fence = /^\s*```+\s*(\S*)/.exec(raw);
+    const closeTable = (): void => {
+        if (table) {
+            out.push({ kind: 'table', lines: table });
+            table = undefined;
+        }
+    };
+    const closeFence = (): void => {
         if (fence) {
-            flush();
-            current = current.code
-                ? { code: false, lines: [] }
-                : { code: true, title: fence[1] || undefined, lines: [] };
+            out.push({
+                kind: 'code',
+                ...(fence.title ? { title: fence.title } : {}),
+                lines: fence.lines,
+            });
+            fence = undefined;
+        }
+    };
+    const settle = (): void => {
+        closeProse();
+        closeTable();
+    };
+
+    for (const raw of text.split('\n')) {
+        if (fence) {
+            if (raw.trimStart().startsWith(fence.marker)) {
+                closeFence();
+            } else {
+                fence.lines.push(dedent(raw, fence.indent));
+            }
             continue;
         }
-        // A pipe inside a fence is whatever the code says it is.
-        if (!current.code) {
-            const row = TABLE_ROW.test(raw);
-            if (row !== (current.table ?? false)) {
-                flush();
-                current = row
-                    ? { code: false, table: true, lines: [] }
-                    : { code: false, lines: [] };
-            }
+
+        const opening = FENCE.exec(raw);
+        if (opening) {
+            settle();
+            fence = {
+                marker: (opening[2] as string).slice(0, 3),
+                indent: (opening[1] as string).length,
+                ...(opening[3] ? { title: opening[3] } : {}),
+                lines: [],
+            };
+            continue;
         }
-        current.lines.push(raw);
+
+        // A blank line ends whatever was being gathered and is not itself a block.
+        if (!raw.trim()) {
+            settle();
+            continue;
+        }
+
+        if (TABLE_ROW.test(raw)) {
+            closeProse();
+            (table ??= []).push(raw.trim());
+            continue;
+        }
+        closeTable();
+
+        const heading = HEADING.exec(raw);
+        if (heading) {
+            closeProse();
+            out.push({
+                kind: 'heading',
+                level: (heading[1] as string).length,
+                spans: inlineOf(heading[2] as string),
+            });
+            continue;
+        }
+
+        // Before the item check, so `* * *` is a rule and not a list of one star.
+        if (RULE.test(raw)) {
+            closeProse();
+            out.push({ kind: 'rule' });
+            continue;
+        }
+
+        const quote = QUOTE.exec(raw);
+        if (quote) {
+            if (prose?.kind !== 'quote') {
+                closeProse();
+                prose = { kind: 'quote', lines: [] };
+            }
+            prose.lines.push(quote[1] as string);
+            continue;
+        }
+
+        const item = ITEM.exec(raw);
+        if (item) {
+            closeProse();
+            const level = Math.min(BULLETS.length - 1, Math.floor((item[1] as string).length / 2));
+            const number = item[3];
+            prose = {
+                kind: 'item',
+                level,
+                marker: number ? `${number}.` : (BULLETS[level] as string),
+                lines: [item[4] as string],
+            };
+            continue;
+        }
+
+        // A line under an item belongs to it; a line under nothing starts a paragraph.
+        if (prose) {
+            prose.lines.push(raw.trim());
+        } else {
+            prose = { kind: 'paragraph', lines: [raw] };
+        }
     }
-    flush();
+
+    settle();
+    closeFence();
     return out;
+}
+
+// ---------------------------------------------------------------------------
+// Back to text
+// ---------------------------------------------------------------------------
+
+/**
+ * A block as the row or rows it reads as, with its markers resolved rather
+ * than shown, and nothing styled.
+ *
+ * This is what a sink that cannot style gets — the pre-answer stream, and the
+ * plain box `zen meta` draws — so that the text does not visibly change shape
+ * at the moment it settles.
+ */
+export function textOf(block: Block, width = 0): string {
+    if (block.kind === 'code') {
+        // The same chrome the settled answer draws, so a fence that is still
+        // arriving is already the shape it will end up as.
+        return [
+            `\u250c\u2500${block.title ? ` ${block.title}` : ''}`,
+            ...(block.lines ?? []).map((l) => `\u2502 ${l}`),
+            '\u2514\u2500',
+        ].join('\n');
+    }
+    if (block.lines) {
+        return block.lines.join('\n');
+    }
+    if (block.kind === 'rule') {
+        return '\u2500'.repeat(Math.max(3, width));
+    }
+    const body = (block.spans ?? []).map((s) => s.text).join('');
+    if (block.kind === 'item') {
+        return `${'  '.repeat(block.level ?? 0)}${block.marker ?? BULLETS[0]} ${body}`;
+    }
+    if (block.kind === 'quote') {
+        return `\u2502 ${body}`;
+    }
+    return body;
+}
+
+/** A whole answer with its markup resolved instead of shown. Still plain text. */
+export function unmarked(text: string, width = 0): string {
+    const rows: string[] = [];
+    let previous: Block | undefined;
+    for (const block of blocksOf(text)) {
+        // Items of one list are one thing; a blank row between them is two lists.
+        if (previous && !(block.kind === 'item' && previous.kind === 'item')) {
+            rows.push('');
+        }
+        rows.push(textOf(block, width));
+        previous = block;
+    }
+    return rows.join('\n');
 }
