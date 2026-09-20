@@ -728,6 +728,7 @@ const SUBS: Record<string, Sub> = {
 export const models: Command = {
     summary: 'What this machine can use: list, search, test and pick models.',
     usage: USAGE,
+    banner: { head: 'Zenera', accent: 'Models', subtitle: 'Model Catalog', hue: 'dusk' },
     details: [
         'Answers "what can I use", using the credentials already on this',
         'machine. `zen check` answers the other question — whether one',

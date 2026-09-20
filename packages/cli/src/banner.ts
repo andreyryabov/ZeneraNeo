@@ -100,6 +100,7 @@ const ACCENTS = {
     cyan: { face: '\u001b[1;38;5;51m', shade: '\u001b[0;38;5;37m' },
     mint: { face: '\u001b[1;38;5;121m', shade: '\u001b[0;38;5;78m' },
     gold: { face: '\u001b[1;38;5;220m', shade: '\u001b[0;38;5;178m' },
+    dusk: { face: '\u001b[1;38;5;141m', shade: '\u001b[0;38;5;97m' },
 } as const satisfies Record<string, Tone>;
 
 export type Hue = keyof typeof ACCENTS;
