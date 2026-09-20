@@ -242,6 +242,34 @@ export function warn(message: string): void {
     note(`${yellow('warning')} ${message}`);
 }
 
+// ---------------------------------------------------------------------------
+// Naming the run
+//
+// Two different things answer to the word "title", and a long run wants both.
+// `process.title` is what the process table says, which is how `ps` and
+// Activity Monitor tell one `zen` from another. The tab is the terminal's own,
+// and nothing a process does to itself reaches it — macOS reads the tab name
+// from the executable — so it takes an OSC sequence, written to stderr with the
+// rest of the narration and only when there is a terminal to read it.
+// ---------------------------------------------------------------------------
+
+let restores = false;
+
+/** What this run calls itself, in the process table and on the terminal's tab. */
+export function title(text: string): void {
+    process.title = text;
+    if (!process.stderr.isTTY) {
+        return;
+    }
+    // Push what the shell had there first, so leaving puts it back.
+    if (!restores) {
+        restores = true;
+        process.stderr.write('\u001b[22;0t');
+        process.on('exit', () => process.stderr.write('\u001b[23;0t'));
+    }
+    process.stderr.write(`\u001b]0;${text}\u0007`);
+}
+
 export function fail(message: string, hint?: string): void {
     note(`${red('error')} ${message}`);
     if (hint) {

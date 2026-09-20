@@ -6,7 +6,7 @@ import { NEO_BANNER, printBanner } from './banner.ts';
 import { ALIASES, COMMANDS, EXTERNAL } from './commands/index.ts';
 import { cliManifest, versionOf } from './commands/version.ts';
 import { hasExternal, loadExternal } from './external.ts';
-import { CliError, EXIT, bold, cyan, dim, fail, note, pad, write } from './term.ts';
+import { CliError, EXIT, bold, cyan, dim, fail, note, pad, title, write } from './term.ts';
 
 /** What the user typed: `zen`, `zn` or `zenera` all arrive here. */
 const NAME = invokedAs('zen');
@@ -25,6 +25,9 @@ const spell = (usage: string): string => (NAME === 'zen' ? usage : usage.replace
 // inside `run`. Everything on this path is Node's own, which is why `zen --help`
 // starts instantly and why the CLI adds no weight to the library.
 // ---------------------------------------------------------------------------
+
+/** Commands whose name is not simply its first letter capitalised. */
+const TITLES: Record<string, string> = { rag: 'RAG' };
 
 const GLOBAL = {
     help: { type: 'boolean', short: 'h' },
@@ -62,6 +65,12 @@ async function main(argv: readonly string[]): Promise<number> {
     const name = parts.name ? (ALIASES[parts.name] ?? parts.name) : undefined;
     const command = name ? COMMANDS[name] : undefined;
     const external = name && !command ? EXTERNAL[name] : undefined;
+
+    // Named before anything is printed, so a run that takes an hour is
+    // identifiable in `ps` and on its own tab for the whole of it.
+    if (name && (command || external)) {
+        title(`Zen ${TITLES[name] ?? name.replace(/^./, (c) => c.toUpperCase())}`);
+    }
 
     // Narration, so `--json` and every pipe are untouched by it. A command
     // living in another package brings its own brand, but only once it is
