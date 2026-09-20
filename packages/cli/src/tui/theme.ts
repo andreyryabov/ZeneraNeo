@@ -72,6 +72,16 @@ export interface Theme {
      */
     readonly thinking: LineStyle;
     /**
+     * Inline code inside prose — `zen check`, `--theme`, a path.
+     *
+     * The one role added for markdown, and it is added because the alternative
+     * is worse: bold is already what `**strong**` means, and grey would say a
+     * command name matters less than the sentence around it when it is usually
+     * the only part worth copying. A hue says *this is literal* without
+     * ranking it.
+     */
+    readonly code: LineStyle;
+    /**
      * The three things a turn spends time on. One word in the footer says which,
      * and it is read at a glance from across a desk — so the word changing is
      * backed by the colour changing, not left to be spelled out.
@@ -110,6 +120,9 @@ const DARK: Theme = {
     // Bright: the gist is one line among many and plain `magenta` on black is
     // the darkest of the six.
     thinking: { color: 'magentaBright' },
+    // Green is the one hue with no other job here: it is not the accent, not
+    // the warning, and not the thinking.
+    code: { color: 'green' },
     phase: { reasoning: 'magenta', waiting: 'yellow', working: 'cyan' },
     lanes: ['cyan', 'green', 'yellow', 'blue', 'red', 'magenta'],
 };
@@ -130,6 +143,7 @@ const LIGHT: Theme = {
     warn: 'magenta',
     chrome: LIGHT_CHROME,
     thinking: { color: 'magenta' },
+    code: { color: 'green' },
     // No yellow: `waiting` takes blue and `working` green, which are the two
     // that survive paper.
     phase: { reasoning: 'magenta', waiting: 'blue', working: 'green' },

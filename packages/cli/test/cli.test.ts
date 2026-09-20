@@ -72,6 +72,7 @@ import { bytes, CliError, cut, EXIT, keysIn, pad, table } from '../src/term.ts';
 import {
     ACTIVITY_ROWS,
     answerWidth,
+    blocksOf,
     BOX_CHROME,
     boxWidth,
     BRANCH_MIN,
@@ -82,10 +83,11 @@ import {
     clip,
     describeCall,
     gistOf,
+    inlineOf,
     readable,
-    segmentsOf,
     summarise,
     THINKING_ROWS,
+    unmarked,
     windowOf,
     wrap,
 } from '../src/tui/wrap.ts';
@@ -745,39 +747,168 @@ describe('clipping to one row', () => {
     });
 });
 
-describe('fenced blocks in an answer', () => {
-    it('leaves an answer with no fence in one piece', () => {
-        expect(segmentsOf('one\ntwo')).toEqual([{ code: false, lines: ['one', 'two'] }]);
+describe('the blocks of an answer', () => {
+    const kinds = (text: string): string[] => blocksOf(text).map((b) => b.kind);
+
+    it('leaves an answer with no markup as one paragraph', () => {
+        expect(blocksOf('one\ntwo')).toEqual([
+            { kind: 'paragraph', spans: [{ text: 'one\ntwo' }] },
+        ]);
     });
 
     it('keeps the indentation a code block depends on', () => {
-        const [prose, block] = segmentsOf('look:\n```ts\nif (x) {\n    y();\n}\n```');
-        expect(prose).toEqual({ code: false, lines: ['look:'] });
-        expect(block?.code).toBe(true);
+        const [prose, block] = blocksOf('look:\n```ts\nif (x) {\n    y();\n}\n```');
+        expect(prose).toEqual({ kind: 'paragraph', spans: [{ text: 'look:' }] });
+        expect(block?.kind).toBe('code');
         expect(block?.title).toBe('ts');
         expect(block?.lines).toEqual(['if (x) {', '    y();', '}']);
     });
 
     it('takes an unlabelled fence, and an unclosed one', () => {
-        const [block] = segmentsOf('```\nx\n');
-        expect(block?.code).toBe(true);
+        const [block] = blocksOf('```\nx\n');
+        expect(block?.kind).toBe('code');
         expect(block?.title).toBeUndefined();
         expect(block?.lines).toEqual(['x', '']);
     });
 
     it('splits a table out of the prose around it', () => {
-        const [intro, table, note] = segmentsOf('ranked:\n| a | b |\n| - | - |\n| 1 | 2 |\nso.');
-        expect(intro).toEqual({ code: false, lines: ['ranked:'] });
-        expect(table?.table).toBe(true);
+        const [intro, table, note] = blocksOf('ranked:\n| a | b |\n| - | - |\n| 1 | 2 |\nso.');
+        expect(intro).toEqual({ kind: 'paragraph', spans: [{ text: 'ranked:' }] });
+        expect(table?.kind).toBe('table');
         expect(table?.lines).toEqual(['| a | b |', '| - | - |', '| 1 | 2 |']);
-        expect(note).toEqual({ code: false, lines: ['so.'] });
+        expect(note).toEqual({ kind: 'paragraph', spans: [{ text: 'so.' }] });
     });
 
     it('leaves a pipe inside a fence, and one in a sentence, as they were', () => {
-        const [block] = segmentsOf('```sh\n| a | b |\n```');
-        expect(block?.code).toBe(true);
-        expect(block?.table).toBeUndefined();
-        expect(segmentsOf('pipe ls | wc -l for a count')[0]?.table).toBeUndefined();
+        const [block] = blocksOf('```sh\n| a | b |\n```');
+        expect(block?.kind).toBe('code');
+        expect(block?.lines).toEqual(['| a | b |']);
+        expect(kinds('pipe ls | wc -l for a count')).toEqual(['paragraph']);
+    });
+
+    it('reads a heading down to its level, without the hashes', () => {
+        const [h] = blocksOf('## What changed ##');
+        expect(h?.kind).toBe('heading');
+        expect(h?.level).toBe(2);
+        expect(h?.spans).toEqual([{ text: 'What changed' }]);
+        // Seven is not a heading, and a bare `#` with no text is not one either.
+        expect(kinds('####### nope')).toEqual(['paragraph']);
+        expect(kinds('#nope')).toEqual(['paragraph']);
+    });
+
+    it('gives a list one block per item, with the bullet resolved', () => {
+        const blocks = blocksOf('- first\n- second\n  - nested\n1. numbered');
+        expect(blocks.map((b) => b.kind)).toEqual(['item', 'item', 'item', 'item']);
+        expect(blocks.map((b) => b.marker)).toEqual(['\u2022', '\u2022', '\u25e6', '1.']);
+        expect(blocks.map((b) => b.level)).toEqual([0, 0, 1, 0]);
+        expect(blocks[0]?.spans).toEqual([{ text: 'first' }]);
+    });
+
+    it('keeps a wrapped item with the item it belongs to', () => {
+        const [item] = blocksOf('- a long point\n  that carried on');
+        expect(item?.kind).toBe('item');
+        expect(item?.spans).toEqual([{ text: 'a long point\nthat carried on' }]);
+    });
+
+    /** Models use `---` as a separator far more often than they mean a setext rule. */
+    it('takes a rule, and does not mistake a list for one', () => {
+        expect(kinds('a\n\n---\n\nb')).toEqual(['paragraph', 'rule', 'paragraph']);
+        expect(kinds('* * *')).toEqual(['rule']);
+        expect(kinds('- item')).toEqual(['item']);
+    });
+
+    it('gathers a quote, however many `>` rows it took', () => {
+        const [quote] = blocksOf('> one\n> two');
+        expect(quote?.kind).toBe('quote');
+        expect(quote?.spans).toEqual([{ text: 'one\ntwo' }]);
+    });
+});
+
+describe('the inline markup of an answer', () => {
+    it('lifts the weights out of the text rather than leaving the markers in', () => {
+        expect(inlineOf('a **bold** and *slanted* word')).toEqual([
+            { text: 'a ' },
+            { text: 'bold', bold: true },
+            { text: ' and ' },
+            { text: 'slanted', italic: true },
+            { text: ' word' },
+        ]);
+    });
+
+    /**
+     * The reason this is a scanner and not a chain of replaces: no regex over
+     * the whole string can know that the brackets here are being quoted.
+     */
+    it('never reads markup inside a code span', () => {
+        expect(inlineOf('write `[a](b)` and `**x**`')).toEqual([
+            { text: 'write ' },
+            { text: '[a](b)', code: true },
+            { text: ' and ' },
+            { text: '**x**', code: true },
+        ]);
+    });
+
+    it('lets a code span hold a backtick, and takes the padding off', () => {
+        expect(inlineOf('`` ` ``')).toEqual([{ text: '`', code: true }]);
+    });
+
+    it('carries a link target beside its text', () => {
+        expect(inlineOf('see [the docs](https://x.dev/a "title") now')).toEqual([
+            { text: 'see ' },
+            { text: 'the docs', href: 'https://x.dev/a' },
+            { text: ' now' },
+        ]);
+    });
+
+    it('nests, so a bold sentence keeps the code in it', () => {
+        expect(inlineOf('**run `zen check` first**')).toEqual([
+            { text: 'run ', bold: true },
+            { text: 'zen check', bold: true, code: true },
+            { text: ' first', bold: true },
+        ]);
+    });
+
+    /** Half a marker is the normal state of a stream, not an error. */
+    it('emits an unmatched marker as the text it is', () => {
+        expect(inlineOf('a **bold')).toEqual([{ text: 'a **bold' }]);
+        expect(inlineOf('unclosed `code')).toEqual([{ text: 'unclosed `code' }]);
+        expect(inlineOf('[not a link')).toEqual([{ text: '[not a link' }]);
+    });
+
+    it('leaves arithmetic and identifiers alone', () => {
+        expect(inlineOf('2 * 3 * 4')).toEqual([{ text: '2 * 3 * 4' }]);
+        expect(inlineOf('snake_case_name')).toEqual([{ text: 'snake_case_name' }]);
+    });
+
+    it('honours an escape', () => {
+        expect(inlineOf('literal \\*stars\\*')).toEqual([{ text: 'literal *stars*' }]);
+    });
+
+    it('drops the markers of a weight it has nowhere to put', () => {
+        expect(inlineOf('~~gone~~')).toEqual([{ text: 'gone' }]);
+    });
+
+    /**
+     * The invariant the whole design rests on: styling rides beside the text,
+     * so a row is exactly as wide as the characters it will print.
+     */
+    it('measures as the text it prints, not the source it came from', () => {
+        const spans = inlineOf('a **bold** `code` [link](https://x.dev) word');
+        expect(spans.reduce((n, s) => n + s.text.length, 0)).toBe('a bold code link word'.length);
+    });
+});
+
+describe('an answer with its markers resolved', () => {
+    it('draws what the stream will show before the styling lands on it', () => {
+        expect(unmarked('## Title\n\n- **one**\n- two\n\nDone.')).toBe(
+            'Title\n\n\u2022 one\n\u2022 two\n\nDone.',
+        );
+    });
+
+    it('leaves a fence exactly as it was, behind the chrome it will settle into', () => {
+        expect(unmarked('```\n  x = **1**\n```')).toBe(
+            '\u250c\u2500\n\u2502   x = **1**\n\u2514\u2500',
+        );
     });
 });
 

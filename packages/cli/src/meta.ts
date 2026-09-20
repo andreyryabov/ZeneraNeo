@@ -19,7 +19,7 @@ import {
     write,
     yellow,
 } from './term.ts';
-import { boxWidth, segmentsOf, wrap } from './tui/wrap.ts';
+import { type Block, blocksOf, boxWidth, textOf, wrap } from './tui/wrap.ts';
 
 // ---------------------------------------------------------------------------
 // The meta agent
@@ -688,17 +688,24 @@ export function answerBox(text: string, columns = process.stdout.columns ?? 80):
     const outer = boxWidth(text, columns);
     const inner = outer - 4;
     const body: string[] = [];
-    for (const segment of segmentsOf(text)) {
-        if (segment.code) {
+    let previous: Block | undefined;
+    for (const block of blocksOf(text)) {
+        if (previous && !(block.kind === 'item' && previous.kind === 'item')) {
+            body.push('');
+        }
+        previous = block;
+        if (block.kind === 'code') {
             // Indentation is the meaning of a fenced block, so it is cut rather
             // than reflowed.
-            body.push(dim(`\u250c\u2500${segment.title ? ` ${segment.title}` : ''}`));
-            body.push(...segment.lines.map((l) => `${dim('\u2502')} ${cut(l, inner - 2)}`));
+            body.push(dim(`\u250c\u2500${block.title ? ` ${block.title}` : ''}`));
+            body.push(...(block.lines ?? []).map((l) => `${dim('\u2502')} ${cut(l, inner - 2)}`));
             body.push(dim('\u2514\u2500'));
-        } else if (segment.table) {
-            body.push(...segment.lines.map((l) => cut(l, inner)));
+        } else if (block.lines) {
+            body.push(...block.lines.map((l) => cut(l, inner)));
         } else {
-            body.push(...wrap(segment.lines.join('\n'), inner));
+            // Plain, not styled: `wrap` counts characters, and a bold run
+            // measured with its escape codes in it folds the line early.
+            body.push(...wrap(textOf(block, inner), inner));
         }
     }
     const rule = BOX.h.repeat(outer - 2);
