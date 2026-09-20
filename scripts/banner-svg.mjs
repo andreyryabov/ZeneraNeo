@@ -96,8 +96,8 @@ const ACCENTS = {
         light: { accent: '#d95c00', accentShade: '#9a4200' },
     },
     green: {
-        dark: { accent: '#3fb950', accentShade: '#238636' },
-        light: { accent: '#1a7f37', accentShade: '#0f5323' },
+        dark: { accent: '#00d75f', accentShade: '#00875f' },
+        light: { accent: '#00d75f', accentShade: '#00875f' },
     },
     violet: {
         dark: { accent: '#a371f7', accentShade: '#7c4ddb' },

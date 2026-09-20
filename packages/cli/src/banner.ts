@@ -96,6 +96,7 @@ const HEADS: Record<Appearance, Tone> = {
 /** One per sub-brand, so two of them are told apart before the word is read. */
 const ACCENTS = {
     orange: { face: '\u001b[1;38;5;208m', shade: '\u001b[0;38;5;130m' },
+    green: { face: '\u001b[1;38;5;41m', shade: '\u001b[0;38;5;29m' },
     cyan: { face: '\u001b[1;38;5;51m', shade: '\u001b[0;38;5;37m' },
     mint: { face: '\u001b[1;38;5;121m', shade: '\u001b[0;38;5;78m' },
 } as const satisfies Record<string, Tone>;
