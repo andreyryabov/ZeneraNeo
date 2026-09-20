@@ -193,13 +193,17 @@ export function answerWidth(columns: number): number {
 export function boxWidth(text: string, columns: number): number {
     let rigid = 0;
     for (const block of blocksOf(text)) {
-        if (!block.lines) {
-            continue;
-        }
         // A fence is drawn behind a `│ ` gutter; a table row is not.
-        const chrome = block.kind === 'code' ? 6 : 4;
-        for (const line of block.lines) {
-            rigid = Math.max(rigid, line.length + chrome);
+        const lines =
+            block.kind === 'code'
+                ? (block.lines ?? []).map((l) => l.length + 6)
+                : block.kind === 'table'
+                  ? textOf(block)
+                        .split('\n')
+                        .map((l) => l.length + 4)
+                  : [];
+        for (const width of lines) {
+            rigid = Math.max(rigid, width);
         }
     }
     return Math.max(answerWidth(columns), Math.min(Math.max(24, columns - 4), rigid));
@@ -500,12 +504,16 @@ export interface Span {
 
 export type BlockKind = 'paragraph' | 'heading' | 'item' | 'quote' | 'code' | 'table' | 'rule';
 
+/** How a table column is set, when its rule row said. */
+export type Align = 'left' | 'right' | 'center';
+
 /**
  * One block of an answer.
  *
- * `lines` and `spans` are exclusive and say how the block may be drawn: `lines`
- * is verbatim and must be cut rather than wrapped, `spans` is prose and the
- * renderer may do as it likes with it.
+ * `lines`, `cells` and `spans` are exclusive and say how the block may be
+ * drawn: `lines` is verbatim and must be cut rather than wrapped, `cells` is a
+ * grid to be laid out by `gridOf`, `spans` is prose and the renderer may do as
+ * it likes with it.
  */
 export interface Block {
     kind: BlockKind;
@@ -515,8 +523,12 @@ export interface Block {
     title?: string;
     /** what a list item is drawn behind — a bullet, or the number that was written */
     marker?: string;
-    /** `code` and `table` only, whose alignment is their meaning */
+    /** `code` only, whose indentation is its meaning */
     lines?: string[];
+    /** `table` only: every row but the rule, as cells, with their markup resolved */
+    cells?: Span[][][];
+    /** `table` only: how each column is set, and that the first row is a header */
+    align?: Align[];
     /** every other kind, with its inline markup resolved */
     spans?: Span[];
 }
@@ -727,8 +739,62 @@ const ITEM = /^(\s*)(?:([-*+])|(\d{1,9})[.)])\s+(.*)$/;
 /** A markdown table row. Both pipes, so a sentence with one in it is still prose. */
 const TABLE_ROW = /^\s*\|.*\|\s*$/;
 
+/** A cell of the rule row under a header: dashes, and where the column is set. */
+const RULE_CELL = /^:?-+:?$/;
+
 /** What a bullet is drawn as, by how deep it is nested. */
 const BULLETS = ['\u2022', '\u25e6', '\u25aa'] as const;
+
+/** Splits a row on the pipes that divide it, dropping the two that bound it. */
+function cellsOf(row: string): string[] {
+    const out: string[] = [];
+    let cell = '';
+    for (let i = 0; i < row.length; i += 1) {
+        const ch = row[i] as string;
+        // An escaped pipe is text, and stays escaped for the inline scan.
+        if (ch === '\\' && row[i + 1] === '|') {
+            cell += '\\|';
+            i += 1;
+        } else if (ch === '|') {
+            out.push(cell);
+            cell = '';
+        } else {
+            cell += ch;
+        }
+    }
+    out.push(cell);
+    return out.slice(1, -1).map((c) => c.trim());
+}
+
+/**
+ * The rows a table was written as, read into a grid.
+ *
+ * The rule row is not kept: what it said about alignment is kept instead, and
+ * `gridOf` draws a rule of the width the columns turn out to be. A table
+ * without one is still a table — models write them — it just has no header.
+ */
+function gatherTable(rows: string[]): Block {
+    const grid = rows.map(cellsOf);
+    const rule = grid[1];
+    const ruled = rule !== undefined && rule.length > 0 && rule.every((c) => RULE_CELL.test(c));
+    const body = ruled ? [grid[0] as string[], ...grid.slice(2)] : grid;
+    const columns = Math.max(0, ...body.map((row) => row.length));
+    return {
+        kind: 'table',
+        cells: body.map((row) => Array.from({ length: columns }, (_, i) => inlineOf(row[i] ?? ''))),
+        ...(ruled
+            ? {
+                  align: Array.from({ length: columns }, (_, i): Align =>
+                      (rule[i] ?? '').endsWith(':')
+                          ? (rule[i] as string).startsWith(':')
+                              ? 'center'
+                              : 'right'
+                          : 'left',
+                  ),
+              }
+            : {}),
+    };
+}
 
 /** Takes back up to `by` columns of indent, and no more than the line has. */
 function dedent(line: string, by: number): string {
@@ -766,7 +832,7 @@ export function blocksOf(text: string): Block[] {
     };
     const closeTable = (): void => {
         if (table) {
-            out.push({ kind: 'table', lines: table });
+            out.push(gatherTable(table));
             table = undefined;
         }
     };
@@ -879,6 +945,52 @@ export function blocksOf(text: string): Block[] {
 // Back to text
 // ---------------------------------------------------------------------------
 
+/** What a run of spans measures, which is the text and never the styling. */
+const lengthOf = (spans: Span[]): number => spans.reduce((n, s) => n + s.text.length, 0);
+
+/** A cell in its column, set where the rule row asked for it. */
+function padOf(spans: Span[], width: number, align: Align): Span[] {
+    const slack = Math.max(0, width - lengthOf(spans));
+    const lead = align === 'right' ? slack : align === 'center' ? Math.floor(slack / 2) : 0;
+    return [
+        ...(lead > 0 ? [{ text: ' '.repeat(lead) }] : []),
+        ...spans,
+        ...(slack > lead ? [{ text: ' '.repeat(slack - lead) }] : []),
+    ];
+}
+
+/**
+ * A table as its rows, each one a single run of spans.
+ *
+ * Columns are laid out here and nowhere else, so the drawn table and the plain
+ * one are the same table: a cell's width is the length of its text, which is
+ * what a `Span` measures whatever styling rides beside it. Nothing a model
+ * writes in a cell can move the cell after it.
+ */
+export function gridOf(block: Block): Span[][] {
+    const cells = block.cells ?? [];
+    const count = Math.max(0, ...cells.map((row) => row.length));
+    if (count === 0) {
+        return [];
+    }
+    const widths = Array.from({ length: count }, (_, i) =>
+        Math.max(3, ...cells.map((row) => lengthOf(row[i] ?? []))),
+    );
+    const rows = cells.map((row) => {
+        const out: Span[] = [];
+        widths.forEach((width, i) => {
+            out.push({ text: i === 0 ? '| ' : ' | ' });
+            out.push(...padOf(row[i] ?? [], width, block.align?.[i] ?? 'left'));
+        });
+        out.push({ text: ' |' });
+        return out;
+    });
+    if (block.align && rows.length > 0) {
+        rows.splice(1, 0, [{ text: `|${widths.map((w) => '-'.repeat(w + 2)).join('|')}|` }]);
+    }
+    return rows;
+}
+
 /**
  * A block as the row or rows it reads as, with its markers resolved rather
  * than shown, and nothing styled.
@@ -899,6 +1011,11 @@ export function textOf(block: Block, width = 0): string {
     }
     if (block.lines) {
         return block.lines.join('\n');
+    }
+    if (block.kind === 'table') {
+        return gridOf(block)
+            .map((row) => row.map((s) => s.text).join(''))
+            .join('\n');
     }
     if (block.kind === 'rule') {
         return '\u2500'.repeat(Math.max(3, width));

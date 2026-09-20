@@ -86,10 +86,12 @@ import {
     inlineOf,
     readable,
     summarise,
+    textOf,
     THINKING_ROWS,
     unmarked,
     windowOf,
     wrap,
+    type Block,
 } from '../src/tui/wrap.ts';
 import { validateProject, type Report } from '../src/validate.ts';
 
@@ -775,8 +777,38 @@ describe('the blocks of an answer', () => {
         const [intro, table, note] = blocksOf('ranked:\n| a | b |\n| - | - |\n| 1 | 2 |\nso.');
         expect(intro).toEqual({ kind: 'paragraph', spans: [{ text: 'ranked:' }] });
         expect(table?.kind).toBe('table');
-        expect(table?.lines).toEqual(['| a | b |', '| - | - |', '| 1 | 2 |']);
+        expect(table?.cells).toEqual([
+            [[{ text: 'a' }], [{ text: 'b' }]],
+            [[{ text: '1' }], [{ text: '2' }]],
+        ]);
+        expect(table?.align).toEqual(['left', 'left']);
         expect(note).toEqual({ kind: 'paragraph', spans: [{ text: 'so.' }] });
+    });
+
+    /**
+     * A model writes the pipes where its words end, not where the columns are,
+     * and it emphasises a cell as readily as a sentence. Both are the table's
+     * problem to solve: the markers come out, and the columns are laid out from
+     * what is left.
+     */
+    it('lays a table out in columns of its own, with the markup resolved', () => {
+        const [table] = blocksOf(
+            '| Resource | Usage |\n| :--- | ---: |\n| **Security** | 75.15% |\n| Audit | 4% |',
+        );
+        expect(textOf(table as Block)).toBe(
+            [
+                '| Resource |  Usage |',
+                '|----------|--------|',
+                '| Security | 75.15% |',
+                '| Audit    |     4% |',
+            ].join('\n'),
+        );
+    });
+
+    it('is still a table with no rule row, and has no header to embolden', () => {
+        const [table] = blocksOf('| a | bb |\n| ccc | d |');
+        expect(table?.align).toBeUndefined();
+        expect(textOf(table as Block)).toBe('| a   | bb  |\n| ccc | d   |');
     });
 
     it('leaves a pipe inside a fence, and one in a sentence, as they were', () => {

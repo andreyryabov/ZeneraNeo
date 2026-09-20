@@ -700,8 +700,12 @@ export function answerBox(text: string, columns = process.stdout.columns ?? 80):
             body.push(dim(`\u250c\u2500${block.title ? ` ${block.title}` : ''}`));
             body.push(...(block.lines ?? []).map((l) => `${dim('\u2502')} ${cut(l, inner - 2)}`));
             body.push(dim('\u2514\u2500'));
-        } else if (block.lines) {
-            body.push(...block.lines.map((l) => cut(l, inner)));
+        } else if (block.lines || block.kind === 'table') {
+            body.push(
+                ...textOf(block)
+                    .split('\n')
+                    .map((l) => cut(l, inner)),
+            );
         } else {
             // Plain, not styled: `wrap` counts characters, and a bold run
             // measured with its escape codes in it folds the line early.

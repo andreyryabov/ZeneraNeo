@@ -29,6 +29,7 @@ import {
     clip,
     describeCall,
     gistOf,
+    gridOf,
     summarise,
     THINKING_ROWS,
     TIME_COL,
@@ -279,15 +280,12 @@ function Spans({ spans }: { spans: readonly Span[] }): React.ReactElement {
     );
 }
 
-/** Whether a table row is the `|---|:--|` rule under its header. */
-const DIVIDER = /^[\s|:-]+$/;
-
 /**
  * One block of an answer.
  *
- * Verbatim kinds are cut rather than wrapped and carry no styling that could
- * change a column: a table's alignment is the only thing a table has, and
- * emphasising a cell would move every cell after it.
+ * A fence is cut rather than wrapped, because its indentation is its meaning.
+ * A table is laid out by `gridOf` and only ever styled a whole row at a time —
+ * a span is measured by its text, so nothing here can move a column.
  */
 function BlockView({
     block,
@@ -319,14 +317,16 @@ function BlockView({
         case 'table':
             return (
                 <Box flexDirection="column" marginTop={gap}>
-                    {(block.lines ?? []).map((l, j) => (
+                    {gridOf(block).map((row, j) => (
                         <Text
                             key={j}
                             wrap="truncate-end"
-                            bold={j === 0}
-                            {...(j > 0 && DIVIDER.test(l) ? { color: theme.chrome.color } : {})}
+                            bold={block.align !== undefined && j === 0}
+                            {...(block.align !== undefined && j === 1
+                                ? { color: theme.chrome.color }
+                                : {})}
                         >
-                            {l}
+                            <Spans spans={row} />
                         </Text>
                     ))}
                 </Box>
