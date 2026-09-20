@@ -48,6 +48,7 @@ interface Flags {
 export const cache: Command = {
     summary: 'What work has been kept, and getting rid of it.',
     usage: USAGE,
+    banner: { head: 'Zenera', accent: 'Cache', subtitle: 'Stored Work', hue: 'gold' },
     details: [
         '  ls                     What is stored, by kind. Changes nothing.',
         '  prune                  Remove what the filters name.',
