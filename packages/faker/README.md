@@ -117,7 +117,14 @@ because a body handed it X.
 zen faker serve <spec...>    Serve them. Generators are written on demand.
 zen faker build <spec...>    Write every generator now and exit.
 zen faker cache ls | clear   What has been generated, or throw it away.
+zen faker model [ref]        Show or set the model it uses.
 ```
+
+The model is looked for in this order: `--model`, `ZENERA_FAKER_MODEL`, what
+`zen faker model <provider>:<id>` stored, then the best one your keys can buy.
+The stored one lives beside the keyring in `~/.zenera/neo/faker.json`, so it is
+remembered between runs and across projects; `zen faker model --clear` forgets
+it.
 
 Useful options: `--port`, `--host` (reachable only from this machine by
 default), `--model`, `--seed` (same request, same answer), `--rebuild`,
@@ -125,9 +132,12 @@ default), `--model`, `--seed` (same request, same answer), `--rebuild`,
 workspace), `--quiet`. `zen help faker` prints the full table.
 
 `GET /` is a contents page: every operation the mock is serving, grouped by the
-document it came from, with its parameters and the shape of its answer. `GET
-/__faker/routes` is the same thing as JSON; `GET /__faker/health` is a health
-check. A document that declares `/` itself keeps it.
+document it came from, with its parameters and the shape of its answer. Each
+one has a **Run** button, which opens a form — a box per parameter, required
+ones marked, a body prefilled with something the mock will accept — and shows
+the status, the time and the answer. `GET /__faker/routes` is the same thing as
+JSON; `GET /__faker/health` is a health check. A document that declares `/`
+itself keeps it.
 
 ## Credentials
 

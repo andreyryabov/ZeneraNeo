@@ -8,6 +8,7 @@ import {
     EXIT,
     green,
     json,
+    KeyStore,
     note,
     ownedContainers,
     parse,
@@ -22,13 +23,22 @@ import {
     type Command,
     type Context,
 } from '@zenera/cli/lib';
+import { createModel } from '@zenera/neo';
 import { rmSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { GENERATORS } from './box.ts';
 import { FAKER_KIND, type GeneratorMeta } from './cache.ts';
 import { reason } from './generate.ts';
 import { listen } from './server.ts';
-import { open, type Setup } from './setup.ts';
+import {
+    chooseModel,
+    MODEL_ENV,
+    open,
+    readSettings,
+    SOURCE_LABELS,
+    writeSettings,
+    type Setup,
+} from './setup.ts';
 import { type Operation } from './spec.ts';
 
 // ---------------------------------------------------------------------------
@@ -43,7 +53,7 @@ import { type Operation } from './spec.ts';
 // takes, which is what every other command already means.
 // ---------------------------------------------------------------------------
 
-const USAGE = 'zen faker <serve|build|cache> [spec...]';
+const USAGE = 'zen faker <serve|build|cache|model> [spec...]';
 
 interface Flags {
     port?: string;
@@ -58,6 +68,7 @@ interface Flags {
     'max-body'?: string;
     rebuild?: boolean;
     'no-cache'?: boolean;
+    clear?: boolean;
     quiet?: boolean;
 }
 
@@ -76,6 +87,7 @@ const OPTIONS = {
     'max-body': { type: 'string' },
     rebuild: { type: 'boolean' },
     'no-cache': { type: 'boolean' },
+    clear: { type: 'boolean' },
     quiet: { type: 'boolean' },
 } as const;
 
@@ -88,13 +100,14 @@ export const command: Command = {
             ['  serve <spec...>', dim('Serve the documents. Generators are written on demand.')],
             ['  build <spec...>', dim('Write every generator now and exit.')],
             ['  cache ls|clear', dim('What has been generated, or throw it away.')],
+            ['  model [ref]', dim('Show or set the model it uses. Remembered between runs.')],
         ]),
         '',
         'Options',
         ...table([
             ['  --port <n>', dim('Default 8787.')],
             ['  --host <h>', dim('Default 127.0.0.1. Anything else is reachable off-machine.')],
-            ['  --model <ref>', dim('Which model writes the generators.')],
+            ['  --model <ref>', dim('Which model writes the generators, for this run only.')],
             ['  --image <ref>', dim('Skip the baked image and use this one.')],
             ['  --cache <dir>', dim("The container's workspace. Default ~/.zenera/neo/faker.")],
             ['  --seed <n>', dim('Answer the same request the same way every time.')],
@@ -104,9 +117,14 @@ export const command: Command = {
             ['  --max-body <n>', dim('Largest request body accepted, in bytes.')],
             ['  --rebuild', dim('Ignore what is cached and write it again.')],
             ['  --no-cache', dim('Do not record what is written.')],
+            ['  --clear', dim('With `model`: forget the stored one.')],
             ['  --quiet', dim('No narration.')],
         ]),
         '',
+        dim(
+            `The model is looked for in this order: ${cyan('--model')}, ${cyan(MODEL_ENV)}, ` +
+                `${cyan('zen faker model')}, then the best one your keys can buy.`,
+        ),
         dim(`Credentials come from the ${cyan('zen')} keyring — try ${cyan('zen key ls')}.`),
     ],
 
@@ -119,6 +137,8 @@ export const command: Command = {
                 return await warm(rest, ctx);
             case 'cache':
                 return await cache(rest, ctx);
+            case 'model':
+                return await model(rest, ctx);
             default:
                 throw usageError(name ? `unknown command "${name}"` : 'no command given', USAGE);
         }
@@ -318,6 +338,63 @@ function listGenerators(): Listed[] {
 }
 
 // ---------------------------------------------------------------------------
+// model
+//
+// A stored model is remembered the way `zen meta model` remembers one: in the
+// home directory, beside the keyring, because it is a choice about this tool on
+// this machine. Shown rather than merely set, since the question when a run
+// surprises you is not "which model" but "why that one".
+// ---------------------------------------------------------------------------
+
+const MODEL_USAGE = 'zen faker model [ref|--clear]';
+
+async function model(args: readonly string[], ctx: Context): Promise<void> {
+    const { values, positionals } = parse<Flags>(args, OPTIONS, MODEL_USAGE);
+    const ref = positionals[0];
+    if (ref && values.clear) {
+        throw usageError('--clear takes no model', MODEL_USAGE);
+    }
+
+    // Before anything builds a model: vertex reads its project out of the
+    // environment, and the keyring is what puts it there.
+    const keys = await KeyStore.open();
+    keys.materialize();
+
+    if (ref || values.clear) {
+        const file = await readSettings();
+        if (ref) {
+            // Only that the ref parses: asking the provider costs a call, and
+            // the next run makes one anyway.
+            createModel(ref);
+            writeSettings({ ...file, model: ref });
+        } else {
+            delete file.model;
+            writeSettings(file);
+        }
+        if (ctx.json) {
+            json({ model: ref });
+            return;
+        }
+        note(ref ? `${green('set')} ${ref}` : `${green('cleared')} ${dim('the stored model')}`);
+    }
+
+    const chosen = await chooseModel(values.model, keys);
+    if (ctx.json) {
+        json({ model: chosen?.ref, from: chosen?.from, stored: (await readSettings()).model });
+        return;
+    }
+    if (!chosen) {
+        note('no model, and no key to recommend one from');
+        note(dim('add a key: zen key add openai'));
+        return;
+    }
+    note(`${cyan(chosen.ref)} ${dim(`from ${SOURCE_LABELS[chosen.from]}`)}`);
+    if (chosen.from === 'default') {
+        note(dim(`set one: zen faker model <provider>:<id>`));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // What was loaded
 //
 // One row per document named on the argv, because that is the unit the user
@@ -396,7 +473,7 @@ async function start(
     what: 'serve' | 'build',
 ): Promise<Setup> {
     const loud = !values.quiet && !ctx.json;
-    return open({
+    const setup = await open({
         specs,
         cwd: ctx.cwd,
         cache: values.cache,
@@ -436,6 +513,10 @@ async function start(
                 : undefined,
         },
     });
+    if (loud) {
+        note(dim(`model ${setup.choice.ref} from ${SOURCE_LABELS[setup.choice.from]}`));
+    }
+    return setup;
 }
 
 function number(raw: string | undefined, what: string): number | undefined {

@@ -9,12 +9,13 @@ import type { Operation, ParamSpec } from './spec.ts';
 // What a person does first with a mock is point a browser at it, and a 404 on
 // `/` tells them nothing about what the thing is serving. So the root is a
 // contents page: every operation, grouped by the document it came from, in the
-// order the document declared it.
+// order the document declared it, and a button that calls it.
 //
-// It is one self-contained string — no stylesheet to fetch, no script, no
-// font, nothing loaded off a network the mock may well be standing in for.
-// The banner is the CLI's own art, so the page and the terminal agree about
-// what this program is called.
+// It is one self-contained string — nothing is fetched over a network the mock
+// may well be standing in for: the stylesheet, the run dialog's script and the
+// operation descriptions it works from are all inline. The banner is the CLI's
+// own art, so the page and the terminal agree about what this program is
+// called.
 // ---------------------------------------------------------------------------
 
 const BRAND = { head: 'Zenera', accent: 'Faker', subtitle: 'Mock API Server' };
@@ -22,6 +23,9 @@ const BRAND = { head: 'Zenera', accent: 'Faker', subtitle: 'Mock API Server' };
 export function indexPage(operations: readonly Operation[]): string {
     const documents = group(operations);
     const title = `${BRAND.head} ${BRAND.accent}`;
+    const at = new Map(operations.map((operation, i) => [operation, i]));
+    // `<` is escaped so no description can close this script element early.
+    const descriptors = JSON.stringify(operations.map(callable)).replace(/</g, '\\u003c');
     return `<!doctype html>
 <html lang="en">
 <head>
@@ -37,8 +41,11 @@ ${banner()}
 <p class="meta">${operations.length} operation${operations.length === 1 ? '' : 's'} &middot; ${documents.length} document${documents.length === 1 ? '' : 's'} &middot; <a href="/__faker/routes">routes</a> &middot; <a href="/__faker/health">health</a></p>
 </header>
 <main>
-${documents.map(document).join('\n') || '<p class="empty">No operations are being served.</p>'}
+${documents.map((d) => document(d, at)).join('\n') || '<p class="empty">No operations are being served.</p>'}
 </main>
+${DIALOG}
+<script type="application/json" id="faker-ops">${descriptors}</script>
+<script>${SCRIPT}</script>
 </body>
 </html>
 `;
@@ -55,17 +62,17 @@ function group(operations: readonly Operation[]): [string, Operation[]][] {
     return [...out];
 }
 
-function document([source, operations]: [string, Operation[]]): string {
+function document([source, operations]: [string, Operation[]], at: Map<Operation, number>): string {
     return `<section>
 <h2>${esc(basename(source))} <span class="source">${esc(source)}</span></h2>
-${operations.map(entry).join('\n')}
+${operations.map((operation) => entry(operation, at.get(operation) ?? 0)).join('\n')}
 </section>`;
 }
 
-function entry(operation: Operation): string {
+function entry(operation: Operation, index: number): string {
     const parts = [
         `<div class="op">`,
-        `<div class="sig"><span class="verb ${operation.method}">${operation.method.toUpperCase()}</span><code class="path">${esc(operation.path)}</code><span class="id">${esc(operation.operationId)}</span></div>`,
+        `<div class="sig"><span class="verb ${operation.method}">${operation.method.toUpperCase()}</span><code class="path">${esc(operation.path)}</code><span class="id">${esc(operation.operationId)}</span><button type="button" class="try" data-op="${index}">Run</button></div>`,
     ];
     if (operation.summary) {
         parts.push(`<p class="summary">${esc(operation.summary)}</p>`);
@@ -152,6 +159,137 @@ function deref(schema: Schema, root: Schema, hops = 0): Schema {
 
 const DEFS = '#/$defs/';
 
+// ---------------------------------------------------------------------------
+// Running one
+//
+// The dialog is built in the browser from these, rather than a form per
+// operation in the markup: a document with a thousand operations is a thousand
+// forms, and only one of them is ever open.
+// ---------------------------------------------------------------------------
+
+interface Field {
+    name: string;
+    in: string;
+    required: boolean;
+    /** the hint beside the box */
+    type: string;
+    /** a closed set, so the box is a menu */
+    choices?: string[];
+    description?: string;
+}
+
+interface Callable {
+    method: string;
+    path: string;
+    fields: Field[];
+    body?: { required: boolean; sample: string };
+}
+
+function callable(operation: Operation): Callable {
+    // Cookies are not the browser's to set from a script, so they are shown in
+    // the table and left out of the form.
+    const fields = operation.params
+        .filter((p) => p.in !== 'cookie')
+        .map((p): Field => {
+            const node = deref(p.schema, p.schema);
+            return {
+                name: p.name,
+                in: p.in,
+                required: p.required,
+                type: typeOf(p.schema),
+                choices: choicesOf(node),
+                description: p.description,
+            };
+        });
+    const body = operation.requestBody;
+    return {
+        method: operation.method,
+        path: operation.path,
+        fields,
+        body: body
+            ? {
+                  required: body.required,
+                  sample: JSON.stringify(sample(body.schema, body.schema), null, 2),
+              }
+            : undefined,
+    };
+}
+
+function choicesOf(node: Schema): string[] | undefined {
+    if (Array.isArray(node.enum)) {
+        return node.enum.map((v) => String(v));
+    }
+    return node.type === 'boolean' ? ['true', 'false'] : undefined;
+}
+
+/** Something shaped like the body, so the textarea is edited rather than written. */
+function sample(schema: Schema, root: Schema, depth = 0): unknown {
+    const node = deref(schema, root);
+    if (node.default !== undefined) {
+        return node.default;
+    }
+    if (Array.isArray(node.enum)) {
+        return node.enum[0];
+    }
+    const type = Array.isArray(node.type) ? node.type[0] : node.type;
+    if (type === 'array') {
+        return depth < 2 && isObject(node.items) ? [sample(node.items, root, depth + 1)] : [];
+    }
+    if (isObject(node.properties) && depth < 3) {
+        // Only what the document insists on. An optional branch filled in with
+        // blanks is a request the mock would reject before it answered.
+        const need = Array.isArray(node.required) ? node.required.map(String) : null;
+        const out: Record<string, unknown> = {};
+        for (const [name, sub] of Object.entries(node.properties)) {
+            if (isObject(sub) && (need === null || need.includes(name))) {
+                out[name] = sample(sub, root, depth + 1);
+            }
+        }
+        return out;
+    }
+    if (Array.isArray(node.allOf) && depth < 3) {
+        // The branches of an `allOf` all apply at once, so they are merged.
+        return node.allOf
+            .filter(isObject)
+            .reduce<Record<string, unknown>>(
+                (all, branch) => Object.assign(all, sample(branch, root, depth + 1)),
+                {},
+            );
+    }
+    for (const key of ['oneOf', 'anyOf'] as const) {
+        const branches = node[key];
+        if (Array.isArray(branches) && isObject(branches[0]) && depth < 3) {
+            return sample(branches[0], root, depth + 1);
+        }
+    }
+    if (type === 'integer' || type === 'number') {
+        return 0;
+    }
+    if (type === 'boolean') {
+        return false;
+    }
+    if (type === 'string') {
+        // A blank fails `format`, and the mock checks the request before it
+        // answers it, so a formatted string starts out as something legal.
+        return LIKE[String(node.format)] ?? '';
+    }
+    return type === 'object' ? {} : null;
+}
+
+const LIKE: Record<string, string> = {
+    email: 'someone@example.com',
+    hostname: 'example.com',
+    uri: 'https://example.com',
+    'uri-reference': '/example',
+    uuid: '00000000-0000-4000-8000-000000000000',
+    date: '2024-01-01',
+    'date-time': '2024-01-01T00:00:00Z',
+    time: '00:00:00',
+    duration: 'P1D',
+    ipv4: '127.0.0.1',
+    ipv6: '::1',
+};
+
 /** A list cut short: a contents page is not the document. */
 const brief = (values: string[], sep: string): string =>
     values.slice(0, MOST).join(sep) + (values.length > MOST ? `${sep}…` : '');
@@ -185,6 +323,162 @@ const esc = (s: string): string =>
         /[&<>"]/g,
         (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] as string,
     );
+
+const DIALOG = `<dialog id="run">
+<div class="run-head"><h3 id="run-title"></h3><button type="button" id="run-close" aria-label="Close">&times;</button></div>
+<form id="run-form">
+<div id="run-fields"></div>
+<div class="actions"><button type="submit" class="go">Run</button><button type="button" id="run-cancel" class="cancel">Cancel</button></div>
+</form>
+<pre id="run-out" hidden></pre>
+</dialog>`;
+
+// Values from the document reach the dialog as text nodes rather than markup:
+// the page escapes what it prints, and this has to do the same by construction.
+const SCRIPT = `
+const specs = JSON.parse(document.getElementById('faker-ops').textContent);
+const dialog = document.getElementById('run');
+const title = document.getElementById('run-title');
+const slots = document.getElementById('run-fields');
+const form = document.getElementById('run-form');
+const out = document.getElementById('run-out');
+let current = null;
+
+function box(field) {
+    if (field.choices) {
+        const select = document.createElement('select');
+        if (!field.required) {
+            select.append(new Option('', ''));
+        }
+        for (const choice of field.choices) {
+            select.append(new Option(choice, choice));
+        }
+        return select;
+    }
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = field.type;
+    return input;
+}
+
+function head(name, hint, required) {
+    const span = document.createElement('span');
+    span.className = 'label';
+    span.textContent = name;
+    const where = document.createElement('em');
+    where.textContent = hint;
+    span.append(' ', where);
+    if (required) {
+        const need = document.createElement('b');
+        need.textContent = 'required';
+        span.append(' ', need);
+    }
+    return span;
+}
+
+function row(field) {
+    const label = document.createElement('label');
+    label.className = 'field';
+    const input = box(field);
+    input.name = field.in + ':' + field.name;
+    input.required = field.required;
+    label.append(head(field.name, field.in + ' \u00b7 ' + field.type, field.required), input);
+    if (field.description) {
+        const note = document.createElement('small');
+        note.textContent = field.description;
+        label.append(note);
+    }
+    return label;
+}
+
+function bodyRow(body) {
+    const label = document.createElement('label');
+    label.className = 'field';
+    const area = document.createElement('textarea');
+    area.name = '@body';
+    area.value = body.sample;
+    area.required = body.required;
+    label.append(head('body', 'application/json', body.required), area);
+    return label;
+}
+
+function show(index) {
+    current = specs[index];
+    title.textContent = current.method.toUpperCase() + ' ' + current.path;
+    slots.replaceChildren();
+    for (const field of current.fields) {
+        slots.append(row(field));
+    }
+    if (current.body) {
+        slots.append(bodyRow(current.body));
+    }
+    if (!current.fields.length && !current.body) {
+        const hint = document.createElement('p');
+        hint.className = 'hint';
+        hint.textContent = 'This call takes no arguments.';
+        slots.append(hint);
+    }
+    out.hidden = true;
+    out.textContent = '';
+    dialog.showModal();
+}
+
+form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const spec = current;
+    const data = new FormData(form);
+    const path = spec.path.replace(/\\{(.*?)\\}/g, (whole, name) =>
+        encodeURIComponent(String(data.get('path:' + name) || '')),
+    );
+    const url = new URL(path, location.origin);
+    const headers = {};
+    for (const field of spec.fields) {
+        const value = data.get(field.in + ':' + field.name);
+        if (value === null || value === '') {
+            continue;
+        }
+        if (field.in === 'query') {
+            url.searchParams.set(field.name, value);
+        }
+        if (field.in === 'header') {
+            headers[field.name] = value;
+        }
+    }
+    let body;
+    const typed = spec.body ? String(data.get('@body') || '').trim() : '';
+    if (typed && spec.method !== 'get' && spec.method !== 'head') {
+        body = typed;
+        headers['content-type'] = 'application/json';
+    }
+
+    out.hidden = false;
+    out.dataset.ok = 'true';
+    out.textContent = 'running\u2026';
+    const started = performance.now();
+    try {
+        const res = await fetch(url, { method: spec.method.toUpperCase(), headers, body });
+        const answer = await res.text();
+        let shown = answer;
+        try {
+            shown = JSON.stringify(JSON.parse(answer), null, 2);
+        } catch {}
+        out.dataset.ok = String(res.ok);
+        out.textContent =
+            res.status + ' ' + res.statusText + ' \u00b7 ' +
+            Math.round(performance.now() - started) + 'ms \u00b7 ' +
+            spec.method.toUpperCase() + ' ' + url.pathname + url.search + '\\n\\n' + shown;
+    } catch (err) {
+        out.dataset.ok = 'false';
+        out.textContent = String(err);
+    }
+});
+
+for (const button of document.querySelectorAll('button.try')) {
+    button.addEventListener('click', () => show(Number(button.dataset.op)));
+}
+document.getElementById('run-close').addEventListener('click', () => dialog.close());
+document.getElementById('run-cancel').addEventListener('click', () => dialog.close());
+`;
 
 // The two schemes are the terminal's two, and the accent is the same mint the
 // `zen faker` banner is painted in on both.
@@ -244,4 +538,36 @@ h2 .source { font-weight: 400; color: var(--dim); font-size: 12px; margin-left: 
 .params .type { color: var(--dim); max-width: 18rem; overflow-wrap: anywhere; }
 .params .note { color: var(--dim); width: 50%; }
 .empty { color: var(--dim); }
+.try { background: transparent; color: var(--shade); border: 1px solid var(--line);
+  border-radius: 6px; padding: .2rem .6rem; font: 600 11px/1.6 inherit; cursor: pointer; }
+.try:hover { border-color: var(--accent); color: var(--accent); }
+dialog { width: min(48rem, 92%); padding: 0; color: var(--fg); background: var(--card);
+  border: 1px solid var(--line); border-radius: 10px; }
+dialog::backdrop { background: rgba(0, 0, 0, .55); }
+.run-head { display: flex; align-items: center; gap: .6rem;
+  padding: .8rem 1rem; border-bottom: 1px solid var(--line); }
+.run-head h3 { margin: 0; overflow-wrap: anywhere;
+  font: 600 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+#run-close { margin-left: auto; background: none; border: 0; color: var(--dim);
+  font-size: 18px; line-height: 1; cursor: pointer; }
+#run-form { padding: 1rem; max-height: 55vh; overflow-y: auto; }
+.field { display: block; margin: 0 0 .9rem; }
+.field .label { font: 600 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.field .label em { font-style: normal; font-weight: 400; color: var(--dim); font-size: 11px; }
+.field .label b { color: var(--shade); font-size: 11px; }
+.field small { display: block; margin-top: .2rem; color: var(--dim); font-size: 11px; }
+.field input, .field select, .field textarea { display: block; width: 100%; margin-top: .3rem;
+  padding: .4rem .5rem; color: var(--fg); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 6px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.field textarea { min-height: 9rem; resize: vertical; }
+.hint { color: var(--dim); font-size: 13px; margin: 0 0 .9rem; }
+.actions { display: flex; gap: .5rem; }
+.go { background: var(--accent); color: #0c0d12; border: 0; border-radius: 6px;
+  padding: .45rem 1.1rem; font: 600 13px/1.4 inherit; cursor: pointer; }
+.cancel { background: transparent; color: var(--dim); border: 1px solid var(--line);
+  border-radius: 6px; padding: .45rem .9rem; font: 13px/1.4 inherit; cursor: pointer; }
+#run-out { margin: 0; padding: .8rem 1rem; max-height: 40vh; overflow: auto;
+  border-top: 1px solid var(--line); background: var(--bg); white-space: pre-wrap;
+  overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+#run-out[data-ok="false"] { color: #ff8f8f; }
 `;

@@ -217,6 +217,22 @@ describe('the server', () => {
         expect(page).toContain('One user by id.');
         expect(page).toContain('getSelf');
     });
+
+    it('gives every operation on the contents page something to call it with', async () => {
+        await boot(echoing);
+        const page = await (await fetch(`${base}/`)).text();
+        const buttons = page.match(/class="try" data-op="\d+"/g) ?? [];
+        expect(buttons).toHaveLength(4);
+        // The dialog is built from these, and nothing in them may close the
+        // script element it travels in.
+        const descriptors = /<script type="application\/json" id="faker-ops">(.*?)<\/script>/s.exec(
+            page,
+        );
+        expect(descriptors).not.toBeNull();
+        const specs = JSON.parse(descriptors?.[1] ?? '') as { path: string; fields: unknown[] }[];
+        expect(specs.map((spec) => spec.path)).toContain('/users/{user_id}');
+        expect(specs[0]?.fields).toHaveLength(2);
+    });
 });
 
 // ---------------------------------------------------------------------------
