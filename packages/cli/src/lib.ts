@@ -23,7 +23,7 @@
 // ---------------------------------------------------------------------------
 
 export { extract, invokedAs, one, parse, split, type Parsed, type Split } from './args.ts';
-export { printBanner, type BannerText } from './banner.ts';
+export { bannerArt, printBanner, type BannerText } from './banner.ts';
 export {
     Cache,
     items as cacheItems,

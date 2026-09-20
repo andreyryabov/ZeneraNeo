@@ -174,6 +174,14 @@ export function bannerLines(text: BannerText, columns = process.stderr.columns |
     return lines;
 }
 
+/**
+ * The same letters, unpainted and still split by word, for a renderer that is
+ * not a terminal and colours the two halves its own way.
+ */
+export function bannerArt(text: BannerText): { head: string[]; accent: string[] } {
+    return { head: big(text.head), accent: big(text.accent).map((row) => row.trimEnd()) };
+}
+
 /** Narration, and only for someone watching. */
 export function printBanner(text: BannerText, options: PrintBannerOptions = {}): void {
     if (!process.stderr.isTTY) {

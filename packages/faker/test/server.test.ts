@@ -205,6 +205,18 @@ describe('the server', () => {
         const routes = (await (await fetch(`${base}/__faker/routes`)).json()) as unknown[];
         expect(routes).toHaveLength(4);
     });
+
+    it('answers the root with a contents page grouped by document', async () => {
+        await boot(echoing);
+        const res = await fetch(`${base}/`);
+        expect(res.status).toBe(200);
+        expect(res.headers.get('content-type')).toMatch(/text\/html/);
+        const page = await res.text();
+        expect(page).toContain('petstore.yaml');
+        expect(page).toContain('/users/{user_id}');
+        expect(page).toContain('One user by id.');
+        expect(page).toContain('getSelf');
+    });
 });
 
 // ---------------------------------------------------------------------------

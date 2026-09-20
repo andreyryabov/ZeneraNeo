@@ -124,8 +124,10 @@ default), `--model`, `--seed` (same request, same answer), `--rebuild`,
 `--attempts`, `--concurrency`, `--timeout`, `--cache <dir>` (the container's
 workspace), `--quiet`. `zen help faker` prints the full table.
 
-`GET /__faker/routes` lists what is being served; `GET /__faker/health` is a
-health check.
+`GET /` is a contents page: every operation the mock is serving, grouped by the
+document it came from, with its parameters and the shape of its answer. `GET
+/__faker/routes` is the same thing as JSON; `GET /__faker/health` is a health
+check. A document that declares `/` itself keeps it.
 
 ## Credentials
 

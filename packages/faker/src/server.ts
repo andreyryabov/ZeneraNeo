@@ -5,6 +5,7 @@ import type { Box } from './box.ts';
 import { BuildFailed, type Cache } from './cache.ts';
 import type { GeneratorInput } from './envelope.ts';
 import { reason } from './generate.ts';
+import { indexPage } from './page.ts';
 import { cutLoop, pagingSeen } from './paging.ts';
 import type { Router } from './router.ts';
 import type { Operation } from './spec.ts';
@@ -104,6 +105,13 @@ async function handle(
 
     const match = opts.router.match(method, url.pathname);
     if (!match) {
+        // The document owns `/` only when it declares it. Otherwise the root is
+        // the contents page, which is what a browser pointed here came for.
+        if (url.pathname === '/' && (method === 'get' || method === 'head')) {
+            html(res, indexPage(opts.router.operations));
+            say(200, 'index');
+            return;
+        }
         const allowed = opts.router.allowed(url.pathname);
         if (allowed.length > 0) {
             res.setHeader('allow', allowed.map((m) => m.toUpperCase()).join(', '));
@@ -340,6 +348,14 @@ function send(res: ServerResponse, status: number, value: unknown): void {
     const text = `${JSON.stringify(value, null, 2)}\n`;
     res.statusCode = status;
     res.setHeader('content-type', 'application/json; charset=utf-8');
+    res.setHeader('content-length', Buffer.byteLength(text));
+    res.end(text);
+}
+
+/** Node drops the body itself when the request was a HEAD. */
+function html(res: ServerResponse, text: string): void {
+    res.statusCode = 200;
+    res.setHeader('content-type', 'text/html; charset=utf-8');
     res.setHeader('content-length', Buffer.byteLength(text));
     res.end(text);
 }
