@@ -39,7 +39,7 @@ import {
     writeSettings,
     type Setup,
 } from './setup.ts';
-import { type Operation } from './spec.ts';
+import { called, type Operation } from './spec.ts';
 
 // ---------------------------------------------------------------------------
 // zen faker — a mock API from a specification
@@ -223,7 +223,7 @@ async function warm(args: readonly string[], ctx: Context): Promise<void> {
     const results: { operation: string; status: string; detail?: string }[] = [];
     try {
         for (const operation of setup.router.operations) {
-            const id = `${operation.method.toUpperCase()} ${operation.path}`;
+            const id = `${operation.method.toUpperCase()} ${called(operation)}`;
             if (!operation.success.schema) {
                 results.push({ operation: id, status: 'skipped', detail: 'no response body' });
                 continue;
@@ -491,7 +491,7 @@ async function start(
             onStart: loud
                 ? ({ operation }) =>
                       note(
-                          `${dim('writing a generator for')} ${operation.method.toUpperCase()} ${operation.path}`,
+                          `${dim('writing a generator for')} ${operation.method.toUpperCase()} ${called(operation)}`,
                       )
                 : undefined,
             onAttempt: loud

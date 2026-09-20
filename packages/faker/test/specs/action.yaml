@@ -1,0 +1,61 @@
+# Two operations on one path and one method, told apart by a query value the
+# path key carries. Invalid OpenAPI, and what VMware NSX-T actually ships.
+openapi: 3.0.3
+info:
+    title: actions
+    version: '1.0'
+paths:
+    '/api/v1/transport-node-collections/{id}?action=retry_profile_realization':
+        post:
+            operationId: RetryTransportNodeCollectionRealization
+            parameters:
+                - name: id
+                  in: path
+                  required: true
+                  schema: { type: string }
+            responses:
+                '200':
+                    description: accepted
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [state]
+                                properties:
+                                    state: { type: string }
+    '/api/v1/transport-node-collections/{id}?action=apply_profile':
+        post:
+            operationId: ApplyTransportNodeCollectionProfile
+            parameters:
+                - name: id
+                  in: path
+                  required: true
+                  schema: { type: string }
+            responses:
+                '200':
+                    description: accepted
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [state]
+                                properties:
+                                    state: { type: string }
+    '/api/v1/transport-node-collections/{id}':
+        get:
+            operationId: ReadTransportNodeCollection
+            parameters:
+                - name: id
+                  in: path
+                  required: true
+                  schema: { type: string }
+            responses:
+                '200':
+                    description: the collection
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [id]
+                                properties:
+                                    id: { type: string }

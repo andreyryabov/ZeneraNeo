@@ -53,8 +53,11 @@ describe('the server', () => {
     let base: string;
     let lastInput: Record<string, unknown> | undefined;
 
-    const boot = async (answer: (input: Record<string, unknown>) => unknown): Promise<void> => {
-        const operations = await loadSpec(join(here, 'specs', 'petstore.yaml'));
+    const boot = async (
+        answer: (input: Record<string, unknown>) => unknown,
+        file = 'petstore.yaml',
+    ): Promise<void> => {
+        const operations = await loadSpec(join(here, 'specs', file));
         const box = new Box({
             root,
             image: 'stub',
@@ -232,6 +235,32 @@ describe('the server', () => {
         const specs = JSON.parse(descriptors?.[1] ?? '') as { path: string; fields: unknown[] }[];
         expect(specs.map((spec) => spec.path)).toContain('/users/{user_id}');
         expect(specs[0]?.fields).toHaveLength(2);
+    });
+
+    it('serves two operations on one path and method under their own query', async () => {
+        await boot(
+            (input) => ({ state: String((input.query as Record<string, string>).action) }),
+            'action.yaml',
+        );
+        const at = async (search: string): Promise<Response> =>
+            fetch(`${base}/api/v1/transport-node-collections/123${search}`, { method: 'POST' });
+
+        const retry = await at('?action=retry_profile_realization');
+        expect(retry.status).toBe(200);
+        expect(retry.headers.get('x-faker-operation')).toBe(
+            'RetryTransportNodeCollectionRealization',
+        );
+        expect(await retry.json()).toEqual({ state: 'retry_profile_realization' });
+
+        const apply = await at('?action=apply_profile');
+        expect(apply.headers.get('x-faker-operation')).toBe('ApplyTransportNodeCollectionProfile');
+
+        // Not a 405: the method is defined here, the query was not.
+        const bare = await at('');
+        expect(bare.status).toBe(404);
+        expect(await bare.json()).toMatchObject({
+            expects: ['?action=retry_profile_realization', '?action=apply_profile'],
+        });
     });
 });
 

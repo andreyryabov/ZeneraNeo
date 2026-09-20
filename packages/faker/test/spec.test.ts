@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { Router } from '../src/router.ts';
 import { normalize } from '../src/schema.ts';
-import { loadSpec, loadSpecs, SpecError } from '../src/spec.ts';
+import { called, loadSpec, loadSpecs, SpecError } from '../src/spec.ts';
 import { Checks } from '../src/validate.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -132,6 +132,20 @@ describe('loading documents', () => {
     it('says which file it could not read', async () => {
         await expect(loadSpec(spec('nope.yaml'))).rejects.toBeInstanceOf(SpecError);
     });
+
+    it('reads a query string in a path key as a query value the call must carry', async () => {
+        const ops = await loadSpec(spec('action.yaml'));
+        const retry = ops.find((o) => o.operationId === 'RetryTransportNodeCollectionRealization');
+        expect(retry?.path).toBe('/api/v1/transport-node-collections/{id}');
+        expect(retry?.fixed).toEqual({ action: 'retry_profile_realization' });
+        // As a parameter too, so the request check and the page know the rule.
+        const action = retry?.params.find((p) => p.name === 'action');
+        expect(action).toMatchObject({ in: 'query', required: true });
+        expect(action?.schema.enum).toEqual(['retry_profile_realization']);
+        expect(called(retry!)).toBe(
+            '/api/v1/transport-node-collections/{id}?action=retry_profile_realization',
+        );
+    });
 });
 
 describe('cache keys', () => {
@@ -173,6 +187,33 @@ describe('routing', () => {
     it('refuses two documents that define the same route', async () => {
         const ops = await loadSpecs([spec('petstore.yaml'), spec('petstore.yaml')]);
         expect(() => new Router(ops)).toThrow(/declared twice/);
+    });
+
+    it('tells two operations on one path and method apart by their query value', async () => {
+        const router = new Router(await loadSpec(spec('action.yaml')));
+        const at = (search: string): string | undefined =>
+            router.match(
+                'post',
+                '/api/v1/transport-node-collections/123',
+                new URLSearchParams(search),
+            )?.operation.operationId;
+        expect(at('action=retry_profile_realization')).toBe(
+            'RetryTransportNodeCollectionRealization',
+        );
+        expect(at('action=apply_profile')).toBe('ApplyTransportNodeCollectionProfile');
+        expect(at('action=nonsense')).toBeUndefined();
+        expect(at('')).toBeUndefined();
+    });
+
+    it('does not offer a method whose query value was missed, and says what it wanted', async () => {
+        const router = new Router(await loadSpec(spec('action.yaml')));
+        const path = '/api/v1/transport-node-collections/123';
+        expect(router.allowed(path, new URLSearchParams(''))).toEqual(['get']);
+        expect(router.expects('post', path)).toEqual([
+            '?action=retry_profile_realization',
+            '?action=apply_profile',
+        ]);
+        expect(router.expects('get', path)).toEqual([]);
     });
 });
 

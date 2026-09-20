@@ -1,7 +1,7 @@
 import { bannerArt } from '@zenera/cli/lib';
 import { basename } from 'node:path';
 import type { Schema } from './schema.ts';
-import type { Operation, ParamSpec } from './spec.ts';
+import { called, type Operation, type ParamSpec } from './spec.ts';
 
 // ---------------------------------------------------------------------------
 // The index page
@@ -72,7 +72,7 @@ ${operations.map((operation) => entry(operation, at.get(operation) ?? 0)).join('
 function entry(operation: Operation, index: number): string {
     const parts = [
         `<div class="op">`,
-        `<div class="sig"><span class="verb ${operation.method}">${operation.method.toUpperCase()}</span><code class="path">${esc(operation.path)}</code><span class="id">${esc(operation.operationId)}</span><button type="button" class="try" data-op="${index}">Run</button></div>`,
+        `<div class="sig"><span class="verb ${operation.method}">${operation.method.toUpperCase()}</span><code class="path">${esc(called(operation))}</code><span class="id">${esc(operation.operationId)}</span><button type="button" class="try" data-op="${index}">Run</button></div>`,
     ];
     if (operation.summary) {
         parts.push(`<p class="summary">${esc(operation.summary)}</p>`);
@@ -181,6 +181,8 @@ interface Field {
 interface Callable {
     method: string;
     path: string;
+    /** the path as the document writes it, query pins and all */
+    shown: string;
     fields: Field[];
     body?: { required: boolean; sample: string };
 }
@@ -205,6 +207,7 @@ function callable(operation: Operation): Callable {
     return {
         method: operation.method,
         path: operation.path,
+        shown: called(operation),
         fields,
         body: body
             ? {
@@ -404,7 +407,7 @@ function bodyRow(body) {
 
 function show(index) {
     current = specs[index];
-    title.textContent = current.method.toUpperCase() + ' ' + current.path;
+    title.textContent = current.method.toUpperCase() + ' ' + current.shown;
     slots.replaceChildren();
     for (const field of current.fields) {
         slots.append(row(field));

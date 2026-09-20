@@ -3,7 +3,7 @@ import type { Box } from './box.ts';
 import { tokenOf, type Paging } from './paging.ts';
 import { echoIssues, nextPage, probesFor, walkStart } from './probe.ts';
 import { instruction, retry, SYSTEM } from './prompt.ts';
-import type { Operation } from './spec.ts';
+import { called, type Operation } from './spec.ts';
 import { describeIssues, issues, type Checks } from './validate.ts';
 
 // ---------------------------------------------------------------------------
@@ -42,7 +42,7 @@ export class BuildFailed extends Error {
 
     constructor(operation: Operation, diagnostics: readonly string[]) {
         super(
-            `could not write a generator for ${operation.method.toUpperCase()} ${operation.path}`,
+            `could not write a generator for ${operation.method.toUpperCase()} ${called(operation)}`,
         );
         this.name = 'BuildFailed';
         this.operation = operation;
@@ -144,10 +144,10 @@ async function judge(
 
     for (const probe of probes) {
         const outcome = await box.run(operation.key, probe);
-        const called = `input ${JSON.stringify({ pathParams: probe.pathParams, query: probe.query })}`;
+        const what = `input ${JSON.stringify({ pathParams: probe.pathParams, query: probe.query })}`;
 
         if (!outcome.ok) {
-            out.push(`- ${called}: the file ${outcome.fault}.`);
+            out.push(`- ${what}: the file ${outcome.fault}.`);
             if (outcome.stderr) {
                 out.push(`  stderr: ${tail(outcome.stderr)}`);
             }
@@ -156,12 +156,12 @@ async function judge(
         }
         if (response && !response(outcome.value)) {
             out.push(
-                `- ${called}: the output does not match the response schema — ${describeIssues(issues('', response.errors))}.`,
+                `- ${what}: the output does not match the response schema — ${describeIssues(issues('', response.errors))}.`,
             );
         }
         const echo = echoIssues(probe, outcome.value, operation.success.schema);
         if (echo.length > 0) {
-            out.push(`- ${called}: ${describeIssues(echo)}.`);
+            out.push(`- ${what}: ${describeIssues(echo)}.`);
         }
     }
     // Only worth the container round trips once the file answers at all, and
@@ -192,13 +192,13 @@ async function walk(
 
     for (let page = 1; page <= MAX_PAGES; page++) {
         const outcome = await box.run(operation.key, input);
-        const called = `page ${page} of ${operation.method.toUpperCase()} ${operation.path}`;
+        const what = `page ${page} of ${operation.method.toUpperCase()} ${called(operation)}`;
         if (!outcome.ok) {
-            return [`- ${called}: the file ${outcome.fault}.`];
+            return [`- ${what}: the file ${outcome.fault}.`];
         }
         if (response && !response(outcome.value)) {
             return [
-                `- ${called}: the output does not match the response schema — ${describeIssues(issues('', response.errors))}.`,
+                `- ${what}: the output does not match the response schema — ${describeIssues(issues('', response.errors))}.`,
             ];
         }
 
@@ -208,12 +208,12 @@ async function walk(
         }
         if (token === sent) {
             return [
-                `- ${called}: \`${paging.next}\` came back as ${JSON.stringify(token)}, the very token the request carried in \`${paging.param}\`. A client following it never advances. Build the token from \`${paging.param}\` so it counts up, and stop after three pages.`,
+                `- ${what}: \`${paging.next}\` came back as ${JSON.stringify(token)}, the very token the request carried in \`${paging.param}\`. A client following it never advances. Build the token from \`${paging.param}\` so it counts up, and stop after three pages.`,
             ];
         }
         if (seen.has(token)) {
             return [
-                `- ${called}: the page tokens cycle — ${JSON.stringify(token)} was handed out earlier in this walk. Every page must offer a token no page has offered before, and the last one must offer none.`,
+                `- ${what}: the page tokens cycle — ${JSON.stringify(token)} was handed out earlier in this walk. Every page must offer a token no page has offered before, and the last one must offer none.`,
             ];
         }
         seen.add(token);

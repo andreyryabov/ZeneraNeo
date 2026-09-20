@@ -6,7 +6,9 @@ import { SpecError, type Method, type Operation } from './spec.ts';
 // Small enough to be obvious, which is the point: a route table is the one
 // place where a subtle bug looks exactly like a missing feature. The only rule
 // worth stating is precedence — a literal segment beats a templated one at the
-// same depth, so `/users/me` is not swallowed by `/users/{id}`.
+// same depth, so `/users/me` is not swallowed by `/users/{id}`, and a route
+// that pins a query value beats one that does not, so `?action=` documents can
+// put several operations on one path and method.
 // ---------------------------------------------------------------------------
 
 interface Segment {
@@ -18,6 +20,8 @@ interface Segment {
 interface Route {
     operation: Operation;
     segments: Segment[];
+    /** query values the operation insists on, all of which must be present */
+    fixed: [string, string][];
     /** how many segments are literal — higher wins */
     specificity: number;
 }
@@ -36,7 +40,10 @@ export class Router {
         const seen = new Map<string, Operation>();
 
         for (const operation of operations) {
-            const id = `${operation.method} ${operation.path}`;
+            const fixed = Object.entries(operation.fixed ?? {}).sort(([a], [b]) =>
+                a.localeCompare(b),
+            );
+            const id = `${operation.method} ${operation.path}${query(fixed)}`;
             const clash = seen.get(id);
             if (clash) {
                 throw new SpecError(
@@ -51,19 +58,23 @@ export class Router {
             list.push({
                 operation,
                 segments,
+                fixed,
                 specificity: segments.filter((s) => s.name === undefined).length,
             });
             this.#routes.set(operation.method, list);
         }
 
         for (const list of this.#routes.values()) {
-            list.sort((a, b) => b.specificity - a.specificity);
+            list.sort((a, b) => b.fixed.length - a.fixed.length || b.specificity - a.specificity);
         }
     }
 
-    match(method: string, pathname: string): Match | undefined {
+    match(method: string, pathname: string, search?: URLSearchParams): Match | undefined {
         const parts = split(pathname);
         for (const route of this.#routes.get(method.toLowerCase() as Method) ?? []) {
+            if (!pins(route, search)) {
+                continue;
+            }
             const pathParams = apply(route.segments, parts);
             if (pathParams) {
                 return { operation: route.operation, pathParams };
@@ -73,17 +84,35 @@ export class Router {
     }
 
     /** Whether the path exists under some other method — a 405, not a 404. */
-    allowed(pathname: string): Method[] {
+    allowed(pathname: string, search?: URLSearchParams): Method[] {
         const parts = split(pathname);
         const out: Method[] = [];
         for (const [method, list] of this.#routes) {
-            if (list.some((r) => apply(r.segments, parts) !== undefined)) {
+            if (list.some((r) => pins(r, search) && apply(r.segments, parts) !== undefined)) {
                 out.push(method);
             }
         }
         return out;
     }
+
+    /**
+     * The query strings this method would have answered on this path. Empty
+     * unless the document pinned one, which is the only way a request can miss
+     * a route whose path it matched exactly.
+     */
+    expects(method: string, pathname: string): string[] {
+        const parts = split(pathname);
+        return (this.#routes.get(method.toLowerCase() as Method) ?? [])
+            .filter((r) => r.fixed.length > 0 && apply(r.segments, parts) !== undefined)
+            .map((r) => query(r.fixed));
+    }
 }
+
+const query = (fixed: [string, string][]): string =>
+    fixed.length === 0 ? '' : `?${new URLSearchParams(fixed).toString()}`;
+
+const pins = (route: Route, search?: URLSearchParams): boolean =>
+    route.fixed.every(([name, value]) => search?.get(name) === value);
 
 function compile(template: string): Segment[] {
     return split(template).map((raw) => {

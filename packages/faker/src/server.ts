@@ -103,7 +103,7 @@ async function handle(
         return;
     }
 
-    const match = opts.router.match(method, url.pathname);
+    const match = opts.router.match(method, url.pathname, url.searchParams);
     if (!match) {
         // The document owns `/` only when it declares it. Otherwise the root is
         // the contents page, which is what a browser pointed here came for.
@@ -112,14 +112,27 @@ async function handle(
             say(200, 'index');
             return;
         }
-        const allowed = opts.router.allowed(url.pathname);
+        // The path matched and the query did not, which no one guesses unaided
+        // — and it is not a 405 either, since the method is defined here.
+        const expects = opts.router.expects(method, url.pathname);
+        if (expects.length > 0) {
+            send(res, 404, {
+                error: `${req.method} ${url.pathname} is only defined with a query`,
+                expects,
+            });
+            say(404, `expects ${expects.join(' ')}`);
+            return;
+        }
+        const allowed = opts.router.allowed(url.pathname, url.searchParams);
         if (allowed.length > 0) {
             res.setHeader('allow', allowed.map((m) => m.toUpperCase()).join(', '));
             send(res, 405, { error: `${req.method} is not defined for ${url.pathname}` });
             say(405, 'no such method');
             return;
         }
-        send(res, 404, { error: `no operation matches ${req.method} ${url.pathname}` });
+        send(res, 404, {
+            error: `no operation matches ${req.method} ${url.pathname}`,
+        });
         say(404, 'no route');
         return;
     }

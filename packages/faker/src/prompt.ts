@@ -1,6 +1,6 @@
 import { AVAILABLE } from './image.ts';
 import type { Paging } from './paging.ts';
-import type { Operation } from './spec.ts';
+import { called, type Operation } from './spec.ts';
 
 // ---------------------------------------------------------------------------
 // What the model is told
@@ -58,7 +58,7 @@ export const SYSTEM = [
 
 export function brief(operation: Operation): string {
     const lines: string[] = [
-        `OPERATION  ${operation.method.toUpperCase()} ${operation.path}`,
+        `OPERATION  ${operation.method.toUpperCase()} ${called(operation)}`,
         `operationId: ${operation.operationId}`,
     ];
     if (operation.summary) {

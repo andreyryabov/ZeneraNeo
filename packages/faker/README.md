@@ -57,6 +57,12 @@ zen faker cache clear                # throw it away
 
 `zen mock` is the same command under a shorter noun.
 
+A path key with a query string on it — `/x/{id}?action=retry`, which VMware NSX
+and others write when they need two `post`s under one path — is read for what
+it means rather than taken verbatim: the path is the part before the `?`, and
+each pair after it becomes a required query value that tells those operations
+apart. Call one without it and the 404 says which queries the path answers to.
+
 ## How a body is produced
 
 The first time an operation is called, the faker asks a model to write a

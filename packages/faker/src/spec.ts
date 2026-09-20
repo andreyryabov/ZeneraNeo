@@ -43,6 +43,8 @@ export interface Operation {
     summary?: string;
     description?: string;
     params: ParamSpec[];
+    /** query values the path key pinned down, see `splitQuery` */
+    fixed?: Record<string, string>;
     requestBody?: { required: boolean; schema: Schema };
     /** the response a call is answered with; `schema` absent means no body */
     success: { status: number; schema?: Schema };
@@ -107,14 +109,18 @@ export async function loadSpec(file: string): Promise<Operation[]> {
             if (!isObject(op)) {
                 continue;
             }
-            const path = join(prefix, template);
-            const merged = override(shared, params(op.parameters, dialect));
+            const { path, fixed } = splitQuery(join(prefix, template));
+            const merged = override(
+                override(shared, params(op.parameters, dialect)),
+                pinned(fixed),
+            );
             out.push(
                 build({
                     source: file,
                     dialect,
                     method,
                     path,
+                    fixed,
                     op,
                     params: merged,
                     body: requestBody(op, dialect),
@@ -143,11 +149,47 @@ function join(prefix: string, template: string): string {
     return `${base}${template.startsWith('/') ? '' : '/'}${template}` || '/';
 }
 
+/** The path as it has to be called — what a person needs to see. */
+export const called = (op: Operation): string =>
+    op.fixed ? `${op.path}?${new URLSearchParams(op.fixed).toString()}` : op.path;
+
+/**
+ * A path template has no query string, but VMware, Oracle and others write one
+ * anyway — `/x/{id}?action=retry` — because they need two `post`s under one
+ * path and the object model gives them one. Taken verbatim the key matches
+ * nothing, since a request path never contains a `?`. So it is read for what
+ * it means: the path is the part before the `?`, and each pair after it is a
+ * query value this operation insists on.
+ */
+function splitQuery(template: string): { path: string; fixed?: Record<string, string> } {
+    const cut = template.indexOf('?');
+    if (cut < 0) {
+        return { path: template };
+    }
+    const fixed: Record<string, string> = {};
+    for (const [name, value] of new URLSearchParams(template.slice(cut + 1))) {
+        fixed[name] = value;
+    }
+    const path = template.slice(0, cut) || '/';
+    return Object.keys(fixed).length > 0 ? { path, fixed } : { path };
+}
+
+/** A one-value enum, so the check, the page and the generator all see the rule. */
+function pinned(fixed: Record<string, string> | undefined): ParamSpec[] {
+    return Object.entries(fixed ?? {}).map(([name, value]) => ({
+        name,
+        in: 'query',
+        required: true,
+        schema: { type: 'string', enum: [value] },
+    }));
+}
+
 interface Built {
     source: string;
     dialect: Dialect;
     method: Method;
     path: string;
+    fixed?: Record<string, string>;
     op: Record<string, unknown>;
     params: ParamSpec[];
     body?: { required: boolean; schema: Schema };
@@ -158,7 +200,7 @@ function build(b: Built): Operation {
     const operationId =
         typeof b.op.operationId === 'string' && b.op.operationId
             ? b.op.operationId
-            : synthesizeId(b.method, b.path);
+            : synthesizeId(b.method, b.path, b.fixed);
 
     const operation: Operation = {
         key: '',
@@ -169,6 +211,7 @@ function build(b: Built): Operation {
         summary: typeof b.op.summary === 'string' ? b.op.summary : undefined,
         description: typeof b.op.description === 'string' ? b.op.description : undefined,
         params: b.params,
+        fixed: b.fixed,
         requestBody: b.body,
         success,
         paging: pagingOf(b.params, success.schema),
@@ -216,9 +259,8 @@ function canonical(value: unknown): unknown {
     return value;
 }
 
-function synthesizeId(method: Method, path: string): string {
-    const words = path
-        .split('/')
+function synthesizeId(method: Method, path: string, fixed?: Record<string, string>): string {
+    const words = [...path.split('/'), ...Object.values(fixed ?? {})]
         .filter(Boolean)
         .map((s) => s.replace(/[{}]/g, '').replace(/[^A-Za-z0-9]+/g, '_'));
     return [method, ...words].join('_');
