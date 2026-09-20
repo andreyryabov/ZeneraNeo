@@ -135,6 +135,42 @@ function textBlock(title, body, tag) {
   return s;
 }
 
+// A prompt is assembled from tagged sections — <house_rules src="...">, <role>,
+// <skills> — and unhighlighted they read as one wall of text, so the reader
+// cannot see which file put which paragraph in front of the model. A section
+// delimiter always stands alone on its line, which is what keeps prose and
+// placeholders (/memory/<id>.<ext>) from lighting up as structure.
+const TAG_LINE_RE = /^(\\s*)(<\\/?[A-Za-z][A-Za-z0-9._:-]*(?:\\s[^<>]*)?\\/?>)(\\s*)$/;
+
+/** A <pre> with every section delimiter lifted out as its own span. */
+function taggedPre(text) {
+  const s = String(text);
+  const pre = el('pre', 'text');
+  if (s.indexOf('<') < 0) { pre.textContent = s; return pre; }
+  const lines = s.split('\\n');
+  let buf = '';
+  function flush() {
+    if (buf) { pre.appendChild(document.createTextNode(buf)); buf = ''; }
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const m = TAG_LINE_RE.exec(lines[i]);
+    if (!m) { buf += (i ? '\\n' : '') + lines[i]; continue; }
+    buf += (i ? '\\n' : '') + m[1];
+    flush();
+    pre.appendChild(el('span', m[2].indexOf('</') === 0 ? 'xtag end' : 'xtag', m[2]));
+    buf = m[3];
+  }
+  flush();
+  return pre;
+}
+
+function promptBlock(title, body, tag) {
+  const s = block(title, tag);
+  if (body) s.appendChild(taggedPre(body));
+  else s.appendChild(el('div', 'empty', '(empty)'));
+  return s;
+}
+
 function foldBlock(title, body) {
   const s = block(title);
   const d = document.createElement('details');
@@ -424,12 +460,14 @@ function message(m) {
 
   if (m.role === 'user' && Array.isArray(m.content)) {
     m.content.forEach(function (p) {
-      if (p.type === 'text') { wrap.appendChild(el('pre', 'text', p.text)); return; }
+      if (p.type === 'text') { wrap.appendChild(taggedPre(p.text)); return; }
       const img = imageEl(p, true);
       wrap.appendChild(img || el('pre', 'text', '[' + p.type + '] ' + mediaUrl(p.url)));
     });
   } else if (typeof m.content === 'string' && m.content) {
-    wrap.appendChild(el('pre', 'text', m.role === 'tool' ? pretty(m.content) : m.content));
+    wrap.appendChild(m.role === 'tool'
+      ? el('pre', 'text', pretty(m.content))
+      : taggedPre(m.content));
   } else if (!m.toolCalls) {
     wrap.appendChild(el('div', 'empty', '(no content)'));
   }
@@ -449,7 +487,7 @@ function requestBlocks(raw, into) {
     into.appendChild(textBlock('Request (unparsed)', raw));
     return;
   }
-  if (req.system) into.appendChild(textBlock('System prompt', req.system)).classList.add('sys');
+  if (req.system) into.appendChild(promptBlock('System prompt', req.system)).classList.add('sys');
 
   const conv = block('Messages', (req.messages || []).length + ' messages');
   (req.messages || []).forEach(function (m) { conv.appendChild(message(m)); });
@@ -497,10 +535,10 @@ function detailFor(e) {
 
   switch (n.type) {
     case 'system_prompt':
-      out.appendChild(textBlock('Prompt', blob(n.prompt)));
+      out.appendChild(promptBlock('Prompt', blob(n.prompt)));
       // The editable half: which file to open when the instruction is wrong.
       (n.sources || []).forEach(function (s) {
-        out.appendChild(textBlock(s.path, blob(s.content), 'prompt file'));
+        out.appendChild(promptBlock(s.path, blob(s.content), 'prompt file'));
       });
       break;
 
@@ -517,7 +555,7 @@ function detailFor(e) {
         return s.name + (s.version ? '@' + s.version : '') + '  ' + s.contentHash.slice(0, 12)
           + (s.file ? '  ' + s.file : '');
       }).join('\\n'), n.provider));
-      out.appendChild(textBlock('Injected instructions', blob(n.content)));
+      out.appendChild(promptBlock('Injected instructions', blob(n.content)));
       out.appendChild(textBlock('Tools unlocked', n.toolNames.join('\\n')));
       break;
 

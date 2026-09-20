@@ -184,6 +184,12 @@ section.blk.sys { border-left: 3px solid var(--warn); }
 pre { margin: 0; padding: 10px 12px; font: 12px/1.55 var(--mono); white-space: pre-wrap;
   word-break: break-word; overflow-wrap: anywhere; }
 pre.text { white-space: pre-wrap; }
+/* Section tags inside a prompt (<house_rules src="...">, <role>, ...): the only
+   structure a composed prompt has, and invisible without this. */
+pre .xtag { color: #ffb0cd; background: #2d1b27; border: 1px solid #4e2c40;
+  border-radius: 4px; padding: 0 4px; font-weight: 600; }
+pre .xtag.end { color: #a07f92; background: #201a1e; border-color: #3b2b35;
+  font-weight: 400; }
 img.media { display: block; max-width: 100%; max-height: 420px; margin: 10px 12px;
   border: 1px solid var(--line); border-radius: 6px; background: #0d1017; }
 img.media.thumb { max-height: 88px; margin: 8px 12px; cursor: zoom-in; }
