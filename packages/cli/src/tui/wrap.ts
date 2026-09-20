@@ -171,13 +171,38 @@ export function branchRows(count: number, allowance: number): number {
 }
 
 /**
- * How wide the answer is drawn. A line of prose spanning a 200-column terminal
- * is measurably harder to read than one that stops, which is why every demo in
+ * How wide *prose* is drawn. A line spanning a 200-column terminal is
+ * measurably harder to read than one that stops, which is why every demo in
  * `examples/sdk/` puts its answer in a box of bounded width — the terminal is the
  * page, not the paragraph.
+ *
+ * `boxWidth` is what a whole answer is drawn at; this is the floor it starts from.
  */
 export function answerWidth(columns: number): number {
     return Math.max(24, Math.min(columns - 4, 96));
+}
+
+/**
+ * How wide the box holding `text` has to be.
+ *
+ * Prose stops at the comfort width, but a fence and a table cannot be
+ * reflowed — fold a table row and the columns stop lining up, which is the one
+ * thing the table was for — so the box grows to hold the widest of them, as far
+ * as the terminal allows and no further.
+ */
+export function boxWidth(text: string, columns: number): number {
+    let rigid = 0;
+    for (const s of segmentsOf(text)) {
+        if (!s.code && !s.table) {
+            continue;
+        }
+        // A fence is drawn behind a `│ ` gutter; a table row is not.
+        const chrome = s.code ? 6 : 4;
+        for (const line of s.lines) {
+            rigid = Math.max(rigid, line.length + chrome);
+        }
+    }
+    return Math.max(answerWidth(columns), Math.min(Math.max(24, columns - 4), rigid));
 }
 
 // ---------------------------------------------------------------------------
@@ -441,19 +466,24 @@ export function gistOf(text: string, width: number): string {
 // Fenced blocks
 // ---------------------------------------------------------------------------
 
-/** A run of lines from an answer, and whether it was fenced as code. */
+/** A run of lines from an answer, and whether it is something that must not be reflowed. */
 export interface Segment {
     code: boolean;
+    /** a run of `| … |` rows, whose alignment is the whole point of it */
+    table?: boolean;
     /** the fence's info string, when it had one */
     title?: string;
     lines: string[];
 }
 
+/** A markdown table row. Both pipes, so a sentence with one in it is still prose. */
+const TABLE_ROW = /^\s*\|.*\|\s*$/;
+
 /**
- * Splits an answer on ``` fences. Prose is left exactly as it was — the common
- * answer has no fence in it and comes back in one piece — but a fenced block is
- * the one thing a terminal must not reflow: its indentation is its meaning, and
- * wrapping it as prose destroys it.
+ * Splits an answer into what may be wrapped and what may not. Prose is left
+ * exactly as it was — the common answer is one piece of it — but a fenced block
+ * and a table are the two things a terminal must not reflow: their alignment is
+ * their meaning, and wrapping them as prose destroys it.
  */
 export function segmentsOf(text: string): Segment[] {
     const out: Segment[] = [];
@@ -465,14 +495,24 @@ export function segmentsOf(text: string): Segment[] {
     };
     for (const raw of text.split('\n')) {
         const fence = /^\s*```+\s*(\S*)/.exec(raw);
-        if (!fence) {
-            current.lines.push(raw);
+        if (fence) {
+            flush();
+            current = current.code
+                ? { code: false, lines: [] }
+                : { code: true, title: fence[1] || undefined, lines: [] };
             continue;
         }
-        flush();
-        current = current.code
-            ? { code: false, lines: [] }
-            : { code: true, title: fence[1] || undefined, lines: [] };
+        // A pipe inside a fence is whatever the code says it is.
+        if (!current.code) {
+            const row = TABLE_ROW.test(raw);
+            if (row !== (current.table ?? false)) {
+                flush();
+                current = row
+                    ? { code: false, table: true, lines: [] }
+                    : { code: false, lines: [] };
+            }
+        }
+        current.lines.push(raw);
     }
     flush();
     return out;

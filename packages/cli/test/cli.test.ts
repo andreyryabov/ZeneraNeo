@@ -73,6 +73,7 @@ import {
     ACTIVITY_ROWS,
     answerWidth,
     BOX_CHROME,
+    boxWidth,
     BRANCH_MIN,
     BRANCH_ROWS,
     branchRows,
@@ -580,6 +581,18 @@ describe('bounding the answer', () => {
         expect(answerWidth(80)).toBe(76);
         expect(answerWidth(10)).toBe(24);
     });
+
+    /**
+     * Folding a table row is the one thing that makes a table useless, so the
+     * box gives up its comfort width rather than its alignment.
+     */
+    it('grows past the comfort width to hold a table, and no further than the terminal', () => {
+        const row = `| ${'x'.repeat(116)} |`;
+        expect(row.length).toBe(120);
+        expect(boxWidth(`look:\n${row}`, 200)).toBe(124);
+        expect(boxWidth(`look:\n${row}`, 100)).toBe(96);
+        expect(boxWidth('just prose', 200)).toBe(answerWidth(200));
+    });
 });
 
 describe('reading a tool payload', () => {
@@ -750,6 +763,21 @@ describe('fenced blocks in an answer', () => {
         expect(block?.code).toBe(true);
         expect(block?.title).toBeUndefined();
         expect(block?.lines).toEqual(['x', '']);
+    });
+
+    it('splits a table out of the prose around it', () => {
+        const [intro, table, note] = segmentsOf('ranked:\n| a | b |\n| - | - |\n| 1 | 2 |\nso.');
+        expect(intro).toEqual({ code: false, lines: ['ranked:'] });
+        expect(table?.table).toBe(true);
+        expect(table?.lines).toEqual(['| a | b |', '| - | - |', '| 1 | 2 |']);
+        expect(note).toEqual({ code: false, lines: ['so.'] });
+    });
+
+    it('leaves a pipe inside a fence, and one in a sentence, as they were', () => {
+        const [block] = segmentsOf('```sh\n| a | b |\n```');
+        expect(block?.code).toBe(true);
+        expect(block?.table).toBeUndefined();
+        expect(segmentsOf('pipe ls | wc -l for a count')[0]?.table).toBeUndefined();
     });
 });
 

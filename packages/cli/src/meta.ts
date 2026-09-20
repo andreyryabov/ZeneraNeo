@@ -19,7 +19,7 @@ import {
     write,
     yellow,
 } from './term.ts';
-import { answerWidth, segmentsOf, wrap } from './tui/wrap.ts';
+import { boxWidth, segmentsOf, wrap } from './tui/wrap.ts';
 
 // ---------------------------------------------------------------------------
 // The meta agent
@@ -685,7 +685,7 @@ export function answerBox(text: string, columns = process.stdout.columns ?? 80):
     if (!process.stdout.isTTY) {
         return text.split('\n');
     }
-    const outer = answerWidth(columns);
+    const outer = boxWidth(text, columns);
     const inner = outer - 4;
     const body: string[] = [];
     for (const segment of segmentsOf(text)) {
@@ -695,6 +695,8 @@ export function answerBox(text: string, columns = process.stdout.columns ?? 80):
             body.push(dim(`\u250c\u2500${segment.title ? ` ${segment.title}` : ''}`));
             body.push(...segment.lines.map((l) => `${dim('\u2502')} ${cut(l, inner - 2)}`));
             body.push(dim('\u2514\u2500'));
+        } else if (segment.table) {
+            body.push(...segment.lines.map((l) => cut(l, inner)));
         } else {
             body.push(...wrap(segment.lines.join('\n'), inner));
         }

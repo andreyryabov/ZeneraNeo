@@ -20,6 +20,7 @@ import {
     ACTIVITY_ROWS,
     answerWidth,
     BOX_CHROME,
+    boxWidth,
     BRANCH_ROWS,
     branchRows,
     budgetOf,
@@ -259,7 +260,7 @@ function Call({ line }: { line: Line }): React.ReactElement {
 function Answer({ text, boxed }: { text: string; boxed: boolean }): React.ReactElement {
     const theme = useTheme();
     const { stdout } = useStdout();
-    const width = answerWidth(stdout?.columns ?? 80);
+    const width = boxWidth(text, stdout?.columns ?? 80);
     const segments = segmentsOf(text);
     const body = segments.map((s, i) =>
         s.code ? (
@@ -274,6 +275,14 @@ function Answer({ text, boxed }: { text: string; boxed: boolean }): React.ReactE
                     </Box>
                 ))}
                 <Text color={theme.chrome.color}>{'\u2514\u2500'}</Text>
+            </Box>
+        ) : s.table ? (
+            <Box key={i} flexDirection="column">
+                {s.lines.map((l, j) => (
+                    <Text key={j} wrap="truncate-end">
+                        {l}
+                    </Text>
+                ))}
             </Box>
         ) : (
             <Text key={i}>{s.lines.join('\n')}</Text>
@@ -493,7 +502,7 @@ function App({ engine, options, theme }: Props): React.ReactElement {
     // below draw. The answer keeps a blank row above it, so what it is separated
     // from is whatever the last call left on screen.
     const textRows = Math.max(1, budget.live - 1);
-    const liveRows = live ? windowOf(live, answerWidth(columns) - 4, textRows).length + 1 : 0;
+    const liveRows = live ? windowOf(live, boxWidth(live, columns) - 4, textRows).length + 1 : 0;
     const wanted =
         activityHeight(fitted.boxes, fitted.trunk) +
         (fitted.hidden ? 1 : 0) +
@@ -1512,7 +1521,7 @@ function Reasoning({
 function Streaming({ text, columns, rows }: StreamProps): React.ReactElement {
     // The same width the finished answer will take, so landing it reflows
     // nothing: what is on screen is what stays there.
-    const shown = windowOf(text, answerWidth(columns) - 4, rows);
+    const shown = windowOf(text, boxWidth(text, columns) - 4, rows);
     return (
         <Box
             flexDirection="column"
