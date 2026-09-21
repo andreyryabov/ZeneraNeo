@@ -812,19 +812,20 @@ sandbox:
     env: [HTTPS_PROXY, NO_PROXY]
 ```
 
-| Field     | Type                   | Default                                       | Meaning                                             |
-| --------- | ---------------------- | --------------------------------------------- | --------------------------------------------------- |
-| `image`   | string                 | `docker.io/library/python:3.14-slim-bookworm` | The base image commands run in                      |
-| `build`   | object                 | none                                          | A Dockerfile to build instead of an image to pull   |
-| `cpus`    | number                 | the host's                                    | Fractional cores, as podman's `--cpus`              |
-| `memory`  | integer, MiB           | the host's                                    | As podman's `--memory`                              |
-| `network` | `bridge`/`none`/`host` | `bridge`                                      | `none` for a project that must not reach out        |
-| `workdir` | absolute path          | `/workspace`                                  | Where the workspace is mounted, and the default cwd |
-| `timeout` | integer, seconds       | `120`                                         | Per command, unless a call asks for less            |
-| `user`    | string                 | the image's                                   | uid, name, or `uid:gid`                             |
-| `persist` | boolean                | `false` - **recommended `true`**              | Keep the container between runs of a session        |
-| `env`     | string[]               | none                                          | Host variables to forward, **by name**              |
-| `keys`    | boolean                | `true`                                        | Whether the model credentials reach the container   |
+| Field       | Type                   | Default                                       | Meaning                                             |
+| ----------- | ---------------------- | --------------------------------------------- | --------------------------------------------------- |
+| `image`     | string                 | `docker.io/library/python:3.14-slim-bookworm` | The base image commands run in                      |
+| `build`     | object                 | none                                          | A Dockerfile to build instead of an image to pull   |
+| `cpus`      | number                 | `4` (`2` under `strict`)                      | Fractional cores, as podman's `--cpus`              |
+| `memory`    | integer, MiB           | `4096` (`2048` under `strict`)                | As podman's `--memory`                              |
+| `network`   | `bridge`/`none`/`host` | `bridge`                                      | `none` for a project that must not reach out        |
+| `workdir`   | absolute path          | `/workspace`                                  | Where the workspace is mounted, and the default cwd |
+| `timeout`   | integer, seconds       | `120`                                         | Per command, unless a call asks for less            |
+| `hardening` | `standard`/`strict`    | `standard`                                    | How much of the host the container may be           |
+| `user`      | string                 | the image's                                   | uid, name, or `uid:gid`                             |
+| `persist`   | boolean                | `false` - **recommended `true`**              | Keep the container between runs of a session        |
+| `env`       | string[]               | none                                          | Host variables to forward, **by name**              |
+| `keys`      | boolean                | `true`                                        | Whether the model credentials reach the container   |
 
 `image` and `build` cannot both be set: a Dockerfile names its own base in its
 `FROM` line, so one of the two would be silently ignored.
@@ -832,6 +833,56 @@ sandbox:
 `cpus` and `memory` do two jobs on macOS and Windows: they cap the container,
 and they size the Podman virtual machine if the CLI has to create one. On
 Linux there is no machine and they only cap the container.
+
+### `hardening:`, for running code nobody has read
+
+Every sandbox gets the same floor: a container, an init process, a pid ceiling
+of 1024, resource limits (`cpus: 4`, `memory: 4096`), `no-new-privileges`, no
+restart policy, never `--privileged`, and podman's own seccomp profile, which
+is never turned off.
+
+`standard` stops there, deliberately. Dropping the kernel capabilities breaks
+`apt` and `pip`, and installing a package is the ordinary use of a shell - so
+under `standard` the container is the boundary and nothing inside it is taken
+away.
+
+`strict` makes the opposite trade, for a project whose agents run code that
+arrived from somewhere else:
+
+```yaml
+sandbox:
+    hardening: strict
+    build:
+        dockerfile: sandbox/Dockerfile
+```
+
+| What it changes                                    | Why                                                       |
+| -------------------------------------------------- | --------------------------------------------------------- |
+| `--cap-drop ALL`                                   | No `CAP_SYS_ADMIN`, `CAP_NET_ADMIN`, `CAP_CHOWN`, nothing |
+| `--read-only` root filesystem                      | The image becomes reference material, not scratch space   |
+| `/tmp` as `noexec,nosuid,nodev` tmpfs, 64 MiB      | The only writable temporary space, and it is in memory    |
+| `--userns keep-id`                                 | Runs as your own unprivileged uid, not as container root  |
+| `network: none` unless you say otherwise           | Default network blackout                                  |
+| `cpus: 2`, `memory: 2048` unless you say otherwise | A ceiling nobody wrote down is not a ceiling              |
+
+Name any of those keys yourself and your value wins - `network: bridge` under
+`strict` is a project that needs egress and has accepted what that means.
+
+Two consequences worth stating plainly:
+
+- **Nothing can be installed at run time.** `apt`, `pip install`, `npm i` and
+  anything else that writes outside the mounts stop working, so a strict
+  project bakes its dependencies into the image with `build:` above. The
+  persistent `$HOME` still works, but an install that needs the capabilities
+  or a writable `/usr` does not.
+- **It needs rootless podman.** `--userns keep-id` is rootless-only, which is
+  also the property that makes a container escape land on an unprivileged host
+  account. Set `user:` explicitly to opt out of `keep-id` and take
+  responsibility for the uid yourself.
+
+The mounts do not go away. `/workspace` is the work itself and stays writable;
+`strict` shrinks what a command can reach, it does not pretend the agent has
+nothing to edit.
 
 ### `build:`, for what the project always needs
 

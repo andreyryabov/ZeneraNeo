@@ -527,6 +527,11 @@
                     "type": "integer",
                     "exclusiveMinimum": 0
                 },
+                "hardening": {
+                    "description": "How much of the host the container may be. `standard` keeps the root filesystem writable and capabilities intact so package managers work. `strict` drops every capability, mounts the root filesystem read-only, restricts /tmp to a 64 MiB noexec tmpfs, and defaults network to none.",
+                    "type": "string",
+                    "enum": ["standard", "strict"]
+                },
                 "user": {
                     "description": "uid, name or `uid:gid`. Unset means the image's own user.",
                     "type": "string",

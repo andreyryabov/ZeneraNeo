@@ -39,19 +39,19 @@ The full reference lives next to this file, one document per part of the command
 line. **Read the one that covers the question before answering it** - do not
 guess a flag, and do not read them all.
 
-| The question is about                                               | Read                                    |
-| ------------------------------------------------------------------- | --------------------------------------- |
-| Global flags, `--json`, exit codes, environment, where files live   | [frame.md](./references/frame.md)       |
-| Creating, finding or opening a project                              | [projects.md](./references/projects.md) |
-| Running: the TUI, one-shot answers, sessions, workspaces, overrides | [run.md](./references/run.md)           |
-| Validating: `zen check`, what it can and cannot see                 | [check.md](./references/check.md)       |
-| API keys, providers, the keyring, "no credential" errors            | [keys.md](./references/keys.md)         |
-| Which models exist, whether one works, recovering from a refusal    | [models.md](./references/models.md)     |
-| The container shell commands run in, images, `persist`              | [sandbox.md](./references/sandbox.md)   |
-| Run reports, trajectories, what a session directory holds           | [inspect.md](./references/inspect.md)   |
-| What the agents remember, why something was recalled, forgetting    | [memory.md](./references/memory.md)     |
-| `zen faker` - a mock API from an OpenAPI/Swagger document           | [faker.md](./references/faker.md)       |
-| `zen rag` - searching an API description, or a pile of markdown     | [rag.md](./references/rag.md)           |
+| The question is about                                               | Read                                                            |
+| ------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Global flags, `--json`, exit codes, environment, where files live   | [frame.md](./references/frame.md)                               |
+| Creating, finding or opening a project                              | [projects.md](./references/projects.md)                         |
+| Running: the TUI, one-shot answers, sessions, workspaces, overrides | [run.md](./references/run.md)                                   |
+| Validating: `zen check`, what it can and cannot see                 | [check.md](./references/check.md)                               |
+| API keys, providers, the keyring, "no credential" errors            | [keys.md](./references/keys.md)                                 |
+| Which models exist, whether one works, recovering from a refusal    | [models.md](./references/models.md)                             |
+| The container shell commands run in, images, `persist`              | [sandbox.md](./references/sandbox.md) (and `zen-sandbox` skill) |
+| Run reports, trajectories, what a session directory holds           | [inspect.md](./references/inspect.md)                           |
+| What the agents remember, why something was recalled, forgetting    | [memory.md](./references/memory.md)                             |
+| `zen faker` - a mock API from an OpenAPI/Swagger document           | [faker.md](./references/faker.md)                               |
+| `zen rag` - searching an API description, or a pile of markdown     | [rag.md](./references/rag.md)                                   |
 
 ## The short version
 

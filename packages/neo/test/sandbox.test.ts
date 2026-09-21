@@ -81,17 +81,25 @@ describe('starting a container', () => {
 
     it('passes cpus and memory through as podman limits', async () => {
         const f = fresh();
-        await box(f, { cpus: 4, memory: 3072 }).start();
+        await box(f, { cpus: 8, memory: 8192 }).start();
 
         const create = find(f, 'run');
         expect(create?.args).toContain('--cpus');
-        expect(create?.args[create.args.indexOf('--cpus') + 1]).toBe('4');
-        expect(create?.args[create.args.indexOf('--memory') + 1]).toBe('3072m');
+        expect(create?.args[create.args.indexOf('--cpus') + 1]).toBe('8');
+        expect(create?.args[create.args.indexOf('--memory') + 1]).toBe('8192m');
     });
 
-    it('omits limits that were never configured', async () => {
+    it('supplies default resource limits under the standard profile', async () => {
         const f = fresh();
         await box(f).start();
+        const args = find(f, 'run')?.args ?? [];
+        expect(args[args.indexOf('--cpus') + 1]).toBe('4');
+        expect(args[args.indexOf('--memory') + 1]).toBe('4096m');
+    });
+
+    it('omits limits when explicitly set to zero', async () => {
+        const f = fresh();
+        await box(f, { cpus: 0, memory: 0 }).start();
         expect(find(f, 'run')?.args).not.toContain('--cpus');
         expect(find(f, 'run')?.args).not.toContain('--memory');
     });
@@ -107,6 +115,58 @@ describe('starting a container', () => {
         // ordinary use of this tool. The container is the boundary.
         expect(args).not.toContain('--cap-drop=ALL');
         expect(args).not.toContain('--privileged');
+    });
+
+    it('takes the whole host away under the strict profile', async () => {
+        const f = fresh();
+        await box(f, { hardening: 'strict' }).start();
+        const args = find(f, 'run')?.args ?? [];
+        expect(args.slice(args.indexOf('--cap-drop'), args.indexOf('--cap-drop') + 2)).toEqual([
+            '--cap-drop',
+            'ALL',
+        ]);
+        expect(args).toContain('--read-only');
+        expect(args).toContain('/tmp:rw,noexec,nosuid,nodev,size=64m');
+        // Non-zero uid *inside* the container, and still the owner of the
+        // bind mounts, which an explicit `--user` would not be.
+        expect(args.slice(args.indexOf('--userns'), args.indexOf('--userns') + 2)).toEqual([
+            '--userns',
+            'keep-id',
+        ]);
+        expect(args).not.toContain('--privileged');
+    });
+
+    it('supplies the limits the strict profile promises', async () => {
+        const f = fresh();
+        await box(f, { hardening: 'strict' }).start();
+        const args = find(f, 'run')?.args ?? [];
+        // A ceiling nobody wrote down is not a ceiling.
+        expect(args[args.indexOf('--cpus') + 1]).toBe('2');
+        expect(args[args.indexOf('--memory') + 1]).toBe('2048m');
+        expect(args[args.indexOf('--network') + 1]).toBe('none');
+    });
+
+    it('lets a strict project ask for what it needs back', async () => {
+        const f = fresh();
+        await box(f, { hardening: 'strict', network: 'bridge', memory: 512, user: '1000' }).start();
+        const args = find(f, 'run')?.args ?? [];
+        expect(args[args.indexOf('--network') + 1]).toBe('bridge');
+        expect(args[args.indexOf('--memory') + 1]).toBe('512m');
+        // A named user answers the question `keep-id` was there to answer.
+        expect(args).not.toContain('--userns');
+        expect(args[args.indexOf('--user') + 1]).toBe('1000');
+    });
+
+    /**
+     * The name is a hash of the configuration, so a field added to it renames
+     * every container that already exists — abandoning a persisted rootfs.
+     */
+    it('does not rename a standard container now that the profile exists', async () => {
+        expect(box(fake(), { hardening: 'standard' }).name).toBe(box(fake()).name);
+        expect(box(fake()).name).toBe('zn-20260827-120000-abcd-9ecf2650b9');
+        expect(box(fake(), { hardening: 'strict' }).name).toBe(
+            'zn-20260827-120000-abcd-0b39f22fa5',
+        );
     });
 
     it('mounts the workspace read-only when the run is', async () => {

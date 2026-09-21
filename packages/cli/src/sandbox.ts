@@ -235,6 +235,7 @@ function toSpec(
         network: config.network,
         workdir: config.workdir,
         timeout: config.timeout,
+        hardening: config.hardening,
         user: config.user,
         persist: config.persist,
         env,
