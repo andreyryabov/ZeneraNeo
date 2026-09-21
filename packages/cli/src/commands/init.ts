@@ -163,6 +163,7 @@ function hasExa(store: KeyStore): boolean {
 export const init: Command = {
     summary: 'Create a project here, or in <dir>, and register it.',
     usage: USAGE,
+    banner: { head: 'Zenera', accent: 'Init', subtitle: 'Project Scaffolding', hue: 'rose' },
     details: [
         'Writes SPECIFICATION.md, agents.yaml, agents/ (house rules, the memory',
         'rules and one role prompt) and scripts/, then records the directory so',

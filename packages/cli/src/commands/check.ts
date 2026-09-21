@@ -70,6 +70,7 @@ interface Flags {
 export const check: Command = {
     summary: 'Validate agents.yaml and every file it names, and ask its models.',
     usage: USAGE,
+    banner: { head: 'Zenera', accent: 'Check', subtitle: 'Project Health', hue: 'lime' },
     details: [
         'Checks the whole project: the configuration parses and satisfies the',
         'schema, every prompt, skill and catalog it names is on disk, hand-offs',

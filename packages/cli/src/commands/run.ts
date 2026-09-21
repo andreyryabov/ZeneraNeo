@@ -31,6 +31,7 @@ interface Flags {
 export const run: Command = {
     summary: 'Run the project — the TUI on a terminal, one shot otherwise.',
     usage: USAGE,
+    banner: { head: 'Zenera', accent: 'Neo', subtitle: 'Agentic Runtime', hue: 'orange' },
     details: [
         'Arguments:',
         '  [project]   Name of a project. Default: the one you are in.',

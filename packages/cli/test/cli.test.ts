@@ -360,6 +360,25 @@ describe('columns', () => {
         expect(bannerLines(NEO_BANNER, Infinity)).toHaveLength(8);
     });
 
+    it('gives every subcommand its own banner with a distinct accent hue', () => {
+        const all = {
+            ...Object.fromEntries(Object.entries(COMMANDS).map(([k, c]) => [k, c.banner])),
+            ...Object.fromEntries(Object.entries(EXTERNAL).map(([k, e]) => [k, e.banner])),
+        };
+        const hues = new Set<string>();
+        for (const [name, b] of Object.entries(all)) {
+            expect(b, `command "${name}" missing banner`).toBeDefined();
+            expect(b!.accent).toBeTruthy();
+            expect(b!.subtitle).toBeTruthy();
+            expect(b!.hue).toBeTruthy();
+            expect(hues.has(b!.hue!), `duplicate hue "${b!.hue}" on command "${name}"`).toBe(false);
+            hues.add(b!.hue!);
+
+            const lines = bannerLines(b!, Infinity);
+            expect(lines.length).toBeGreaterThanOrEqual(8);
+        }
+    });
+
     it('aligns on visible width, not byte length', () => {
         const styled = '\u001b[1mzn\u001b[22m';
         expect(pad(styled, 5)).toBe(`${styled}   `);

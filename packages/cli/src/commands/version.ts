@@ -25,6 +25,7 @@ function libraryManifest(): URL {
 export const version: Command = {
     summary: 'Print the CLI, library and Node versions.',
     usage: 'zen version',
+    banner: { head: 'Zenera', accent: 'Version', subtitle: 'Runtime & Build', hue: 'steel' },
     run: async (ctx) => {
         const versions = {
             cli: await versionOf(cliManifest),

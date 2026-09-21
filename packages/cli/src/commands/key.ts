@@ -640,6 +640,7 @@ const SUBS: Record<string, Sub> = {
 export const key: Command = {
     summary: 'The credential store: add, choose, verify and export API keys.',
     usage: USAGE,
+    banner: { head: 'Zenera', accent: 'Keys', subtitle: 'Credential Keyring', hue: 'amber' },
     details: [
         'Keys live in ~/.zenera/neo/keys.json (0600) and are materialised into',
         'the environment before a run. A real environment variable always wins,',

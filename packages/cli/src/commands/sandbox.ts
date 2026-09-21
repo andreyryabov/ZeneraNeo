@@ -60,6 +60,7 @@ interface Flags {
 export const sandbox: Command = {
     summary: 'Check and prepare the container command-line tools run in.',
     usage: USAGE,
+    banner: { head: 'Zenera', accent: 'Sandbox', subtitle: 'Container Isolation', hue: 'azure' },
     details: [
         '  status                 What is installed, running and pulled. Changes nothing.',
         '  up                     Install if asked, start the machine, pull or build the image.',

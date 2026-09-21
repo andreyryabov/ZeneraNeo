@@ -77,6 +77,7 @@ const LISTED = 30;
 export const memory: Command = {
     summary: 'What the agents remember, and getting rid of it.',
     usage: USAGE,
+    banner: { head: 'Zenera', accent: 'Memory', subtitle: 'Knowledge Graph', hue: 'purple' },
     details: [
         '  stats                  Size, vocabulary, and whether it is embedded.',
         '  ls                     Nodes, newest first. Changes nothing.',
