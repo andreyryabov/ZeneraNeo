@@ -1,6 +1,6 @@
 ---
 name: zen-spec-sync
-description: Running `/spec-sync-project` as an incremental pass - the committed `.spec-sync` baseline of what the last pass applied, how to scope a pass from the specification and feedback diffs and from what moved in the project itself, the four checks a narrow pass may never skip, the iteration history format, and why the baseline is written last. Load before every `/spec-sync-project`, including the first one on a project that has no baseline yet.
+description: Running `/spec-sync-project` as an incremental pass - the committed `.spec-sync` baseline of what the last pass applied, how to scope a pass from the specification and feedback diffs and from what moved in the project itself, the five checks a narrow pass may never skip, which skills a pass must load before editing (`zen-instructions` for any house rule it touches), the iteration history format, and why the baseline is written last. Load before every `/spec-sync-project`, including the first one on a project that has no baseline yet.
 ---
 
 # Syncing a project with its specification, one change at a time
@@ -103,7 +103,7 @@ editing anything, and report it in the chat as the pass's scope.
    covers it, and you say which line, or it does not, and it is an **extra**
    reported under `➕`.
 
-## The four checks a narrow pass may never skip
+## The five checks a narrow pass may never skip
 
 However small the diff:
 
@@ -119,6 +119,14 @@ However small the diff:
    `.github/skills/zen-memory/references/memory-instructions.md`. `zen init` and
    `zen open` rewrite the reference, so this drifts without anybody editing the
    project.
+5. **`zen-instructions` is loaded before any house rule is touched.** A pass
+   whose scope reaches `agents/*instructions.md` - and input 4 puts it there
+   whenever one of them moved - has to know that `tools-instructions.md`,
+   `memory-instructions.md` and `fork-instructions.md` are `zen`'s and are
+   replaced by `zen check --fix`. A pass that writes a requirement into one of
+   them has implemented nothing: the next `open` reverts it, the history entry
+   claims it, and the baseline records it as applied. Specification-driven rules
+   go in a topic file of the project's own beside it.
 
 A narrow diff narrows reading and editing. It does not narrow verification.
 

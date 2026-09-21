@@ -46,11 +46,21 @@ not reconstruct `zen` arguments from memory or call `--help` to discover them.
 visible in `agents.yaml` and that `zen check` does not report.** Before
 reviewing or changing a project, list the capabilities it has turned on and load
 the editor skill for each one - `zen-memory` for a `memory:` block, `zen-rag-
-schema` or `zen-rag-docs` for an index, `zen-cli` always. A capability that is
+schema` or `zen-rag-docs` for an index, `zen-instructions` for anything under
+`agents/*instructions.md`, `zen-cli` always. A capability that is
 already configured and already passing `zen check` is exactly the case that
 looks finished and is not: the obligation lives in the skill, so a review that
 never opens the skill cannot find what is missing. This applies whatever
 prompted the change - a task scoped to `SPECIFICATION.md` does not narrow it.
+
+**Load `zen-instructions` before writing, editing, reviewing or deleting any
+`agents/*instructions.md`.** They are the house rules, prepended to every
+agent's prompt, and three of them are `zen`'s own copies rather than the
+project's: an edit made inside one is lost at the next `zen check --fix`, `zen
+init` or `zen open`, with no diff to show for it. The skill is what says which
+three those are, where a project's own rules on the same subjects go instead,
+how `requires:` conditions a document, and what filename order decides. None of
+that is visible in the file being edited.
 
 First determine whether the target project uses RAG: a `zen rag` command in an
 agent prompt or skill, RAG tools supplied by its host, or a documentation or
@@ -633,6 +643,16 @@ follow. So:
 
 Target 20–60 lines each. If one exceeds ~100, split the stable half out into a
 preloaded skill.
+
+Three of these documents are **`zen`'s, not the project's** -
+`tools-instructions.md`, `memory-instructions.md` and `fork-instructions.md`.
+They are replaced by `zen check --fix`, and a copy that differs is reported as
+`rules.stale`. This project's own rules on any of those subjects go in a topic
+file beside them - `agents/memory-policy-instructions.md` and the like, carrying
+the same `requires:`. The `zen-instructions` skill is the full treatment: the
+two owners, the naming and ordering that keeps a policy after the rules it
+qualifies, and every finding these files can produce. Load it before touching
+one.
 
 ### 3.3 `agents/prompts/<name>.md`
 
@@ -1943,6 +1963,9 @@ Before finishing any change here:
 - [ ] If any agent has `fork:`, `agents/fork-instructions.md` is present - §6.4
 - [ ] No `rules.stale`: the three files that are `zen`'s rather than yours say
       what this version of the runtime does, and `zen check --fix` replaces them
+- [ ] Any change to an `agents/*instructions.md` was made with the
+      `zen-instructions` skill loaded, and nothing of this project's was written
+      into one of `zen`'s - §3.2
 - [ ] Every tool and agent referenced by its exact name
 - [ ] Failure paths stated for every instruction that can fail
 - [ ] No facts, rates or figures embedded in a prompt

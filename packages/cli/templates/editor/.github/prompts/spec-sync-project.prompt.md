@@ -31,7 +31,7 @@ because a prompt or skill someone changed outside a pass still has to be
 accounted for against the specification.
 
 The scope decides what you **read and edit**. It never decides what you
-**verify**: §6, §7 and the four checks in the skill run at full size on every
+**verify**: §6, §7 and the five checks in the skill run at full size on every
 pass, however small the diff.
 
 ## 1. Read before changing anything

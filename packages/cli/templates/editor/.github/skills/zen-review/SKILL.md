@@ -1,6 +1,6 @@
 ---
 name: zen-review
-description: Checking a project before committing - the four mechanical checks `/project-review` makes before any judgement (`zen check`, the §2.5 path sweep, the memory house-rules copy, the spec-sync record), what each one owns, what their exit codes mean, and what deliberately has no check because no tool can make it. Load before running `/project-review`, before saying a project is ready, and whenever a review finding needs verifying rather than restating.
+description: Checking a project before committing - the four mechanical checks `/project-review` makes before any judgement (`zen check`, the §2.5 path sweep, the memory house-rules copy, the spec-sync record), what each one owns, what their exit codes mean, which findings hand off to `zen-instructions`, and what deliberately has no check because no tool can make it. Load before running `/project-review`, before saying a project is ready, and whenever a review finding needs verifying rather than restating.
 ---
 
 # Reviewing a project
@@ -91,6 +91,21 @@ cause and the least believable finding.
 `fix` is the one-line `cp` and nothing else. Project policy belongs in
 `agents/memory-policy-instructions.md`, which filename order puts directly after
 the copy - see the `zen-memory` skill.
+
+## Findings that are not yours to fix in place
+
+`zen check` reports `rules.stale`, `memory.uninstructed`, `fork.uninstructed`,
+`rules.requires.unknown` or `rules.unreached` against a file under `agents/`, and
+the obvious repair - open it and edit it - is wrong for three of those files.
+`tools-instructions.md`, `memory-instructions.md` and `fork-instructions.md` are
+`zen`'s copies: `zen check --fix` replaces them, so an edit made inside one is
+gone at the next fix, `init` or `open`.
+
+**Load `zen-instructions` before acting on any of those findings**, and before
+judging a house rule at all. It owns which documents belong to whom, where a
+project's own rules on the same subject go instead, what `requires:` does, and
+what filename order decides. A review that fixes one of ours in place has
+undone itself by the next `zen open` and left nothing behind to say so.
 
 ## What has no check, on purpose
 
