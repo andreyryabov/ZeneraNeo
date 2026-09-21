@@ -1,5 +1,3 @@
-# Two operations on one path and one method, told apart by a query value the
-# path key carries. Invalid OpenAPI, and what VMware NSX-T actually ships.
 openapi: 3.0.3
 info:
     title: actions
