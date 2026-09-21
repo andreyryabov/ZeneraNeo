@@ -96,9 +96,10 @@ Using `--json` guarantees:
 
 ### 5. Validate before promotion
 
-Do not overwrite the project's `memory/` until the generated graph in
-`.tmp/warmup-<timestamp>/memory` has been inspected with `zen memory stats` and
-verified to contain expected nodes and vector embeddings.
+Track graph accumulation by inspecting `zen memory stats --dir ...` in between
+warmup queries, and do not overwrite the project's `memory/` until the final
+graph in `.tmp/warmup-<timestamp>/memory` has been verified to contain expected
+nodes and vector embeddings.
 
 ---
 
@@ -112,7 +113,9 @@ flowchart TD
     D --> E{Check stopReason & exit code}
     E -- Success --> F[Accumulate nodes in staging graph]
     E -- Failure --> G[Log error & abort or retry]
-    F --> H{More queries?}
+    F --> T["Log timing: query duration & total elapsed"]
+    T --> S["Inspect progress: zen memory stats --dir .tmp/warmup-<timestamp>/memory"]
+    S --> H{More queries?}
     H -- Yes --> C
     H -- No --> I["Validate: zen memory stats --dir .tmp/warmup-<timestamp>/memory"]
     I --> J{Graph healthy?}
@@ -185,8 +188,8 @@ The script should automate the entire pipeline:
 3. Filter, shuffle, and sample from categorized query definitions.
 4. If `--dry-run` is active, print the execution plan and exit 0 before touching disk.
 5. Invoke `zen run` with `--memory`, `--workspace`, `--model`, and `--json`.
-6. Parse each outcome with `jq` and halt if a turn fails.
-7. Print graph statistics via `zen memory stats --dir ...`.
+6. Parse each outcome with `jq`, halt if a turn fails, and report per-query execution time and total elapsed time since start.
+7. Print graph statistics via `zen memory stats --dir ...` between queries to track graph growth, followed by a final validation.
 8. Safely backup and replace the project's `memory/` directory with the warmed graph.
 
 ### Recommended Script Template (`scripts/memory_warmup.sh`)
@@ -233,6 +236,21 @@ DRY_RUN=false
 LIMIT=0
 SHUFFLE=false
 CATEGORY_FILTER=""
+
+# Helper to format seconds as human-readable duration
+format_duration() {
+    local total_sec=$1
+    local hours=$((total_sec / 3600))
+    local mins=$(((total_sec % 3600) / 60))
+    local secs=$((total_sec % 60))
+    if [ $hours -gt 0 ]; then
+        echo "${hours}h ${mins}m ${secs}s"
+    elif [ $mins -gt 0 ]; then
+        echo "${mins}m ${secs}s"
+    else
+        echo "${secs}s"
+    fi
+}
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -372,6 +390,7 @@ if [ "$DRY_RUN" = true ]; then
     echo "Sample command that would execute:"
     SAMPLE_Q="${SELECTED[0]#*|}"
     echo "  zen run --memory \"$STAGING_MEM\" --workspace \"$WORKSPACES_DIR/run-1-<timestamp>\" ${MODEL:+--model \"$MODEL\" }--json \"$SAMPLE_Q\""
+    echo "  zen memory stats --dir \"$STAGING_MEM\""
     echo ""
     echo "Post-run validation that would run:"
     echo "  zen memory stats --dir \"$STAGING_MEM\""
@@ -379,6 +398,8 @@ if [ "$DRY_RUN" = true ]; then
     echo "Dry run complete. No files created, no commands executed."
     exit 0
 fi
+
+WARMUP_START=$(date +%s)
 
 echo "=== Zenera Neo Memory Warmup ==="
 echo "Project root:      $ROOT"
@@ -431,12 +452,18 @@ for item in "${SELECTED[@]}"; do
     fi
     CMD+=("$QUERY")
 
+    QUERY_START=$(date +%s)
+
     # Run query and capture JSON output
     JSON_OUT="$("${CMD[@]}")"
     EXIT_CODE=$?
 
+    QUERY_END=$(date +%s)
+    QUERY_DURATION=$((QUERY_END - QUERY_START))
+    TOTAL_ELAPSED=$((QUERY_END - WARMUP_START))
+
     if [ $EXIT_CODE -ne 0 ]; then
-        echo "  -> Command exited with code $EXIT_CODE" >&2
+        echo "  -> Command exited with code $EXIT_CODE (query: $(format_duration $QUERY_DURATION), total elapsed: $(format_duration $TOTAL_ELAPSED))" >&2
         exit $EXIT_CODE
     fi
 
@@ -444,8 +471,7 @@ for item in "${SELECTED[@]}"; do
     if command -v jq >/dev/null 2>&1; then
         STOP_REASON=$(echo "$JSON_OUT" | jq -r '.stopReason // empty')
         AGENT=$(echo "$JSON_OUT" | jq -r '.agent // empty')
-        DURATION=$(echo "$JSON_OUT" | jq -r '.durationMs // empty')
-        echo "  -> Completed: agent=$AGENT stopReason=$STOP_REASON (${DURATION}ms)"
+        echo "  -> Completed: agent=$AGENT stopReason=$STOP_REASON"
 
         if [ "$STOP_REASON" != "final" ]; then
             echo "  -> Unexpected stop reason: $STOP_REASON" >&2
@@ -454,10 +480,23 @@ for item in "${SELECTED[@]}"; do
     else
         echo "  -> Turn completed successfully."
     fi
+
+    echo "  -> Timing: query took $(format_duration $QUERY_DURATION) | elapsed since start: $(format_duration $TOTAL_ELAPSED)"
+
+    # Print memory stats between queries to track graph growth
+    if [ -f "$STAGING_MEM/manifest.json" ]; then
+        echo ""
+        echo "Memory stats after query $COUNT:"
+        zen memory stats --dir "$STAGING_MEM"
+    else
+        echo "  -> Memory stats: No memories committed yet."
+    fi
+    echo ""
 done
 
 echo "----------------------------------------"
-echo "All warmup queries finished successfully."
+TOTAL_RUN_TIME=$(( $(date +%s) - WARMUP_START ))
+echo "All warmup queries finished successfully in $(format_duration $TOTAL_RUN_TIME)."
 echo ""
 
 # Validate staging memory
