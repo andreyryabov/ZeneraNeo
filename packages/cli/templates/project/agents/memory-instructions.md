@@ -248,6 +248,23 @@ for it, or a fact with nothing that acts on it, is a memory nobody can use. Refs
 resolve only within a single `memory_commit`, so a subgraph split across calls
 arrives without its links.
 
+**Use `ref` (not `id`) for new nodes.** A new node uses `ref` as its local name
+(for example, `"ask"`, `"script"`), and edges connect them using those refs:
+
+```json
+{
+    "nodes": [
+        { "ref": "ask", "kind": "task", "text": "audit firewall rules for risky ports" },
+        { "ref": "script", "kind": "file", "text": "risk report generator", "file": "report.py" }
+    ],
+    "edges": [{ "from": "ask", "to": "script", "relation": "PRODUCED" }]
+}
+```
+
+Use `id` only when updating an existing node that is already in memory from a
+previous search or load. Never pass `id` when creating a new node, and do not
+pass both `ref` and `id` on the same node.
+
 **Do not re-commit what a search already returned.** A node that says what one
 already in memory says is folded into it, and its existing id comes back under
 your ref - so the links you asked for still land, on the memory that was already
@@ -284,6 +301,26 @@ and exactly as it was - the entire block, not a summary of it. Content in a file
 costs nothing until a `memory_load` asks for it, and comes back at
 `/memory/<id>.<ext>` to be read or run. Commit a node with no file only when the
 whole of what you know is one line long.
+
+**The file must exist in the workspace first.** `memory_commit` copies an
+existing file from the workspace; it is not an upload channel and does not
+write file contents from raw arguments. Write the file to the workspace first
+(using `write_file`, `apply_patch`, or a command saving under `/workspace`),
+then pass its workspace path (e.g. `"file": "report.py"` or
+`"file": "/workspace/report.py"`).
+
+| Which files to commit  | What belongs in them                                                       |
+| ---------------------- | -------------------------------------------------------------------------- |
+| Working scripts        | A script, query or invocation that can be re-run directly                  |
+| Configurations & specs | Self-contained config files, schemas or request templates                  |
+| Rendered findings      | A table of findings or structured report produced by an investigation      |
+| Pinned reference text  | Verbatim passages from released specs or versioned docs that cannot change |
+| Assembled answers      | Synthesised conclusions from multiple sources with a provenance header     |
+| Specimen responses     | An API response shape to reproduce against (never raw secrets)             |
+
+Do not commit files from the living codebase (use a pointer with file and line
+ranges instead - copies go stale silently), raw ephemeral command logs, or
+anything outside the workspace.
 
 **Name the sources inside the file as well as in the text.** The two halves
 arrive separately - a recollection shows the text, and only a later

@@ -1,10 +1,23 @@
-import { createHash, randomInt } from 'node:crypto';
+import { createHash, randomInt, randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { join } from 'node:path';
 import type { Box } from './box.ts';
 import { BuildFailed, type Cache } from './cache.ts';
 import type { GeneratorInput } from './envelope.ts';
 import { reason } from './generate.ts';
+import {
+    formatLogLine,
+    formatRegenerated,
+    formatRegenerating,
+    formatRegenLimitHit,
+    RegenerationLimiter,
+    RequestHistory,
+    saveRequestDump,
+    type ErrorKind,
+    type RequestDumpData,
+} from './logger.ts';
 import { indexPage } from './page.ts';
 import { cutLoop, pagingSeen } from './paging.ts';
 import type { Router } from './router.ts';
@@ -40,6 +53,10 @@ export interface ServerOptions {
     seed?: number;
     maxBody?: number;
     onRequest?: (line: string) => void;
+    requestsDir?: string;
+    regenLimit?: number;
+    history?: RequestHistory;
+    limiter?: RegenerationLimiter;
 }
 
 export interface Listening {
@@ -49,11 +66,18 @@ export interface Listening {
 }
 
 export function build(opts: ServerOptions): Server {
+    const history = opts.history ?? new RequestHistory();
+    const limiter = opts.limiter ?? new RegenerationLimiter(opts.regenLimit ?? 3);
+    const requestsDir = opts.requestsDir ?? join(opts.box.root, 'requests');
+    const enriched: ServerOptions = { ...opts, history, limiter, requestsDir };
+
     return createServer((req, res) => {
-        handle(req, res, opts).catch((err: unknown) => {
-            // Nothing below is expected to throw; if it does, the client still
-            // gets an answer and the operator still gets the reason.
-            send(res, 500, { error: err instanceof Error ? err.message : String(err) });
+        handle(req, res, enriched).catch((err: unknown) => {
+            const message = err instanceof Error ? err.message : String(err);
+            send(res, 500, { error: message });
+            opts.onRequest?.(
+                `${req.method ?? 'GET'} ${req.url ?? '/'} 500 [SERVER_INTERNAL_ERROR] ${message}`,
+            );
         });
     });
 }
@@ -88,18 +112,86 @@ async function handle(
     opts: ServerOptions,
 ): Promise<void> {
     const started = Date.now();
+    const timestamp = new Date(started);
+    const id = randomUUID().slice(0, 8);
     const url = new URL(req.url ?? '/', 'http://localhost');
     const method = (req.method ?? 'GET').toLowerCase();
-    // The search string is part of the request: without it a 400 caused by a
-    // query parameter is unexplainable from the log.
-    const say = (status: number, what: string): void =>
-        opts.onRequest?.(
-            `${req.method} ${url.pathname}${url.search} ${status} ${Date.now() - started}ms ${what}`,
+
+    const finish = async (
+        status: number,
+        meta: {
+            errorKind?: ErrorKind;
+            errorMessage?: string;
+            stderr?: string;
+            issues?: readonly unknown[];
+            note?: string;
+            operationId?: string;
+            routePath?: string;
+            pathParams?: Record<string, string>;
+            query?: Record<string, string>;
+            requestBody?: unknown;
+            responseBody?: unknown;
+            cacheStatus?: 'hit' | 'miss' | 'regenerated';
+            regenerated?: boolean;
+            regenAttempts?: number;
+            regenLimitHit?: boolean;
+        },
+    ): Promise<void> => {
+        const responseHeaders = Object.fromEntries(
+            Object.entries(res.getHeaders()).map(([k, v]) => [k, String(v)]),
         );
+
+        const dumpData: RequestDumpData = {
+            id,
+            timestamp,
+            durationMs: Date.now() - started,
+            method,
+            url: req.url ?? '/',
+            pathname: url.pathname,
+            search: url.search,
+            operationId: meta.operationId,
+            routePath: meta.routePath,
+            pathParams: meta.pathParams,
+            query: meta.query ?? Object.fromEntries(url.searchParams),
+            requestHeaders: safeHeaders(req),
+            requestBody: meta.requestBody,
+            status,
+            responseHeaders,
+            responseBody: meta.responseBody,
+            errorKind: meta.errorKind,
+            errorMessage: meta.errorMessage,
+            stderr: meta.stderr,
+            cacheStatus: meta.cacheStatus,
+            regenerated: meta.regenerated,
+            regenAttempts: meta.regenAttempts,
+            regenLimitHit: meta.regenLimitHit,
+            regenLimit: opts.limiter?.limit,
+            issues: meta.issues,
+            note: meta.note,
+        };
+
+        let dumpPath = '';
+        const shouldDump = Boolean(
+            opts.requestsDir &&
+            url.pathname !== '/' &&
+            !url.pathname.startsWith('/__faker/') &&
+            meta.operationId,
+        );
+        if (shouldDump) {
+            try {
+                dumpPath = await saveRequestDump(opts.requestsDir!, dumpData);
+            } catch {
+                // Ignore filesystem dump write failures so server remains operational
+            }
+        }
+        if (opts.onRequest) {
+            opts.onRequest(formatLogLine(dumpData, dumpPath));
+        }
+    };
 
     if (url.pathname.startsWith('/__faker/')) {
         introspect(url.pathname, res, opts);
-        say(200, 'introspection');
+        await finish(200, { note: 'introspection' });
         return;
     }
 
@@ -108,32 +200,54 @@ async function handle(
         // The document owns `/` only when it declares it. Otherwise the root is
         // the contents page, which is what a browser pointed here came for.
         if (url.pathname === '/' && (method === 'get' || method === 'head')) {
-            html(res, indexPage(opts.router.operations));
-            say(200, 'index');
+            const end = prepareHtml(res, indexPage(opts.router.operations));
+            await finish(200, { note: 'index' });
+            end();
             return;
         }
         // The path matched and the query did not, which no one guesses unaided
         // — and it is not a 405 either, since the method is defined here.
         const expects = opts.router.expects(method, url.pathname);
         if (expects.length > 0) {
-            send(res, 404, {
+            const bodyObj = {
                 error: `${req.method} ${url.pathname} is only defined with a query`,
                 expects,
+            };
+            const end = prepareSend(res, 404, bodyObj);
+            await finish(404, {
+                errorKind: 'CLIENT_ERROR: NOT_FOUND',
+                errorMessage: `expects ${expects.join(' ')}`,
+                responseBody: bodyObj,
+                note: `expects ${expects.join(' ')}`,
             });
-            say(404, `expects ${expects.join(' ')}`);
+            end();
             return;
         }
         const allowed = opts.router.allowed(url.pathname, url.searchParams);
         if (allowed.length > 0) {
             res.setHeader('allow', allowed.map((m) => m.toUpperCase()).join(', '));
-            send(res, 405, { error: `${req.method} is not defined for ${url.pathname}` });
-            say(405, 'no such method');
+            const bodyObj = { error: `${req.method} is not defined for ${url.pathname}` };
+            const end = prepareSend(res, 405, bodyObj);
+            await finish(405, {
+                errorKind: 'CLIENT_ERROR: METHOD_NOT_ALLOWED',
+                errorMessage: 'no such method',
+                responseBody: bodyObj,
+                note: 'no such method',
+            });
+            end();
             return;
         }
-        send(res, 404, {
+        const bodyObj = {
             error: `no operation matches ${req.method} ${url.pathname}`,
+        };
+        const end = prepareSend(res, 404, bodyObj);
+        await finish(404, {
+            errorKind: 'CLIENT_ERROR: NOT_FOUND',
+            errorMessage: 'no route',
+            responseBody: bodyObj,
+            note: 'no route',
         });
-        say(404, 'no route');
+        end();
         return;
     }
 
@@ -145,22 +259,54 @@ async function handle(
         body = await readBody(req, opts.maxBody ?? DEFAULT_MAX_BODY);
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        send(res, message.includes('too large') ? 413 : 400, { error: message });
-        say(400, 'bad body');
+        const status = message.includes('too large') ? 413 : 400;
+        const errorKind: ErrorKind =
+            status === 413 ? 'CLIENT_ERROR: PAYLOAD_TOO_LARGE' : 'CLIENT_ERROR: BAD_REQUEST';
+        const bodyObj = { error: message };
+        const end = prepareSend(res, status, bodyObj);
+        await finish(status, {
+            operationId: operation.operationId,
+            routePath: operation.path,
+            pathParams,
+            errorKind,
+            errorMessage: message,
+            responseBody: bodyObj,
+            note: status === 413 ? 'body too large' : 'bad body',
+        });
+        end();
         return;
     }
 
     const problems = check(operation, opts.checks, pathParams, url.searchParams, body);
     if (problems.length > 0) {
-        send(res, 400, { error: describeIssues(problems), issues: problems });
-        say(400, describeIssues(problems));
+        const desc = describeIssues(problems);
+        const bodyObj = { error: desc, issues: problems };
+        const end = prepareSend(res, 400, bodyObj);
+        await finish(400, {
+            operationId: operation.operationId,
+            routePath: operation.path,
+            pathParams,
+            requestBody: body,
+            errorKind: 'CLIENT_ERROR: VALIDATION_FAILED',
+            errorMessage: desc,
+            issues: problems,
+            responseBody: bodyObj,
+            note: desc,
+        });
+        end();
         return;
     }
 
     if (!operation.success.schema) {
         res.statusCode = operation.success.status;
+        await finish(operation.success.status, {
+            operationId: operation.operationId,
+            routePath: operation.path,
+            pathParams,
+            requestBody: body,
+            note: 'no body declared',
+        });
         res.end();
-        say(operation.success.status, 'no body declared');
         return;
     }
 
@@ -170,15 +316,27 @@ async function handle(
     } catch (err) {
         const status = err instanceof BuildFailed ? 501 : 500;
         const detail = reason(err);
-        send(res, status, {
+        const bodyObj = {
             error: `no generator for ${operation.operationId}`,
             detail,
             diagnostics: err instanceof BuildFailed ? err.diagnostics : undefined,
+        };
+        const end = prepareSend(res, status, bodyObj);
+        await finish(status, {
+            operationId: operation.operationId,
+            routePath: operation.path,
+            pathParams,
+            requestBody: body,
+            errorKind: 'GENERATOR_BUILD_FAILED',
+            errorMessage: `no generator: ${detail}`,
+            responseBody: bodyObj,
+            note: `no generator: ${detail}`,
         });
-        say(status, `no generator: ${detail}`);
+        end();
         return;
     }
     res.setHeader('x-faker-cache', generator.cached ? 'hit' : 'miss');
+    let cacheStatus: 'hit' | 'miss' | 'regenerated' = generator.cached ? 'hit' : 'miss';
 
     const input: GeneratorInput = {
         operationId: operation.operationId,
@@ -191,20 +349,181 @@ async function handle(
         seed: seedFor(opts.seed, operation, pathParams, url.searchParams),
     };
 
-    const outcome = await opts.box.run(operation.key, input);
-    if (!outcome.ok) {
-        send(res, 502, {
-            error: `the generator for ${operation.operationId} ${outcome.fault}`,
-            stderr: outcome.stderr || undefined,
-        });
-        say(502, 'generator faulted');
-        return;
+    let outcome = await opts.box.run(operation.key, input);
+
+    const responseValidator = opts.checks.for(operation).response;
+    let schemaMismatch = false;
+    if (outcome.ok && responseValidator && !responseValidator(outcome.value)) {
+        schemaMismatch = true;
+        const desc = describeIssues(issues('', responseValidator.errors));
+        outcome = {
+            ok: false,
+            fault: `output does not match response schema — ${desc}`,
+            stderr: outcome.stderr,
+            durationMs: outcome.durationMs,
+            value: outcome.value,
+        };
     }
 
-    const note = generator.cached ? 'hit' : 'miss';
+    if (!outcome.ok) {
+        const urlKey = url.pathname;
+        const errorKind: ErrorKind = outcome.fault?.includes('longer than')
+            ? 'GENERATOR_TIMEOUT'
+            : schemaMismatch
+              ? 'GENERATOR_SCHEMA_MISMATCH'
+              : 'GENERATOR_FAULT';
+
+        // Check regeneration limit for this URL
+        if (opts.limiter!.isLimitHit(urlKey)) {
+            opts.onRequest?.(
+                formatRegenLimitHit(urlKey, opts.limiter!.limit, operation.operationId),
+            );
+            const bodyObj = {
+                error: `the generator for ${operation.operationId} ${outcome.fault}`,
+                stderr: outcome.stderr || undefined,
+                regenerationLimitHit: true,
+                regenerationLimit: opts.limiter!.limit,
+            };
+            const end = prepareSend(res, 502, bodyObj);
+            await finish(502, {
+                operationId: operation.operationId,
+                routePath: operation.path,
+                pathParams,
+                requestBody: body,
+                errorKind,
+                errorMessage: `${outcome.fault} (regeneration limit reached)`,
+                stderr: outcome.stderr,
+                responseBody: bodyObj,
+                cacheStatus,
+                regenLimitHit: true,
+                note: 'generator faulted (limit hit)',
+            });
+            end();
+            return;
+        }
+
+        const attempt = opts.limiter!.increment(urlKey);
+        opts.onRequest?.(
+            formatRegenerating(
+                urlKey,
+                attempt,
+                opts.limiter!.limit,
+                operation.operationId,
+                outcome.fault,
+            ),
+        );
+
+        const regenStarted = Date.now();
+        let currentSource = generator.source;
+        if (!currentSource?.trim()) {
+            currentSource = (await opts.cache.getSource?.(operation.key)) ?? '';
+        }
+        if (!currentSource?.trim()) {
+            try {
+                currentSource = await readFile(opts.box.sourceOf(operation.key), 'utf8');
+            } catch {
+                currentSource = '# generator';
+            }
+        }
+
+        const examples = opts.history!.getSuccessful(operation.key, 2);
+
+        try {
+            await opts.cache.regenerate(operation, {
+                currentSource,
+                failingInput: input,
+                fault: outcome.fault ?? 'generator faulted',
+                stderr: outcome.stderr,
+                examples,
+            });
+
+            cacheStatus = 'regenerated';
+            res.setHeader('x-faker-cache', 'regenerated');
+            opts.onRequest?.(
+                formatRegenerated(
+                    urlKey,
+                    attempt,
+                    Date.now() - regenStarted,
+                    operation.operationId,
+                ),
+            );
+
+            // Re-run the request with the newly regenerated generator
+            outcome = await opts.box.run(operation.key, input);
+            if (outcome.ok && responseValidator && !responseValidator(outcome.value)) {
+                outcome = {
+                    ok: false,
+                    fault: 'output does not match response schema after regeneration',
+                    stderr: outcome.stderr,
+                    durationMs: outcome.durationMs,
+                };
+            }
+        } catch (regenErr) {
+            const detail = reason(regenErr);
+            const bodyObj = {
+                error: `regeneration failed for ${operation.operationId}: ${detail}`,
+                stderr: outcome.stderr || undefined,
+                regenerated: false,
+            };
+            const end = prepareSend(res, 502, bodyObj);
+            await finish(502, {
+                operationId: operation.operationId,
+                routePath: operation.path,
+                pathParams,
+                requestBody: body,
+                errorKind: 'REGENERATION_FAILED',
+                errorMessage: `regeneration failed: ${detail}`,
+                stderr: outcome.stderr,
+                responseBody: bodyObj,
+                cacheStatus,
+                regenAttempts: attempt,
+                note: 'regeneration failed',
+            });
+            end();
+            return;
+        }
+
+        if (!outcome.ok) {
+            const bodyObj = {
+                error: `the regenerated generator for ${operation.operationId} ${outcome.fault}`,
+                stderr: outcome.stderr || undefined,
+                regenerated: true,
+            };
+            const end = prepareSend(res, 502, bodyObj);
+            await finish(502, {
+                operationId: operation.operationId,
+                routePath: operation.path,
+                pathParams,
+                requestBody: body,
+                errorKind,
+                errorMessage: `regenerated generator ${outcome.fault}`,
+                stderr: outcome.stderr,
+                responseBody: bodyObj,
+                cacheStatus,
+                regenerated: true,
+                regenAttempts: attempt,
+                note: 'regenerated generator faulted',
+            });
+            end();
+            return;
+        }
+    }
+
+    const note = cacheStatus;
     const looped = cut(operation, outcome.value, url.searchParams);
-    send(res, operation.success.status, outcome.value);
-    say(operation.success.status, looped ? `${note} · cut a looping page token` : note);
+    opts.history!.recordSuccess(operation.key, input, outcome.value);
+    const end = prepareSend(res, operation.success.status, outcome.value);
+    await finish(operation.success.status, {
+        operationId: operation.operationId,
+        routePath: operation.path,
+        pathParams,
+        requestBody: body,
+        responseBody: outcome.value,
+        cacheStatus,
+        regenerated: cacheStatus === 'regenerated',
+        note: looped ? `${note} · cut a looping page token` : note,
+    });
+    end();
 }
 
 /**
@@ -357,18 +676,26 @@ function introspect(pathname: string, res: ServerResponse, opts: ServerOptions):
     send(res, 404, { error: `no such endpoint: ${pathname}` });
 }
 
-function send(res: ServerResponse, status: number, value: unknown): void {
+function prepareSend(res: ServerResponse, status: number, value: unknown): () => void {
     const text = `${JSON.stringify(value, null, 2)}\n`;
     res.statusCode = status;
     res.setHeader('content-type', 'application/json; charset=utf-8');
     res.setHeader('content-length', Buffer.byteLength(text));
-    res.end(text);
+    return () => res.end(text);
+}
+
+function send(res: ServerResponse, status: number, value: unknown): void {
+    prepareSend(res, status, value)();
+}
+
+function prepareHtml(res: ServerResponse, text: string): () => void {
+    res.statusCode = 200;
+    res.setHeader('content-type', 'text/html; charset=utf-8');
+    res.setHeader('content-length', Buffer.byteLength(text));
+    return () => res.end(text);
 }
 
 /** Node drops the body itself when the request was a HEAD. */
 function html(res: ServerResponse, text: string): void {
-    res.statusCode = 200;
-    res.setHeader('content-type', 'text/html; charset=utf-8');
-    res.setHeader('content-length', Buffer.byteLength(text));
-    res.end(text);
+    prepareHtml(res, text)();
 }

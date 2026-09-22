@@ -33,6 +33,8 @@ const MAX_FORMAT_LEN = 16;
 
 export interface RememberOptions {
     maxBytes?: number;
+    /** Display path as passed to the tool, for reporting errors without leaking the host filesystem */
+    path?: string;
 }
 
 /**
@@ -49,32 +51,33 @@ export async function rememberFile(
     opts: RememberOptions = {},
 ): Promise<MemoryFile> {
     const maxBytes = opts.maxBytes ?? MAX_FILE_BYTES;
-    const info = await describe(source);
+    const name = opts.path ?? source;
+    const info = await describe(source, name);
     if (!info.isFile()) {
         throw new MemoryError(
-            `${source} is not a regular file`,
+            `${name} is not a regular file`,
             'only files can be remembered; write a `fact` node describing a directory instead',
         );
     }
     if (info.size > maxBytes) {
         throw new MemoryError(
-            `${source} is ${info.size} bytes, over the ${maxBytes} byte limit for a remembered file`,
+            `${name} is ${info.size} bytes, over the ${maxBytes} byte limit for a remembered file`,
             'keep the artifact in the workspace and remember a `snippet` of the part that matters',
         );
     }
 
     const bytes = await readFile(source);
     if (bytes.byteLength > maxBytes) {
-        throw new MemoryError(`${source} grew past the ${maxBytes} byte limit while being read`);
+        throw new MemoryError(`${name} grew past the ${maxBytes} byte limit while being read`);
     }
 
     const format = formatOf(source);
-    const name = id + (format ? `.${format}` : '');
+    const fileName = id + (format ? `.${format}` : '');
     await mkdir(join(dir, FILES_DIR), { recursive: true });
-    await writeFile(join(dir, FILES_DIR, name), bytes);
+    await writeFile(join(dir, FILES_DIR, fileName), bytes);
 
     return {
-        path: `${MEMORY_MOUNT}/${name}`,
+        path: `${MEMORY_MOUNT}/${fileName}`,
         bytes: bytes.byteLength,
         sha256: createHash('sha256').update(bytes).digest('hex'),
         format,
@@ -92,12 +95,12 @@ export async function forgetFile(dir: string, file: MemoryFile): Promise<void> {
     await rm(hostPath(dir, file), { force: true });
 }
 
-async function describe(source: string) {
+async function describe(source: string, name: string = source) {
     try {
         return await stat(source);
     } catch {
         throw new MemoryError(
-            `${source} does not exist`,
+            `${name} does not exist`,
             'remember a file the run actually wrote, by the path the file tools use',
         );
     }

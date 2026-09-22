@@ -1,3 +1,4 @@
+import type { GeneratorInput } from './envelope.ts';
 import { AVAILABLE } from './image.ts';
 import type { Paging } from './paging.ts';
 import { called, type Operation } from './spec.ts';
@@ -181,6 +182,67 @@ export function retry(diagnostics: readonly string[]): string {
         '',
         ...diagnostics,
     ].join('\n');
+}
+
+export interface ExampleRequest {
+    input: GeneratorInput;
+    output?: unknown;
+}
+
+export interface RegenerationPromptContext {
+    operation: Operation;
+    currentSource: string;
+    failingInput: GeneratorInput;
+    fault: string;
+    stderr?: string;
+    examples?: readonly ExampleRequest[];
+}
+
+export function regenerationInstruction(ctx: RegenerationPromptContext): string {
+    const { operation, currentSource, failingInput, fault, stderr, examples } = ctx;
+    const lines: string[] = [
+        brief(operation),
+        '',
+        'Embed the response schema in the file as a literal and validate against it.',
+        '',
+        'CURRENT GENERATOR CODE:',
+        '```python',
+        currentSource.trim(),
+        '```',
+        '',
+        'THE GENERATOR FAILED ON THIS REQUEST:',
+        'Input:',
+        json(failingInput),
+        '',
+        `Fault: ${fault}`,
+    ];
+
+    if (stderr && stderr.trim()) {
+        lines.push('', 'Stderr / Traceback:', '```', stderr.trim(), '```');
+    }
+
+    if (examples && examples.length > 0) {
+        lines.push('', 'PREVIOUS SUCCESSFUL REQUESTS (use as examples):');
+        for (let i = 0; i < examples.length; i++) {
+            const ex = examples[i];
+            lines.push(
+                `Example ${i + 1}:`,
+                'Input:',
+                json(ex.input),
+                'Output produced:',
+                json(ex.output),
+                '',
+            );
+        }
+    }
+
+    lines.push(
+        'TASK:',
+        'Fix the generator code so that it handles the failing request without error, produces valid output that matches the schema, and continues to produce valid output for the previous example requests.',
+        'ANSWER WITH THE COMPLETE REVISED PYTHON FILE AND NOTHING ELSE. No explanation, no markdown fence.',
+    );
+
+    return lines.join('\n');
 }
 
 const json = (value: unknown): string => JSON.stringify(value, null, 1);

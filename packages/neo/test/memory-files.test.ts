@@ -73,6 +73,12 @@ describe('remembering a file', () => {
         );
     });
 
+    it('names the passed path in the error when provided', async () => {
+        await expect(
+            rememberFile(dir, join(work, 'nope.py'), 'ID6', { path: '/workspace/nope.py' }),
+        ).rejects.toThrow(/\/workspace\/nope\.py does not exist/);
+    });
+
     it('resolves a stored path back through the files directory only', async () => {
         const file = await rememberFile(dir, source, 'ID7');
         const escaped = { ...file, path: '/memory/../../etc/passwd' };

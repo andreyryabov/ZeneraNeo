@@ -1,13 +1,15 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Embedder, EmbeddingRequest, EmbeddingResponse } from '../src/embedding.ts';
 import type { IdClock } from '../src/ids.ts';
 import { hostPath } from '../src/memory/files.ts';
 import { MemoryIndex, type MemoryTransaction } from '../src/memory/index.ts';
 import { MemoryStore } from '../src/memory/store.ts';
+import { memoryTools } from '../src/memory/tools.ts';
 import { MemoryError } from '../src/memory/types.ts';
+import { isToolReturn, MEMORY_COMMIT_TOOL, type AnyTool, type ToolContext } from '../src/types.ts';
 
 const DIMS = 64;
 const EMBEDDING = { model: 'stub', dimensions: DIMS };
@@ -196,6 +198,94 @@ describe('committing a subgraph', () => {
         expect(second.ids.b).not.toBe(first.ids.a);
         expect(second).toMatchObject({ created: 1, merged: 0 });
     });
+
+    it('accepts a new node when the caller supplies both ref and id with the same value', async () => {
+        const res = await commit({
+            nodes: [
+                {
+                    ref: 'task_node',
+                    id: 'task_node',
+                    kind: 'task',
+                    text: 'audit firewall rules',
+                },
+                {
+                    ref: 'file_node',
+                    id: 'file_node',
+                    kind: 'file',
+                    text: 'firewall report',
+                },
+            ],
+            edges: [{ from: 'task_node', to: 'file_node', relation: 'PRODUCED' }],
+        });
+        expect(res).toMatchObject({ created: 2, updated: 0, edges: 1 });
+        expect(res.ids.task_node).toBeDefined();
+        expect(res.ids.file_node).toBeDefined();
+        expect(index.graph.edges(['*'])).toContainEqual({
+            source: res.ids.task_node,
+            target: res.ids.file_node,
+            relation: 'PRODUCED',
+        });
+    });
+
+    it('accepts a new node when the caller uses id instead of ref', async () => {
+        const res = await commit({
+            nodes: [
+                { id: 't1', kind: 'task', text: 'audit firewall rules' },
+                { id: 'f1', kind: 'file', text: 'firewall report' },
+            ],
+            edges: [{ from: 't1', to: 'f1', relation: 'PRODUCED' }],
+        });
+        expect(res).toMatchObject({ created: 2, updated: 0, edges: 1 });
+        expect(res.ids.t1).toBeDefined();
+        expect(res.ids.f1).toBeDefined();
+        expect(index.graph.edges(['*'])).toContainEqual({
+            source: res.ids.t1,
+            target: res.ids.f1,
+            relation: 'PRODUCED',
+        });
+    });
+
+    it('handles model-generated payloads where nodes use id or both ref and id', async () => {
+        // Scenario 1: ref and id both provided with same string
+        const res1 = await commit({
+            nodes: [
+                {
+                    ref: 'task_node',
+                    id: 'task_node',
+                    kind: 'task',
+                    text: 'Query API for virtual machine rules',
+                },
+                {
+                    ref: 'file_node',
+                    id: 'file_node',
+                    kind: 'file',
+                    text: 'Full system state report',
+                },
+            ],
+            edges: [{ from: 'task_node', to: 'file_node', relation: 'PRODUCED' }],
+        });
+        expect(res1.created).toBe(2);
+
+        // Scenario 2: id used instead of ref, with edges
+        const res2 = await commit({
+            edges: [{ from: 't1', to: 'f1', relation: 'PRODUCED' }],
+            nodes: [
+                { id: 't1', kind: 'task', text: 'Query API for security rules' },
+                { id: 'f1', kind: 'file', text: 'Security report' },
+            ],
+        });
+        expect(res2.created).toBe(2);
+
+        // Scenario 3: hyphenated ids used instead of ref
+        const res3 = await commit({
+            nodes: [
+                { id: 'task-1010', kind: 'task', text: 'Query API for network rules' },
+                { id: 'report-1010', kind: 'file', text: 'Network report' },
+            ],
+            edges: [{ from: 'task-1010', to: 'report-1010', relation: 'PRODUCED' }],
+        });
+        expect(res3.created).toBe(2);
+    });
 });
 
 describe('a commit that cannot be honoured', () => {
@@ -279,6 +369,28 @@ describe('a commit that cannot be honoured', () => {
         await expect(commit({ nodes: [{ kind: 'fact', text: 'x' }] })).rejects.toThrow(
             /either a ref .* or an id/,
         );
+    });
+
+    it('refuses an update to a non-existent memory id', async () => {
+        await expect(commit({ nodes: [{ id: 'ghost' }] })).rejects.toThrow(/ghost: no such memory/);
+    });
+
+    it('reports a missing file using the passed path rather than the host path', async () => {
+        await expect(
+            commit({
+                nodes: [
+                    {
+                        ref: 'f',
+                        kind: 'file',
+                        text: 'missing report',
+                        file: {
+                            source: join(work, 'nonexistent.json'),
+                            path: '/workspace/nonexistent.json',
+                        },
+                    },
+                ],
+            }),
+        ).rejects.toThrow('/workspace/nonexistent.json does not exist');
     });
 
     it('refuses an empty transaction', async () => {
@@ -366,5 +478,108 @@ describe('loading and forgetting', () => {
         reopened.release();
         // the afterEach release must still find a lock it owns
         index = new MemoryIndex({ store: await MemoryStore.open(dir, { embedding: EMBEDDING }) });
+    });
+});
+
+describe('the memory_commit tool', () => {
+    let dir: string;
+    let work: string;
+    let index: MemoryIndex;
+    let clock: IdClock;
+    let commitTool: AnyTool;
+
+    beforeEach(async () => {
+        dir = await mkdtemp(join(tmpdir(), 'neo-index-'));
+        work = await mkdtemp(join(tmpdir(), 'neo-work-'));
+        await writeFile(join(work, 'audit.py'), SCRIPT);
+        clock = clockFrom();
+        index = new MemoryIndex({ store: await MemoryStore.open(dir) });
+        const tools = memoryTools({
+            index,
+            binding: { access: 'full', sees: ['*'], writes: ['*'] },
+        });
+        commitTool = tools.find((t) => t.name === MEMORY_COMMIT_TOOL)!;
+    });
+
+    afterEach(async () => {
+        index.store.release();
+        await rm(dir, { recursive: true, force: true });
+        await rm(work, { recursive: true, force: true });
+    });
+
+    const tc = (resolveFile?: (p: string) => string): ToolContext =>
+        ({
+            callId: 'call1',
+            state: { runId: 'run1' },
+            services: {
+                clock,
+                resolveFile: resolveFile ?? ((p: string) => join(work, p)),
+            },
+        }) as unknown as ToolContext;
+
+    const unwrap = (ret: unknown) => (isToolReturn(ret) ? ret.output : ret);
+
+    it('accepts file as a string path', async () => {
+        const res = unwrap(
+            await commitTool.execute(
+                {
+                    nodes: [{ ref: 's', kind: 'file', text: 'audit script', file: 'audit.py' }],
+                },
+                tc(),
+            ),
+        ) as { summary: string; ids: Record<string, string> };
+        expect(res.ids.s).toBeDefined();
+        expect(index.graph.get(res.ids.s)?.file?.format).toBe('py');
+    });
+
+    it('accepts file as an object with path', async () => {
+        const res = unwrap(
+            await commitTool.execute(
+                {
+                    nodes: [
+                        {
+                            ref: 's',
+                            kind: 'file',
+                            text: 'audit script',
+                            file: { path: 'audit.py' },
+                        },
+                    ],
+                },
+                tc(),
+            ),
+        ) as { summary: string; ids: Record<string, string> };
+        expect(res.ids.s).toBeDefined();
+        expect(index.graph.get(res.ids.s)?.file?.format).toBe('py');
+    });
+
+    it('reports missing file using the passed path, not the host path', async () => {
+        const res = unwrap(
+            await commitTool.execute(
+                {
+                    nodes: [
+                        {
+                            ref: 's',
+                            kind: 'file',
+                            text: 'missing script',
+                            file: { path: '/workspace/app-vm-1011-report.json' },
+                        },
+                    ],
+                },
+                tc((p: string) => join(work, basename(p))),
+            ),
+        ) as { error: string; hint?: string };
+        expect(res.error).toBe('/workspace/app-vm-1011-report.json does not exist');
+    });
+
+    it('refuses empty file path with a clear hint', async () => {
+        const res = unwrap(
+            await commitTool.execute(
+                {
+                    nodes: [{ ref: 's', kind: 'file', text: 'empty path', file: { path: '   ' } }],
+                },
+                tc(),
+            ),
+        ) as { error: string; hint?: string };
+        expect(res.error).toBe('file path is required');
     });
 });

@@ -63,7 +63,7 @@ export interface CommitNode {
     audience?: string[];
     metadata?: Record<string, unknown>;
     /** absolute host path of a file to copy in, already resolved by the caller */
-    file?: { source: string };
+    file?: { source: string; path?: string };
     expectedRevision?: number;
 }
 
@@ -211,7 +211,9 @@ export class MemoryIndex {
         const written: MemoryFile[] = [];
         try {
             for (const item of plan.files) {
-                const file = await rememberFile(this.store.dir, item.source, item.id);
+                const file = await rememberFile(this.store.dir, item.source, item.id, {
+                    path: item.path,
+                });
                 written.push(file);
                 item.target.file = file;
             }
@@ -349,23 +351,48 @@ export class MemoryIndex {
         const embed: { id: string; text: string }[] = [];
 
         for (const [i, node] of nodes.entries()) {
-            const where = node.ref ?? node.id ?? `nodes[${i}]`;
-            if ((node.ref === undefined) === (node.id === undefined)) {
+            let ref = node.ref;
+            let id = node.id;
+            const where = ref ?? id ?? `nodes[${i}]`;
+
+            // If the model passed both ref and id with the same value (e.g. ref: "x", id: "x"),
+            // and id is not an existing node, treat it as a new node create.
+            if (ref !== undefined && id !== undefined) {
+                if (ref === id && !this.graph.has(id)) {
+                    id = undefined;
+                } else {
+                    throw new MemoryError(
+                        `${where}: give either a ref (to create) or an id (to update), not both`,
+                    );
+                }
+            } else if (
+                ref === undefined &&
+                id !== undefined &&
+                !this.graph.has(id) &&
+                (node.kind !== undefined || (node.text !== undefined && node.text.trim()))
+            ) {
+                // Models often assign "id" to new nodes instead of "ref". If the id does not
+                // match an existing node in memory, treat it as the local ref for creation.
+                ref = id;
+                id = undefined;
+            }
+
+            if (ref === undefined && id === undefined) {
                 throw new MemoryError(
                     `${where}: give either a ref (to create) or an id (to update), not both`,
                 );
             }
             const audience = this.#audience(node, opts.writes, where);
 
-            if (node.id) {
-                const existing = this.graph.get(node.id);
+            if (id) {
+                const existing = this.graph.get(id);
                 if (!existing) {
                     throw new MemoryError(`${where}: no such memory`);
                 }
                 if (node.kind !== undefined) {
                     this.#kind(node.kind, where);
                 }
-                ids[node.id] = node.id;
+                ids[id] = id;
                 const patch: NodePatch = {
                     ...(node.kind !== undefined ? { kind: node.kind } : {}),
                     ...(node.text !== undefined ? { text: node.text } : {}),
@@ -375,20 +402,24 @@ export class MemoryIndex {
                         ? { expectedRevision: node.expectedRevision }
                         : {}),
                 };
-                planned.push({ existing: true, id: node.id, patch });
+                planned.push({ existing: true, id, patch });
                 // Only a text change invalidates the vector; re-embedding on an
                 // audience edit would burn a call to store the same numbers.
                 if (node.text !== undefined && node.text !== existing.text) {
-                    embed.push({ id: node.id, text: node.text });
+                    embed.push({ id, text: node.text });
                 }
                 if (node.file) {
-                    files.push({ id: node.id, source: node.file.source, target: patch });
+                    files.push({
+                        id,
+                        source: node.file.source,
+                        path: node.file.path,
+                        target: patch,
+                    });
                 }
                 continue;
             }
 
-            const ref = node.ref!;
-            if (ref in ids) {
+            if (ref! in ids) {
                 throw new MemoryError(`${where}: two nodes share the ref "${ref}"`);
             }
             if (node.text === undefined || !node.text.trim()) {
@@ -398,19 +429,24 @@ export class MemoryIndex {
                 );
             }
             const kind = this.#kind(node.kind, where);
-            const id = opts.clock.newId();
-            ids[ref] = id;
+            const newId = opts.clock.newId();
+            ids[ref!] = newId;
             const draft: NodeDraft = {
-                id,
+                id: newId,
                 kind,
                 text: node.text,
                 audience: audience ?? [ALL_AGENTS],
                 ...(node.metadata !== undefined ? { metadata: node.metadata } : {}),
             };
-            planned.push({ existing: false, id, draft });
-            embed.push({ id, text: node.text });
+            planned.push({ existing: false, id: newId, draft });
+            embed.push({ id: newId, text: node.text });
             if (node.file) {
-                files.push({ id, source: node.file.source, target: draft });
+                files.push({
+                    id: newId,
+                    source: node.file.source,
+                    path: node.file.path,
+                    target: draft,
+                });
             }
         }
 
@@ -497,6 +533,7 @@ function flatten(text: string): string {
 interface PlannedFile {
     id: string;
     source: string;
+    path?: string;
     /** the draft or patch the copied file's record is written into */
     target: { file?: MemoryFile };
 }
