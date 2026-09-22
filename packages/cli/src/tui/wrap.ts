@@ -517,7 +517,7 @@ export type Align = 'left' | 'right' | 'center';
  */
 export interface Block {
     kind: BlockKind;
-    /** `heading`: its depth, 1–6. `item`: how deep it is nested. */
+    /** `heading`: its depth, 1-6. `item`: how deep it is nested. */
     level?: number;
     /** the fence's info string, when it had one */
     title?: string;

@@ -642,7 +642,7 @@ follow. So:
 - Anything only one agent needs goes in that agent's prompt instead. If you find
   yourself writing "if you are the router…", you are in the wrong file.
 
-Target 20–60 lines each. If one exceeds ~100, split the stable half out into a
+Target 20-60 lines each. If one exceeds ~100, split the stable half out into a
 preloaded skill.
 
 Four of these documents are **`zen`'s, not the project's** -
@@ -665,7 +665,7 @@ Structure that works:
 ```markdown
 <one sentence: who this agent is and what it owns>
 
-<what it does, as a short numbered procedure or 3–5 rules>
+<what it does, as a short numbered procedure or 3-5 rules>
 
 <what it must NOT do - especially the neighbouring agent's job>
 
@@ -698,7 +698,7 @@ already did, §3.2), never repeats one of them, and never describes the runtime.
 Every line should be an instruction the model can act on or a boundary it can
 check itself against.
 
-Target 10–40 lines. A 200-line prompt is a skill catalog that has not been split
+Target 10-40 lines. A 200-line prompt is a skill catalog that has not been split
 yet.
 
 ### 3.4 Skills

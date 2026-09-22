@@ -10,8 +10,8 @@ Refunds are decided by how long ago the order was delivered.
 
 | Days since delivery | Outcome                                       |
 | ------------------- | --------------------------------------------- |
-| 0–30                | Full refund, no questions asked               |
-| 31–90               | Store credit only, minus a 10% restocking fee |
+| 0-30                | Full refund, no questions asked               |
+| 31-90               | Store credit only, minus a 10% restocking fee |
 | 91+                 | No refund; offer a repair                     |
 
 Faulty goods ignore the table: they are always a full refund, at any age.

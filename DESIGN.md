@@ -72,9 +72,9 @@ Temporal workflow:
                │ calls (pure w.r.t. state, no I/O)
 ┌──────────────▼─────────────────────────────────────────────┐
 │ kernel.ts (deterministic state machine - plain functions)   │
-│   createState()      – explicit initial context            │
-│   nextAction(state)  – llm | tools | fork | done           │
-│   buildRequest(state)– trajectory → ModelRequest           │
+│   createState()      - explicit initial context            │
+│   nextAction(state)  - llm | tools | fork | done           │
+│   buildRequest(state)- trajectory → ModelRequest           │
 │   applyLlmResponse(state, res)                             │
 │   applyToolResult(state, callId, res)                      │
 │   applyJoin(state, forkId, branchResults)                  │
