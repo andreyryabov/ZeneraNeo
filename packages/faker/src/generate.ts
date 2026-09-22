@@ -1,8 +1,15 @@
 import type { Message, Model, ModelRequest, ModelResponse } from '@zenera/neo';
 import type { Box } from './box.ts';
+import type { GeneratorInput } from './envelope.ts';
 import { tokenOf, type Paging } from './paging.ts';
 import { echoIssues, nextPage, probesFor, walkStart } from './probe.ts';
-import { instruction, retry, SYSTEM } from './prompt.ts';
+import {
+    instruction,
+    regenerationInstruction,
+    retry,
+    SYSTEM,
+    type ExampleRequest,
+} from './prompt.ts';
 import { called, type Operation } from './spec.ts';
 import { describeIssues, issues, type Checks } from './validate.ts';
 
@@ -34,6 +41,14 @@ export interface BuildOptions {
 export interface Built {
     source: string;
     attempts: number;
+}
+
+export interface RegenerateOptions extends BuildOptions {
+    currentSource: string;
+    failingInput: GeneratorInput;
+    fault: string;
+    stderr?: string;
+    examples?: readonly ExampleRequest[];
 }
 
 export class BuildFailed extends Error {
@@ -85,6 +100,59 @@ export async function build(operation: Operation, opts: BuildOptions): Promise<B
     const response = opts.checks.for(operation).response;
     const messages: Message[] = [
         { role: 'user', content: [{ type: 'text', text: instruction(operation) }] },
+    ];
+    let last: string[] = [];
+
+    for (let attempt = 1; attempt <= limit; attempt++) {
+        const answer = await ask(opts, {
+            system: SYSTEM,
+            messages,
+            tools: [],
+            signal: opts.signal,
+        });
+        const source = unfence(answer.text);
+        if (!source.trim()) {
+            last = ['the answer was empty'];
+        } else {
+            await opts.box.write(operation.key, source);
+            last = await judge(operation, probes, response, opts.box);
+            if (last.length === 0) {
+                return { source, attempts: attempt };
+            }
+        }
+
+        opts.onAttempt?.(attempt, last);
+        messages.push(
+            { role: 'assistant', content: source },
+            { role: 'user', content: [{ type: 'text', text: retry(last) }] },
+        );
+    }
+
+    throw new BuildFailed(operation, last);
+}
+
+export async function regenerate(operation: Operation, opts: RegenerateOptions): Promise<Built> {
+    const limit = Math.max(1, opts.attempts ?? 3);
+    const exampleInputs = opts.examples?.map((e) => e.input) ?? [];
+    const probes = [opts.failingInput, ...exampleInputs, ...probesFor(operation)];
+    const response = opts.checks.for(operation).response;
+    const messages: Message[] = [
+        {
+            role: 'user',
+            content: [
+                {
+                    type: 'text',
+                    text: regenerationInstruction({
+                        operation,
+                        currentSource: opts.currentSource,
+                        failingInput: opts.failingInput,
+                        fault: opts.fault,
+                        stderr: opts.stderr,
+                        examples: opts.examples,
+                    }),
+                },
+            ],
+        },
     ];
     let last: string[] = [];
 

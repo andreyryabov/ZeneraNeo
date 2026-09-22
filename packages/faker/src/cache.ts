@@ -1,7 +1,9 @@
 import { Cache as Store, type CacheStore } from '@zenera/cli/lib';
 import type { Model } from '@zenera/neo';
 import type { Box } from './box.ts';
-import { build, BuildFailed } from './generate.ts';
+import type { GeneratorInput } from './envelope.ts';
+import { build, BuildFailed, regenerate } from './generate.ts';
+import type { ExampleRequest } from './prompt.ts';
 import type { Operation } from './spec.ts';
 import type { Checks } from './validate.ts';
 
@@ -79,6 +81,14 @@ export interface CacheOptions {
     onFail?: (e: CacheEvent & { error: Error }) => void;
 }
 
+export interface CacheRegenerateContext {
+    currentSource: string;
+    failingInput: GeneratorInput;
+    fault: string;
+    stderr?: string;
+    examples?: readonly ExampleRequest[];
+}
+
 const DEFAULT_CONCURRENCY = 4;
 
 export class Cache {
@@ -129,6 +139,61 @@ export class Cache {
         );
         this.#live.set(operation.key, started);
         return started;
+    }
+
+    get model(): Model {
+        return this.#opts.model;
+    }
+
+    async getSource(key: string): Promise<string | undefined> {
+        const found = this.#store.get<Stored>(key);
+        return found?.source?.trim() ? found.source : undefined;
+    }
+
+    async regenerate(operation: Operation, ctx: CacheRegenerateContext): Promise<Generator> {
+        const { box, model, checks, ephemeral } = this.#opts;
+        await this.#enter();
+        this.#opts.onStart?.({ operation });
+        try {
+            const built = await regenerate(operation, {
+                model,
+                box,
+                checks,
+                attempts: this.#opts.attempts,
+                currentSource: ctx.currentSource,
+                failingInput: ctx.failingInput,
+                fault: ctx.fault,
+                stderr: ctx.stderr,
+                examples: ctx.examples,
+                onAttempt: (attempt, diagnostics) =>
+                    this.#opts.onAttempt?.({ operation, attempt, diagnostics }),
+            });
+            if (!ephemeral) {
+                this.#store.put(operation.key, {
+                    source: built.source,
+                    meta: {
+                        operationId: operation.operationId,
+                        method: operation.method,
+                        path: operation.path,
+                        source: operation.source,
+                        model: model.id,
+                        attempts: built.attempts,
+                        createdAt: new Date().toISOString(),
+                    },
+                } satisfies Stored);
+            }
+            this.#opts.onReady?.({ operation, cached: false, attempts: built.attempts });
+            const gen: Generator = { key: operation.key, source: built.source, cached: false };
+            this.#settled.add(operation.key);
+            this.#live.set(operation.key, Promise.resolve(gen));
+            return gen;
+        } catch (err) {
+            const error = err instanceof Error ? err : new Error(String(err));
+            this.#opts.onFail?.({ operation, error });
+            throw error;
+        } finally {
+            this.#leave();
+        }
     }
 
     async #make(operation: Operation): Promise<Generator> {

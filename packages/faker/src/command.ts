@@ -66,6 +66,8 @@ interface Flags {
     seed?: string;
     timeout?: string;
     'max-body'?: string;
+    'regen-limit'?: string;
+    'requests-dir'?: string;
     rebuild?: boolean;
     'no-cache'?: boolean;
     clear?: boolean;
@@ -85,6 +87,8 @@ const OPTIONS = {
     seed: { type: 'string' },
     timeout: { type: 'string' },
     'max-body': { type: 'string' },
+    'regen-limit': { type: 'string' },
+    'requests-dir': { type: 'string' },
     rebuild: { type: 'boolean' },
     'no-cache': { type: 'boolean' },
     clear: { type: 'boolean' },
@@ -115,6 +119,8 @@ export const command: Command = {
             ['  --concurrency <n>', dim('Generators written at once. Default 4.')],
             ['  --timeout <s>', dim('Seconds one generator may take. Default 30.')],
             ['  --max-body <n>', dim('Largest request body accepted, in bytes.')],
+            ['  --regen-limit <n>', dim('Maximum regenerations per URL on error. Default 3.')],
+            ['  --requests-dir <dir>', dim('Where to save request/response .md files.')],
             ['  --rebuild', dim('Ignore what is cached and write it again.')],
             ['  --no-cache', dim('Do not record what is written.')],
             ['  --clear', dim('With `model`: forget the stored one.')],
@@ -158,6 +164,9 @@ async function serve(args: readonly string[], ctx: Context): Promise<void> {
     }
 
     const host = values.host ?? '127.0.0.1';
+    const requestsDir = values['requests-dir']
+        ? resolve(ctx.cwd, values['requests-dir'])
+        : undefined;
     const listener = await listen(
         {
             router: setup.router,
@@ -166,7 +175,9 @@ async function serve(args: readonly string[], ctx: Context): Promise<void> {
             box: setup.box,
             seed: number(values.seed, 'seed'),
             maxBody: number(values['max-body'], 'max-body'),
-            onRequest: values.quiet ? undefined : (line) => note(dim(line)),
+            requestsDir,
+            regenLimit: number(values['regen-limit'], 'regen-limit'),
+            onRequest: values.quiet ? undefined : (line) => note(line),
         },
         host,
         number(values.port, 'port') ?? 8787,
@@ -181,6 +192,7 @@ async function serve(args: readonly string[], ctx: Context): Promise<void> {
             note(yellow(`bound to ${host} — this mock is reachable from the network`));
         }
         note(dim(`generators: ${setup.root}/${GENERATORS}`));
+        note(dim(`request logs: ${requestsDir ?? `${setup.root}/requests`}`));
     }
     // The address is the answer; the rest was narration.
     write(`http://${host}:${listener.port}`);
