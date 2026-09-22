@@ -64,7 +64,7 @@ interface CommitArgs {
         id?: string;
         kind?: string;
         text?: string;
-        file?: string;
+        file?: string | { path: string };
         audience?: string[];
         expected_revision?: number;
     }[];
@@ -230,11 +230,12 @@ export function memoryTools<TCtx>(opts: MemoryToolsOptions): AnyTool<TCtx>[] {
                                 ref: {
                                     type: 'string',
                                     description:
-                                        'a short name for a new node, used by edges in this call',
+                                        'a short local name for a new node (e.g. "task_1", "file_1"), used by edges in this call. Use ref (not id) when creating new nodes.',
                                 },
                                 id: {
                                     type: 'string',
-                                    description: 'to change an existing node instead of adding one',
+                                    description:
+                                        'the permanent id of an existing node to update in place (from search/load). Do not use for new nodes; use ref instead.',
                                 },
                                 kind: { type: 'string', enum: kinds, description: kindHelp },
                                 text: {
@@ -242,9 +243,28 @@ export function memoryTools<TCtx>(opts: MemoryToolsOptions): AnyTool<TCtx>[] {
                                     description: 'what to remember, in your own words',
                                 },
                                 file: {
-                                    type: 'string',
+                                    oneOf: [
+                                        {
+                                            type: 'string',
+                                            description:
+                                                'path of an existing file in the workspace to keep a copy of (e.g. "report.py" or "/workspace/report.py"), for kind "file"',
+                                        },
+                                        {
+                                            type: 'object',
+                                            properties: {
+                                                path: {
+                                                    type: 'string',
+                                                    description:
+                                                        'path of an existing file in the workspace',
+                                                },
+                                            },
+                                            required: ['path'],
+                                            additionalProperties: false,
+                                            description: 'file object with path',
+                                        },
+                                    ],
                                     description:
-                                        'path of a file to keep a copy of, for kind "file"',
+                                        'path of an existing file in the workspace to keep a copy of (e.g. "report.py" or "/workspace/report.py"), for kind "file"',
                                 },
                                 ...audience,
                                 expected_revision: {
@@ -262,11 +282,11 @@ export function memoryTools<TCtx>(opts: MemoryToolsOptions): AnyTool<TCtx>[] {
                             properties: {
                                 from: {
                                     type: 'string',
-                                    description: 'a ref from this call, or an id',
+                                    description: 'a ref from this call, or an existing node id',
                                 },
                                 to: {
                                     type: 'string',
-                                    description: 'a ref from this call, or an id',
+                                    description: 'a ref from this call, or an existing node id',
                                 },
                                 relation: {
                                     type: 'string',
@@ -286,15 +306,31 @@ export function memoryTools<TCtx>(opts: MemoryToolsOptions): AnyTool<TCtx>[] {
                 const opId = memoryOpId(tc.state.runId, tc.callId);
                 let nodes: CommitNode[];
                 try {
-                    nodes = args.nodes.map((n) => ({
-                        ref: n.ref,
-                        id: n.id,
-                        kind: n.kind,
-                        text: n.text,
-                        audience: n.audience,
-                        expectedRevision: n.expected_revision,
-                        file: n.file === undefined ? undefined : { source: source(tc, n.file) },
-                    }));
+                    nodes = args.nodes.map((n) => {
+                        let fileSpec: { source: string; path: string } | undefined;
+                        if (n.file !== undefined) {
+                            const rawPath = extractFilePath(n.file);
+                            if (!rawPath.trim()) {
+                                throw new MemoryError(
+                                    'file path is required',
+                                    'pass the path of the file in the workspace to remember, e.g. "report.py"',
+                                );
+                            }
+                            fileSpec = {
+                                source: source(tc, rawPath),
+                                path: rawPath,
+                            };
+                        }
+                        return {
+                            ref: n.ref,
+                            id: n.id,
+                            kind: n.kind,
+                            text: n.text,
+                            audience: n.audience,
+                            expectedRevision: n.expected_revision,
+                            file: fileSpec,
+                        };
+                    });
                 } catch (err) {
                     return refusal(err);
                 }
@@ -408,6 +444,21 @@ function refusal(err: unknown): { error: string; hint?: string } {
     throw err;
 }
 
+function extractFilePath(raw: unknown): string {
+    if (typeof raw === 'string') {
+        return raw;
+    }
+    if (
+        raw &&
+        typeof raw === 'object' &&
+        'path' in raw &&
+        typeof (raw as { path: unknown }).path === 'string'
+    ) {
+        return (raw as { path: string }).path;
+    }
+    return '';
+}
+
 function source<TCtx>(tc: ToolContext<TCtx>, path: string): string {
     if (!tc.services.resolveFile) {
         throw new MemoryError(
@@ -415,7 +466,17 @@ function source<TCtx>(tc: ToolContext<TCtx>, path: string): string {
             'commit the node without `file`, or give the agent a workspace',
         );
     }
-    return tc.services.resolveFile(path);
+    try {
+        return tc.services.resolveFile(path);
+    } catch (err) {
+        if (err instanceof MemoryError) {
+            throw err;
+        }
+        throw new MemoryError(
+            err instanceof Error ? err.message : String(err),
+            'remember a file the run actually wrote, by the path the file tools use',
+        );
+    }
 }
 
 function changed(
