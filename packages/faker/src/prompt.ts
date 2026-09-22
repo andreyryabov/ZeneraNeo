@@ -43,8 +43,9 @@ export const SYSTEM = [
     '   this generically, by looking the names up at run time. Do the same for a',
     '   query parameter where it plainly describes the content rather than',
     '   controlling the call. A paging control — a cursor, page, offset or',
-    '   page-size parameter — is never content and must not be copied into the',
-    '   body; see PAGINATION below where the operation has one.',
+    '   page-size parameter (whether in query or request body) — is never content',
+    '   and must not be copied into the body; see PAGINATION below where the',
+    '   operation has one.',
     '3. Every required property must be present. Optional ones may be omitted',
     '   sometimes; that is what makes a mock useful.',
     '4. Values must suit their names, not just their types. Use `faker` for anything',
@@ -108,11 +109,12 @@ function pagination(paging: Paging): string[] {
         paging.style === 'cursor'
             ? 'the base64 of a small JSON object holding the next page index, such as {"p": 2}'
             : "the offset of the next page — this page's offset plus its size";
+    const where = paging.paramIn === 'body' ? 'In the request `body`, ' : '';
     const lines = [
         'PAGINATION',
-        `  This operation is paged. \`${paging.param}\` asks for a page;`,
+        `  This operation is paged. ${where}\`${paging.param}\` asks for a page;`,
         '  absent or empty means the first one.',
-        '  - Fabricate three pages in total and no more.',
+        '  - Fabricate a random number of pages between 1 and 10 in total and no more.',
     ];
     if (paging.next) {
         lines.push(
@@ -159,7 +161,7 @@ function last(paging: Paging): string[] {
         .join(' and ');
     return [
         `  - The schema requires \`${paging.next}\` on every page, so the last page`,
-        `    ends the list the other way: ${otherwise || 'an empty page'}.`,
+        `    ends the list the other way: ${otherwise || 'an empty page'} (e.g. \`${paging.items || 'results'}\` as an empty list \`[]\`).`,
     ];
 }
 

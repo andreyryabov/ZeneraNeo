@@ -276,7 +276,7 @@ async function walk(
         }
         if (token === sent) {
             return [
-                `- ${what}: \`${paging.next}\` came back as ${JSON.stringify(token)}, the very token the request carried in \`${paging.param}\`. A client following it never advances. Build the token from \`${paging.param}\` so it counts up, and stop after three pages.`,
+                `- ${what}: \`${paging.next}\` came back as ${JSON.stringify(token)}, the very token the request carried in \`${paging.param}\`. A client following it never advances. Build the token from \`${paging.param}\` so it counts up, and stop after pagination ends.`,
             ];
         }
         if (seen.has(token)) {
@@ -289,7 +289,7 @@ async function walk(
         input = nextPage(input, paging, token);
     }
     return [
-        `- ${operation.method.toUpperCase()} ${operation.path}: the pages never run out — after ${MAX_PAGES} of them \`${paging.next}\` is still set. Fabricate three pages in total and set it to null on the last.`,
+        `- ${operation.method.toUpperCase()} ${operation.path}: the pages never run out — after ${MAX_PAGES} of them \`${paging.next}\` is still set. Fabricate between 1 and 10 pages in total and set it to null on the last.`,
     ];
 }
 

@@ -92,20 +92,21 @@ nothing it shouldn't, and hands back `abc` again - so the client asks for the
 same page forever.
 
 The faker reads the document for this. Where an operation has a paging
-parameter (`cursor`, `page`, `offset`, `page_token`, …) and a response property
-that carries the next one (`next`, `next_cursor`, `has_more`, …), three things
-happen, all in the operation's own names:
+parameter (`cursor`, `page`, `offset`, `page_token`, …) in query or request body
+and a response property that carries the next one (`next`, `next_cursor`, `has_more`, …),
+three things happen, all in the operation's own names:
 
-- the model is told to fabricate **three pages** in total, to build the token
+- the model is told to fabricate **between 1 and 10 pages** in total, to build the token
   out of the paging parameter rather than the seed, and to end the list - null,
-  absent, or `has_more: false` where the schema leaves no other room;
+  absent, or `has_more: false` (and empty items) where the schema leaves no other room;
 - the generator is then **walked**: the faker calls it with no cursor, follows
   the token it gets back, and rejects the file if the token repeats, cycles, or
   never runs out. The diagnostics say which, and the model gets another go;
-- at request time a token identical to the one just sent is **cut** - nulled or
-  dropped, whichever the schema allows - and the request line says so. Nothing
-  is invented in its place; a generator written before this rule existed is
-  still cached, and a cache is not rebuilt because a rule changed.
+- at request time, pagination is tracked and bounded: a token identical to the one
+  just sent is **cut** (nulled or dropped), cycles are stopped, and streams are capped
+  to random 1–10 pages, returning empty results if a client loops past the end. The
+  request line narrates each cut. Nothing is invented in its place; a generator written
+  before this rule existed is still cached, and a cache is not rebuilt because a rule changed.
 
 Only paginated operations are affected. Their cache keys changed once, so they
 are written again on first use; everything else keeps the key it had.
@@ -114,8 +115,8 @@ are written again on first use; everything else keeps the key it had.
 Plenty of documents describe the envelope and never write down the parameter
 that reads it back. The first two steps cannot help there - nothing static can
 see a parameter that is not declared - but the cut still applies: it takes the
-paging parameter from the request itself, since a client only sends `?cursor=X`
-because a body handed it X.
+paging parameter from query parameters or request body, since a client only sends
+`cursor=X` because a body handed it X.
 
 ## Commands
 

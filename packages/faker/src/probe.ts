@@ -200,9 +200,17 @@ function text(schema: Schema, variant: number): string {
 // on the second page here instead of on somebody's client.
 // ---------------------------------------------------------------------------
 
+const isObject = (v: unknown): v is Record<string, unknown> =>
+    typeof v === 'object' && v !== null && !Array.isArray(v);
+
 /** The first page: an ordinary probe with the paging control taken back off. */
 export function walkStart(operation: Operation, paging: Paging): GeneratorInput {
     const input = probesFor(operation)[0];
+    if (paging.paramIn === 'body') {
+        const body = isObject(input.body) ? { ...input.body } : {};
+        delete body[paging.param];
+        return { ...input, body };
+    }
     const query = { ...input.query };
     delete query[paging.param];
     return { ...input, query };
@@ -210,6 +218,11 @@ export function walkStart(operation: Operation, paging: Paging): GeneratorInput 
 
 /** The same request again, asking for whatever the last answer pointed at. */
 export function nextPage(previous: GeneratorInput, paging: Paging, token: string): GeneratorInput {
+    if (paging.paramIn === 'body') {
+        const body = isObject(previous.body) ? { ...previous.body } : {};
+        body[paging.param] = token;
+        return { ...previous, body };
+    }
     return { ...previous, query: { ...previous.query, [paging.param]: token } };
 }
 

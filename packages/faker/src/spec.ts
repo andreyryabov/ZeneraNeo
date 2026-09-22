@@ -4,6 +4,12 @@ import { createHash } from 'node:crypto';
 import { pagingOf, type Paging } from './paging.ts';
 import { normalize, type Dialect, type Schema } from './schema.ts';
 
+/**
+ * Version of generator prompt rules and environment contracts.
+ * Bumping this invalidates cached Python generators and triggers regeneration.
+ */
+export const GENERATOR_RULES_VERSION = 2;
+
 // ---------------------------------------------------------------------------
 // Documents, flattened
 //
@@ -214,7 +220,7 @@ function build(b: Built): Operation {
         fixed: b.fixed,
         requestBody: b.body,
         success,
-        paging: pagingOf(b.params, success.schema),
+        paging: pagingOf(b.params, success.schema, b.body?.schema),
     };
     return { ...operation, key: keyOf(operation) };
 }
@@ -228,6 +234,7 @@ function build(b: Built): Operation {
  */
 function keyOf(op: Operation): string {
     const shape = {
+        version: GENERATOR_RULES_VERSION,
         method: op.method,
         path: op.path,
         operationId: op.operationId,
