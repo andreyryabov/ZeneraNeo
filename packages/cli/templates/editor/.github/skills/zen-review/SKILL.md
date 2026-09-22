@@ -94,12 +94,13 @@ the copy - see the `zen-memory` skill.
 
 ## Findings that are not yours to fix in place
 
-`zen check` reports `rules.stale`, `memory.uninstructed`, `fork.uninstructed`,
-`rules.requires.unknown` or `rules.unreached` against a file under `agents/`, and
-the obvious repair - open it and edit it - is wrong for three of those files.
-`tools-instructions.md`, `memory-instructions.md` and `fork-instructions.md` are
-`zen`'s copies: `zen check --fix` replaces them, so an edit made inside one is
-gone at the next fix, `init` or `open`.
+`zen check` reports `rules.stale`, `files.uninstructed`, `memory.uninstructed`,
+`fork.uninstructed`, `rules.requires.unknown` or `rules.unreached` against a
+file under `agents/`, and the obvious repair - open it and edit it - is wrong for
+four of those files. `tools-instructions.md`, `files-instructions.md`,
+`memory-instructions.md` and `fork-instructions.md` are `zen`'s copies:
+`zen check --fix` replaces them, so an edit made inside one is gone at the next
+fix, `init` or `open`.
 
 **Load `zen-instructions` before acting on any of those findings**, and before
 judging a house rule at all. It owns which documents belong to whom, where a

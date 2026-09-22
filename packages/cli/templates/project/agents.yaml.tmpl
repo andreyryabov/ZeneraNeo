@@ -44,14 +44,14 @@ agents:
       # store at all.
       memory: true
       #
-      # workspace:* is every file tool at once, sandbox:* is the shell. Name
-      # them one by one to be narrower, or subtract: [workspace:*, -delete_file]
+      # files:* (alias: workspace:*) is every file tool at once, sandbox:* is
+      # the shell. Name them one by one to be narrower, or subtract: [files:*, -delete_file]
       #
       # sandbox:* runs commands in a container, not on this machine, so it
       # needs podman — `zen run` installs and starts what it can on its own,
       # and `zen sandbox status` says where that got to. Drop the line if you
       # would rather this agent never reached a shell.
       tools:
-          - workspace:*
+          - files:*
           - sandbox:*
           {{exa}}

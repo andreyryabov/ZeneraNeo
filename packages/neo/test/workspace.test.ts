@@ -297,9 +297,9 @@ describe('the workspace tools', () => {
         ]);
     });
 
-    it('tags every tool with the workspace group', () => {
+    it('tags every tool with the files group', () => {
         const groups = workspaceTools({ root }).map((t) => t.group);
-        expect(new Set(groups)).toEqual(new Set(['workspace']));
+        expect(new Set(groups)).toEqual(new Set(['files']));
     });
 
     /**
@@ -326,14 +326,17 @@ describe('the workspace tools', () => {
         );
     });
 
-    it('accepts a tool named bare or qualified by its group', () => {
+    it('accepts a tool named bare or qualified by its group (including workspace alias)', () => {
         const pick = (selectors: string[]): string[] =>
             selectTools(tools, selectors, { where: 'test' }).map((t) => t.name);
+        expect(pick(['files:read_file', 'list_dir'])).toEqual(['read_file', 'list_dir']);
+        expect(pick(['files:*', '-files:delete_file'])).not.toContain('delete_file');
         expect(pick(['workspace:read_file', 'list_dir'])).toEqual(['read_file', 'list_dir']);
         expect(pick(['workspace:*', '-workspace:delete_file'])).not.toContain('delete_file');
         // The qualified form still has to be true: a right name in the wrong
         // group is a mistake worth naming, not a silent grant.
-        expect(() => pick(['sandbox:read_file'])).toThrow(/group "workspace"/);
+        expect(() => pick(['sandbox:read_file'])).toThrow(/group "files"/);
+        expect(() => pick(['files:nope'])).toThrow(/unknown tool/);
         expect(() => pick(['workspace:nope'])).toThrow(/unknown tool/);
     });
 

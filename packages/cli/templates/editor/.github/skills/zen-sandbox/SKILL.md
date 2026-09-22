@@ -69,16 +69,16 @@ Agents select tools through `tools:` using exact names, group wildcards, or subt
 ```yaml
 agents:
     - name: developer
-      tools: [workspace:*, sandbox:*] # all file and shell tools
+      tools: [files:*, sandbox:*] # all file and shell tools
 
     - name: reviewer
-      tools: [workspace:*, sandbox:run_command] # foreground only, no background servers
+      tools: [files:*, sandbox:run_command] # foreground only, no background servers
 
     - name: tester
       tools: [sandbox:*, -stop_command] # sandbox tools without stop_command
 
     - name: analyst
-      tools: [workspace:*] # no shell tools; container is never started
+      tools: [files:*] # no shell tools; container is never started
 ```
 
 An agent with no `sandbox:*` tools never triggers an image pull, container creation, or VM startup.

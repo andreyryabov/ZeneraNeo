@@ -310,13 +310,13 @@ agents:
     - name: reader
       description: Reads the workspace and summarises what is in it.
       system: agents/prompts/reader.md
-      tools: [workspace:read_file, workspace:list_dir, workspace:find_files]
+      tools: [files:read_file, files:list_dir, files:find_files]
       handoffs: [writer]
 
     - name: writer
       description: Turns a summary into a file on disk.
       system: agents/prompts/writer.md
-      tools: [workspace:*]
+      tools: [files:*]
       handoffs: [reader] # a hand-off does not return by itself; give it a way back
 ```
 
@@ -351,7 +351,7 @@ lines. Then say where you put it and stop.
 | `description` | what it is for - read by the _other_ agents when deciding to hand off |
 | `system`      | its own brief, in prose, at `agents/prompts/<name>.md`                |
 | `model`       | this agent's model; the top-level one otherwise                       |
-| `tools`       | what it may reach for - `workspace:*`, `sandbox:*`, a named tool      |
+| `tools`       | what it may reach for - `files:*` (or `workspace:*`), `sandbox:*`     |
 | `handoffs`    | who it may pass the work to                                           |
 | `skills`      | knowledge pulled in mid-run instead of carried in every prompt        |
 

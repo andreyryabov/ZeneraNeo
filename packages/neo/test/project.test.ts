@@ -10,6 +10,7 @@ import {
     parseConfig,
     projectPath,
 } from '../src/project/index.ts';
+import { workspaceTools } from '../src/tools/workspace.ts';
 import { tool, zeroUsage } from '../src/types.ts';
 
 // ---------------------------------------------------------------------------
@@ -250,6 +251,40 @@ describe('conditional house rules', () => {
         );
         expect(srcs(p, 'writer')).toEqual(['agents/commit-instructions.md']);
         expect(srcs(p, 'reader')).toEqual([]);
+    });
+
+    it('conditions files instructions on agent tool selectors', async () => {
+        const dummySandbox = tool({
+            name: 'run_command',
+            group: 'sandbox',
+            description: 'run',
+            parameters: { type: 'object', properties: {}, additionalProperties: false },
+            execute: () => 'ok',
+        });
+        const tools = [...workspaceTools({ root: tmpdir() }), dummySandbox];
+        const p = await loadProject(
+            project({
+                'agents.yaml':
+                    'agents:\n' +
+                    '  - name: full\n    tools: [files:*]\n' +
+                    '  - name: readonly\n    tools: [files:*, -write_file, -apply_patch, -move_file, -delete_file]\n' +
+                    '  - name: legacy\n    tools: [workspace:*]\n' +
+                    '  - name: none\n    tools: [sandbox:*]\n',
+                'agents/files-instructions.md': '---\nrequires: [files]\n---\nRead carefully.',
+                'agents/write-instructions.md': '---\nrequires: [files-write]\n---\nPatch cleanly.',
+            }),
+            { tools },
+        );
+        expect(srcs(p, 'full')).toEqual([
+            'agents/files-instructions.md',
+            'agents/write-instructions.md',
+        ]);
+        expect(srcs(p, 'readonly')).toEqual(['agents/files-instructions.md']);
+        expect(srcs(p, 'legacy')).toEqual([
+            'agents/files-instructions.md',
+            'agents/write-instructions.md',
+        ]);
+        expect(srcs(p, 'none')).toEqual([]);
     });
 
     it('leaves a document without frontmatter unconditional, header and all', async () => {

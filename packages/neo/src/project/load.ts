@@ -377,6 +377,66 @@ interface HouseRule {
     part: PromptText;
 }
 
+const FILE_TOOLS = [
+    'read_file',
+    'list_dir',
+    'find_files',
+    'write_file',
+    'apply_patch',
+    'move_file',
+    'delete_file',
+] as const;
+
+const FILE_WRITE_TOOLS = new Set(['write_file', 'apply_patch', 'move_file', 'delete_file']);
+
+function activeFileTools(selectors: readonly string[] | undefined): Set<string> {
+    const active = new Set<string>();
+    if (!selectors?.length) {
+        return active;
+    }
+    for (const raw of selectors) {
+        const drop = raw.startsWith('-');
+        const selector = (drop ? raw.slice(1) : raw).trim();
+        if (selector === '*' || selector === 'files:*' || selector === 'workspace:*') {
+            for (const t of FILE_TOOLS) {
+                if (drop) {
+                    active.delete(t);
+                } else {
+                    active.add(t);
+                }
+            }
+            continue;
+        }
+        const colon = selector.lastIndexOf(':');
+        const name = colon >= 0 ? selector.slice(colon + 1) : selector;
+        const group = colon >= 0 ? selector.slice(0, colon) : undefined;
+        if (FILE_TOOLS.includes(name as (typeof FILE_TOOLS)[number])) {
+            if (!group || group === 'files' || group === 'workspace') {
+                if (drop) {
+                    active.delete(name);
+                } else {
+                    active.add(name);
+                }
+            }
+        }
+    }
+    return active;
+}
+
+function hasFileTools(spec: AgentConfig): boolean {
+    return activeFileTools(spec.tools).size > 0;
+}
+
+function hasFileWriteTools(spec: AgentConfig): boolean {
+    const active = activeFileTools(spec.tools);
+    for (const t of FILE_WRITE_TOOLS) {
+        if (active.has(t)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /**
  * What `requires:` may name, and what each one means. A closed vocabulary
  * rather than an expression language: these are the capabilities the runtime
@@ -397,6 +457,10 @@ const CAPABILITIES: Record<string, (spec: AgentConfig) => PromptText['when'] | b
     'memory-write': (spec) =>
         spec.memory?.access === 'read-write' || spec.memory?.access === 'full',
     'memory-forget': (spec) => spec.memory?.access === 'full',
+    files: (spec) => hasFileTools(spec),
+    'files-write': (spec) => hasFileWriteTools(spec),
+    workspace: (spec) => hasFileTools(spec),
+    'workspace-write': (spec) => hasFileWriteTools(spec),
 };
 
 /**

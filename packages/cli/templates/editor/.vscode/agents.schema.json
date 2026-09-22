@@ -577,12 +577,12 @@
                     "$ref": "#/$defs/modelRef"
                 },
                 "tools": {
-                    "description": "Tool names and selectors: `workspace:*` is every file tool, `sandbox:*` the shell, `exa:*` web search and page reading. Subtract from a group with a leading `-`.",
+                    "description": "Tool names and selectors: `files:*` (alias `workspace:*`) is every file tool, `sandbox:*` the shell, `exa:*` web search and page reading. Subtract from a group with a leading `-`.",
                     "type": "array",
                     "items": { "type": "string", "minLength": 1 },
                     "examples": [
-                        ["workspace:*", "sandbox:*"],
-                        ["workspace:*", "-delete_file"]
+                        ["files:*", "sandbox:*"],
+                        ["files:*", "-delete_file"]
                     ]
                 },
                 "handoffs": {

@@ -1151,38 +1151,44 @@ to a fan-out; the number of branches is the only difference.
 
 An entry is a tool name, or a selector:
 
-| Selector              | Selects                                                     |
-| --------------------- | ----------------------------------------------------------- |
-| `read_file`           | that one tool                                               |
-| `workspace:read_file` | the same tool, written out in full                          |
-| `group:*`             | every tool in a group - `workspace:*` is all the file tools |
-| `'*'`                 | everything the host passed to `loadProject`                 |
-| `-<any>`              | removes what it matches from the selection so far           |
+| Selector          | Selects                                                                 |
+| ----------------- | ----------------------------------------------------------------------- |
+| `read_file`       | that one tool                                                           |
+| `files:read_file` | the same tool, written out in full                                      |
+| `group:*`         | every tool in a group - `files:*` (alias `workspace:*`) is all file ops |
+| `'*'`             | everything the host passed to `loadProject`                             |
+| `-<any>`          | removes what it matches from the selection so far                       |
 
 Quote a lone `'*'`: unquoted, YAML reads it as an alias and refuses the file.
-`workspace:*` needs no quoting.
+`files:*` and `workspace:*` need no quoting.
 
 Selectors are applied in the order written, so subtraction reads as an
 exception to the line above it:
 
 ```yaml
-tools: [workspace:*, -delete_file, -move_file, policy_lookup]
+tools: [files:*, -delete_file, -move_file, policy_lookup]
 ```
 
 Groups come from the tool, not from config: `workspaceTools()` tags its seven
-with `workspace`, `sandboxTools()` tags its four with `sandbox`, and a host's
-own tools can carry any `group` they like. The model never sees a group - it
-gets the same flat list of names either way.
+with `files` (with `workspace` recognized as an alias), `sandboxTools()` tags
+its four with `sandbox`, and a host's own tools can carry any `group` they like.
+The model never sees a group - it gets the same flat list of names either way.
 
 The same grammar resolves a skill's `tools:` frontmatter against the tools
 registered on its provider.
 
 The two groups the CLI registers:
 
-| Group         | Tools                                                                                          |
-| ------------- | ---------------------------------------------------------------------------------------------- |
-| `workspace:*` | `read_file`, `list_dir`, `find_files`, `write_file`, `apply_patch`, `move_file`, `delete_file` |
-| `sandbox:*`   | `run_command`, `run_command_background`, `read_command_output`, `stop_command`                 |
+| Group                        | Tools                                                                                          |
+| ---------------------------- | ---------------------------------------------------------------------------------------------- |
+| `files:*` (or `workspace:*`) | `read_file`, `list_dir`, `find_files`, `write_file`, `apply_patch`, `move_file`, `delete_file` |
+| `sandbox:*`                  | `run_command`, `run_command_background`, `read_command_output`, `stop_command`                 |
+
+Declaring file tools makes the operations available. How to discover files, read
+ranges without blowing context, and safely patch files is in the house rules
+`agents/files-instructions.md`, carrying `requires: [files]`. An agent with
+file tools whose project has deleted that file gets the file schemas and no
+explanation - `zen check` reports that as `files.uninstructed`.
 
 Naming `sandbox:*` is what makes a project need a container engine. See
 [`sandbox:`](#sandbox).
@@ -1257,8 +1263,9 @@ terms of its domain.
 
 - Unknown key anywhere (strict schema)
 - A name that breaks the name pattern
-- `requires:` in a house-rules document naming something outside `fork`,
-  `memory`, `memory-write`, `memory-forget`
+- `requires:` in a house-rules document naming something outside `files`,
+  `files-write`, `fork`, `memory`, `memory-write`, `memory-forget` (or aliases
+  `workspace`, `workspace-write`)
 - `models.<alias>.provider` naming an undeclared provider
 - `agents[].tools` naming a tool not passed to `loadProject`, or a group with
   nothing in it

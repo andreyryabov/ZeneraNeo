@@ -45,6 +45,9 @@ const TEMPLATES = fileURLToPath(new URL('../templates', import.meta.url));
 /** The suffix on a file with `{{...}}` in it, dropped when the file lands. */
 const TEMPLATE = '.tmpl';
 
+/** How to use file tools: a house rules file, landing under `agents/`. */
+const FILE_RULES = join('agents', 'files-instructions.md');
+
 /** How to use the memory graph: a house rules file, landing under `agents/`. */
 const MEMORY_RULES = join('agents', 'memory-instructions.md');
 
@@ -66,7 +69,7 @@ const FORK_RULES = join('agents', 'fork-instructions.md');
  * place: project policy on any of those subjects goes in a topic file of its
  * own beside them.
  */
-export const SHARED_RULES: readonly string[] = [FORK_RULES, MEMORY_RULES, TOOL_RULES];
+export const SHARED_RULES: readonly string[] = [FILE_RULES, FORK_RULES, MEMORY_RULES, TOOL_RULES];
 
 /** The same bytes, kept in the `zen-memory` skill to restore or diff against. */
 const MEMORY_REFERENCE = join(
