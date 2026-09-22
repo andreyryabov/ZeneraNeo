@@ -570,11 +570,38 @@ interface ForkArgs {
 
 function parseForkArgs(raw: string): ForkArgs | string {
     const args = parseArgs(raw);
-    const branches = args.branches;
+    let branches = args.branches;
+    // When a model delegates a single task, it frequently flattens the branch
+    // fields directly into the root arguments instead of wrapping them in a
+    // 1-element array. Coerce it if name and instructions are present at the root.
+    if (
+        !Array.isArray(branches) &&
+        typeof args.name === 'string' &&
+        typeof args.instructions === 'string'
+    ) {
+        branches = [
+            {
+                name: args.name,
+                instructions: args.instructions,
+                agent: typeof args.agent === 'string' ? args.agent : undefined,
+            },
+        ];
+    }
     // Spelled out rather than "invalid arguments": this string is fed back to
     // the model as the tool result, and it is the only chance it gets to work
     // out what to do differently.
     if (!Array.isArray(branches) || branches.length === 0) {
+        if (
+            args.name !== undefined ||
+            args.instructions !== undefined ||
+            args.agent !== undefined
+        ) {
+            return (
+                'the "branches" argument is missing; "fork" requires an array of branches: ' +
+                '{ "branches": [{ "name": "...", "instructions": "...", "agent": "..." }] }. ' +
+                'Do not pass branch fields at the top level.'
+            );
+        }
         return 'the "branches" argument is missing or empty; it must be an array of at least one branch';
     }
     const parsed: ForkArgs['branches'] = [];

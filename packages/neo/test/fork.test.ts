@@ -72,3 +72,98 @@ describe('fork instructions', () => {
         expect(system).toBe('SOLO');
     });
 });
+
+describe('flattened fork argument handling', () => {
+    it('coerces a single branch passed at the root of the tool arguments', async () => {
+        let branchSaw = '';
+        const model: Model = {
+            id: 'mock',
+            generate: async (req: ModelRequest): Promise<ModelResponse> => {
+                const last = req.messages.at(-1);
+                if (last?.role === 'tool' && last.name === 'fork') {
+                    if (last.content.includes('find the number')) {
+                        branchSaw = last.content;
+                        return {
+                            text: 'found 42',
+                            toolCalls: [],
+                            stopReason: 'stop',
+                            usage: zeroUsage(),
+                        };
+                    }
+                    return {
+                        text: 'delegation done',
+                        toolCalls: [],
+                        stopReason: 'stop',
+                        usage: zeroUsage(),
+                    };
+                }
+                return {
+                    text: '',
+                    toolCalls: [
+                        {
+                            id: 'c1',
+                            name: 'fork',
+                            args: JSON.stringify({
+                                agent: 'specialist',
+                                name: 'lookup',
+                                instructions: 'find the number',
+                            }),
+                        },
+                    ],
+                    stopReason: 'tool_calls',
+                    usage: zeroUsage(),
+                };
+            },
+        };
+        const runner = new AgentRunner({ model });
+        runner.agent({ name: 'specialist', instructions: 'SPECIALIST' });
+        runner.agent({ name: 'lead', instructions: 'LEAD', fork: {} });
+
+        const res = await runner.run('lead', 'start');
+        expect(res.output).toBe('delegation done');
+        expect(branchSaw).toContain('find the number');
+    });
+
+    it('returns a diagnostic error message when branch fields are passed without instructions', async () => {
+        let toolError = '';
+        const model: Model = {
+            id: 'mock',
+            generate: async (req: ModelRequest): Promise<ModelResponse> => {
+                const last = req.messages.at(-1);
+                if (last?.role === 'tool' && last.name === 'fork') {
+                    toolError = last.content;
+                    return {
+                        text: 'error seen',
+                        toolCalls: [],
+                        stopReason: 'stop',
+                        usage: zeroUsage(),
+                    };
+                }
+                return {
+                    text: '',
+                    toolCalls: [
+                        {
+                            id: 'c1',
+                            name: 'fork',
+                            args: JSON.stringify({
+                                agent: 'specialist',
+                                name: 'lookup',
+                            }),
+                        },
+                    ],
+                    stopReason: 'tool_calls',
+                    usage: zeroUsage(),
+                };
+            },
+        };
+        const runner = new AgentRunner({ model });
+        runner.agent({ name: 'specialist', instructions: 'SPECIALIST' });
+        runner.agent({ name: 'lead', instructions: 'LEAD', fork: {} });
+
+        const res = await runner.run('lead', 'start');
+        expect(res.output).toBe('error seen');
+        expect(toolError).toContain(
+            'the "branches" argument is missing; "fork" requires an array of branches',
+        );
+    });
+});

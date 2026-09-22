@@ -28,6 +28,23 @@ exploration down a path that may go nowhere. **Several branches are a fan-out**:
 independent parts of one task, worked at the same time, merged by you. It is the
 same call either way; the number of branches is the only difference.
 
+Every `fork` call takes an array under `branches`, even for a single branch:
+
+```json
+{
+    "branches": [
+        {
+            "name": "audit-auth",
+            "agent": "security",
+            "instructions": "Audit /workspace/src/auth/** for bypasses. Return the count and worst finding."
+        }
+    ]
+}
+```
+
+Never pass branch fields (`name`, `instructions`, `agent`) at the top level of
+the tool call.
+
 Do not fork a sequence. Branches run at once and can exchange nothing, so a step
 that needs the step before it has to stay in this conversation.
 

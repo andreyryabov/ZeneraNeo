@@ -26,7 +26,8 @@ export const FORK_DESCRIPTION = [
         'its own, cannot ask questions, and cannot see the other branches. One branch delegates ' +
         'a job; several run in parallel and rejoin together.',
     '',
-    'The branches\u2019 answers come back as the result of this call, and what the final answer ' +
+    'Always provide a "branches" array, even when delegating to a single branch. ' +
+        'The branches\u2019 answers come back as the result of this call, and what the final answer ' +
         'is remains yours to decide.',
 ].join('\n');
 
@@ -56,8 +57,8 @@ export function forkParameters(agents: string[], self: string, maxBranches?: num
                     `One branch per job that can be carried out on its own${
                         max >= 1 ? `, at most ${max}` : ''
                     }. ` +
-                    'One delegates that job elsewhere; several work independent parts of the ' +
-                    'task at the same time.',
+                    'Always an array of branch objects: one delegates that job elsewhere; several ' +
+                    'work independent parts of the task at the same time.',
                 items: {
                     type: 'object',
                     properties: {
