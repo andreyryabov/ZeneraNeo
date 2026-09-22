@@ -14,5 +14,8 @@ memory/.lock
 # Credentials.
 .env
 
+# Generated vector database files (rebuilt with scripts/_setup.sh)
+assets/**/lance/
+
 .DS_Store
 **/.DS_Store
