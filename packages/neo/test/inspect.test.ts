@@ -289,4 +289,15 @@ describe('the run report memory view', () => {
         expect(html).toContain('id="mdetail"');
         expect(html).not.toContain('</script><img');
     });
+
+    it('includes collapsible tagged section scripts and styles in the report', async () => {
+        const payloads = new PayloadResolver(new InMemoryPayloadStore());
+        const state = { runId: 'r', trajectory: [] } as unknown as AgentState;
+        const html = await renderRunReport(state, payloads);
+
+        expect(html).toContain('xtag-section');
+        expect(html).toContain('xtag-body');
+        expect(html).toContain('details.xtag-section');
+        expect(html).toContain('details.xtag-section[open] > summary .preview');
+    });
 });

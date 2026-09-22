@@ -142,26 +142,107 @@ function textBlock(title, body, tag) {
 // placeholders (/memory/<id>.<ext>) from lighting up as structure.
 const TAG_LINE_RE = /^(\\s*)(<\\/?[A-Za-z][A-Za-z0-9._:-]*(?:\\s[^<>]*)?\\/?>)(\\s*)$/;
 
-/** A <pre> with every section delimiter lifted out as its own span. */
+/** A container where tagged sections (<tag>...</tag>) become collapsible <details> blocks. */
 function taggedPre(text) {
   const s = String(text);
-  const pre = el('pre', 'text');
-  if (s.indexOf('<') < 0) { pre.textContent = s; return pre; }
+  if (s.indexOf('<') < 0) return el('pre', 'text', s);
   const lines = s.split('\\n');
-  let buf = '';
-  function flush() {
-    if (buf) { pre.appendChild(document.createTextNode(buf)); buf = ''; }
-  }
+
+  let hasTag = false;
   for (let i = 0; i < lines.length; i++) {
-    const m = TAG_LINE_RE.exec(lines[i]);
-    if (!m) { buf += (i ? '\\n' : '') + lines[i]; continue; }
-    buf += (i ? '\\n' : '') + m[1];
-    flush();
-    pre.appendChild(el('span', m[2].indexOf('</') === 0 ? 'xtag end' : 'xtag', m[2]));
-    buf = m[3];
+    if (TAG_LINE_RE.test(lines[i])) { hasTag = true; break; }
   }
-  flush();
-  return pre;
+  if (!hasTag) return el('pre', 'text', s);
+
+  const wrap = el('div', 'tagged-pre');
+  let plainLines = [];
+
+  function flushPlain() {
+    if (!plainLines.length) return;
+    const chunk = plainLines.join('\\n');
+    plainLines = [];
+    if (!chunk.trim()) return;
+    wrap.appendChild(el('pre', 'text', chunk));
+  }
+
+  let current = null;
+
+  function flushSection() {
+    if (!current) return;
+    const d = document.createElement('details');
+    d.className = 'xtag-section';
+
+    let firstLine = '';
+    for (let j = 0; j < current.lines.length; j++) {
+      const trimmed = current.lines[j].trim();
+      if (trimmed) {
+        firstLine = trimmed;
+        break;
+      }
+    }
+
+    const sum = el('summary');
+    sum.appendChild(el('span', 'xtag', current.openTag));
+    if (firstLine) {
+      const previewText = firstLine.length > 120 ? firstLine.slice(0, 120) + '…' : firstLine;
+      sum.appendChild(el('span', 'preview', previewText));
+    }
+    d.appendChild(sum);
+
+    const bodyPre = el('pre', 'xtag-body');
+    if (current.lines.length) {
+      bodyPre.textContent = current.lines.join('\\n');
+    }
+    if (current.closeTag) {
+      if (current.lines.length) bodyPre.appendChild(document.createTextNode('\\n'));
+      bodyPre.appendChild(el('span', 'xtag end', current.closeTag));
+    }
+    d.appendChild(bodyPre);
+    wrap.appendChild(d);
+    current = null;
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const m = TAG_LINE_RE.exec(line);
+    if (!m) {
+      if (current) current.lines.push(line);
+      else plainLines.push(line);
+      continue;
+    }
+
+    const tagStr = m[2];
+    const isClose = tagStr.indexOf('</') === 0;
+    const isSelfClosing = tagStr.slice(-2) === '/>';
+
+    if (current) {
+      if (isClose) {
+        const closeName = tagStr.slice(2).split(/[\\s>]/)[0];
+        if (!closeName || closeName === current.tagName) {
+          current.closeTag = tagStr;
+          flushSection();
+          continue;
+        }
+      } else if (!isSelfClosing) {
+        flushSection();
+      }
+    }
+
+    if (!current) {
+      if (!isClose && !isSelfClosing) {
+        flushPlain();
+        const openName = tagStr.slice(1).split(/[\\s>]/)[0];
+        current = { openTag: tagStr, tagName: openName, lines: [], closeTag: null };
+      } else {
+        plainLines.push(line);
+      }
+    }
+  }
+
+  if (current) flushSection();
+  flushPlain();
+
+  return wrap;
 }
 
 function promptBlock(title, body, tag) {
