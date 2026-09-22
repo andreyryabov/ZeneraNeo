@@ -14,7 +14,7 @@ import {
 } from 'node:fs';
 import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { extract, split } from '../src/args.ts';
 import { auditModels } from '../src/audit.ts';
 import { bannerLines, NEO_BANNER } from '../src/banner.ts';
@@ -67,7 +67,10 @@ import {
 } from '../src/meta.ts';
 import { engineDisk, ensurePodmanReady, ownedContainers } from '../src/podman.ts';
 import { dirSize, lastUsedAt, projectMounts } from '../src/projects.ts';
+import { chooseWorkspace } from '../src/resolve.ts';
 import { scaffold } from '../src/scaffold.ts';
+import { sessionPaths } from '../src/session.ts';
+import * as term from '../src/term.ts';
 import { bytes, CliError, cut, EXIT, keysIn, pad, table } from '../src/term.ts';
 import {
     ACTIVITY_ROWS,
@@ -358,6 +361,25 @@ describe('columns', () => {
     it('can keep the block banner for an interactive terminal', () => {
         expect(bannerLines(NEO_BANNER, 1)).toHaveLength(2);
         expect(bannerLines(NEO_BANNER, Infinity)).toHaveLength(8);
+    });
+
+    it('gives every subcommand its own banner with a distinct accent hue', () => {
+        const all = {
+            ...Object.fromEntries(Object.entries(COMMANDS).map(([k, c]) => [k, c.banner])),
+            ...Object.fromEntries(Object.entries(EXTERNAL).map(([k, e]) => [k, e.banner])),
+        };
+        const hues = new Set<string>();
+        for (const [name, b] of Object.entries(all)) {
+            expect(b, `command "${name}" missing banner`).toBeDefined();
+            expect(b!.accent).toBeTruthy();
+            expect(b!.subtitle).toBeTruthy();
+            expect(b!.hue).toBeTruthy();
+            expect(hues.has(b!.hue!), `duplicate hue "${b!.hue}" on command "${name}"`).toBe(false);
+            hues.add(b!.hue!);
+
+            const lines = bannerLines(b!, Infinity);
+            expect(lines.length).toBeGreaterThanOrEqual(8);
+        }
     });
 
     it('aligns on visible width, not byte length', () => {
@@ -1448,6 +1470,57 @@ describe('what a run mounts', () => {
             (m) => m.at === MEMORY_MOUNT,
         );
         expect(at?.host).toBe(realpathSync(join(dir, 'brain', 'files')));
+    });
+});
+
+describe('choosing the workspace', () => {
+    const root = mkdtempSync(join(tmpdir(), 'zen-workspace-'));
+
+    afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+    const session = sessionPaths(root, stamp());
+
+    it('does not warn when --workspace is explicitly passed', async () => {
+        let stderr = '';
+        const spy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+            stderr += String(chunk);
+            return true;
+        });
+        try {
+            const target = await chooseWorkspace(session, {
+                cwd: root,
+                workspace: 'outside',
+                yes: true,
+            });
+            expect(target).toBe(join(root, 'outside'));
+            expect(stderr).not.toContain('the agent will be able to read and write');
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
+    it('warns when workspace is chosen implicitly', async () => {
+        let stderr = '';
+        const spy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+            stderr += String(chunk);
+            return true;
+        });
+        const chooseSpy = vi.spyOn(term, 'choose').mockResolvedValue(root);
+        const confirmSpy = vi.spyOn(term, 'confirm').mockResolvedValue(true);
+        const interactiveSpy = vi.spyOn(term, 'isInteractive').mockReturnValue(true);
+        try {
+            const target = await chooseWorkspace(session, {
+                cwd: root,
+                yes: true,
+            });
+            expect(target).toBe(root);
+            expect(stderr).toContain(`the agent will be able to read and write ${root}`);
+        } finally {
+            spy.mockRestore();
+            chooseSpy.mockRestore();
+            confirmSpy.mockRestore();
+            interactiveSpy.mockRestore();
+        }
     });
 });
 

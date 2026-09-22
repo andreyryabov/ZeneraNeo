@@ -83,8 +83,33 @@ that tag is absent, which is safe precisely because the tag follows the content.
 
 ## Hardening
 
-`no-new-privileges`, an init process, a pid limit, no restart policy. Not
-`--cap-drop=ALL` (it breaks `apt` and `pip`) and never `--privileged`.
+Every container gets the same floor: `no-new-privileges`, an init process, a
+pid limit of 1024, resource limits (`cpus: 4`, `memory: 4096`), no restart
+policy, podman's own seccomp profile (never turned off), and never
+`--privileged`.
+
+`hardening: standard` (the default) stops there. `--cap-drop=ALL` breaks `apt`
+and `pip`, and installing a package is the ordinary use of a shell - so the
+container is the boundary and nothing inside it is taken away.
+
+```yaml
+sandbox:
+    hardening: strict
+```
+
+`strict` is for running code nobody has read. It drops every capability,
+mounts the root filesystem read-only with `/tmp` as a 64 MiB
+`noexec,nosuid,nodev` tmpfs, runs as your own unprivileged uid via
+`--userns keep-id`, and defaults `network` to `none` and `cpus`/`memory` to
+`2`/`2048`. Name any of those keys yourself and your value wins.
+
+Two consequences: nothing can be installed at run time, so a strict project
+bakes its dependencies into the image with `build:`; and it needs rootless
+podman, which is also what makes an escape land on an unprivileged host
+account. Set `user:` explicitly to opt out of `keep-id`.
+
+`/workspace` stays writable either way - `strict` shrinks what a command can
+reach, not what the agent is there to edit.
 
 ## When it goes wrong
 
@@ -95,3 +120,6 @@ Podman is a warning.
 
 `zen sandbox clean` removes every container this CLI created - the way out of a
 container left on a bad rootfs.
+
+For complete container architecture, the `sandbox:*` tools, mount rules, and
+hardening details, load the `zen-sandbox` skill (`.github/skills/zen-sandbox/SKILL.md`).

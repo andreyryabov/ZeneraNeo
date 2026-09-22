@@ -93,14 +93,34 @@ const HEADS: Record<Appearance, Tone> = {
     light: { face: '\u001b[1;38;5;235m', shade: '\u001b[0;38;5;245m' },
 };
 
+const tone = (face: number, shade: number): Tone => ({
+    face: `\u001b[1;38;5;${face}m`,
+    shade: `\u001b[0;38;5;${shade}m`,
+});
+
 /** One per sub-brand, so two of them are told apart before the word is read. */
 const ACCENTS = {
-    orange: { face: '\u001b[1;38;5;208m', shade: '\u001b[0;38;5;130m' },
-    green: { face: '\u001b[1;38;5;41m', shade: '\u001b[0;38;5;29m' },
-    cyan: { face: '\u001b[1;38;5;51m', shade: '\u001b[0;38;5;37m' },
-    mint: { face: '\u001b[1;38;5;121m', shade: '\u001b[0;38;5;78m' },
-    gold: { face: '\u001b[1;38;5;220m', shade: '\u001b[0;38;5;178m' },
-    dusk: { face: '\u001b[1;38;5;141m', shade: '\u001b[0;38;5;97m' },
+    orange: tone(208, 130),
+    amber: tone(214, 172),
+    gold: tone(220, 178),
+    lime: tone(154, 106),
+    green: tone(41, 29),
+    emerald: tone(48, 29),
+    mint: tone(121, 78),
+    teal: tone(44, 30),
+    cyan: tone(51, 37),
+    sky: tone(39, 26),
+    azure: tone(33, 25),
+    steel: tone(110, 67),
+    indigo: tone(105, 61),
+    violet: tone(141, 97),
+    purple: tone(171, 90),
+    magenta: tone(201, 127),
+    pink: tone(212, 169),
+    rose: tone(204, 125),
+    crimson: tone(197, 124),
+    red: tone(196, 88),
+    dusk: tone(141, 97),
 } as const satisfies Record<string, Tone>;
 
 export type Hue = keyof typeof ACCENTS;

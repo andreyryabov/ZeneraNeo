@@ -279,6 +279,20 @@ const sandbox = z
         workdir: z.string().min(1).optional(),
         /** seconds one command may take before it is killed */
         timeout: z.int().positive().optional(),
+        /**
+         * How much of the host the container is allowed to be.
+         *
+         * `standard` (the default) keeps the kernel capabilities and a
+         * writable root filesystem, so `apt` and `pip` work — which is what a
+         * project whose agents install their own dependencies needs.
+         *
+         * `strict` drops every capability, mounts the root filesystem
+         * read-only with an in-memory `noexec` `/tmp`, runs as an
+         * unprivileged uid and turns the network off unless this block asks
+         * for one. Nothing can be installed at run time, so the image has to
+         * carry everything the agent will need. It requires rootless podman.
+         */
+        hardening: z.enum(['standard', 'strict']).optional(),
         /** uid, name or `uid:gid`; unset means the image's own user */
         user: z.string().min(1).optional(),
         /** keep the container between sessions instead of removing it */

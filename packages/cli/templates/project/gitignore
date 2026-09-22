@@ -13,3 +13,6 @@ memory/.lock
 
 # Credentials.
 .env
+
+.DS_Store
+**/.DS_Store

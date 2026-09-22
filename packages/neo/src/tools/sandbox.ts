@@ -42,6 +42,19 @@ const DEFAULT_PIDS = 1024;
 /** How long a container gets to stop itself before it is killed. */
 const STOP_GRACE_S = 2;
 
+// Standard mode's resource ceilings. Even without the strict profile, an
+// unbounded container can exhaust host cores or memory during runaway builds.
+const DEFAULT_CPUS = 4;
+const DEFAULT_MEMORY = 4096;
+
+// Strict mode's own defaults. A limit that is only there when someone
+// remembered to write it down is not a limit, so the profile supplies one for
+// each of the four exhaustible things: cores, memory, processes and disk.
+const STRICT_CPUS = 2;
+const STRICT_MEMORY = 2048;
+const STRICT_TMPFS = 'rw,noexec,nosuid,nodev';
+const STRICT_TMP_SIZE = '64m';
+
 /** The family name config selects the whole set by: `tools: [sandbox:*]`. */
 export const SANDBOX_GROUP = 'sandbox';
 
@@ -63,6 +76,8 @@ export interface SandboxSpec {
     workdir?: string;
     /** default seconds a single command may take */
     timeout?: number;
+    /** how much of the host the container is allowed to be; `standard` by default */
+    hardening?: SandboxHardening;
     /** uid, name, or `uid:gid`; unset means the image's own user */
     user?: string;
     /** keep the container between sessions rather than removing it */
@@ -83,6 +98,28 @@ export interface SandboxSpec {
 }
 
 export type SandboxNetwork = 'bridge' | 'none' | 'host';
+
+/**
+ * Two postures, because they cannot both be the default.
+ *
+ * `standard` is the one this tool was built around: a container with an init,
+ * a pid ceiling and `no-new-privileges`, running an image the agent can still
+ * install into. Installing a package is the ordinary use of a shell, so the
+ * capabilities stay and the root filesystem stays writable.
+ *
+ * `strict` is for running code nobody has read. Every capability is dropped,
+ * the root filesystem is read-only, the only writable temporary space is an
+ * in-memory `/tmp` with `noexec,nosuid,nodev`, the process runs as the host's
+ * own unprivileged uid rather than as container root, and the network is off
+ * unless the project turns it back on. What that costs is exactly what it
+ * removes: `apt`, `pip` and anything else that writes outside the mounts stop
+ * working, so a strict project bakes its dependencies into the image instead.
+ *
+ * What it does *not* do is make the bind mounts go away. `/workspace` is the
+ * work itself and stays writable — the profile shrinks the blast radius of a
+ * command, it does not pretend the agent has nothing to edit.
+ */
+export type SandboxHardening = 'standard' | 'strict';
 
 export interface SandboxMount {
     /** absolute host path */
@@ -269,6 +306,8 @@ interface Resolved extends Required<Omit<SandboxSpec, 'user'>> {
     readOnly: boolean;
     mounts: readonly SandboxMount[];
     engine: string;
+    explicitCpus?: boolean;
+    explicitMemory?: boolean;
 }
 
 export interface ExecOptions {
@@ -372,15 +411,38 @@ export class Sandbox {
         args.push('--pids-limit', String(DEFAULT_PIDS));
 
         // `no-new-privileges` costs nothing here and closes setuid escalation.
-        // Capabilities are deliberately *not* dropped wholesale: installing a
-        // package is the ordinary use of this tool, and `--cap-drop=ALL` breaks
-        // every package manager there is. The container is the boundary.
+        // Under `standard` the capabilities are deliberately *not* dropped
+        // wholesale: installing a package is the ordinary use of this tool, and
+        // `--cap-drop=ALL` breaks every package manager there is. The container
+        // is the boundary. `strict` makes the opposite trade, below.
         args.push('--security-opt', 'no-new-privileges');
 
         // Background jobs orphan processes; without an init they accumulate as
         // zombies until the pids limit stops the sandbox dead.
         args.push('--init');
         args.push('--restart', 'no');
+
+        if (s.hardening === 'strict') {
+            args.push('--cap-drop', 'ALL');
+            // The image's own files become reference material: a command can
+            // read a binary and run it, and can write nowhere but the mounts
+            // and the tmpfs below.
+            args.push('--read-only');
+            // `noexec` is safe for the job launcher because a job script is
+            // *interpreted* (`/bin/sh <file>`), never executed as a program.
+            // `/run` is left to podman's own read-only tmpfs: `--init` mounts
+            // catatonit under it and has to be able to exec it.
+            args.push('--tmpfs', `/tmp:${STRICT_TMPFS},size=${STRICT_TMP_SIZE}`);
+            if (!s.user) {
+                // Rootless podman maps container uid 0 to the host account, so
+                // the default container root is already unprivileged on the
+                // host — but it is uid 0 *inside*, where the setuid binaries
+                // are. `keep-id` runs the process as the host's own uid, which
+                // is both non-zero and the owner of every bind mount, so the
+                // workspace stays writable without a chown.
+                args.push('--userns', 'keep-id');
+            }
+        }
 
         if (s.user) {
             args.push('--user', s.user);
@@ -641,15 +703,20 @@ function resolveSpec(opts: SandboxOptions): Resolved {
     if (!posix.isAbsolute(workdir)) {
         throw new SandboxError(`sandbox workdir must be absolute: ${workdir}`);
     }
+    const hardening = opts.hardening ?? 'standard';
+    const strict = hardening === 'strict';
     return {
         root: opts.root,
         key: opts.key,
         image: opts.image ?? DEFAULT_IMAGE,
-        cpus: opts.cpus ?? 0,
-        memory: opts.memory ?? 0,
-        network: opts.network ?? 'bridge',
+        cpus: opts.cpus ?? (strict ? STRICT_CPUS : DEFAULT_CPUS),
+        memory: opts.memory ?? (strict ? STRICT_MEMORY : DEFAULT_MEMORY),
+        explicitCpus: opts.cpus !== undefined,
+        explicitMemory: opts.memory !== undefined,
+        network: opts.network ?? (strict ? 'none' : 'bridge'),
         workdir,
         timeout: opts.timeout ?? DEFAULT_TIMEOUT_MS / 1000,
+        hardening,
         user: opts.user,
         persist: opts.persist ?? false,
         env: opts.env ?? {},
@@ -671,13 +738,23 @@ function resolveSpec(opts: SandboxOptions): Resolved {
  * every time a key was rotated.
  */
 function containerName(spec: Resolved): string {
+    // Unconfigured cpus and memory hash 0 under standard and strict's own
+    // defaults under strict, so introducing defaults did not rename every
+    // existing container.
+    const hashCpus = spec.explicitCpus ? spec.cpus : spec.hardening === 'strict' ? STRICT_CPUS : 0;
+    const hashMemory = spec.explicitMemory
+        ? spec.memory
+        : spec.hardening === 'strict'
+          ? STRICT_MEMORY
+          : 0;
+
     const digest = createHash('sha256')
         .update(
             JSON.stringify([
                 spec.root,
                 spec.image,
-                spec.cpus,
-                spec.memory,
+                hashCpus,
+                hashMemory,
                 spec.network,
                 spec.workdir,
                 spec.user ?? null,
@@ -685,6 +762,9 @@ function containerName(spec: Resolved): string {
                 spec.mounts,
                 Object.entries(spec.env).sort(),
                 [...spec.secrets].sort(),
+                // Appended only when it is set, so adding the profile did not
+                // rename every container that existed before it.
+                ...(spec.hardening === 'strict' ? ['strict'] : []),
             ]),
         )
         .digest('hex')

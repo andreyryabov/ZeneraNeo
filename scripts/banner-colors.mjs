@@ -13,6 +13,7 @@
 // what ships.
 //
 //   node scripts/banner-colors.mjs                     every palette
+//   node scripts/banner-colors.mjs --commands          every CLI command's banner
 //   node scripts/banner-colors.mjs --only cyan,violet  just these
 //   node scripts/banner-colors.mjs --head Zenera --accent Meta --subtitle "Meta Agent"
 //   node scripts/banner-colors.mjs --try 231,244,45,31 an ad-hoc set
@@ -76,6 +77,7 @@ const { values } = parseArgs({
         only: { type: 'string' },
         try: { type: 'string', multiple: true, default: [] },
         chart: { type: 'boolean', default: false },
+        commands: { type: 'boolean', default: false },
     },
 });
 
@@ -121,6 +123,19 @@ if (values.chart) {
         }
     }
     console.log();
+} else if (values.commands) {
+    const { COMMANDS, EXTERNAL } = await import('../packages/cli/src/commands/index.ts');
+    const all = {
+        ...Object.fromEntries(Object.entries(COMMANDS).map(([k, c]) => [k, c.banner])),
+        ...Object.fromEntries(Object.entries(EXTERNAL).map(([k, e]) => [k, e.banner])),
+    };
+    for (const [cmd, b] of Object.entries(all)) {
+        if (!b) continue;
+        console.log(`\n  \u001b[1mzen ${cmd}\u001b[0m  \u001b[2m[${b.hue ?? 'orange'}]\u001b[0m\n`);
+        for (const line of bannerLines(b, Infinity)) {
+            console.log(line);
+        }
+    }
 } else {
     const wanted = values.only?.split(',').map((s) => s.trim());
     for (const [name, quad] of Object.entries(PALETTES)) {

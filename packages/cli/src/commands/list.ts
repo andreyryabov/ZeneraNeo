@@ -17,6 +17,7 @@ interface Flags {
 export const list: Command = {
     summary: 'Every known project: sessions, last run, whether one is live.',
     usage: USAGE,
+    banner: { head: 'Zenera', accent: 'Projects', subtitle: 'Project Registry', hue: 'sky' },
     details: [
         'The registry is an index, not the truth. An entry whose directory has',
         'gone away is shown dimmed rather than hidden; --prune forgets them.',

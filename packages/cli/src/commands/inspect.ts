@@ -56,6 +56,7 @@ interface Flags {
 export const inspect: Command = {
     summary: "Open or rebuild a run's report.html.",
     usage: USAGE,
+    banner: { head: 'Zenera', accent: 'Inspect', subtitle: 'Run Trajectory', hue: 'indigo' },
     details: [
         'With no arguments: asks which session and run, or takes the newest of',
         'each when there is nothing to ask on.',

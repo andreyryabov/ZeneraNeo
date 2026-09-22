@@ -24,6 +24,7 @@ interface Flags {
 export const open: Command = {
     summary: 'Open a project in your editor.',
     usage: USAGE,
+    banner: { head: 'Zenera', accent: 'Open', subtitle: 'Workspace Studio', hue: 'teal' },
     details: [
         'Editor: --editor, then $ZENERA_EDITOR, then the editor this terminal',
         'belongs to, then $VISUAL or $EDITOR, then a known editor on PATH or',

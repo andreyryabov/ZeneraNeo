@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { relative, resolve, sep } from 'node:path';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { stamp } from './ids.ts';
 import * as Projects from './projects.ts';
 import {
@@ -10,18 +10,8 @@ import {
     sessionPaths,
     type SessionPaths,
 } from './session.ts';
-import {
-    ago,
-    bold,
-    choose,
-    confirm,
-    cyan,
-    dim,
-    isInteractive,
-    usageError,
-    warn,
-    yellow,
-} from './term.ts';
+import * as term from './term.ts';
+import { ago, bold, cyan, dim, usageError, yellow } from './term.ts';
 
 // ---------------------------------------------------------------------------
 // Resolution
@@ -69,7 +59,7 @@ export async function project(want: Wanted): Promise<Projects.Project> {
     if (known.length === 0) {
         throw usageError('not inside a project, and none are registered', 'create one: zen init');
     }
-    if (!isInteractive()) {
+    if (!term.isInteractive()) {
         throw usageError('not inside a project', 'name one with --project');
     }
     // Most recently worked in first: the answer to "which project" is nearly
@@ -78,7 +68,7 @@ export async function project(want: Wanted): Promise<Projects.Project> {
     const ranked = known
         .map((entry) => ({ entry, used: Projects.lastUsedAt(entry.path) ?? '' }))
         .sort((a, b) => b.used.localeCompare(a.used) || a.entry.name.localeCompare(b.entry.name));
-    const chosen = await choose(
+    const chosen = await term.choose(
         'Which project?',
         ranked.map(({ entry }) => ({ label: entry.name, detail: entry.path, value: entry })),
     );
@@ -147,11 +137,11 @@ async function pickExisting(projectDir: string): Promise<SessionPaths | undefine
     if (all.length === 0) {
         return undefined;
     }
-    if (!isInteractive()) {
+    if (!term.isInteractive()) {
         return sessionPaths(projectDir, all[0]!.id);
     }
     const sessions = all.slice(0, MAX_SESSIONS);
-    const choice = await choose<string | undefined>('Session', [
+    const choice = await term.choose<string | undefined>('Session', [
         {
             key: '0',
             label: bold(cyan('New session…')),
@@ -204,10 +194,10 @@ export async function chooseWorkspace(session: SessionPaths, want: Wanted): Prom
         await approve(at, session, want);
         return at;
     }
-    if (!isInteractive()) {
+    if (!term.isInteractive()) {
         return own;
     }
-    const chosen = await choose('Workspace — what the agent can read and write', [
+    const chosen = await term.choose('Workspace — what the agent can read and write', [
         { label: 'A fresh, empty directory', detail: own, value: own },
         { label: 'The directory you started in', detail: want.cwd, value: want.cwd },
     ]);
@@ -219,17 +209,19 @@ async function approve(at: string, session: SessionPaths, want: Wanted): Promise
     if (contains(session.dir, at)) {
         return;
     }
-    warn(`the agent will be able to read and write ${at}`);
+    if (!want.workspace) {
+        term.warn(`the agent will be able to read and write ${at}`);
+    }
     if (want.yes) {
         return;
     }
-    if (!isInteractive()) {
+    if (!term.isInteractive()) {
         throw usageError(
             'refusing a workspace outside the session without confirmation',
             'pass --yes if that is what you meant',
         );
     }
-    if (!(await confirm('Continue?'))) {
+    if (!(await term.confirm('Continue?'))) {
         throw usageError('cancelled');
     }
 }
@@ -237,5 +229,9 @@ async function approve(at: string, session: SessionPaths, want: Wanted): Promise
 function contains(parent: string, child: string): boolean {
     const from = resolve(parent);
     const to = resolve(child);
-    return from === to || !relative(from, to).startsWith(`..${sep}`);
+    if (from === to) {
+        return true;
+    }
+    const rel = relative(from, to);
+    return !rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel);
 }

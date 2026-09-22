@@ -45,13 +45,13 @@ not reconstruct `zen` arguments from memory or call `--help` to discover them.
 **Every runtime capability a project turns on carries obligations that are not
 visible in `agents.yaml` and that `zen check` does not report.** Before
 reviewing or changing a project, list the capabilities it has turned on and load
-the editor skill for each one - `zen-memory` for a `memory:` block, `zen-rag-
-schema` or `zen-rag-docs` for an index, `zen-instructions` for anything under
-`agents/*instructions.md`, `zen-cli` always. A capability that is
-already configured and already passing `zen check` is exactly the case that
-looks finished and is not: the obligation lives in the skill, so a review that
-never opens the skill cannot find what is missing. This applies whatever
-prompted the change - a task scoped to `SPECIFICATION.md` does not narrow it.
+the editor skill for each one - `zen-memory` for a `memory:` block,
+`zen-sandbox` for sandbox configuration or shell tools, `zen-rag-schema` or
+`zen-rag-docs` for an index, `zen-cli` always. A capability that is already
+configured and already passing `zen check` is exactly the case that looks
+finished and is not: the obligation lives in the skill, so a review that never
+opens the skill cannot find what is missing. This applies whatever prompted the
+change - a task scoped to `SPECIFICATION.md` does not narrow it.
 
 **Load `zen-instructions` before writing, editing, reviewing or deleting any
 `agents/*instructions.md`.** They are the house rules, prepended to every
