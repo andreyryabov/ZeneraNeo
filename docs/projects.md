@@ -17,7 +17,8 @@ my-project/
     agents.yaml                      who exists, what they may reach for
     agents/
         instructions.md              house rules, prepended to every agent
-        memory-instructions.md       more of them, one topic at a time
+        files-instructions.md        more of them, one topic at a time
+        memory-instructions.md
         tools-instructions.md        how tools are called
         prompts/
             intake.md                one agent's own brief

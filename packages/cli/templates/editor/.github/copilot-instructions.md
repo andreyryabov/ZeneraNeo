@@ -232,6 +232,7 @@ my-project/
 ├── agents.yaml                   who exists, what they may reach for
 ├── agents/
 │   ├── instructions.md            house rules, prepended to every agent
+│   ├── files-instructions.md      and more - how files are handled
 │   ├── fork-instructions.md       more of them - any `<topic>-instructions.md`
 │   ├── memory-instructions.md     and more - how the graph is used
 │   ├── tools-instructions.md      and more - how tools are called
@@ -641,18 +642,18 @@ follow. So:
 - Anything only one agent needs goes in that agent's prompt instead. If you find
   yourself writing "if you are the router…", you are in the wrong file.
 
-Target 20–60 lines each. If one exceeds ~100, split the stable half out into a
+Target 20-60 lines each. If one exceeds ~100, split the stable half out into a
 preloaded skill.
 
-Three of these documents are **`zen`'s, not the project's** -
-`tools-instructions.md`, `memory-instructions.md` and `fork-instructions.md`.
-They are replaced by `zen check --fix`, and a copy that differs is reported as
-`rules.stale`. This project's own rules on any of those subjects go in a topic
-file beside them - `agents/memory-policy-instructions.md` and the like, carrying
-the same `requires:`. The `zen-instructions` skill is the full treatment: the
-two owners, the naming and ordering that keeps a policy after the rules it
-qualifies, and every finding these files can produce. Load it before touching
-one.
+Four of these documents are **`zen`'s, not the project's** -
+`tools-instructions.md`, `files-instructions.md`, `memory-instructions.md` and
+`fork-instructions.md`. They are replaced by `zen check --fix`, and a copy that
+differs is reported as `rules.stale`. This project's own rules on any of those
+subjects go in a topic file beside them - `agents/files-policy-instructions.md`,
+`agents/memory-policy-instructions.md` and the like, carrying the same
+`requires:`. The `zen-instructions` skill is the full treatment: the two owners,
+the naming and ordering that keeps a policy after the rules it qualifies, and
+every finding these files can produce. Load it before touching one.
 
 ### 3.3 `agents/prompts/<name>.md`
 
@@ -664,7 +665,7 @@ Structure that works:
 ```markdown
 <one sentence: who this agent is and what it owns>
 
-<what it does, as a short numbered procedure or 3–5 rules>
+<what it does, as a short numbered procedure or 3-5 rules>
 
 <what it must NOT do - especially the neighbouring agent's job>
 
@@ -697,7 +698,7 @@ already did, §3.2), never repeats one of them, and never describes the runtime.
 Every line should be an instruction the model can act on or a boundary it can
 check itself against.
 
-Target 10–40 lines. A 200-line prompt is a skill catalog that has not been split
+Target 10-40 lines. A 200-line prompt is a skill catalog that has not been split
 yet.
 
 ### 3.4 Skills
@@ -818,21 +819,21 @@ Three rules follow:
 
 - **Grant the narrowest set the job needs.** An agent that only reviews should
   not be holding the tools that overwrite files.
-- **Grant by group, then subtract.** Write `workspace:*` and take away what this
-  agent must not have - not a hand-picked list of names. The tools in a group are
-  designed to be used together, and a list assembled one name at a time leaves out
-  the companion the model reaches for next: `write_file` without `apply_patch`
-  turns every one-line edit into a whole-file rewrite, and `read_file` without
-  `list_dir` and `find_files` leaves it guessing at paths. A group also tracks the
-  runtime - a tool added to it later reaches the agent, where an enumerated list
-  silently stays behind.
+- **Grant by group, then subtract.** Write `files:*` (or `workspace:*`) and take
+  away what this agent must not have - not a hand-picked list of names. The tools
+  in a group are designed to be used together, and a list assembled one name at
+  a time leaves out the companion the model reaches for next: `write_file`
+  without `apply_patch` turns every one-line edit into a whole-file rewrite, and
+  `read_file` without `list_dir` and `find_files` leaves it guessing at paths. A
+  group also tracks the runtime - a tool added to it later reaches the agent,
+  where an enumerated list silently stays behind.
 - **Say in the prompt when to reach for what.** A granted tool the prompt never
   mentions is used at the model's discretion, which is not the same as never.
 
 Skills can own tools too - `tools:` in a skill's frontmatter (§3.4) names tools
 that refuse to run until that skill is active.
 
-### 3.6 The workspace tools (`workspace:*`)
+### 3.6 The file tools (`files:*`, alias `workspace:*`)
 
 `zen run` builds this set for you, rooted at the session's workspace directory.
 Nothing else reaches the file system, so an agent whose `tools:` does not name
@@ -861,27 +862,27 @@ container involved there is no second name and everything stays relative.
 
 **Selecting them.** A `tools:` entry is a selector, not only a name:
 
-| Selector              | Selects                                           |
-| --------------------- | ------------------------------------------------- |
-| `read_file`           | that one tool                                     |
-| `workspace:read_file` | the same tool, written out in full                |
-| `workspace:*`         | every tool in the group                           |
-| `'*'`                 | every tool the runtime provides                   |
-| `-<any>`              | removes what it matches from the selection so far |
+| Selector                        | Selects                                           |
+| ------------------------------- | ------------------------------------------------- |
+| `read_file`                     | that one tool                                     |
+| `files:read_file`               | the same tool, written out in full                |
+| `files:*` (alias `workspace:*`) | every tool in the group                           |
+| `'*'`                           | every tool the runtime provides                   |
+| `-<any>`                        | removes what it matches from the selection so far |
 
 ```yaml
 agents:
     - name: editor
-      tools: [workspace:*]
+      tools: [files:*]
 
     - name: reviewer
       # Everything except the four that can change something.
-      tools: [workspace:*, -write_file, -apply_patch, -move_file, -delete_file]
+      tools: [files:*, -write_file, -apply_patch, -move_file, -delete_file]
 ```
 
 Selectors apply in the order written, so a `-` line reads as an exception to the
 line above it. Quote a lone `'*'`: unquoted, YAML reads it as an alias and
-refuses the file. `workspace:*` needs no quoting. There is no name globbing -
+refuses the file. `files:*` (and `workspace:*`) needs no quoting. There is no name globbing -
 `read_*` is an unknown tool, because a selector should track a declared set, not
 a naming habit.
 
@@ -1003,12 +1004,12 @@ sandbox:
 
 agents:
     - name: builder
-      tools: [workspace:*, sandbox:*]
+      tools: [files:*, sandbox:*]
       sandbox:
           image: docker.io/library/node:22-bookworm-slim
           memory: 8192
     - name: analyst
-      tools: [workspace:*, sandbox:*] # shares the project's container
+      tools: [files:*, sandbox:*] # shares the project's container
 ```
 
 **Write `persist: true` unless you have a reason not to.** By default the
@@ -1073,7 +1074,7 @@ over several pages, and wastes it when a specific document is wanted.
 ```yaml
 agents:
     - name: researcher
-      tools: [exa:*, workspace:*]
+      tools: [exa:*, files:*]
 
     - name: fact-checker
       # Find and read, but never let a model on the far side do the reasoning.
@@ -1960,8 +1961,9 @@ Before finishing any change here:
 - [ ] Nothing duplicated between a house-rules file and an agent prompt
 - [ ] Each `agents/<topic>-instructions.md` is about one capability, and is true
       of every agent it reaches - `requires:` if it is about one of them
+- [ ] If any agent has file tools, `agents/files-instructions.md` is present - §3.6
 - [ ] If any agent has `fork:`, `agents/fork-instructions.md` is present - §6.4
-- [ ] No `rules.stale`: the three files that are `zen`'s rather than yours say
+- [ ] No `rules.stale`: the four files that are `zen`'s rather than yours say
       what this version of the runtime does, and `zen check --fix` replaces them
 - [ ] Any change to an `agents/*instructions.md` was made with the
       `zen-instructions` skill loaded, and nothing of this project's was written
@@ -2007,7 +2009,7 @@ candidates; these are the judgements to make about each one)**
 - [ ] No agent holds `write_file` without `apply_patch`, or `read_file` without
       `list_dir` and `find_files`
 - [ ] An agent that only reads is not holding `write_file`, `apply_patch`,
-      `move_file` or `delete_file` - subtract them from `workspace:*`
+      `move_file` or `delete_file` - subtract them from `files:*` (or `workspace:*`)
 - [ ] `sandbox:*` is granted only where a shell is actually needed
 - [ ] `sandbox.persist: true`, unless a throwaway rootfs is wanted on purpose
 - [ ] The `sandbox:` image carries what the work needs, rather than the prompt
@@ -2079,6 +2081,7 @@ candidates; these are the judgements to make about each one)**
 | Works through N independent items serially    | `fork:` on that agent, and a prompt line - §6.4                     |
 | Forks when the steps actually depend          | Prompt line: branches cannot see each other                         |
 | Forks a sequence, or loses a branch's working | `agents/fork-instructions.md` is missing or empty - §6.4            |
+| Edits files blindly or breaks patches         | `agents/files-instructions.md` is missing or empty - §3.6           |
 | Slow and expensive on trivial cases           | Demote that agent's model tier / reasoning effort                   |
 | Fails only on genuinely hard cases            | Promote that agent's tier, or split the hard path out               |
 | Shows no reasoning while it works             | Turn summaries on for that model - §7.6                             |

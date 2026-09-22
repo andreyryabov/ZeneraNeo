@@ -104,7 +104,7 @@ three things happen, all in the operation's own names:
   never runs out. The diagnostics say which, and the model gets another go;
 - at request time, pagination is tracked and bounded: a token identical to the one
   just sent is **cut** (nulled or dropped), cycles are stopped, and streams are capped
-  to random 1–10 pages, returning empty results if a client loops past the end. The
+  to random 1-10 pages, returning empty results if a client loops past the end. The
   request line narrates each cut. Nothing is invented in its place; a generator written
   before this rule existed is still cached, and a cache is not rebuilt because a rule changed.
 

@@ -120,7 +120,7 @@ agents:
       description: Weighs the written policy against the case and explains the outcome.
       system: agents/prompts/adjuster.md
       model: openai:gpt-5.4
-      tools: [workspace:*, sandbox:*]
+      tools: [files:*, sandbox:*]
       skills:
           discovery: index # the model loads what the case needs
           preload: [house_style] # always on, from turn one

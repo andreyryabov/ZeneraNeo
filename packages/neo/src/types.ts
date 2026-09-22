@@ -260,15 +260,16 @@ export function tool<TArgs, TCtx = unknown>(def: Tool<TArgs, TCtx>): Tool<TArgs,
 //
 // So a selector may also name a *group*, and subtract:
 //
-//     tools: [workspace:*, -delete_file, policy_lookup]
+//     tools: [files:*, -delete_file, policy_lookup]
 //
 // Subtraction is what makes the wildcard usable rather than a trap. Without it
 // the only way to withhold one tool from a family is to stop using the family,
 // and an author who wants six of seven is back to listing names.
 //
 // A single tool may be written either way — `read_file` or
-// `workspace:read_file` — because having seen the group in one line, everyone
-// tries the qualified form in the next.
+// `files:read_file` (with `workspace:read_file` supported as an alias) —
+// because having seen the group in one line, everyone tries the qualified form
+// in the next.
 //
 // Everything is resolved at load, and an unknown name or an empty group is a
 // startup failure: a typo that silently grants nothing is the same bug as a
@@ -280,6 +281,18 @@ export interface ToolSelection {
     where: string;
     /** how the caller should register a tool that is missing */
     hint?: string;
+}
+
+/**
+ * Aliases for tool groups, so renaming a group breaks no existing configuration.
+ * `workspace` is the legacy name for the file tools (`files`).
+ */
+const GROUP_ALIASES: Record<string, string> = {
+    workspace: 'files',
+};
+
+function canonicalGroup(group: string | undefined): string | undefined {
+    return group ? (GROUP_ALIASES[group] ?? group) : undefined;
 }
 
 /**
@@ -321,12 +334,17 @@ function matchTools<TCtx>(
         return available;
     }
     if (selector.endsWith(':*')) {
-        const group = selector.slice(0, -2);
-        const hits = available.filter((t) => t.group === group);
+        const rawGroup = selector.slice(0, -2);
+        const group = canonicalGroup(rawGroup) ?? rawGroup;
+        const hits = available.filter((t) => (canonicalGroup(t.group) ?? t.group) === group);
         if (hits.length === 0) {
-            const groups = [...new Set(available.map((t) => t.group).filter(Boolean))];
+            const groups = [
+                ...new Set(
+                    available.map((t) => canonicalGroup(t.group) ?? t.group).filter(Boolean),
+                ),
+            ];
             throw new Error(
-                `${opts.where}: no tools in group "${group}" ` +
+                `${opts.where}: no tools in group "${rawGroup}" ` +
                     `(known groups: ${groups.join(', ') || 'none'})`,
             );
         }
@@ -336,22 +354,26 @@ function matchTools<TCtx>(
     if (exact) {
         return [exact];
     }
-    // `workspace:read_file` is the same thing as `read_file`: an author who
-    // writes `workspace:*` on one line should not be told the qualified form
-    // is a typo on the next.
+    // `workspace:read_file` or `files:read_file` is the same thing as `read_file`:
+    // an author who writes `files:*` on one line should not be told the qualified
+    // form is a typo on the next.
     const colon = selector.lastIndexOf(':');
     if (colon > 0) {
-        const group = selector.slice(0, colon);
+        const rawGroup = selector.slice(0, colon);
+        const group = canonicalGroup(rawGroup) ?? rawGroup;
         const name = selector.slice(colon + 1);
-        const qualified = available.find((t) => t.group === group && t.name === name);
+        const qualified = available.find(
+            (t) => (canonicalGroup(t.group) ?? t.group) === group && t.name === name,
+        );
         if (qualified) {
             return [qualified];
         }
         const elsewhere = available.find((t) => t.name === name);
         if (elsewhere) {
+            const elsewhereGroup = canonicalGroup(elsewhere.group) ?? elsewhere.group ?? 'none';
             throw new Error(
                 `${opts.where}: unknown tool "${selector}" ` +
-                    `("${name}" is in group "${elsewhere.group ?? 'none'}", not "${group}")`,
+                    `("${name}" is in group "${elsewhereGroup}", not "${rawGroup}")`,
             );
         }
     }

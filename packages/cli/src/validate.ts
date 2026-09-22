@@ -245,12 +245,14 @@ const CONFIG_NAMES = ['agents.yaml', 'agents.yml', 'agents/agents.yaml', 'agents
 const AGENTS_DIR = 'agents';
 const HOUSE_RULES = 'agents/instructions.md';
 const INSTRUCTIONS_SUFFIX = '-instructions.md';
+/** How file tools are used; without it the model has schemas only. */
+const FILE_RULES = 'agents/files-instructions.md';
 /** The only place memory is explained to a model; the runtime composes none of it. */
 const MEMORY_RULES = 'agents/memory-instructions.md';
 /** The only place forking is explained to a model; the same holds. */
 const FORK_RULES = 'agents/fork-instructions.md';
 /** The conditioned documents `zen` ships, which land whether or not they apply. */
-const OURS = new Set([MEMORY_RULES, FORK_RULES]);
+const OURS = new Set([FILE_RULES, MEMORY_RULES, FORK_RULES]);
 const PROMPTS_DIR = 'agents/prompts';
 const SKILLS_DIR = 'agents/skills';
 const SKILL_FILE = 'SKILL.md';
@@ -259,6 +261,66 @@ const ASSETS_DIR = 'assets';
 /** What `allow:` and `preload:` accept, so a skill outside it cannot be named. */
 const REFERABLE = /^[a-z0-9]+(?:[-_][a-z0-9]+)*$/;
 
+const FILE_TOOLS = [
+    'read_file',
+    'list_dir',
+    'find_files',
+    'write_file',
+    'apply_patch',
+    'move_file',
+    'delete_file',
+] as const;
+
+const FILE_WRITE_TOOLS = new Set(['write_file', 'apply_patch', 'move_file', 'delete_file']);
+
+function activeFileTools(selectors: readonly string[] | undefined): Set<string> {
+    const active = new Set<string>();
+    if (!selectors?.length) {
+        return active;
+    }
+    for (const raw of selectors) {
+        const drop = raw.startsWith('-');
+        const selector = (drop ? raw.slice(1) : raw).trim();
+        if (selector === '*' || selector === 'files:*' || selector === 'workspace:*') {
+            for (const t of FILE_TOOLS) {
+                if (drop) {
+                    active.delete(t);
+                } else {
+                    active.add(t);
+                }
+            }
+            continue;
+        }
+        const colon = selector.lastIndexOf(':');
+        const name = colon >= 0 ? selector.slice(colon + 1) : selector;
+        const group = colon >= 0 ? selector.slice(0, colon) : undefined;
+        if (FILE_TOOLS.includes(name as (typeof FILE_TOOLS)[number])) {
+            if (!group || group === 'files' || group === 'workspace') {
+                if (drop) {
+                    active.delete(name);
+                } else {
+                    active.add(name);
+                }
+            }
+        }
+    }
+    return active;
+}
+
+function hasFileTools(spec: AgentConfig): boolean {
+    return activeFileTools(spec.tools).size > 0;
+}
+
+function hasFileWriteTools(spec: AgentConfig): boolean {
+    const active = activeFileTools(spec.tools);
+    for (const t of FILE_WRITE_TOOLS) {
+        if (active.has(t)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /** What `requires:` may name. Mirrors `CAPABILITIES` in the loader. */
 const CAPABILITIES: Record<string, (spec: AgentConfig) => boolean> = {
     fork: (spec) => Boolean(spec.fork),
@@ -266,6 +328,10 @@ const CAPABILITIES: Record<string, (spec: AgentConfig) => boolean> = {
     'memory-write': (spec) =>
         spec.memory?.access === 'read-write' || spec.memory?.access === 'full',
     'memory-forget': (spec) => spec.memory?.access === 'full',
+    files: (spec) => hasFileTools(spec),
+    'files-write': (spec) => hasFileWriteTools(spec),
+    workspace: (spec) => hasFileTools(spec),
+    'workspace-write': (spec) => hasFileWriteTools(spec),
 };
 
 /** A house-rules document as found on disk, with what its frontmatter asked for. */
@@ -550,7 +616,25 @@ export async function validateProject(opts: ValidateOptions): Promise<Report> {
         }
     }
 
-    // Present is not the same as current. These three files are copies of ours
+    // The same again for file operations: the file tools need instructions on
+    // discovery, safe reading, and patching. Without them the tools are granted
+    // with only their schemas to explain them.
+    if (config.agents.some((a) => hasFileTools(a))) {
+        const path = join(root, FILE_RULES);
+        if (!existsSync(path) || empty(path)) {
+            add({
+                severity: 'error',
+                code: 'files.uninstructed',
+                where: FILE_RULES,
+                message:
+                    'an agent has file tools, but nothing tells it how to use them — ' +
+                    'the tools are granted with only their schemas to explain them',
+                fix: 'zen check --fix, which writes the current rules back',
+            });
+        }
+    }
+
+    // Present is not the same as current. These files are copies of ours
     // and nobody is meant to be maintaining them, so bytes that differ are an
     // older `zen`'s — prose about a runtime that has since moved, which reads
     // exactly as authoritative as the version that is true. The frontmatter
@@ -949,7 +1033,7 @@ function checkAgent(
         try {
             tools = selectTools(available, [...selectors], {
                 where: `${where}.tools`,
-                hint: 'this CLI provides the workspace and sandbox groups',
+                hint: 'this CLI provides the files and sandbox groups',
             }).map((t) => t.name);
         } catch (err) {
             resolved = false;

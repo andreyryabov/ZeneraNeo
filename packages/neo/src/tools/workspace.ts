@@ -897,8 +897,8 @@ function patchLines(
 // The tools
 // ---------------------------------------------------------------------------
 
-/** The family name config selects the whole set by: `tools: [workspace:*]`. */
-const GROUP = 'workspace';
+/** The family name config selects the whole set by: `tools: [files:*]` (or legacy `workspace:*`). */
+const GROUP = 'files';
 
 export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<TCtx>[] {
     const ws = new Workspace(opts);

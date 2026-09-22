@@ -260,7 +260,7 @@ async function queryBackground(timeoutMs = 300): Promise<Appearance | undefined>
     });
 }
 
-/** Components come back as 1–4 hex digits, so each is scaled by its own width. */
+/** Components come back as 1-4 hex digits, so each is scaled by its own width. */
 function appearanceOf(r: string, g: string, b: string): Appearance {
     const channel = (hex: string): number => parseInt(hex, 16) / (16 ** hex.length - 1);
     const luminance = 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);

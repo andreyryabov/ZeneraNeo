@@ -21,6 +21,7 @@ What it writes:
 zenera.json                     { version, name }
 agents.yaml                     the configuration
 agents/instructions.md          house rules, prepended to every agent
+agents/files-instructions.md     more of them, for agents that work with files
 agents/fork-instructions.md     more of them, for agents that can fork
 agents/memory-instructions.md   more of them, for agents with the memory store
 agents/tools-instructions.md    more of them, about how tools are called
