@@ -19,7 +19,13 @@ import {
     type RequestDumpData,
 } from './logger.ts';
 import { indexPage } from './page.ts';
-import { cutLoop, pagingSeen } from './paging.ts';
+import {
+    cutLoop,
+    getSentToken,
+    PaginationLimiter,
+    pagingSeen,
+    type PaginationCutResult,
+} from './paging.ts';
 import type { Router } from './router.ts';
 import type { Operation } from './spec.ts';
 import { describeIssues, issues, type Checks, type Issue } from './validate.ts';
@@ -57,6 +63,8 @@ export interface ServerOptions {
     regenLimit?: number;
     history?: RequestHistory;
     limiter?: RegenerationLimiter;
+    maxPages?: number | (() => number);
+    paginationLimiter?: PaginationLimiter;
 }
 
 export interface Listening {
@@ -68,8 +76,15 @@ export interface Listening {
 export function build(opts: ServerOptions): Server {
     const history = opts.history ?? new RequestHistory();
     const limiter = opts.limiter ?? new RegenerationLimiter(opts.regenLimit ?? 3);
+    const paginationLimiter = opts.paginationLimiter ?? new PaginationLimiter(opts.maxPages);
     const requestsDir = opts.requestsDir ?? join(opts.box.root, 'requests');
-    const enriched: ServerOptions = { ...opts, history, limiter, requestsDir };
+    const enriched: ServerOptions = {
+        ...opts,
+        history,
+        limiter,
+        paginationLimiter,
+        requestsDir,
+    };
 
     return createServer((req, res) => {
         handle(req, res, enriched).catch((err: unknown) => {
@@ -510,7 +525,15 @@ async function handle(
     }
 
     const note = cacheStatus;
-    const looped = cut(operation, outcome.value, url.searchParams);
+    const streamKey = `${operation.key}:${req.socket.remoteAddress || 'local'}`;
+    const cutResult = cut(
+        operation,
+        outcome.value,
+        url.searchParams,
+        body,
+        opts.paginationLimiter,
+        streamKey,
+    );
     opts.history!.recordSuccess(operation.key, input, outcome.value);
     const end = prepareSend(res, operation.success.status, outcome.value);
     await finish(operation.success.status, {
@@ -521,7 +544,7 @@ async function handle(
         responseBody: outcome.value,
         cacheStatus,
         regenerated: cacheStatus === 'regenerated',
-        note: looped ? `${note} · cut a looping page token` : note,
+        note: cutResult?.cut ? `${note} · ${cutResult.reason}` : note,
     });
     end();
 }
@@ -531,15 +554,31 @@ async function handle(
  * cache is not rebuilt just because the rule changed. A body offering back the
  * token it was handed is therefore still possible, and it is the one bug here
  * that costs the client rather than the mock: it hangs.
+ *
+ * In addition, pagination is tracked and capped to prevent infinite loops (random
+ * 1-10 max pages by default) and repetitive cycling tokens.
  */
-function cut(operation: Operation, value: unknown, query: URLSearchParams): boolean {
+function cut(
+    operation: Operation,
+    value: unknown,
+    query: URLSearchParams,
+    body?: unknown,
+    limiter?: PaginationLimiter,
+    streamKey = 'default',
+): PaginationCutResult | undefined {
     const paging =
-        operation.paging ?? pagingSeen(operation.params, operation.success.schema, query);
+        operation.paging ?? pagingSeen(operation.params, operation.success.schema, query, body);
     if (!paging) {
-        return false;
+        return undefined;
     }
-    const sent = query.get(paging.param);
-    return sent !== null && cutLoop(value, paging, sent);
+    const sent = getSentToken(query, body, paging);
+    if (limiter) {
+        return limiter.process(operation.key, streamKey, sent, value, paging);
+    }
+    if (sent !== undefined && cutLoop(value, paging, sent)) {
+        return { cut: true, reason: 'cut a looping page token' };
+    }
+    return undefined;
 }
 
 function check(

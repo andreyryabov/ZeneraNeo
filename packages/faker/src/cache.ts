@@ -4,7 +4,7 @@ import type { Box } from './box.ts';
 import type { GeneratorInput } from './envelope.ts';
 import { build, BuildFailed, regenerate } from './generate.ts';
 import type { ExampleRequest } from './prompt.ts';
-import type { Operation } from './spec.ts';
+import { GENERATOR_RULES_VERSION, type Operation } from './spec.ts';
 import type { Checks } from './validate.ts';
 
 // ---------------------------------------------------------------------------
@@ -36,6 +36,7 @@ export interface GeneratorMeta {
     source?: string;
     model?: string;
     attempts?: number;
+    rulesVersion?: number;
     createdAt?: string;
 }
 
@@ -178,6 +179,7 @@ export class Cache {
                         source: operation.source,
                         model: model.id,
                         attempts: built.attempts,
+                        rulesVersion: GENERATOR_RULES_VERSION,
                         createdAt: new Date().toISOString(),
                     },
                 } satisfies Stored);
@@ -228,6 +230,7 @@ export class Cache {
                         source: operation.source,
                         model: model.id,
                         attempts: built.attempts,
+                        rulesVersion: GENERATOR_RULES_VERSION,
                         createdAt: new Date().toISOString(),
                     },
                 } satisfies Stored);

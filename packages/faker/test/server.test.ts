@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Box } from '../src/box.ts';
 import { Cache, FAKER_KIND } from '../src/cache.ts';
 import { Router } from '../src/router.ts';
-import { listen, type Listening } from '../src/server.ts';
+import { listen, type Listening, type ServerOptions } from '../src/server.ts';
 import { loadSpec } from '../src/spec.ts';
 import { Checks } from '../src/validate.ts';
 
@@ -284,7 +284,10 @@ describe('a looping page token', () => {
      * whole scenario: it was written before the pagination rule existed, and
      * the walk in the build loop would refuse to write it today.
      */
-    const boot = async (answer: (input: Record<string, unknown>) => unknown): Promise<void> => {
+    const boot = async (
+        answer: (input: Record<string, unknown>) => unknown,
+        serverOpts?: Partial<ServerOptions>,
+    ): Promise<void> => {
         const box = new Box({ root, image: 'stub', exec: engineThat(answer, root) });
         const checks = new Checks();
         const cacheDir = join(root, 'store');
@@ -303,6 +306,7 @@ describe('a looping page token', () => {
                 box,
                 cache: new Cache({ box, checks, model, cacheDir }),
                 onRequest: (line) => log.push(line),
+                ...serverOpts,
             },
             '127.0.0.1',
             0,
@@ -350,5 +354,76 @@ describe('a looping page token', () => {
         const res = await fetch(`${base}/events?offset=40`);
         expect(await res.json()).toMatchObject({ next_offset: 40 });
         expect(log.at(-1)).not.toContain('cut');
+    });
+
+    it('is cut when a looping cursor is sent in the request body', async () => {
+        await boot(() => ({ results: ['audit1'], cursor: 'eyJwIjoyfQ==', has_more: true }));
+        const res = await fetch(`${base}/audit-logs`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ cursor: 'eyJwIjoyfQ==' }),
+        });
+        expect(await res.json()).toEqual({ results: ['audit1'], cursor: null, has_more: false });
+        expect(log.at(-1)).toContain('cut a looping page token');
+    });
+
+    it('terminates pagination at maxPages and cuts the next cursor', async () => {
+        await boot(
+            (input) => {
+                const asked = (input.query as Record<string, unknown>)?.cursor;
+                const pageNum = asked ? Number(asked) : 1;
+                return {
+                    results: [{ id: `m${pageNum}` }],
+                    cursor: String(pageNum + 1),
+                    has_more: true,
+                };
+            },
+            { maxPages: 2 },
+        );
+
+        // Page 1: returns next cursor '2'
+        const res1 = await fetch(`${base}/machines`);
+        expect(await res1.json()).toMatchObject({ cursor: '2' });
+
+        // Page 2: hits maxPages = 2, so cursor is cut to null
+        const res2 = await fetch(`${base}/machines?cursor=2`);
+        expect(await res2.json()).toEqual({
+            results: [{ id: 'm2' }],
+            cursor: null,
+            has_more: false,
+        });
+        expect(log.at(-1)).toContain('cut pagination at max pages (2)');
+
+        // Page 3: client in while True loop ignores termination and calls again
+        const res3 = await fetch(`${base}/machines?cursor=2`);
+        expect(await res3.json()).toMatchObject({ results: [] });
+    });
+
+    it('cuts cycling page tokens across requests', async () => {
+        await boot(
+            (input) => {
+                const asked = (input.query as Record<string, unknown>)?.cursor;
+                const next = asked === 'tok-1' ? 'tok-2' : 'tok-1';
+                return { results: [{ id: 'm1' }], cursor: next, has_more: true };
+            },
+            { maxPages: 10 },
+        );
+
+        // Request 1: no cursor -> gets 'tok-1'
+        const res1 = await fetch(`${base}/machines`);
+        expect(await res1.json()).toMatchObject({ cursor: 'tok-1' });
+
+        // Request 2: cursor 'tok-1' -> gets 'tok-2'
+        const res2 = await fetch(`${base}/machines?cursor=tok-1`);
+        expect(await res2.json()).toMatchObject({ cursor: 'tok-2' });
+
+        // Request 3: cursor 'tok-2' -> returns 'tok-1' (cycle detected!)
+        const res3 = await fetch(`${base}/machines?cursor=tok-2`);
+        expect(await res3.json()).toEqual({
+            results: [{ id: 'm1' }],
+            cursor: null,
+            has_more: false,
+        });
+        expect(log.at(-1)).toContain('cut a cycling page token');
     });
 });

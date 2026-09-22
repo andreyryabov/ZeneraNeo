@@ -110,6 +110,39 @@ paths:
                                     cursor:
                                         type: string
                                         nullable: true
+    /audit-logs:
+        post:
+            operationId: collectAuditLogs
+            summary: The cursor is carried in the request body.
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            properties:
+                                cursor:
+                                    type: string
+                                page_size:
+                                    type: integer
+            responses:
+                '200':
+                    description: one page
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [results]
+                                properties:
+                                    results:
+                                        type: array
+                                        items:
+                                            type: string
+                                    cursor:
+                                        type: string
+                                        nullable: true
+                                    has_more:
+                                        type: boolean
 components:
     schemas:
         Machine:

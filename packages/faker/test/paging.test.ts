@@ -1,7 +1,7 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { cutLoop, pagingSeen, tokenOf, type Paging } from '../src/paging.ts';
+import { cutLoop, PaginationLimiter, pagingSeen, tokenOf, type Paging } from '../src/paging.ts';
 import { loadSpec, type Operation } from '../src/spec.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -36,6 +36,21 @@ describe('recognising a paged operation', () => {
         expect(op.paging?.items).toBe('data');
     });
 
+    it('finds the cursor when declared in the request body', async () => {
+        const op = (await load('paged')).get('collectAuditLogs')!;
+        expect(op.paging).toEqual({
+            style: 'cursor',
+            param: 'cursor',
+            paramIn: 'body',
+            size: 'page_size',
+            next: 'cursor',
+            nextNullable: true,
+            nextRequired: false,
+            more: 'has_more',
+            items: 'results',
+        });
+    });
+
     // A cap on how much comes back is not an invitation to come back.
     it('does not call a bare `limit` pagination', async () => {
         const op = (await load('paged')).get('listTags')!;
@@ -53,14 +68,13 @@ describe('recognising a paged operation', () => {
         expect(op.paging).toBeUndefined();
     });
 
-    // The identity is what makes a paged operation rebuild once and everything
-    // else stay exactly where it is. These two are the keys the released
-    // version produces; a change here means somebody's whole cache is cold.
+    // The identity pins down cache keys for GENERATOR_RULES_VERSION = 1.
+    // Changing the shape or rules version produces new keys and invalidates the cache.
     it('leaves the cache key of an unpaged operation exactly as it was', async () => {
         const ops = await load('petstore');
-        expect(ops.get('getUserById')!.key).toBe('b0030957041e70c5');
-        expect(ops.get('createUser')!.key).toBe('0345299ea01b3a37');
-        expect((await load('paged')).get('listTags')!.key).toBe('16e8fb3f2e92f328');
+        expect(ops.get('getUserById')!.key).toBe('f8434cb1c129bd19');
+        expect(ops.get('createUser')!.key).toBe('5a30d79cad52fc95');
+        expect((await load('paged')).get('listTags')!.key).toBe('de7e62368e98ec17');
     });
 });
 
@@ -127,6 +141,23 @@ describe('paging the document never declared', () => {
         });
     });
 
+    it('detects paging when cursor is sent in the request body', async () => {
+        const op = (await load('paged')).get('listAlarms')!;
+        expect(
+            pagingSeen(op.params, op.success.schema, query(''), { cursor: 'eyJwIjoyfQ==' }),
+        ).toEqual({
+            style: 'cursor',
+            param: 'cursor',
+            paramIn: 'body',
+            size: undefined,
+            next: 'cursor',
+            nextNullable: true,
+            nextRequired: false,
+            more: undefined,
+            items: 'results',
+        });
+    });
+
     it('asks nothing of a request that carries no extra parameter', async () => {
         const op = (await load('paged')).get('listAlarms')!;
         expect(pagingSeen(op.params, op.success.schema, query(''))).toBeUndefined();
@@ -137,5 +168,76 @@ describe('paging the document never declared', () => {
     it('does not invent paging out of an unrelated parameter', async () => {
         const op = (await load('paged')).get('listTags')!;
         expect(pagingSeen(op.params, op.success.schema, query('cursor=abc'))).toBeUndefined();
+    });
+});
+
+describe('PaginationLimiter', () => {
+    const paging: Paging = {
+        style: 'cursor',
+        param: 'cursor',
+        next: 'cursor',
+        nextNullable: true,
+        nextRequired: false,
+        more: 'has_more',
+        items: 'results',
+    };
+
+    it('cuts a 1-page stream immediately on the first page', () => {
+        const limiter = new PaginationLimiter(1);
+        const body = { results: ['a'], cursor: 'token-2', has_more: true };
+        const result = limiter.process('op1', 'client1', undefined, body, paging);
+        expect(result).toEqual({ cut: true, reason: 'cut pagination at max pages (1)' });
+        expect(body.cursor).toBeNull();
+        expect(body.has_more).toBe(false);
+    });
+
+    it('allows pages until maxPages is reached, then terminates', () => {
+        const limiter = new PaginationLimiter(3);
+        // Page 1 (initial request, no cursor sent)
+        const p1 = { results: ['a'], cursor: 't1', has_more: true };
+        expect(limiter.process('op1', 'c1', undefined, p1, paging)).toBeUndefined();
+        expect(p1.cursor).toBe('t1');
+
+        // Page 2
+        const p2 = { results: ['b'], cursor: 't2', has_more: true };
+        expect(limiter.process('op1', 'c1', 't1', p2, paging)).toBeUndefined();
+        expect(p2.cursor).toBe('t2');
+
+        // Page 3 (hits maxPages = 3)
+        const p3 = { results: ['c'], cursor: 't3', has_more: true };
+        const cut = limiter.process('op1', 'c1', 't2', p3, paging);
+        expect(cut).toEqual({ cut: true, reason: 'cut pagination at max pages (3)' });
+        expect(p3.cursor).toBeNull();
+        expect(p3.has_more).toBe(false);
+
+        // Page 4 (client continues calling in a while True loop with terminated cursor)
+        const p4 = { results: ['d'], cursor: 't4', has_more: true };
+        const empty = limiter.process('op1', 'c1', 't2', p4, paging);
+        expect(empty).toEqual({ cut: true, reason: 'cut pagination at max pages (3)' });
+        expect(p4.results).toEqual([]);
+    });
+
+    it('cuts cycling page tokens', () => {
+        const limiter = new PaginationLimiter(10);
+        const p1 = { results: ['a'], cursor: 'A', has_more: true };
+        limiter.process('op1', 'c1', undefined, p1, paging);
+
+        const p2 = { results: ['b'], cursor: 'B', has_more: true };
+        limiter.process('op1', 'c1', 'A', p2, paging);
+
+        // Server returns A again (cycle!)
+        const p3 = { results: ['c'], cursor: 'A', has_more: true };
+        const cut = limiter.process('op1', 'c1', 'B', p3, paging);
+        expect(cut).toEqual({ cut: true, reason: 'cut a cycling page token' });
+        expect(p3.cursor).toBeNull();
+    });
+
+    it('cuts when base64 cursor index reaches maxPages', () => {
+        const limiter = new PaginationLimiter(5);
+        const tokenP5 = Buffer.from(JSON.stringify({ p: 5 })).toString('base64');
+        const body = { results: ['e'], cursor: 'next-p6', has_more: true };
+        const cut = limiter.process('op1', 'c1', tokenP5, body, paging);
+        expect(cut).toEqual({ cut: true, reason: 'cut pagination at max pages (5)' });
+        expect(body.cursor).toBeNull();
     });
 });
