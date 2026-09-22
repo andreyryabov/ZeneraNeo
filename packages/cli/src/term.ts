@@ -126,6 +126,8 @@ function fromAppleTerminal(): Appearance | undefined {
 // ---------------------------------------------------------------------------
 
 export const bold = (s: string): string => styleText('bold', s);
+export const italic = (s: string): string => styleText('italic', s);
+export const underline = (s: string): string => styleText('underline', s);
 
 /**
  * One step quieter, which is half of everything this tool prints: paths,

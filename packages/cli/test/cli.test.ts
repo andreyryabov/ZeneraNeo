@@ -51,6 +51,7 @@ import {
 import { classify, probeModels } from '../src/liveness.ts';
 import {
     absorb,
+    answerBox,
     chooseModel,
     defaultRef,
     footerCells,
@@ -72,6 +73,7 @@ import { scaffold } from '../src/scaffold.ts';
 import { sessionPaths } from '../src/session.ts';
 import * as term from '../src/term.ts';
 import { bytes, CliError, cut, EXIT, keysIn, pad, table } from '../src/term.ts';
+import { formatInline, formatMarkdown } from '../src/tui/markdown.ts';
 import {
     ACTIVITY_ROWS,
     answerWidth,
@@ -2942,5 +2944,131 @@ describe('re-rendering copilot output', () => {
         const { out, said } = run([{ type: 'session.something_new', data: { x: 1 } }]);
         expect(said).toEqual([]);
         expect(out.events).toHaveLength(1);
+    });
+
+    it('processes progress commentary lines as inline markdown', () => {
+        const { said } = run([
+            {
+                type: 'assistant.message',
+                data: {
+                    content: 'I am running `snapshot.sh status` and checking **status**.',
+                    toolRequests: [{ a: 1 }],
+                },
+            },
+        ]);
+        expect(said).toHaveLength(1);
+        const line = said[0]!;
+        expect(line).not.toContain('`snapshot.sh status`');
+        expect(line).toContain('snapshot.sh status');
+        expect(term.plain(line)).toBe('I am running snapshot.sh status and checking status.');
+    });
+});
+
+describe('formatting the answer box', () => {
+    let originalIsTTY: boolean | undefined;
+
+    beforeEach(() => {
+        originalIsTTY = process.stdout.isTTY;
+        process.stdout.isTTY = true;
+    });
+
+    afterEach(() => {
+        if (originalIsTTY !== undefined) {
+            process.stdout.isTTY = originalIsTTY;
+        } else {
+            delete (process.stdout as { isTTY?: boolean }).isTTY;
+        }
+    });
+
+    it('returns raw lines when not on a TTY', () => {
+        process.stdout.isTTY = false;
+        const text = 'line 1\nline 2';
+        expect(answerBox(text)).toEqual(['line 1', 'line 2']);
+    });
+
+    it('wraps and styles markdown paragraphs with bold, italic, code, and links', () => {
+        const text = 'Here is **bold**, *italic*, `code`, and [link](https://example.com).';
+        const lines = answerBox(text, 60);
+        expect(lines[0]).toBe('');
+        // Top and bottom rules have box-drawing characters
+        expect(term.plain(lines[1]!)).toMatch(/^╭─+╮$/);
+        expect(term.plain(lines[lines.length - 2]!)).toMatch(/^╰─+╯$/);
+        // Interior lines contain styled text within borders
+        const body = lines.slice(2, -2).join('\n');
+        expect(body).toContain('bold');
+        expect(body).toContain('italic');
+        expect(body).toContain('code');
+        expect(body).toContain('link');
+    });
+
+    it('formats headings with bold weight', () => {
+        const text = '## Section Title\n\nSome body text.';
+        const lines = answerBox(text, 60);
+        const body = lines.slice(2, -2).join('\n');
+        expect(body).toContain('Section Title');
+    });
+
+    it('formats list items with hanging indentation', () => {
+        const text = '- first point with enough text to wrap onto another line\n- second point';
+        const lines = answerBox(text, 40);
+        const body = lines.slice(2, -2).join('\n');
+        expect(body).toContain('•');
+        expect(body).toContain('first point');
+    });
+
+    it('formats quotes with a left bar', () => {
+        const text = '> Important notice quoted here';
+        const lines = answerBox(text, 50);
+        const body = lines.slice(2, -2).join('\n');
+        expect(body).toContain('│');
+        expect(body).toContain('Important notice');
+    });
+
+    it('formats fenced code blocks within inner chrome', () => {
+        const text = '```ts\nconst x = 42;\n```';
+        const lines = answerBox(text, 50);
+        const body = lines.slice(2, -2).join('\n');
+        expect(body).toContain('┌─ ts');
+        expect(body).toContain('const x = 42;');
+        expect(body).toContain('└─');
+    });
+
+    it('formats tables with headers and aligned columns', () => {
+        const text = '| Name | Status |\n| - | - |\n| web | ok |';
+        const lines = answerBox(text, 50);
+        const body = lines.slice(2, -2).join('\n');
+        expect(body).toContain('Name');
+        expect(body).toContain('Status');
+        expect(body).toContain('web');
+        expect(body).toContain('ok');
+    });
+
+    it('ensures every row of the box matches the same outer width', () => {
+        const text =
+            '# Heading\n\nA paragraph with **bold** and `code`.\n\n- item 1\n- item 2\n\n```sh\necho hi\n```';
+        const lines = answerBox(text, 50);
+        const outer = term.plain(lines[1]!).length;
+        expect(outer).toBeGreaterThan(20);
+        for (const line of lines.slice(1, -1)) {
+            // plain visible length of every border row must be identical
+            expect(term.plain(line).length).toBe(outer);
+        }
+    });
+
+    it('formats markdown directly via formatMarkdown', () => {
+        const text = 'A paragraph with **bold** and `code`.';
+        const lines = formatMarkdown(text, 50);
+        expect(lines).toHaveLength(1);
+        expect(term.plain(lines[0]!)).toBe('A paragraph with bold and code.');
+        expect(lines[0]!).toContain('\u001b[1mbold\u001b[22m');
+        expect(lines[0]!).toContain('\u001b[32mcode\u001b[39m');
+    });
+
+    it('formats inline markdown via formatInline', () => {
+        const text = 'Running `zen check` on **acme** with [link](https://acme.dev).';
+        const formatted = formatInline(text);
+        expect(formatted).not.toContain('`zen check`');
+        expect(formatted).not.toContain('**acme**');
+        expect(term.plain(formatted)).toBe('Running zen check on acme with link.');
     });
 });

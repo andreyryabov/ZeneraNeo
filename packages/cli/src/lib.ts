@@ -107,11 +107,13 @@ export {
     green,
     invalidError,
     isInteractive,
+    italic,
     json,
     note,
     pad,
     red,
     table,
+    underline,
     usageError,
     warn,
     write,
@@ -119,3 +121,4 @@ export {
     yellow,
     type ExitCode,
 } from './term.ts';
+export { formatBlocks, formatInline, formatMarkdown, wrapSpans } from './tui/markdown.ts';

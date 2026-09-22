@@ -19,7 +19,8 @@ import {
     write,
     yellow,
 } from './term.ts';
-import { type Block, blocksOf, boxWidth, textOf, wrap } from './tui/wrap.ts';
+import { formatInline, formatMarkdown } from './tui/markdown.ts';
+import { boxWidth } from './tui/wrap.ts';
 
 // ---------------------------------------------------------------------------
 // The meta agent
@@ -676,7 +677,7 @@ export function windowSink(rows = WINDOW_ROWS): Sink {
 
 /**
  * The answer in the same box `zen run` draws it in: bounded width, rounded
- * rule, fenced blocks kept as they were written.
+ * rule, formatted with full markdown styling (bold, italics, code, lists, quotes, tables).
  *
  * Redirected output gets the text and nothing else — `zen meta run ... > out.md`
  * is meant to produce a file you can read, not one with a border down its side.
@@ -687,31 +688,7 @@ export function answerBox(text: string, columns = process.stdout.columns ?? 80):
     }
     const outer = boxWidth(text, columns);
     const inner = outer - 4;
-    const body: string[] = [];
-    let previous: Block | undefined;
-    for (const block of blocksOf(text)) {
-        if (previous && !(block.kind === 'item' && previous.kind === 'item')) {
-            body.push('');
-        }
-        previous = block;
-        if (block.kind === 'code') {
-            // Indentation is the meaning of a fenced block, so it is cut rather
-            // than reflowed.
-            body.push(dim(`\u250c\u2500${block.title ? ` ${block.title}` : ''}`));
-            body.push(...(block.lines ?? []).map((l) => `${dim('\u2502')} ${cut(l, inner - 2)}`));
-            body.push(dim('\u2514\u2500'));
-        } else if (block.lines || block.kind === 'table') {
-            body.push(
-                ...textOf(block)
-                    .split('\n')
-                    .map((l) => cut(l, inner)),
-            );
-        } else {
-            // Plain, not styled: `wrap` counts characters, and a bold run
-            // measured with its escape codes in it folds the line early.
-            body.push(...wrap(textOf(block, inner), inner));
-        }
-    }
+    const body = formatMarkdown(text, inner);
     const rule = BOX.h.repeat(outer - 2);
     return [
         '',
@@ -800,7 +777,7 @@ export function absorb(event: Event, out: Outcome, sink: Sink, width: number): v
             if (requests.length === 0) {
                 out.answer = content;
             } else if (content) {
-                sink.narrate(cut(content.replace(/\s+/g, ' '), width));
+                sink.narrate(cut(formatInline(content.replace(/\s+/g, ' ')), width));
             }
             break;
         }
