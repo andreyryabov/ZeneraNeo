@@ -4,6 +4,7 @@
 #
 #   scripts/_setup.sh            do whatever is not done yet
 #   scripts/_setup.sh --force    do all of it again
+#   scripts/_setup.sh --check    say what is not done, and do none of it
 #
 # Anything that has to be in place before a run — an index built, a document
 # fetched, a file generated — is a script in this directory rather than a
@@ -17,6 +18,11 @@
 #   - takes no arguments, and reads $FORCE to know whether to redo finished work
 #   - exits 0 when it did the work, 3 when there was nothing to do, non-zero
 #     when it failed
+#   - under $CHECK, does none of the work: it runs the same "already done" test,
+#     exits 3 when the answer is yes, and otherwise says what is missing and
+#     exits 4. A check must not assume an earlier step has run — a missing
+#     prerequisite is a 4 of its own, not a hard failure, or one unbuilt thing
+#     hides the rest of the list
 #   - writes under .tmp/ and moves the result into place, so an interrupted run
 #     never leaves half an artefact behind
 #
@@ -27,6 +33,10 @@
 # first search fails for a reason nobody connects to setup. Ask the tool instead
 # of guessing at files — `zen rag docs ready` answers exactly that question.
 #
+# That test is the whole of `--check`, which is why this is one script and not
+# two: the steps already know what "done" means, and a second script asking the
+# same question would be a second answer to keep in step with this one.
+#
 # Running this twice has to be safe, and the second run is what proves it: every
 # step should report `skipped`.
 
@@ -34,10 +44,17 @@ set -eu
 cd "$(dirname "$0")/.."
 
 FORCE=0
-if [ "${1:-}" = "--force" ]; then
-    FORCE=1
-fi
-export FORCE
+CHECK=0
+case "${1:-}" in
+    '') ;;
+    --force) FORCE=1 ;;
+    --check) CHECK=1 ;;
+    *)
+        echo "usage: scripts/_setup.sh [--force|--check]" >&2
+        exit 2
+        ;;
+esac
+export FORCE CHECK
 
 LOGS=.tmp/logs
 
@@ -57,6 +74,12 @@ LOGS=.tmp/logs
 #   if [ "${FORCE:-0}" = 0 ] && zen rag docs ready --dir "$OUT" --quiet; then
 #       echo "$OUT is already built"
 #       exit 3
+#   fi
+#   if [ "${CHECK:-0}" = 1 ]; then
+#       # Without --quiet it names what is missing and the command that fixes
+#       # it; `|| true` because not-ready is the exit code we came for.
+#       zen rag docs ready --dir "$OUT" || true
+#       exit 4
 #   fi
 #   # Committed index, git-ignored vectors: re-embed from the copies the index
 #   # already holds rather than indexing the documents over again.
@@ -80,9 +103,16 @@ fi
 mkdir -p "$LOGS"
 summary=""
 failed=0
+pending=0
 
 for name in $STEPS; do
-    log="$LOGS/setup-$name.log"
+    # A dry run keeps its own log: overwriting the build's would lose the
+    # record of the build to a question about it.
+    if [ "$CHECK" = 1 ]; then
+        log="$LOGS/check-$name.log"
+    else
+        log="$LOGS/setup-$name.log"
+    fi
     echo
     echo "-- $name  $(date '+%H:%M:%S')  ($log)"
 
@@ -96,6 +126,10 @@ for name in $STEPS; do
     case "$code" in
         0) word=ok ;;
         3) word=skipped ;;
+        4)
+            word="needs setup"
+            pending=1
+            ;;
         *)
             word="failed ($code)"
             failed=1
@@ -105,12 +139,20 @@ for name in $STEPS; do
 "
     # Later steps depend on earlier ones, so a failure stops rather than
     # producing a second failure that is only a consequence of the first.
+    # `needs setup` does not stop it: the point of asking is the whole list.
     if [ "$failed" = 1 ]; then
         break
     fi
 done
 
 echo
-echo "setup:"
+if [ "$CHECK" = 1 ]; then
+    echo "setup check:"
+else
+    echo "setup:"
+fi
 printf '%s' "$summary"
-exit "$failed"
+if [ "$failed" = 1 ] || [ "$pending" = 1 ]; then
+    exit 1
+fi
+exit 0

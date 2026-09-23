@@ -70,7 +70,7 @@ SPECIFICATION-FEEDBACK.md   what it could not do without guessing:
 zen check                the project still loads
         ↓
 scripts/_setup.sh        what has to be built is built
-        ↓
+        ↓                (--check first, to see what is missing)
 zen run                  see whether it does the thing
         ↓
 edit SPECIFICATION.md    ← the report goes back into the spec, not into a prompt
@@ -189,6 +189,7 @@ agent.
 ```sh
 scripts/_setup.sh            # do whatever is not done yet
 scripts/_setup.sh --force    # do all of it again
+scripts/_setup.sh --check    # say what is not done, and do none of it
 ```
 
 The runner `zen init` writes holds a `STEPS` list at the top and runs
@@ -210,6 +211,15 @@ failure appears much later as a search error nobody connects to setup. Ask the
 tool instead - `zen rag docs ready --dir "$OUT" --quiet` exits 0 only when the
 index can answer, and `zen rag docs restore --dir "$OUT"` re-embeds it from the
 copies it already carries.
+
+That same test is the whole of `--check`, which is why the dry run is a flag on
+the runner rather than a second script: the steps already know what "done"
+means, and asking them is cheaper and more honest than a second opinion about
+what a directory ought to contain. Under `$CHECK` a step makes its test, does
+none of the work, and exits **3** when there is nothing to do or **4** when
+there is - reported as `needs setup`, and a non-zero exit overall. It answers
+the question `zen check` cannot: `zen check` says the project loads, this says
+it can run.
 
 Everything transient lives under `.tmp/`, which is git-ignored: deleting it must
 leave the project runnable and `scripts/_setup.sh` re-runnable.

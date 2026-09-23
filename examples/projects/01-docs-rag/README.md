@@ -109,8 +109,9 @@ zen meta run rag-example /spec-apply-feedback
 Then verify and build:
 
 ```sh
-zen check          # the project loads, the models answer
-scripts/_setup.sh  # downloads the docs and builds the index - once
+zen check                  # the project loads, the models answer
+scripts/_setup.sh --check  # ...and says what it still needs
+scripts/_setup.sh          # downloads the docs and builds the index - once
 ```
 
 The setup script skips the work when `assets/docs-db` can already answer - it
@@ -118,6 +119,11 @@ asks `zen rag docs ready`, not whether the directory exists - so it is safe to
 re-run. On a clone of a project whose index is committed, the vectors under
 `lance/` are git-ignored and the step re-embeds them with
 `zen rag docs restore` instead of downloading and indexing everything again.
+
+`--check` asks those same questions and does none of the work, printing what is
+missing and the command that produces it. That is the one to run on a fresh
+clone: `zen check` will pass on a project whose index cannot answer a thing,
+because an index is not something `agents.yaml` declares.
 
 ## 6. Ask it something
 

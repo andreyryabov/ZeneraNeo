@@ -2,6 +2,7 @@ import type { Embedder, EmbeddingRequest, Model, ProcResult, runProcess } from '
 import { MEMORY_MOUNT, readProjectConfig } from '@zenera/neo';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
+    chmodSync,
     existsSync,
     mkdirSync,
     mkdtempSync,
@@ -1677,6 +1678,64 @@ describe('the scaffold', () => {
         // thing anyone has to know. Twice, because it has to stay safe to redo.
         const run = (): string => execFileSync(script, { cwd: tmpdir(), encoding: 'utf8' });
         expect(run()).toBe(run());
+    });
+
+    /**
+     * `--check` answers the question `zen check` cannot reach — an index is not
+     * something `agents.yaml` declares — so it has to say what is missing
+     * without paying the download and the embedding to find out.
+     */
+    it('answers --check without doing the work, and refuses a flag it does not know', () => {
+        const dir = join(root, 'setup-check');
+        mkdirSync(dir, { recursive: true });
+        scaffold({ dir, model: 'gpt-4o' });
+        const script = join(dir, 'scripts', '_setup.sh');
+
+        // A fresh scaffold has no steps, so the dry run agrees with the real one.
+        const at = (...args: string[]): string =>
+            execFileSync(script, args, { cwd: tmpdir(), encoding: 'utf8' });
+        expect(at('--check')).toBe(at());
+
+        let code: number | undefined;
+        try {
+            execFileSync(script, ['--nope'], { cwd: tmpdir(), stdio: 'pipe' });
+        } catch (err) {
+            code = (err as { status?: number }).status;
+        }
+        expect(code).toBe(2);
+    });
+
+    /**
+     * The runner's half of the bargain: a step that reports it is not done must
+     * not stop the walk the way a failure does, or the first unbuilt thing
+     * hides everything behind it and the list is read twice.
+     */
+    it('names every step that needs setup, not just the first', () => {
+        const dir = join(root, 'setup-pending');
+        mkdirSync(dir, { recursive: true });
+        scaffold({ dir, model: 'gpt-4o' });
+        const script = join(dir, 'scripts', '_setup.sh');
+        writeFileSync(script, readFileSync(script, 'utf8').replace('STEPS=""', 'STEPS="one two"'));
+        for (const [name, code] of [
+            ['one', 4],
+            ['two', 3],
+        ] as const) {
+            const step = join(dir, 'scripts', `${name}.sh`);
+            writeFileSync(step, `#!/usr/bin/env bash\necho "${name} spoke"\nexit ${code}\n`);
+            chmodSync(step, 0o755);
+        }
+
+        // Non-zero overall, which is what makes it usable as a gate.
+        let out: string;
+        try {
+            out = execFileSync(script, ['--check'], { cwd: tmpdir(), encoding: 'utf8' });
+            expect.unreachable('a pending step should exit non-zero');
+        } catch (err) {
+            out = (err as { stdout: string }).stdout;
+        }
+        expect(out).toContain('one: needs setup');
+        expect(out).toContain('two spoke');
+        expect(out).toContain('two: skipped');
     });
 
     /**

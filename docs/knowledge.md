@@ -183,6 +183,10 @@ if [ "${FORCE:-0}" = 0 ] && zen rag docs ready --dir "$OUT" --quiet; then
     echo "$OUT is already built"
     exit 3
 fi
+if [ "${CHECK:-0}" = 1 ]; then
+    zen rag docs ready --dir "$OUT" || true   # its reason and its fix, verbatim
+    exit 4
+fi
 # The index is committed and `lance/` is not, so a clone has the documents and
 # no vectors: re-embed from the copies rather than indexing everything again.
 if [ "${FORCE:-0}" = 0 ] && [ -f "$OUT/manifest.json" ]; then
@@ -206,6 +210,13 @@ failure surfaces much later as a search error nobody connects to setup. `zen rag
 docs ready` opens the store and answers with its exit code — 0 searchable, 3
 not — and `zen rag docs restore` puts the vectors back from the index's own
 `sources/`, which is also how an index moves to another embedding model.
+
+The same test answers `scripts/_setup.sh --check`, which makes every step's
+readiness test and does none of the work. That is the command to run on a fresh
+clone: `zen check` will pass on a project whose index cannot answer anything,
+because an index is not something `agents.yaml` declares, and without `--quiet`
+the `ready` output the step passes through names the missing part and the
+`restore` that fixes it.
 
 Say in `SPECIFICATION.md` that the project has a document index, what is in it,
 and which agents may read it - then `/spec-sync-project` maintains the skill, the

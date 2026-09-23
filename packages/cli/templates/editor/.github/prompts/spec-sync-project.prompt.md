@@ -151,6 +151,18 @@ not a paragraph of instructions for a human.
   to a temporary path and moving it into place so an interrupted run never leaves
   a half-built artefact behind. `scripts/_setup.sh --force` redoes everything,
   and reaches each step as `$FORCE=1`.
+- **Every step answers a dry run.** `scripts/_setup.sh --check` reaches each step
+  as `$CHECK=1` and means: make the same "already done" test, then do none of the
+  work. Exit **3** when the answer is yes, otherwise say what is missing and exit
+  **4**, which the runner reports as `needs setup`. This is the one command that
+  says whether the project can run without spending the download and the
+  embedding to find out, so the line a step prints under `$CHECK` is the whole
+  value of it: name the artefact and the command that produces it. Pass a tool's
+  own words through rather than writing a second opinion: `zen rag docs ready`
+  without `--quiet` already prints what is wrong and the `restore` or `index`
+  that fixes it. A check must not assume an earlier step has run: a missing
+  prerequisite is a 4 of its own, not a failure, or the first unbuilt thing
+  hides everything after it.
 - **A step's "already done" test must name something that survives a clone.**
   Git-ignored output does not. A rag index commits its `manifest.json` and
   ignores `lance/`, so `[ -f "$OUT/manifest.json" ]` is true on a fresh checkout
@@ -167,6 +179,10 @@ not a paragraph of instructions for a human.
         echo "$OUT is already built"
         exit 3
     fi
+    if [ "${CHECK:-0}" = 1 ]; then
+        zen rag docs ready --dir "$OUT" || true   # its reason and its fix
+        exit 4
+    fi
     if [ "${FORCE:-0}" = 0 ] && [ -f "$OUT/manifest.json" ]; then
         zen rag docs restore --dir "$OUT"   # committed index, ignored vectors
         exit 0
@@ -178,7 +194,8 @@ not a paragraph of instructions for a human.
 
 - **It must be watchable.** `scripts/_setup.sh` tees each step's output to
   `.tmp/logs/setup-<step>.log`, prints a heartbeat line while a long step runs,
-  and finishes with one line per step: `ok`, `skipped`, or `failed`.
+  and finishes with one line per step: `ok`, `skipped`, `needs setup`, or
+  `failed`.
 - **Everything transient goes under `.tmp/`** - logs, scratch files, downloads,
   test output, and the temporary path a step writes to before moving its
   artefact into place. Nothing else in the tree is a scratch directory, and
@@ -382,6 +399,9 @@ background and follow the logs instead of waiting blind:
   for the same reason, stop and raise it in `SPECIFICATION-FEEDBACK.md`.
 - Prove re-entrancy: once it has succeeded, run `scripts/_setup.sh` once more and
   check that every step reports `skipped` rather than rebuilding.
+- Prove the dry run: `scripts/_setup.sh --check` must then report every step
+  `skipped` and exit 0. `needs setup` for something setup has just built means
+  the step's two tests disagree, and one of them is wrong.
 - **`skipped` on a machine that has never built it is a bug, not a pass.** A
   step that tests for a committed file skips on a fresh clone and leaves the
   project unusable. For every index the project builds, check it can actually

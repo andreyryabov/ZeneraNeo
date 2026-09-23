@@ -75,11 +75,17 @@ In a setup step, in this order:
 
 ```sh
 if [ "${FORCE:-0}" = 0 ] && zen rag docs ready --dir "$OUT" --quiet; then exit 3; fi
+if [ "${CHECK:-0}" = 1 ]; then zen rag docs ready --dir "$OUT" || true; exit 4; fi
 if [ "${FORCE:-0}" = 0 ] && [ -f "$OUT/manifest.json" ]; then
     zen rag docs restore --dir "$OUT"; exit 0
 fi
 # … otherwise index it from the documents
 ```
+
+Exit 4 is what `scripts/_setup.sh --check` reports as `needs setup`. Dropping
+`--quiet` there is deliberate: `ready` prints what is missing and the command
+that fixes it, and repeating that in the step would be a second opinion to keep
+in step with this one.
 
 ## Which index gets read
 
