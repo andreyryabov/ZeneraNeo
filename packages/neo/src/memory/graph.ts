@@ -93,6 +93,20 @@ export class MemoryGraph {
         return node;
     }
 
+    /**
+     * Put a node in exactly as it stands — id, timestamps, revision and counters
+     * included. `add` mints a new memory; this carries one across from another
+     * graph, and replaces the node already under that id if there is one.
+     */
+    adopt(node: MemoryNode): void {
+        const next = { ...node };
+        if (this.#graph.hasNode(node.id)) {
+            this.#graph.replaceNodeAttributes(node.id, next);
+        } else {
+            this.#graph.addNode(node.id, next);
+        }
+    }
+
     update(id: string, patch: NodePatch, at: string): MemoryNode {
         const current = this.#graph.getNodeAttributes(id);
         if (patch.expectedRevision !== undefined && patch.expectedRevision !== current.revision) {
@@ -130,6 +144,13 @@ export class MemoryGraph {
         });
     }
 
+    /** `link` for an edge that already exists elsewhere: it keeps the stamp it had. */
+    adoptEdge(source: string, target: string, attrs: MemoryEdgeAttrs): void {
+        this.#graph.mergeEdgeWithKey(edgeKey(source, target, attrs.relation), source, target, {
+            ...attrs,
+        });
+    }
+
     /** Drops the node and every edge touching it; the file it names is the store's to unlink. */
     forget(id: string): MemoryNode | undefined {
         const node = this.get(id);
@@ -156,6 +177,15 @@ export class MemoryGraph {
                 return;
             }
             out.push({ source, target, relation: attrs.relation });
+        });
+        return out;
+    }
+
+    /** Edges with their attributes and no mask — `edges` is the view, this is the record. */
+    links(): { source: string; target: string; attrs: MemoryEdgeAttrs }[] {
+        const out: { source: string; target: string; attrs: MemoryEdgeAttrs }[] = [];
+        this.#graph.forEachEdge((_key, attrs, source, target) => {
+            out.push({ source, target, attrs });
         });
         return out;
     }

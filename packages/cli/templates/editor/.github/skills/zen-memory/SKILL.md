@@ -610,7 +610,7 @@ can act on.
 ## Inspecting and repairing it
 
 ```
-zen memory [stats|ls|show|export|forget] [args] [options]
+zen memory [stats|ls|show|export|merge|forget] [args] [options]
 ```
 
 `zen memory export --open` is the one to reach for: one self-contained HTML
@@ -627,6 +627,7 @@ so inspection is free and offline.
 | What has been corrected?                 | `zen memory ls --stale`          |
 | What files are being kept?               | `zen memory ls --files`          |
 | Why was that recalled?                   | `zen memory show <id>`           |
+| Fold parallel warmup graphs into one     | `zen memory merge <dir...>`      |
 | That should never have been written down | `zen memory forget <id>`         |
 
 The directory is not fixed. `zen run --memory <dir>` sends one run's memory

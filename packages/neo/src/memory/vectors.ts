@@ -52,6 +52,14 @@ export class VectorBlock {
         return this.#index.has(id);
     }
 
+    /** A copy, not a view: the row it came from moves the next time something is deleted. */
+    get(id: string): Float32Array | undefined {
+        const row = this.#index.get(id);
+        return row === undefined
+            ? undefined
+            : this.#data.slice(row * this.#dims, (row + 1) * this.#dims);
+    }
+
     set(id: string, vector: ArrayLike<number>): void {
         if (vector.length !== this.#dims) {
             throw new Error(`expected a ${this.#dims}-dimension vector, got ${vector.length}`);

@@ -5,14 +5,17 @@ import {
     memoryDir,
     MemoryIndex,
     MemoryStore,
+    MergeConflicts,
+    mergeMemories,
     readProjectConfig,
     renderMemoryHtml,
     type MemoryNode,
+    type MergeReport,
 } from '@zenera/neo';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
-import { basename, isAbsolute, join, resolve } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { project as resolveProject } from '../resolve.ts';
@@ -20,10 +23,12 @@ import {
     ago,
     bold,
     bytes,
+    CliError,
     confirm,
     count,
     cyan,
     dim,
+    EXIT,
     green,
     isInteractive,
     json,
@@ -35,7 +40,7 @@ import {
     yellow,
 } from '../term.ts';
 
-const USAGE = 'zen memory [stats|ls|show|export|forget] [args] [options]';
+const USAGE = 'zen memory [stats|ls|show|export|merge|forget] [args] [options]';
 
 interface Flags {
     project?: string;
@@ -48,9 +53,12 @@ interface Flags {
     out?: string;
     open?: boolean;
     yes?: boolean;
+    force?: boolean;
+    'dry-run'?: boolean;
+    'no-dedupe'?: boolean;
 }
 
-const SUBCOMMANDS = ['stats', 'ls', 'show', 'export', 'forget'];
+const SUBCOMMANDS = ['stats', 'ls', 'show', 'export', 'merge', 'forget'];
 
 /** Enough to see the shape of it; the rest is a number. */
 const LISTED = 30;
@@ -83,6 +91,7 @@ export const memory: Command = {
         '  ls                     Nodes, newest first. Changes nothing.',
         '  show <id>              One node in full, with what it links to.',
         '  export [file]          The whole graph as one HTML page.',
+        '  merge <dir...>         Fold other memories into this one.',
         '  forget <id...>         Remove nodes, their vectors and their files.',
         '',
         '  --project <name|dir>   Which project. Defaults to the one you are in.',
@@ -94,7 +103,10 @@ export const memory: Command = {
         '  --limit <n>            Rows to list. Default 30.',
         '  --out <file>           Where `export` writes. Default memory.html.',
         '  --open                 Open the exported page.',
-        '  --yes                  Do not ask before removing.',
+        '  --dry-run              Say what `merge` would do, and stop.',
+        '  --no-dedupe            Keep memories `merge` would otherwise fold together.',
+        '  --force                Let `merge` pick a winner where two copies disagree.',
+        '  --yes                  Do not ask before removing or merging.',
         '',
         'Everything here reads the graph *unmasked* — every audience, including',
         'what no agent can see. That is the point: when a mask is the thing',
@@ -103,6 +115,11 @@ export const memory: Command = {
         '`export` is the one to reach for. It writes a single self-contained',
         'page: the node list on the left, the graph in the middle, and whatever',
         'you click on the right, file contents and all.',
+        '',
+        '`merge` is for warming a memory in parallel. The lock is per directory,',
+        'so N runs write N memories; this folds them back into one:',
+        '',
+        '  zen memory merge .tmp/warmup-*/memory',
     ],
     run: async (ctx) => {
         const { values, positionals } = parse<Flags>(
@@ -118,6 +135,9 @@ export const memory: Command = {
                 out: { type: 'string' },
                 open: { type: 'boolean' },
                 yes: { type: 'boolean' },
+                force: { type: 'boolean' },
+                'dry-run': { type: 'boolean' },
+                'no-dedupe': { type: 'boolean' },
             },
             USAGE,
         );
@@ -127,7 +147,9 @@ export const memory: Command = {
             throw usageError(`unknown subcommand: ${what}`, USAGE);
         }
         const rest = positionals.slice(1);
-        const opened = await open(ctx.cwd, values.project, values.dir);
+        // `merge` is the one subcommand that may write a memory into existence;
+        // every other one is an inspector and a missing manifest is a mistake.
+        const opened = await open(ctx.cwd, values.project, values.dir, what === 'merge');
 
         try {
             switch (what) {
@@ -139,6 +161,8 @@ export const memory: Command = {
                     return show(opened, rest, ctx.json);
                 case 'export':
                     return await write_(opened, rest, values, ctx.cwd, ctx.json);
+                case 'merge':
+                    return await merge(opened, rest, values, ctx.cwd, ctx.json);
                 default:
                     return await forget(opened, rest, values, ctx.json);
             }
@@ -167,15 +191,20 @@ interface Opened {
  * A named directory is opened as it stands, project or no project: a graph
  * copied out of a running session is the one most worth looking at, and it
  * should not have to be given an `agents.yaml` first.
+ *
+ * `create` drops the requirement that anything be there yet, for `merge`,
+ * which has somewhere to put what it reads even when the destination is a name
+ * nothing has written to.
  */
 async function open(
     cwd: string,
     want: string | undefined,
     at: string | undefined,
+    create = false,
 ): Promise<Opened> {
     if (at) {
         const dir = resolve(cwd, at);
-        if (!existsSync(join(dir, 'manifest.json'))) {
+        if (!create && !existsSync(join(dir, 'manifest.json'))) {
             throw usageError(`${dir} is not a memory`, 'no manifest.json in it');
         }
         return { store: await MemoryStore.open(dir), dir, project: basename(dir) };
@@ -189,7 +218,7 @@ async function open(
             'give an agent `memory: true` in agents.yaml, or add a `memory:` block',
         );
     }
-    if (!existsSync(join(dir, 'manifest.json'))) {
+    if (!create && !existsSync(join(dir, 'manifest.json'))) {
         throw usageError(
             `${project.name} has a memory configured but nothing in it yet`,
             'it is written the first time an agent commits something',
@@ -457,6 +486,116 @@ function reveal(target: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// merge
+// ---------------------------------------------------------------------------
+
+/**
+ * Warming a memory is parallel work, and the lock is per directory, so N runs
+ * produce N memories rather than one. This is the other half of that: it folds
+ * them back together, offline and without a model.
+ *
+ * Divergence refuses rather than guesses. Two copies of the same memory that
+ * disagree are a question about which piece of work was right, and answering
+ * it silently is how a merge loses the answer.
+ */
+async function merge(
+    o: Opened,
+    dirs: string[],
+    flags: Flags,
+    cwd: string,
+    asJson: boolean,
+): Promise<void> {
+    if (!dirs.length) {
+        throw usageError(
+            'merge takes at least one memory directory',
+            'zen memory merge <dir...> [--dir <into>]',
+        );
+    }
+    const dryRun = flags['dry-run'] === true;
+    const held = o.store.graph.order;
+
+    if (held && !dryRun && !flags.yes) {
+        if (!isInteractive()) {
+            throw usageError(
+                `${o.project} already remembers ${count(held, 'node')}`,
+                'pass --yes, or --dry-run to see what would change first',
+            );
+        }
+        note(
+            `${count(dirs.length, 'memory', 'memories')} into ${bold(o.dir)} ` +
+                dim(`· ${count(held, 'node')} already there`),
+        );
+        if (!(await confirm('Merge?'))) {
+            note('nothing merged');
+            return;
+        }
+    }
+
+    let report: MergeReport;
+    try {
+        report = await mergeMemories(
+            o.store,
+            dirs.map((d) => resolve(cwd, d)),
+            { dedupe: !flags['no-dedupe'], force: flags.force, dryRun },
+        );
+    } catch (err) {
+        if (err instanceof MergeConflicts) {
+            throw diverged(err, cwd, asJson);
+        }
+        throw err;
+    }
+
+    if (asJson) {
+        json(report);
+        return;
+    }
+    writeAll(
+        table([
+            [dim('memory'), dim('nodes'), dim('new'), dim('shared'), dim('folded'), dim('files')],
+            ...report.sources.map((s) => [
+                near(s.dir, cwd),
+                String(s.nodes),
+                s.added ? green(String(s.added)) : '0',
+                String(s.shared),
+                s.twins ? yellow(String(s.twins)) : '0',
+                String(s.files),
+            ]),
+        ]),
+    );
+    write();
+    const summary = [
+        count(report.added, 'node'),
+        `${count(report.edges, 'edge')}`,
+        `${report.twins} folded`,
+    ].join(', ');
+    note(dryRun ? `${yellow('would add')} ${summary}` : `${green('merged')} ${summary}`);
+}
+
+/**
+ * A refusal with the ids to look at. It is deliberately not a summary: the
+ * point of stopping is that a person decides, and they cannot decide from a
+ * count.
+ */
+function diverged(err: MergeConflicts, cwd: string, asJson: boolean): CliError {
+    if (asJson) {
+        json({ error: err.message, conflicts: err.conflicts });
+    } else {
+        writeAll(
+            table(
+                err.conflicts.map((c) => [
+                    cyan(c.id),
+                    dim(`r${c.mine} ↔ r${c.theirs}`),
+                    clip(c.text, 48),
+                    dim(near(c.dir, cwd)),
+                ]),
+            ),
+        );
+        write();
+    }
+    return new CliError(err.message, EXIT.failed, err.hint);
+}
+
+// ---------------------------------------------------------------------------
 // forget
 // ---------------------------------------------------------------------------
 
@@ -514,4 +653,10 @@ async function forget(o: Opened, ids: string[], flags: Flags, asJson: boolean): 
 function clip(text: string, n: number): string {
     const one = text.replace(/\s+/g, ' ').trim();
     return one.length > n ? one.slice(0, n - 1) + '…' : one;
+}
+
+/** A path as it was probably typed: relative when it is below here, absolute when it is not. */
+function near(dir: string, cwd: string): string {
+    const rel = relative(cwd, dir);
+    return rel && !rel.startsWith('..') ? rel : dir;
 }

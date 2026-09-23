@@ -1,6 +1,6 @@
 ---
 name: zen-memory-warmup
-description: Pre-populating an agent project's memory graph through warm-up queries before production or deployment — isolating scratch memory and workspaces in timestamped .tmp directories, using stronger reasoning models, validating machine-readable JSON output, categorizing queries with limits, shuffling, and dry-run execution, inspecting the graph with zen memory stats/ls, atomic promotion into the project, and generating automated population scripts in scripts/memory_warmup.sh.
+description: Pre-populating an agent project's memory graph through warm-up queries before production or deployment — isolating scratch memory and workspaces in timestamped .tmp directories, using stronger reasoning models, validating machine-readable JSON output, categorizing queries with limits, shuffling, dry-run execution, fanning queries out across parallel runs and folding the results back with zen memory merge, inspecting the graph with zen memory stats/ls, atomic promotion into the project, and generating automated population scripts in scripts/memory_warmup.sh.
 ---
 
 # Memory Warmup
@@ -33,7 +33,7 @@ synthesize, connect, and commit high-value knowledge nodes.
 
 ## Core Architecture & Safety Rules
 
-Warmup is an offline staging process. It must adhere to five safety rules:
+Warmup is an offline staging process. It must adhere to six safety rules:
 
 ### 1. Never warm up directly into the project's active `memory/`
 
@@ -100,6 +100,56 @@ Track graph accumulation by inspecting `zen memory stats --dir ...` in between
 warmup queries, and do not overwrite the project's `memory/` until the final
 graph in `.tmp/warmup-<timestamp>/memory` has been verified to contain expected
 nodes and vector embeddings.
+
+### 6. Give every parallel run its own memory directory
+
+The memory lock is **per directory**. Two runs pointed at the same `--memory`
+do not interleave — the second one refuses to start. So a warmup that wants to
+use the wall clock has to fan out into one memory per run:
+
+```sh
+.tmp/warmup-$STAMP/memory-1
+.tmp/warmup-$STAMP/memory-2
+...
+```
+
+and fold them back together afterwards with `zen memory merge`, which is
+offline, contacts no model, and preserves node ids:
+
+```sh
+zen memory merge .tmp/warmup-$STAMP/memory-* --dir .tmp/warmup-$STAMP/memory
+```
+
+Merging is what makes `--incremental` safe under fan-out: every shard starts
+from a copy of the same project memory, so most of what comes back is a shared
+ancestor rather than a collision. Shared ancestors reconcile silently; two runs
+that genuinely changed the same memory in different ways stop the merge and
+name the ids, because picking a winner silently is how a merge loses an answer.
+
+---
+
+## Fanning Out
+
+```mermaid
+flowchart LR
+    A["Selected queries"] --> B1["zen run → memory-1"]
+    A --> B2["zen run → memory-2"]
+    A --> B3["zen run → memory-N"]
+    B1 --> M["zen memory merge memory-* --dir memory"]
+    B2 --> M
+    B3 --> M
+    M --> V["zen memory stats --dir memory"]
+    V --> P["Backup & promote to memory/"]
+```
+
+Bound the fan-out with `--jobs <n>`. Each run is a model call **and** a Podman
+container, so the useful ceiling is set by the machine and the provider's rate
+limit rather than by the number of queries; 4 is a sane default.
+
+Sequential warmup is still the better choice when the queries build on each
+other, because a later query can recall what an earlier one committed. Fan-out
+trades that away for wall-clock time, and `merge` gives back everything except
+the cross-query recall.
 
 ---
 
@@ -181,6 +231,7 @@ The script should automate the entire pipeline:
     - `--shuffle`: Randomize query order before applying limits.
     - `--category <name>`: Filter queries to a specific category.
     - `--model <provider:model>`: Override model with a reasoning flagship.
+    - `--jobs <n>`: Run up to $n$ queries at once, each into its own memory.
     - `--incremental`: Copy existing project memory into staging before warming up.
     - `-y`, `--yes`: Promote memory without interactive confirmation.
 2. Create timestamped staging paths under `.tmp/` (e.g.
@@ -189,8 +240,9 @@ The script should automate the entire pipeline:
 4. If `--dry-run` is active, print the execution plan and exit 0 before touching disk.
 5. Invoke `zen run` with `--memory`, `--workspace`, `--model`, and `--json`.
 6. Parse each outcome with `jq`, halt if a turn fails, and report per-query execution time and total elapsed time since start.
-7. Print graph statistics via `zen memory stats --dir ...` between queries to track graph growth, followed by a final validation.
-8. Safely backup and replace the project's `memory/` directory with the warmed graph.
+7. Under `--jobs <n>`, give each run its own `memory-N` directory and fold them back with `zen memory merge memory-* --dir memory`.
+8. Print graph statistics via `zen memory stats --dir ...` between queries to track graph growth, followed by a final validation.
+9. Safely backup and replace the project's `memory/` directory with the warmed graph.
 
 ### Recommended Script Template (`scripts/memory_warmup.sh`)
 
@@ -211,6 +263,7 @@ pattern:
 #   --shuffle               Randomize query order before applying limits
 #   --category <name>       Filter queries to a specific category
 #   --model <ref>           Override model (e.g. anthropic:claude-sonnet-4-5)
+#   --jobs <n>              Run up to n queries at once, one memory each (default 1)
 #   --incremental           Seed staging memory with current memory/ before runs
 #   -y, --yes               Assume yes for memory promotion
 #   -h, --help              Show this help
@@ -219,6 +272,7 @@ pattern:
 #   ./scripts/memory_warmup.sh --dry-run
 #   ./scripts/memory_warmup.sh --dry-run --category workflows --limit 2
 #   ./scripts/memory_warmup.sh --shuffle --limit 5 --model anthropic:claude-sonnet-4-5
+#   ./scripts/memory_warmup.sh --jobs 4
 #   ./scripts/memory_warmup.sh --incremental
 #
 
@@ -234,6 +288,7 @@ INCREMENTAL=false
 ASSUME_YES=false
 DRY_RUN=false
 LIMIT=0
+JOBS=1
 SHUFFLE=false
 CATEGORY_FILTER=""
 
@@ -275,6 +330,10 @@ while [[ $# -gt 0 ]]; do
             MODEL="$2"
             shift 2
             ;;
+        --jobs)
+            JOBS="$2"
+            shift 2
+            ;;
         --incremental)
             INCREMENTAL=true
             shift
@@ -292,6 +351,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --shuffle          Randomize query order before applying limits"
             echo "  --category <name>  Filter queries to a specific category"
             echo "  --model <ref>      Override model (e.g. anthropic:claude-sonnet-4-5)"
+            echo "  --jobs <n>         Run up to n queries at once, one memory each (default 1)"
             echo "  --incremental      Seed staging memory with current memory/ before runs"
             echo "  -y, --yes          Assume yes for memory promotion"
             echo "  -h, --help         Show this help"
@@ -378,6 +438,7 @@ if [ "$DRY_RUN" = true ]; then
     echo "Category filter:   ${CATEGORY_FILTER:-<all>}"
     echo "Shuffled:          $SHUFFLE"
     echo "Limit:             ${LIMIT:-none}"
+    echo "Jobs:              $JOBS"
     echo "Selected queries:  ${#SELECTED[@]} of ${#ALL_QUERIES[@]}"
     echo ""
     echo "Planned queries:"
@@ -389,7 +450,15 @@ if [ "$DRY_RUN" = true ]; then
     echo ""
     echo "Sample command that would execute:"
     SAMPLE_Q="${SELECTED[0]#*|}"
-    echo "  zen run --memory \"$STAGING_MEM\" --workspace \"$WORKSPACES_DIR/run-1-<timestamp>\" ${MODEL:+--model \"$MODEL\" }--json \"$SAMPLE_Q\""
+    if [ "$JOBS" -le 1 ]; then
+        SAMPLE_MEM="$STAGING_MEM"
+    else
+        SAMPLE_MEM="$SCRATCH_DIR/memory-1"
+    fi
+    echo "  zen run --memory \"$SAMPLE_MEM\" --workspace \"$WORKSPACES_DIR/run-1-<timestamp>\" ${MODEL:+--model \"$MODEL\" }--json \"$SAMPLE_Q\""
+    if [ "$JOBS" -gt 1 ]; then
+        echo "  zen memory merge \"$SCRATCH_DIR\"/memory-* --dir \"$STAGING_MEM\" --yes"
+    fi
     echo "  zen memory stats --dir \"$STAGING_MEM\""
     echo ""
     echo "Post-run validation that would run:"
@@ -421,78 +490,139 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Prepare staging memory
-mkdir -p "$STAGING_MEM" "$WORKSPACES_DIR"
+# Prepare staging paths
+mkdir -p "$WORKSPACES_DIR"
 
-if [ "$INCREMENTAL" = true ] && [ -d "$PROJECT_MEM" ]; then
-    echo "Copying existing memory for incremental warmup..."
-    cp -R "$PROJECT_MEM/." "$STAGING_MEM/"
-fi
+seed_memory() {
+    mkdir -p "$1"
+    if [ "$INCREMENTAL" = true ] && [ -d "$PROJECT_MEM" ]; then
+        cp -R "$PROJECT_MEM/." "$1/"
+    fi
+}
 
-echo "Running ${#SELECTED[@]} warmup queries..."
-echo "----------------------------------------"
+# One query, into the memory directory it is handed. The lock is per directory,
+# so this is the unit that more than one of can be in flight at a time.
+run_query() {
+    local index="$1" category="$2" query="$3" mem="$4"
+    local workspace="$WORKSPACES_DIR/run-$index-$(date +%s)"
+    mkdir -p "$workspace"
 
-COUNT=0
-for item in "${SELECTED[@]}"; do
-    COUNT=$((COUNT + 1))
-    CATEGORY="${item%%|*}"
-    QUERY="${item#*|}"
-
-    RUN_STAMP="$(date +%s)"
-    RUN_WORKSPACE="$WORKSPACES_DIR/run-$COUNT-$RUN_STAMP"
-    mkdir -p "$RUN_WORKSPACE"
-
-    echo "[$COUNT/${#SELECTED[@]}] [$CATEGORY] \"$QUERY\""
-    echo "  -> Workspace: $RUN_WORKSPACE"
-
-    # Assemble arguments
-    CMD=(zen run --memory "$STAGING_MEM" --workspace "$RUN_WORKSPACE" --json)
+    local cmd=(zen run --memory "$mem" --workspace "$workspace" --json)
     if [ -n "$MODEL" ]; then
-        CMD+=(--model "$MODEL")
+        cmd+=(--model "$MODEL")
     fi
-    CMD+=("$QUERY")
+    cmd+=("$query")
 
-    QUERY_START=$(date +%s)
+    echo "[$index/${#SELECTED[@]}] [$category] \"$query\""
+    echo "  -> Workspace: $workspace"
 
-    # Run query and capture JSON output
-    JSON_OUT="$("${CMD[@]}")"
-    EXIT_CODE=$?
-
-    QUERY_END=$(date +%s)
-    QUERY_DURATION=$((QUERY_END - QUERY_START))
-    TOTAL_ELAPSED=$((QUERY_END - WARMUP_START))
-
-    if [ $EXIT_CODE -ne 0 ]; then
-        echo "  -> Command exited with code $EXIT_CODE (query: $(format_duration $QUERY_DURATION), total elapsed: $(format_duration $TOTAL_ELAPSED))" >&2
-        exit $EXIT_CODE
+    local start out
+    start=$(date +%s)
+    if ! out="$("${cmd[@]}")"; then
+        echo "  -> Command failed" >&2
+        return 1
     fi
 
-    # Parse outcome via jq if available
     if command -v jq >/dev/null 2>&1; then
-        STOP_REASON=$(echo "$JSON_OUT" | jq -r '.stopReason // empty')
-        AGENT=$(echo "$JSON_OUT" | jq -r '.agent // empty')
-        echo "  -> Completed: agent=$AGENT stopReason=$STOP_REASON"
-
-        if [ "$STOP_REASON" != "final" ]; then
-            echo "  -> Unexpected stop reason: $STOP_REASON" >&2
-            exit 1
+        local stop agent
+        stop=$(echo "$out" | jq -r '.stopReason // empty')
+        agent=$(echo "$out" | jq -r '.agent // empty')
+        echo "  -> Completed: agent=$agent stopReason=$stop"
+        if [ "$stop" != "final" ]; then
+            echo "  -> Unexpected stop reason: $stop" >&2
+            return 1
         fi
     else
         echo "  -> Turn completed successfully."
     fi
 
-    echo "  -> Timing: query took $(format_duration $QUERY_DURATION) | elapsed since start: $(format_duration $TOTAL_ELAPSED)"
+    local now
+    now=$(date +%s)
+    echo "  -> Timing: query took $(format_duration $((now - start))) | elapsed since start: $(format_duration $((now - WARMUP_START)))"
+}
 
-    # Print memory stats between queries to track graph growth
-    if [ -f "$STAGING_MEM/manifest.json" ]; then
-        echo ""
-        echo "Memory stats after query $COUNT:"
-        zen memory stats --dir "$STAGING_MEM"
-    else
-        echo "  -> Memory stats: No memories committed yet."
+# `wait` with no arguments always reports success, so every child is waited for
+# by pid. Batches of $JOBS rather than a rolling queue: `wait -n` wants bash
+# 4.3 and macOS still ships 3.2.
+PIDS=()
+FAILED=false
+drain() {
+    if [ ${#PIDS[@]} -eq 0 ]; then
+        return 0
     fi
+    local pid
+    for pid in "${PIDS[@]}"; do
+        wait "$pid" || FAILED=true
+    done
+    PIDS=()
+}
+
+echo "Running ${#SELECTED[@]} warmup queries (jobs: $JOBS)..."
+echo "----------------------------------------"
+
+if [ "$JOBS" -le 1 ]; then
+    seed_memory "$STAGING_MEM"
+    COUNT=0
+    for item in "${SELECTED[@]}"; do
+        COUNT=$((COUNT + 1))
+        run_query "$COUNT" "${item%%|*}" "${item#*|}" "$STAGING_MEM"
+
+        # Print memory stats between queries to track graph growth
+        if [ -f "$STAGING_MEM/manifest.json" ]; then
+            echo ""
+            echo "Memory stats after query $COUNT:"
+            zen memory stats --dir "$STAGING_MEM"
+        else
+            echo "  -> Memory stats: No memories committed yet."
+        fi
+        echo ""
+    done
+else
+    SHARDS=()
+    COUNT=0
+    for item in "${SELECTED[@]}"; do
+        COUNT=$((COUNT + 1))
+        SHARD="$SCRATCH_DIR/memory-$COUNT"
+        seed_memory "$SHARD"
+        SHARDS+=("$SHARD")
+        run_query "$COUNT" "${item%%|*}" "${item#*|}" "$SHARD" \
+            >"$SCRATCH_DIR/run-$COUNT.log" 2>&1 &
+        PIDS+=($!)
+        if [ ${#PIDS[@]} -ge "$JOBS" ]; then
+            drain
+        fi
+    done
+    drain
+
+    for log in "$SCRATCH_DIR"/run-*.log; do
+        if [ -f "$log" ]; then
+            cat "$log"
+            echo ""
+        fi
+    done
+
+    if [ "$FAILED" = true ]; then
+        echo "One or more warmup runs failed; nothing was promoted." >&2
+        exit 1
+    fi
+
+    # Only a memory something was committed to can be merged; a run that found
+    # nothing worth keeping never writes a manifest.
+    MERGE=()
+    for shard in "${SHARDS[@]}"; do
+        if [ -f "$shard/manifest.json" ]; then
+            MERGE+=("$shard")
+        fi
+    done
+    if [ ${#MERGE[@]} -eq 0 ]; then
+        echo "No warmup run committed anything." >&2
+        exit 1
+    fi
+
+    echo "Merging ${#MERGE[@]} memories into $STAGING_MEM..."
+    zen memory merge "${MERGE[@]}" --dir "$STAGING_MEM" --yes
     echo ""
-done
+fi
 
 echo "----------------------------------------"
 TOTAL_RUN_TIME=$(( $(date +%s) - WARMUP_START ))

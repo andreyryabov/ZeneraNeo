@@ -151,6 +151,7 @@ zen memory stats            # size, vocabulary, whether it is embedded
 zen memory ls --files       # nodes, newest first
 zen memory show <id>        # one node in full, with what it links to
 zen memory export --open    # the whole graph as one self-contained HTML page
+zen memory merge <dir...>   # fold other memories into this one
 zen memory forget <id...>   # remove nodes, their vectors and their files
 ```
 
@@ -164,6 +165,29 @@ running session - copy the directory, delete its `.lock`, read the copy.
 `forget` is for what should never have been written down - it removes the node,
 its vector and its file bytes together. A memory that is merely out of date
 should be superseded instead.
+
+## Merging several memories
+
+The lock is per directory, so two runs cannot write one memory at the same
+time. Warming a memory in parallel therefore means N runs writing N memories,
+and `merge` is how they come back together:
+
+```sh
+zen memory merge .tmp/warmup-20260923/memory-*
+```
+
+Sources are positional, the target is the project you are in or whatever
+`--dir` names, and a target that does not exist yet is created. It is offline -
+no model, no re-embedding - so every side must already share an embedder.
+
+Node ids survive a merge, which makes the same id on both sides the ordinary
+case rather than a collision: parallel runs usually start from a copy of the
+same memory. When both copies are at the same revision with the same content
+they are one memory, and only the use counts reconcile - to the larger of the
+two, so merging the same source twice changes nothing. When they disagree the
+whole merge is refused and the conflicting ids are listed, because which piece
+of work was right is a question for a person; `--force` answers it with the
+highest revision. `--dry-run` reports what would happen and writes nothing.
 
 ## Say it in the specification
 

@@ -49,7 +49,7 @@ export interface MemoryManifest {
     updatedAt: string;
 }
 
-interface Lock {
+export interface Lock {
     pid: number;
     host: string;
     startedAt: string;
@@ -275,6 +275,16 @@ async function atomic(path: string, body: string | Uint8Array): Promise<void> {
         await rm(tmp, { force: true });
         throw err;
     }
+}
+
+/**
+ * Who is writing a memory right now, if anyone. Read-only on purpose: it never
+ * claims the lock and never clears a stale one, so it is safe to ask about a
+ * directory this process has no intention of opening for writing.
+ */
+export function lockHolder(dir: string): Lock | undefined {
+    const held = readLock(join(dir, LOCK_FILE));
+    return held && held.host === hostname() && alive(held.pid) ? held : undefined;
 }
 
 function readLock(path: string): Lock | undefined {

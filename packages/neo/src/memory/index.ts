@@ -526,7 +526,7 @@ type PlannedNode =
     | { existing: true; id: string; patch: NodePatch };
 
 /** Whitespace and case are not what makes two memories different. */
-function flatten(text: string): string {
+export function flatten(text: string): string {
     return text.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 

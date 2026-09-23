@@ -1,7 +1,7 @@
 # Memory - `zen memory`
 
 ```
-zen memory [stats|ls|show|export|forget] [args] [options]
+zen memory [stats|ls|show|export|merge|forget] [args] [options]
 ```
 
 Alias: `mem`.
@@ -24,20 +24,24 @@ skill.
 | `zen memory ls`           | Nodes, newest first. Changes nothing        |
 | `zen memory show <id>`    | One node in full, with what it links to     |
 | `zen memory export [f]`   | The whole graph as one HTML page            |
+| `zen memory merge <dir…>` | Fold other memories into this one           |
 | `zen memory forget <id…>` | Remove nodes, their vectors and their files |
 
-| Flag                    | Meaning                                      |
-| ----------------------- | -------------------------------------------- |
-| `--project <name\|dir>` | Which project. Inferred from the directory   |
-| `--dir <dir>`           | Read this memory directory instead           |
-| `--kind <name>`         | Only this kind of node                       |
-| `--audience <name>`     | Only nodes committed under this label        |
-| `--files`               | Only nodes that remember a file              |
-| `--stale`               | Only nodes something has superseded          |
-| `--limit <n>`           | Rows to list. Default 30                     |
-| `--out <file>`          | Where `export` writes. Default `memory.html` |
-| `--open`                | Open the exported page                       |
-| `--yes`                 | Do not ask before removing                   |
+| Flag                    | Meaning                                       |
+| ----------------------- | --------------------------------------------- |
+| `--project <name\|dir>` | Which project. Inferred from the directory    |
+| `--dir <dir>`           | Read this memory directory instead            |
+| `--kind <name>`         | Only this kind of node                        |
+| `--audience <name>`     | Only nodes committed under this label         |
+| `--files`               | Only nodes that remember a file               |
+| `--stale`               | Only nodes something has superseded           |
+| `--limit <n>`           | Rows to list. Default 30                      |
+| `--out <file>`          | Where `export` writes. Default `memory.html`  |
+| `--open`                | Open the exported page                        |
+| `--dry-run`             | Say what `merge` would do, and stop           |
+| `--no-dedupe`           | Keep memories `merge` would otherwise fold    |
+| `--force`               | Let `merge` pick a winner where copies differ |
+| `--yes`                 | Do not ask before removing or merging         |
 
 ## A graph that is not the project's
 
@@ -89,6 +93,40 @@ Mermaid graph that large is not a picture of anything.
 It is a single file with no server behind it, so it attaches to a bug report.
 The only network it does is fetching Mermaid; without that it degrades to a
 working list and detail view.
+
+## Merging
+
+The lock is per directory, so two runs cannot warm the same memory at once.
+They each warm their own, and `merge` puts the results back together:
+
+```sh
+zen memory merge .tmp/warmup-*/memory                    into the project’s
+zen memory merge a/memory b/memory --dir merged/memory   into a named one
+```
+
+Sources are positional and the target is `--dir`, or the project you are in —
+the same shape as everywhere else here. The shell expands the glob, so a
+twelve-way fan-out is still one word. `merge` is the one subcommand that will
+write a memory into existence: a target that is not there yet is created.
+
+It is offline and contacts no model, which is why every side has to have been
+embedded with the same model already. Node ids are kept, so the interesting
+case is the same id on both sides:
+
+- **Same revision, same content** — a shared ancestor, because the runs started
+  from a copy of the same memory. Use counts and timestamps reconcile to the
+  larger of the two, never the sum, so merging a source twice changes nothing.
+- **Anything else** — a divergence. The whole merge is refused, nothing is
+  written, and every conflicting id is listed with both revisions. `--force`
+  takes the highest revision instead.
+
+Memories that are not the same node but say the same thing fold together on the
+same rule a commit uses for duplicates — near-identical by cosine, same kind,
+same audience, never one that remembers a file. `--no-dedupe` turns that off.
+Edges follow whatever their ends folded onto, and an edge whose ends both
+landed on the same memory is dropped.
+
+`--dry-run` reports all of it and writes nothing.
 
 ## Forgetting
 

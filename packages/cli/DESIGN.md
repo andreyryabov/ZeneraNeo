@@ -1079,7 +1079,38 @@ hostile - node text and remembered files are model output. Data reaches the
 document only inside an inert `application/json` block and leaves it only
 through `textContent`.
 
-### 10.2 Forgetting
+### 10.2 `merge` - putting a fanned-out warmup back together
+
+The memory lock is per directory, which is what keeps two runs of one project
+from interleaving commits. It also means warming a memory in parallel is N runs
+writing N memories. `merge` is the other half of that: it folds them into one,
+offline, with no model and no re-embedding.
+
+It is the only subcommand here that writes a memory into existence. Everything
+else is an inspector, and a target with no `manifest.json` is a mistake worth
+naming; a merge target that does not exist yet is the ordinary case, because
+the warmed graph is usually assembled somewhere new before it is promoted.
+Sources are positional and the target is `--dir`, so the shell expands
+`.tmp/warmup-$STAMP/memory-*` and the command shape matches every other
+subcommand's.
+
+The work itself is `mergeMemories` in `@zenera/neo`, for the same reason
+`forget` delegates: the rules for what two memories mean together belong beside
+the graph, not in a renderer. What the CLI owes it is the table, the
+confirmation before writing into a memory that already holds something, and
+turning a refusal into ids a person can look at.
+
+Refusal is the interesting part of the design. Node ids survive a merge, so
+parallel runs seeded from a copy of the same memory produce the same id on
+several sides - the common case, not a collision. Same revision and same
+content is a shared ancestor and reconciles to nothing more than counters, and
+those take the larger of the two rather than the sum so that merging a source
+twice is a no-op. Anything else is a real divergence: the whole merge stops
+before a byte is written and lists the ids with both revisions, because which
+piece of work was right is a question, and answering it silently is how a merge
+loses the answer. `--force` answers it with the highest revision.
+
+### 10.3 Forgetting
 
 `forget` asks before it removes, and refuses outright when there is no terminal
 to ask at; `--yes` is the only way through a script. It then delegates to the
