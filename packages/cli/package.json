@@ -48,14 +48,20 @@
         "prepack": "tsc -b"
     },
     "dependencies": {
-        "@inkjs/ui": "^2.0.0",
-        "ink": "^7.1.1",
-        "react": "^19.2.8",
-        "@zenera/neo": "^1.1.22",
         "@anthropic-ai/sdk": "^0.120.0",
         "@google/genai": "^2.18.0",
+        "@inkjs/ui": "^2.0.0",
         "@openrouter/sdk": "^1.2.80",
+        "@zenera/neo": "^1.1.22",
         "google-auth-library": "^10.0.0",
-        "openai": "^6.0.0"
+        "ink": "^7.1.1",
+        "openai": "^6.0.0",
+        "react": "^19.2.8",
+        "yauzl": "^3.4.0",
+        "yazl": "^3.3.1"
+    },
+    "devDependencies": {
+        "@types/yauzl": "^3.4.0",
+        "@types/yazl": "^3.3.1"
     }
 }

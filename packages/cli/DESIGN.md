@@ -131,6 +131,8 @@ two.
 | `memory`  | The memory graph from outside the agents (§10).                            |
 | `check`   | Reports on the project in full: files, wiring, credentials, models (§9.2). |
 |           | `--fix` rewrites the files a project copies but does not own (§9.3).       |
+| `export`  | Writes the project to a shareable zip archive (§11).                       |
+| `import`  | Unpacks one, registers it, and runs nothing in it (§11).                   |
 | `sandbox` | Checks and prepares the container command-line tools run in (§9).          |
 | `cache`   | What work has been kept, and getting rid of it (§4.2).                     |
 | `version` | CLI, library and Node versions.                                            |
@@ -1090,7 +1092,72 @@ memory is to commit the corrected node and supersede the old one, which keeps
 the record of having been wrong; `zen memory ls --stale` is how you read that
 back. `forget` is for what should never have been stored.
 
-## 11. Not here
+## 11. Moving a project - `zen export` and `zen import`
+
+A project is a directory, so the reason this is not `zip -r` is that half of the
+directory is _this machine_ rather than the project. `export` writes the other
+half, and `import` reads it back.
+
+```
+<name>-<stamp>.zip
+├── zenera-export.json          the manifest, at the root and outside the project
+└── <name>/                     the project, verbatim
+```
+
+What travels is the `.gitignore` rule with one deliberate difference: **the
+vectors travel.** A clone rebuilds a rag index from the documents it already
+carries, and memory has no such fallback - a graph without `vectors.f32` recalls
+by term overlap until every node is written again. An archive is not a clone
+with a setup step waiting for it; it is the whole thing, or it is not worth
+sending. `--no-vectors` makes the small archive for someone who will run
+`zen rag <subject> restore`, and says so on both ends.
+
+What is left behind: `sessions/`, `.tmp/`, `.git/`, `node_modules/`, lock files,
+`.DS_Store`, any `*.zip` sitting at the top of the project - the default
+destination puts one there, and a second export must not pack the first - and
+`.env`. Symbolic links are counted and never followed. The `.env` is the one
+that needs saying twice: the values never travel, behind no flag, and the names
+do - as a synthesized `.env.example` with every value blank and every comment
+kept, because "which credentials does this need" is the first question on the
+other end and the answer is not a secret.
+
+The archive is a zip because every machine already opens one, and because a
+person handed an archive should be able to look inside without this tool.
+Reading and writing are streaming throughout (`yazl`, `yauzl`): an assets tree
+with vectors runs to hundreds of megabytes, and a reader that has to hold the
+archive in memory to open it is a reader that fails on the archives worth
+sending.
+
+`export` refuses only one thing - memory held by a live run, because a graph
+copied mid-write is an archive that opens and is wrong, which is worse than one
+that does not open. A project that fails `zen check` is exported with a warning:
+sending someone a broken project to ask for help is the point.
+
+### 11.1 Import is the suspicious half
+
+An archive is a file somebody sent, and every path, size and mode in it is a
+claim. The guards live in `src/archive.ts`, next to the code that writes them,
+because a guard kept apart from the thing it guards is a guard that drifts:
+
+- **Every entry path is resolved and checked** - no absolute path, no `..`
+  segment, no backslash, no drive letter, and nothing outside the single
+  directory the manifest names. `safePath` is exported so it can be tested
+  directly.
+- **An entry claiming to be a symbolic link is refused.** That is the classic
+  way an unpacker is talked into writing outside the tree it checked.
+- **Entry count and unpacked size are bounded**, against an archive that
+  decompresses to more than the disk holds.
+- **Modes are replaced, not honoured** - `0644`, and `0755` for `*.sh` only.
+- **The manifest is parsed field by field**, and the project name is checked
+  before it becomes a directory or a registry key.
+
+And the rule the command is built on: **nothing in the archive is executed.** It
+carries `scripts/`, a Dockerfile and a `.github/` tree, every one of which a
+machine could be talked into running on arrival. `import` writes files,
+registers a name, and prints the commands you would type next - which you can
+read first, because they are on your screen and not in somebody else's zip.
+
+## 12. Not here
 
 - **No daemon.** Nothing runs between commands. "Is a run live" is answered by a
   lockfile holding a pid, not by a service that has to be kept alive to answer.
@@ -1099,4 +1166,7 @@ back. `forget` is for what should never have been stored.
   CLI adds nothing beside it.
 - **No credential logic in the library.** The keyring ends at `process.env`.
 - **No sync, no remote projects, no team sharing.** The registry is one
-  machine's index of one machine's directories.
+  machine's index of one machine's directories, and `zen export` is a file you
+  send - not an upload, not a registry, not an account.
+- **No encryption or signing** on an archive beyond the zip's own CRC. Send it
+  over something you already trust.

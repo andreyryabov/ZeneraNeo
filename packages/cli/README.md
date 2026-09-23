@@ -461,6 +461,41 @@ zen sandbox clean                     # remove containers created by zen
 `disk` are machine-wide operations, so use them when you mean to inspect or
 remove resources beyond the current project.
 
+## Sharing a project
+
+A project is a directory, so sending one somewhere else is a zip - except that
+half of the directory belongs to this machine rather than to the project.
+`zen export` writes the other half.
+
+```sh
+zen export                            # ./<project>-<stamp>.zip, from inside the project
+zen export my-project --out /tmp/a.zip
+zen export --no-vectors               # much smaller; needs a restore step on arrival
+
+zen import a.zip                      # unpacks into ./<project> and registers it
+zen import a.zip ~/code/theirs --name theirs
+```
+
+It carries `agents.yaml`, the `agents/` tree, the specification and its
+feedback, `assets/`, `memory/`, `sandbox/`, `scripts/` and the editor files.
+It leaves behind `sessions/`, `.tmp/`, `.git/`, `node_modules/`, lock files, any
+`*.zip` at the top of the project - and `.env`. The **values** in `.env` never
+travel, behind no flag; the names do, as a `.env.example` with every value
+blank, because knowing which credentials a project needs is the first thing you
+want on the other end.
+
+The vectors travel by default. A rag index without its `lance/` tree looks built
+and cannot search, and memory has no other source at all - a graph without its
+vectors recalls by term overlap until every node is written again. `--no-vectors`
+leaves both out for a much smaller archive, and the import tells you to run
+`zen rag <subject> restore`.
+
+`zen import` treats the archive as something a stranger sent: every path is
+checked against escaping the target directory, symbolic-link entries are
+refused, and the size it unpacks to is bounded. **Nothing inside is executed** -
+not `scripts/_setup.sh`, not the Dockerfile, not a line of the `.github/` tree.
+The commands to run next are printed for you to read and type.
+
 ## Commands
 
 | Command   | Does                                                                 |
@@ -475,6 +510,8 @@ remove resources beyond the current project.
 | `inspect` | Opens or rebuilds a run's `report.html`.                             |
 | `memory`  | What the agents remember - size, listing, one node, or a whole page. |
 | `check`   | Validates the project and every file it names, and asks the models.  |
+| `export`  | Writes the project to a shareable zip archive.                       |
+| `import`  | Unpacks one, registers it, and runs nothing in it.                   |
 | `sandbox` | Checks and prepares the container that command-line tools run in.    |
 | `cache`   | What work has been kept, and getting rid of it.                      |
 | `version` | CLI, library and Node versions.                                      |

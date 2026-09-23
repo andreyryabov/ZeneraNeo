@@ -2,6 +2,8 @@ import type { BannerText } from '../banner.ts';
 import type { Command } from '../command.ts';
 import { cache } from './cache.ts';
 import { check } from './check.ts';
+import { pack } from './export.ts';
+import { unpack } from './import.ts';
 import { init } from './init.ts';
 import { inspect } from './inspect.ts';
 import { key } from './key.ts';
@@ -17,7 +19,11 @@ import { version } from './version.ts';
 /**
  * Insertion order is the order help prints in, and it is deliberate: the four
  * a new user needs first, then the credentials-and-models pair, then the two
- * reports on a project, then the two that are only ever run on purpose.
+ * reports on a project, then the pair that moves a project between machines,
+ * then the ones that are only ever run on purpose.
+ *
+ * `export` and `import` are reserved words, so the two commands are declared
+ * under names a module can export and given their real ones here.
  */
 export const COMMANDS: Record<string, Command> = {
     init,
@@ -29,6 +35,8 @@ export const COMMANDS: Record<string, Command> = {
     models,
     check,
     inspect,
+    export: pack,
+    import: unpack,
     memory,
     sandbox,
     cache,
@@ -49,6 +57,10 @@ export const ALIASES: Record<string, string> = {
     edit: 'open',
     code: 'open',
     mock: 'faker',
+    pack: 'export',
+    archive: 'export',
+    unpack: 'import',
+    share: 'export',
 };
 
 // ---------------------------------------------------------------------------
