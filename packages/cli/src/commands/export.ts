@@ -1,5 +1,5 @@
+import { lockHolder, memoryDir, readProjectConfig } from '@zenera/neo';
 import { existsSync, readFileSync } from 'node:fs';
-import { hostname } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import {
     ARCHIVE_FORMAT,
@@ -16,7 +16,7 @@ import { one, parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { ENV_FILE } from '../env.ts';
 import { stamp } from '../ids.ts';
-import { alive, isBusy, Registry, sessionIds, sessionsDir } from '../projects.ts';
+import { isBusy, Registry, sessionIds, sessionsDir } from '../projects.ts';
 import { project as resolveProject } from '../resolve.ts';
 import { ownVersion } from '../scaffold.ts';
 import {
@@ -189,14 +189,13 @@ export const pack: Command = {
  * the only thing it can disturb is an asset the agent is editing.
  */
 function settled(dir: string, force: boolean, memory: boolean): void {
-    if (memory) {
-        const held = lockHolder(join(dir, 'memory', '.lock'));
-        if (held !== undefined && !force) {
-            throw invalidError(
-                `this project's memory is in use (pid ${held})`,
-                'wait for that run to finish, or: zen export --no-memory',
-            );
-        }
+    const at = memory ? memoryAt(dir) : undefined;
+    const held = at ? lockHolder(at) : undefined;
+    if (held && !force) {
+        throw invalidError(
+            `this project's memory is in use (pid ${held.pid}, since ${held.startedAt})`,
+            'wait for that run to finish, or: zen export --no-memory',
+        );
     }
     const busy = sessionIds(dir).filter((id) => isBusy(join(sessionsDir(dir), id)));
     if (busy.length > 0 && !force) {
@@ -204,16 +203,14 @@ function settled(dir: string, force: boolean, memory: boolean): void {
     }
 }
 
-/** The pid holding a lock, when one is alive on this host. */
-function lockHolder(path: string): number | undefined {
+/**
+ * The configured memory directory, or nothing when the project will not load —
+ * which is a project this command exports anyway, so it cannot be an error here.
+ */
+function memoryAt(dir: string): string | undefined {
     try {
-        const lock = JSON.parse(readFileSync(path, 'utf8')) as { pid?: number; host?: string };
-        if (typeof lock.pid !== 'number' || (lock.host && lock.host !== hostname())) {
-            return undefined;
-        }
-        return alive(lock.pid) ? lock.pid : undefined;
+        return memoryDir(dir, readProjectConfig(dir).config);
     } catch {
-        // Absent, unreadable or malformed: nothing is holding it.
         return undefined;
     }
 }
