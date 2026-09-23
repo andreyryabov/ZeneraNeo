@@ -2377,6 +2377,62 @@ describe('the sandbox check', () => {
         // A file that is not there cannot be built, so the engine is never asked.
         expect(e.seen.some((l) => l.includes('build'))).toBe(false);
     });
+
+    /**
+     * The pin `zen init` wrote is never rewritten afterwards, so the only thing
+     * standing between an upgraded host and a container holding an older `zen`
+     * is this reading — which is why it does not need the engine.
+     */
+    describe('the `@zenera/*` pin in the Dockerfile', () => {
+        const dockerfile = (install: string): string =>
+            `FROM scratch\n# bump @zenera/cli and @zenera/rag together\nRUN npm install -g ${install}\n`;
+
+        it('says nothing when the pin is this `zen`', async () => {
+            const mine = await versionOf(cliManifest);
+            const report = await validateProject({
+                dir: project(dockerfile(`@zenera/cli@${mine} @zenera/rag@${mine}`)),
+                sandbox: { enabled: false },
+            });
+
+            expect(of(report, 'warning')).not.toContain('sandbox.pin.stale');
+            expect(of(report, 'warning')).not.toContain('sandbox.pin.absent');
+        });
+
+        it('warns when the pin has fallen behind the host, and names both packages', async () => {
+            const report = await validateProject({
+                dir: project(dockerfile('@zenera/cli@0.0.1 @zenera/rag@0.0.1')),
+                sandbox: { enabled: false },
+            });
+
+            // It loads and it builds; only the `zen` inside it is the wrong one.
+            expect(of(report, 'error')).toEqual([]);
+            expect(of(report, 'warning')).toContain('sandbox.pin.stale');
+            const stale = report.findings.find((f) => f.code === 'sandbox.pin.stale')!;
+            expect(stale.where).toBe('sandbox/Dockerfile');
+            expect(stale.message).toContain('@zenera/cli@0.0.1');
+            expect(stale.message).toContain('@zenera/rag@0.0.1');
+            expect(stale.fix).toContain(await versionOf(cliManifest));
+        });
+
+        it('warns when the package is named with no version at all', async () => {
+            const report = await validateProject({
+                dir: project(dockerfile('@zenera/cli')),
+                sandbox: { enabled: false },
+            });
+
+            expect(of(report, 'warning')).toContain('sandbox.pin.absent');
+            expect(of(report, 'warning')).not.toContain('sandbox.pin.stale');
+        });
+
+        it('reads the pin, not the prose about it', async () => {
+            const report = await validateProject({
+                dir: project('FROM scratch\n# installs @zenera/cli@0.0.1 in another image\n'),
+                sandbox: { enabled: false },
+            });
+
+            expect(of(report, 'warning')).not.toContain('sandbox.pin.stale');
+        });
+    });
 });
 
 // ---------------------------------------------------------------------------

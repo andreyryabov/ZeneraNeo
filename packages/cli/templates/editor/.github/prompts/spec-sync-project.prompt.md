@@ -115,7 +115,10 @@ the model to compute or remember. Specifically:
   in it to the version of `zen` in hand. Read that version with `zen --version`
   and write it into the `npm install -g` line, so the CLI an agent runs inside
   the container is the same one that built it. An unpinned name drifts away from
-  the host on the next image build; a stale pin is a mismatch nothing reports.
+  the host on the next image build; a stale pin leaves the container holding an
+  older `zen` than the session outside it. `zen check` reports both, as
+  `sandbox.pin.absent` and `sandbox.pin.stale`, but will not repair either - the
+  Dockerfile is the project's file, so this edit is yours to make.
 
 Never delete an **extra** without saying so. Report it, say why the
 specification does not cover it, and leave it unless I tell you to remove it.

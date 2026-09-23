@@ -972,6 +972,20 @@ the case in hand. Every project scaffolded before they existed carries a memory
 document with no condition on it, which still reaches every agent and still
 loads without complaint; the bytes are the only thing that says so.
 
+`sandbox/Dockerfile` goes stale the same silent way and is handled the other
+way round. `zen init` pins `@zenera/cli` and `@zenera/rag` to its own version,
+and `keep: true` means no later `init` or `open` rewrites the file - so the pin
+is fixed at creation and the host walks away from it at the next upgrade, while
+the file parses, the image builds and the only symptom is a tool inside the
+container behaving unlike the documentation outside it. The check reads the
+`npm install -g` line and reports `sandbox.pin.stale`, or `sandbox.pin.absent`
+for a name with no version on it. Both are warnings: the project runs, it just
+runs a different `zen` than the one you are holding. Neither is repaired by
+`--fix`, because that command replaces only the files that are ours and this
+one is the project's - a rewrite would discard whatever else was added to it.
+The reading is textual and needs no engine, which is the point: `--no-sandbox`
+and a laptop with no podman are exactly the cases nothing else would tell.
+
 ### 9.4 Where the disk goes
 
 A container is per _session_, not per project, so a project worked on for a

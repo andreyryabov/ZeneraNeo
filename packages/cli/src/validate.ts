@@ -35,7 +35,7 @@ import { resolveBuild, type ResolvedBuild } from './image.ts';
 import { SHAPES, envNames, form, type KeyStore, type Liveness, type Service } from './keys.ts';
 import { probeModels, type ModelTarget } from './liveness.ts';
 import { BuildError, ensurePodmanReady } from './podman.ts';
-import { staleShared } from './scaffold.ts';
+import { ownVersion, staleShared } from './scaffold.ts';
 
 // ---------------------------------------------------------------------------
 // The project check
@@ -1691,6 +1691,8 @@ function checkSandbox(
         return undefined;
     }
 
+    checkPin(join(root, file), file, add);
+
     try {
         return resolveBuild(root, config.sandbox);
     } catch (err) {
@@ -1701,6 +1703,76 @@ function checkSandbox(
             message: err instanceof Error ? err.message : String(err),
         });
         return undefined;
+    }
+}
+
+/** `@zenera/cli`, and the version after it when the line pins one. */
+const ZENERA_INSTALL = /@zenera\/([a-z0-9-]+)(?:@([^\s\\'"]+))?/g;
+
+/**
+ * Whether the Dockerfile's `@zenera/*` installs name this `zen`.
+ *
+ * `zen init` writes the version it was run by and never rewrites the file
+ * again — the scaffold keeps what the project already has — so the pin is fixed
+ * at creation and falls behind the host on the next upgrade. Nothing else
+ * notices: the file parses, the image builds, and the container simply holds a
+ * different `zen` than the session outside it, which is a mismatch that shows
+ * up as a tool behaving unlike its documentation.
+ *
+ * Read rather than run, so it is true on the laptop with no container engine —
+ * the one `--no-sandbox` leaves with no other word on the subject.
+ */
+function checkPin(path: string, rel: string, add: Add): void {
+    let text: string;
+    try {
+        // Existence is already a finding; an unreadable file is not worth a
+        // second one, and a throw here would cost every check after it.
+        text = readFileSync(path, 'utf8');
+    } catch {
+        return;
+    }
+
+    const mine = ownVersion();
+    const stale = new Set<string>();
+    const loose = new Set<string>();
+    for (const line of text.split('\n')) {
+        // A comment naming the package is prose about the pin, not the pin.
+        if (/^\s*#/.test(line)) {
+            continue;
+        }
+        for (const match of line.matchAll(ZENERA_INSTALL)) {
+            const name = `@zenera/${match[1]}`;
+            const pinned: string | undefined = match[2];
+            if (pinned === undefined) {
+                loose.add(name);
+            } else if (pinned !== mine) {
+                stale.add(`${name}@${pinned}`);
+            }
+        }
+    }
+
+    const fix = `pin them to ${mine}, the version \`zen --version\` reports`;
+    if (stale.size > 0) {
+        add({
+            severity: 'warning',
+            code: 'sandbox.pin.stale',
+            where: rel,
+            message:
+                `installs ${[...stale].join(', ')}, but this \`zen\` is ${mine} — the CLI an ` +
+                'agent runs inside the container is not the one that built the session',
+            fix,
+        });
+    }
+    if (loose.size > 0) {
+        add({
+            severity: 'warning',
+            code: 'sandbox.pin.absent',
+            where: rel,
+            message:
+                `installs ${[...loose].join(', ')} unpinned, so the next image build takes ` +
+                'whatever is current and drifts away from the host without saying so',
+            fix,
+        });
     }
 }
 

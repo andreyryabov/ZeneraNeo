@@ -51,6 +51,11 @@ checked too. A word that is neither is a usage error (exit 2), not a report.
   exist, and - unless `--no-sandbox` - the image **builds** and one command runs
   in it, against a temporary directory rather than your workspace. No container
   engine at all is a warning, not an error.
+- The `@zenera/*` the Dockerfile installs are pinned to **this** `zen`. The pin
+  is written once, by `zen init`, and nothing rewrites it afterwards, so it falls
+  behind the host on the next upgrade and the container ends up holding a
+  different `zen` than the session outside it. Read rather than run, so this one
+  is reported with `--no-sandbox` too.
 
 ### Findings
 
@@ -66,6 +71,7 @@ fork.unknown          skills.missing         skill.unloadable / .no-skill-md
 skills.no-catalog     skills.unreachable     skill.unused
 assets.missing        assets.overbroad       sandbox.dockerfile.missing
 sandbox.build         sandbox.smoke          sandbox.start / .unchecked
+sandbox.pin.stale     sandbox.pin.absent
 provider.invalid      model.none             model.unresolvable
 model.refused         model.unreachable      model.unusable
 embedding.refused     embedding.unreachable  embedding.unusable

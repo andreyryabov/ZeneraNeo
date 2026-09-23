@@ -83,8 +83,11 @@ const MEMORY_REFERENCE = join(
 /**
  * This `zen`'s own version, which the scaffold pins the sandbox's tools to.
  * The publishable packages move in lockstep, so one number covers them all.
+ *
+ * Exported so the check that reports a drifted pin reads the same number the
+ * scaffold wrote, rather than a second definition of "this version".
  */
-function ownVersion(): string {
+export function ownVersion(): string {
     const manifest = fileURLToPath(new URL('../package.json', import.meta.url));
     return (JSON.parse(readFileSync(manifest, 'utf8')) as { version: string }).version;
 }
