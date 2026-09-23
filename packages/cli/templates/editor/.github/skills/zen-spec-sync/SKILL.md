@@ -111,7 +111,11 @@ However small the diff:
    last.
 2. **`scripts/_setup.sh` has run to completion in this session, and re-runs
    clean.** A one-line specification change can still break a setup step, and a
-   pass that did not run it does not know.
+   pass that did not run it does not know. `skipped` is only a pass if the
+   artefact really is usable: for every index the project builds, check
+   `zen rag <subject> ready --dir <dir>` agrees. A step that tests for a
+   committed `manifest.json` skips on a fresh clone whose git-ignored `lance/`
+   vectors are missing, and the project cannot search.
 3. **§9 of the copilot instructions, worked as a checklist**, group by group.
 4. **The capability obligations in §0.1.** For every capability the project has
    turned on, load that capability's skill and re-check what it requires - in

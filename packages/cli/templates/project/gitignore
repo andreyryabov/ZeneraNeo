@@ -14,7 +14,12 @@ memory/.lock
 # Credentials.
 .env
 
-# Generated vector database files (rebuilt with scripts/_setup.sh)
+# A rag index commits everything except its vectors: they are binary, they are
+# large, and `zen rag <subject> restore` rebuilds them from the copies of the
+# documents the index already carries — which is why this is safe to ignore and
+# `memory/` above is not. A clone therefore holds an index that looks built and
+# cannot search until a setup step restores it. `zen rag <subject> ready` is the
+# test for that; `[ -f manifest.json ]` is not, because the manifest is here.
 assets/**/lance/
 
 .DS_Store

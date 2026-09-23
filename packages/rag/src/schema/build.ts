@@ -49,6 +49,8 @@ export interface BuildOptions {
     /** what the documents turned out to hold, before a vector has been paid for */
     onRead?: (summary: BuildSummary) => void;
     onProgress?: (done: number, total: number) => void;
+    /** every vector is in and the search indexes are about to be built, silently */
+    onWriting?: (rows: number) => void;
 }
 
 export interface BuildSummary {
@@ -108,6 +110,7 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
         writer = await openStore(options.out);
         const dimensions = await embedAll(entities, options, journal, cache, writer);
         journal.phase('writing');
+        options.onWriting?.(entities.length);
         const written = await writer.finish();
 
         const manifest: Manifest = {

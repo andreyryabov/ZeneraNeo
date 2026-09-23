@@ -61,6 +61,22 @@ export function span(ms: number): string {
 export const breakdown = (timings: readonly { name: string; ms: number }[]): string =>
     timings.map((t) => `${t.name} ${span(t.ms)}`).join(' · ');
 
+/**
+ * The silence after the last embedded row. Building the full-text and vector
+ * indexes is one call that reports nothing until it returns, and on a large
+ * corpus that is minutes — so it is announced, or it reads as a hang. Small
+ * indexes finish before the line is read, and are not promised a wait.
+ */
+export function indexing(rows: number, unit: string): string[] {
+    const lines = [`indexing ${rows} ${unit} for search: full text, then vectors …`];
+    if (rows >= 50_000) {
+        lines.push('this step reports no progress, and at this size it takes several minutes');
+    } else if (rows >= 5_000) {
+        lines.push('this step reports no progress until it is done');
+    }
+    return lines;
+}
+
 /** The first line only: a stack trace in a README helps nobody. */
 export function message(reason: unknown): string {
     const text = reason instanceof Error ? reason.message : String(reason);

@@ -202,6 +202,15 @@ prove itself re-entrant. A step writes into `.tmp/` and moves the result into
 place, so an interrupted build never leaves half an artefact behind, and reads
 `$FORCE` to know whether `--force` was passed.
 
+A step decides it has nothing to do by testing for something that **survives a
+clone**. Git-ignored output does not: a rag index commits its `manifest.json`
+and ignores `lance/`, so `[ -f "$OUT/manifest.json" ]` is true on a fresh
+checkout that cannot search at all, every step reports `skipped`, and the
+failure appears much later as a search error nobody connects to setup. Ask the
+tool instead - `zen rag docs ready --dir "$OUT" --quiet` exits 0 only when the
+index can answer, and `zen rag docs restore --dir "$OUT"` re-embeds it from the
+copies it already carries.
+
 Everything transient lives under `.tmp/`, which is git-ignored: deleting it must
 leave the project runnable and `scripts/_setup.sh` re-runnable.
 

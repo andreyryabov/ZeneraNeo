@@ -148,6 +148,31 @@ not a paragraph of instructions for a human.
   to a temporary path and moving it into place so an interrupted run never leaves
   a half-built artefact behind. `scripts/_setup.sh --force` redoes everything,
   and reaches each step as `$FORCE=1`.
+- **A step's "already done" test must name something that survives a clone.**
+  Git-ignored output does not. A rag index commits its `manifest.json` and
+  ignores `lance/`, so `[ -f "$OUT/manifest.json" ]` is true on a fresh checkout
+  that cannot search at all - every step reports `skipped` and the failure
+  surfaces much later, as a search error nobody connects to setup. Ask the tool
+  rather than guessing at files: `zen rag docs ready --dir "$OUT" --quiet` exits
+  0 when the index can answer and 3 when it cannot, and
+  `zen rag docs restore --dir "$OUT"` re-embeds it from the copies it already
+  holds instead of indexing the documents again. A step that builds an index
+  looks like this:
+
+    ```sh
+    if [ "${FORCE:-0}" = 0 ] && zen rag docs ready --dir "$OUT" --quiet; then
+        echo "$OUT is already built"
+        exit 3
+    fi
+    if [ "${FORCE:-0}" = 0 ] && [ -f "$OUT/manifest.json" ]; then
+        zen rag docs restore --dir "$OUT"   # committed index, ignored vectors
+        exit 0
+    fi
+    rm -rf .tmp/docs-db
+    zen rag docs index assets/docs --embedding <ref> --out .tmp/docs-db
+    rm -rf "$OUT" && mv .tmp/docs-db "$OUT"
+    ```
+
 - **It must be watchable.** `scripts/_setup.sh` tees each step's output to
   `.tmp/logs/setup-<step>.log`, prints a heartbeat line while a long step runs,
   and finishes with one line per step: `ok`, `skipped`, or `failed`.
@@ -354,6 +379,11 @@ background and follow the logs instead of waiting blind:
   for the same reason, stop and raise it in `SPECIFICATION-FEEDBACK.md`.
 - Prove re-entrancy: once it has succeeded, run `scripts/_setup.sh` once more and
   check that every step reports `skipped` rather than rebuilding.
+- **`skipped` on a machine that has never built it is a bug, not a pass.** A
+  step that tests for a committed file skips on a fresh clone and leaves the
+  project unusable. For every index the project builds, check it can actually
+  answer - `zen rag docs ready --dir <dir>` - and fix the step's test if the
+  answer disagrees with what setup reported.
 
 ## 7. Verify and report
 

@@ -15,17 +15,19 @@ import {
     type Command,
     type Context,
 } from '@zenera/cli/lib';
-import { relative, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
 import { resolveEmbedder } from '../common/embedder.ts';
 import { locateIndex, outputDir } from '../common/locate.ts';
-import { assertSameEmbedding } from '../common/manifest.ts';
+import { assertSameEmbedding, inspectIndex } from '../common/manifest.ts';
 import { PatternError } from '../common/match.ts';
 import { INTERVAL_MS } from '../common/progress.ts';
-import { breakdown, grid } from '../common/prose.ts';
+import { breakdown, grid, indexing } from '../common/prose.ts';
+import { announce, reportReady, stagingFor, swapIn } from '../common/restore.ts';
 import { assemble, DEFAULT_MAX_LINES } from './assemble.ts';
 import { buildIndex } from './build.ts';
 import { CHUNK_KINDS } from './chunk.ts';
-import { DOCS_INDEX, readManifest, type DocRecord } from './files.ts';
+import { DOCS_INDEX, readManifest, SOURCES_DIR, type DocRecord, type Manifest } from './files.ts';
 import { DOC_EXTENSIONS } from './load.ts';
 import {
     grepLines,
@@ -46,6 +48,7 @@ import {
     type DocsQuery,
     type SearchMode,
 } from './search.ts';
+import { ChunkStore } from './store.ts';
 
 const { defaultDir: DEFAULT_DIR, envName: DIR_ENV } = DOCS_INDEX;
 
@@ -73,9 +76,11 @@ const { defaultDir: DEFAULT_DIR, envName: DIR_ENV } = DOCS_INDEX;
 // every match or none, and these give it with no model and no credential.
 // ---------------------------------------------------------------------------
 
-const USAGE = 'zen rag docs <index|search|list|grep|show|stats> [args...]';
+const USAGE = 'zen rag docs <index|restore|ready|search|list|grep|show|stats> [args...]';
 
 const INDEX_USAGE = 'zen rag docs index --embedding <ref> [--out <dir>] <path...>';
+const RESTORE_USAGE = 'zen rag docs restore [--dir <dir>] [--embedding <ref>]';
+const READY_USAGE = 'zen rag docs ready [--dir <dir>] [--quiet]';
 const SEARCH_USAGE =
     'zen rag docs search [--dir <dir>] [query... | --text-query <text> --vector-query <text>]';
 const LIST_USAGE = 'zen rag docs list <files|sections|tables> [--dir <dir>]';
@@ -92,6 +97,11 @@ export const command: Command = {
                 '  index <path...>',
                 dim('Build or refresh an index before searching changed documents.'),
             ],
+            [
+                '  restore',
+                dim('Re-embed an index from its own copies, after a clone or a model change.'),
+            ],
+            ['  ready', dim('Ask whether an index can answer. Exit 0 if it can, 3 if it cannot.')],
             [
                 '  search [text]',
                 dim('Rank relevant passages with hybrid full-text and vector search.'),
@@ -137,6 +147,29 @@ export const command: Command = {
         '',
         dim('  Every document is copied into the index, so it stays portable and'),
         dim('  every quoted line comes from the document rather than a rebuild of it.'),
+        '',
+        'Restore — the vectors, from the copies the index already holds',
+        ...table([
+            ['  -d, --dir <dir>', dim(`Which index. Found from here if unset; see ${DIR_ENV}.`)],
+            ['  --embedding <ref>', dim('Move to another embedder. Default: the one recorded.')],
+            ['  --dimensions <n>', dim('Narrower vectors. Default: the width recorded.')],
+            ['  --chunk-tokens <n>', dim('Re-chunk at this size. Default: the size recorded.')],
+            ['  --batch <n>', dim("Texts per embedding request. Default: the model's own cap.")],
+            ['  --no-cache', dim('Embed everything again, ignoring what is already kept.')],
+            ['  --cache-dir <dir>', dim('Take them from somewhere other than the shared cache.')],
+            ['  --quiet', dim('No narration.')],
+        ]),
+        '',
+        dim('  `lance/` is binary and rebuildable, so it is usually git-ignored while the'),
+        dim('  rest of the index is committed. A clone then has an index that looks built'),
+        dim(`  and cannot answer: ${cyan('ready')} says so, and this puts the vectors back`),
+        dim('  without going to find the documents again.'),
+        '',
+        dim('  It is also how an index changes embedder: --embedding re-embeds everything'),
+        dim('  and rewrites the manifest, so later searches ask for the new model.'),
+        '',
+        dim('  The rebuild is written beside the index and renamed into place, so a failed'),
+        dim('  restore leaves the old index intact — and needs room for both meanwhile.'),
         '',
         'Search',
         ...table([
@@ -216,6 +249,10 @@ export const command: Command = {
         switch (name) {
             case 'index':
                 return await index(tail, ctx);
+            case 'restore':
+                return await restore(tail, ctx);
+            case 'ready':
+                return await ready(tail, ctx);
             case 'search':
                 return await search(tail, ctx);
             case 'list':
@@ -322,6 +359,7 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
                       ),
                   )
             : undefined,
+        onWriting: loud ? (rows) => notes(indexing(rows, 'chunks').map(aside)) : undefined,
     });
 
     if (ctx.json) {
@@ -348,6 +386,139 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
     const where =
         out === resolve(ctx.cwd, DEFAULT_DIR) ? '' : ` --dir ${relative(ctx.cwd, out) || out}`;
     note(dim(`  search it: ${cyan(`zen rag docs search${where} "what you are after"`)}`));
+}
+
+// ---------------------------------------------------------------------------
+// restore
+// ---------------------------------------------------------------------------
+
+interface RestoreFlags {
+    dir?: string;
+    embedding?: string;
+    batch?: string;
+    dimensions?: string;
+    'chunk-tokens'?: string;
+    'no-cache'?: boolean;
+    'cache-dir'?: string;
+    quiet?: boolean;
+}
+
+async function restore(args: readonly string[], ctx: Context): Promise<void> {
+    const { values } = parse<RestoreFlags>(
+        args,
+        {
+            dir: { type: 'string', short: 'd' },
+            embedding: { type: 'string' },
+            batch: { type: 'string' },
+            dimensions: { type: 'string' },
+            'chunk-tokens': { type: 'string' },
+            'no-cache': { type: 'boolean' },
+            'cache-dir': { type: 'string' },
+            quiet: { type: 'boolean' },
+        },
+        RESTORE_USAGE,
+    );
+
+    const dir = indexDir(ctx, values.dir);
+    const manifest = await readManifest(dir);
+    const sources = join(dir, SOURCES_DIR);
+    if (!existsSync(sources)) {
+        throw new CliError(
+            `${dir} kept no copy of its documents`,
+            EXIT.invalid,
+            'build it again from the documents with `zen rag docs index`',
+        );
+    }
+    const loud = !values.quiet && !ctx.json;
+    const cacheDir = values['cache-dir'] ? resolve(ctx.cwd, values['cache-dir']) : paths.cache();
+    // Every setting defaults to what the index recorded, so a restore that is
+    // asked for nothing produces the index it already had, minus the loss.
+    const ref = values.embedding ?? manifest.embedding.ref;
+    const dimensions = values.dimensions
+        ? count(values.dimensions, '--dimensions')
+        : manifest.embedding.requested;
+    const chunk = values['chunk-tokens']
+        ? { chunkTokens: count(values['chunk-tokens'], '--chunk-tokens') }
+        : manifest.chunk;
+    if (loud && !chunk) {
+        note(dim('  this index records no chunk settings; the defaults are used'));
+    }
+    const chosen = await resolveEmbedder(ref, {
+        maxBatch: values.batch ? count(values.batch, '--batch') : undefined,
+        dimensions,
+    });
+    const started = Date.now();
+    if (loud) {
+        announce(manifest, ref, `${manifest.counts.chunks} chunks`);
+    }
+
+    const staging = stagingFor(dir);
+    const built = await buildIndex({
+        files: [sources],
+        cwd: dir,
+        // The names are the identity — chunk ids, --file patterns, what `show`
+        // takes — so they are taken from `sources/` rather than from wherever
+        // the documents happened to sit on the machine that indexed them.
+        root: sources,
+        out: staging.dir,
+        embedder: chosen,
+        embeddingRef: ref,
+        // The index is the same index; what rebuilt its vectors is not a new
+        // author of it.
+        indexer: manifest.indexer,
+        chunk,
+        dimensions,
+        cache: !values['no-cache'],
+        cacheDir: values['cache-dir'] ? cacheDir : undefined,
+        onProgress: loud
+            ? (done, total) =>
+                  note(
+                      dim(
+                          `  embedded ${done}/${total} · ${Math.floor((done / total) * 100)}% · ${elapsed(started)}`,
+                      ),
+                  )
+            : undefined,
+        onWriting: loud ? (rows) => notes(indexing(rows, 'chunks').map(aside)) : undefined,
+    });
+    await swapIn(dir, staging);
+
+    if (ctx.json) {
+        json({ dir, manifest: built.manifest });
+        return;
+    }
+    note();
+    write(dir);
+    note(
+        `  restored ${bold(String(built.manifest.counts.chunks))} chunks from ` +
+            `${bold(String(built.manifest.counts.documents))} document(s) in ${bold(dir)}, ` +
+            `embedded with ${built.manifest.embedding.ref} ` +
+            `(${built.manifest.embedding.dimensions}d)`,
+    );
+    note(dim(`  ${breakdown(built.timings)}`));
+    note(
+        dim(
+            `  reused ${built.reused.vectors}/${built.manifest.counts.chunks} vectors` +
+                `${values['no-cache'] ? ' (--no-cache)' : ` from ${cacheDir}`}`,
+        ),
+    );
+}
+
+// ---------------------------------------------------------------------------
+// ready
+// ---------------------------------------------------------------------------
+
+async function ready(args: readonly string[], ctx: Context): Promise<void> {
+    const { values } = parse<{ dir?: string; quiet?: boolean }>(
+        args,
+        { dir: { type: 'string', short: 'd' }, quiet: { type: 'boolean' } },
+        READY_USAGE,
+    );
+    const health = await inspectIndex<Manifest>(
+        indexDir(ctx, values.dir),
+        DOCS_INDEX,
+        ChunkStore.open,
+    );
+    reportReady(health, ctx, values.quiet === true);
 }
 
 const SOURCE_HEADERS = ['LINES', 'SECTIONS', 'TABLES', 'CHUNKS'] as const;
@@ -742,9 +913,10 @@ async function stats(args: readonly string[], ctx: Context): Promise<void> {
     );
     const dir = indexDir(ctx, values.dir);
     const manifest = await readManifest(dir);
+    const health = await inspectIndex<Manifest>(dir, DOCS_INDEX, ChunkStore.open);
 
     if (ctx.json) {
-        json(manifest);
+        json({ ...manifest, state: health.state });
         return;
     }
     note(bold(dir));
@@ -757,6 +929,9 @@ async function stats(args: readonly string[], ctx: Context): Promise<void> {
                 '  indexes',
                 `fts ${yes(manifest.indexes.fts)} · vector ${yes(manifest.indexes.vector)}`,
             ],
+            // `stats` reports and never refuses, so a missing store is a row
+            // here rather than the error `search` would raise.
+            ['  vectors', health.state === 'ready' ? 'present' : dim('missing — `restore` them')],
         ]),
     );
     printSources(manifest.sources);
@@ -844,5 +1019,7 @@ function notes(lines: readonly string[]): void {
         note(line);
     }
 }
+
+const aside = (line: string): string => dim(`  ${line}`);
 
 const yes = (value: boolean): string => (value ? 'yes' : 'no');

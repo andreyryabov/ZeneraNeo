@@ -154,7 +154,7 @@ export class EntityStore {
             throw new CliError(
                 `${dir} holds no searchable table`,
                 EXIT.invalid,
-                'rebuild it with `zen rag schema index`',
+                'put the vectors back with `zen rag schema restore`, or rebuild it with `zen rag schema index`',
             );
         }
     }

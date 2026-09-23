@@ -18,18 +18,20 @@ word "password" appears in forty places that are not the one you want.
 ## The commands
 
 ```
-zen rag schema <index|search|list|grep|trace|show|stats> [spec...]
+zen rag schema <index|restore|ready|search|list|grep|trace|show|stats> [spec...]
 ```
 
-| Command  | Answers                                | Embedder? | Typical |
-| -------- | -------------------------------------- | --------- | ------- |
-| `index`  | builds the thing                       | yes       | minutes |
-| `search` | _what is this API's way to do X?_      | **yes**   | seconds |
-| `list`   | _what methods/types/fields are there?_ | no        | instant |
-| `grep`   | _does the string X appear anywhere?_   | no        | instant |
-| `trace`  | _which call can reach this field?_     | no        | instant |
-| `show`   | _print exactly these things_           | no        | instant |
-| `stats`  | _what is in this index?_               | no        | instant |
+| Command   | Answers                                | Embedder? | Typical |
+| --------- | -------------------------------------- | --------- | ------- |
+| `index`   | builds the thing                       | yes       | minutes |
+| `restore` | _put the vectors back_                 | **yes**   | minutes |
+| `ready`   | _can this index answer at all?_        | no        | instant |
+| `search`  | _what is this API's way to do X?_      | **yes**   | seconds |
+| `list`    | _what methods/types/fields are there?_ | no        | instant |
+| `grep`    | _does the string X appear anywhere?_   | no        | instant |
+| `trace`   | _which call can reach this field?_     | no        | instant |
+| `show`    | _print exactly these things_           | no        | instant |
+| `stats`   | _what is in this index?_               | no        | instant |
 
 Only `search` ranks, and only `search` costs a network round trip - it embeds
 the query before it can compare anything. The other five read `graph.json` off
@@ -108,6 +110,29 @@ schema-db/
 `manifest.json` records **which embedder made the vectors**, so a search with a
 different model is refused rather than answered with noise.
 
+### What survives a clone
+
+`lance/` is binary, large, and rebuildable, so a project commits the index and
+git-ignores the vectors. What a fresh checkout holds is therefore an index that
+**looks built and cannot answer**: the manifest is there, the graph is there,
+and the first search fails with `holds no searchable table`.
+
+```sh
+zen rag schema ready --dir assets/schema-db      # exit 0 searchable, exit 3 not
+zen rag schema restore --dir assets/schema-db    # re-embed from sources/
+```
+
+`ready` answers with its **exit code**, so a setup step branches on it without
+parsing anything. `restore` rebuilds from the bundled copies in `sources/` and
+renames the result into place, so a failure leaves the old index untouched -
+which means an index built with `--no-sources` cannot be restored at all, and
+says so. `--embedding <ref>` is how an index moves to another model: everything
+is re-embedded and the manifest rewritten.
+
+> **Never test for a built index with `[ -f .../manifest.json ]`.** The manifest
+> is committed and the vectors are not, so that test is true on exactly the
+> machine where it is wrong. `zen rag schema ready` is the test.
+
 ## Installing
 
 `zen rag` ships in `@zenera/rag`, a sibling of the CLI. It has no binary of its
@@ -134,13 +159,13 @@ have not installed globally.
 zen rag schema index <spec...> [--embedding <ref>] [-o <dir>] [--batch <n>]
 ```
 
-| Flag                | Default       | Meaning                                                      |
-| ------------------- | ------------- | ------------------------------------------------------------ |
-| `--embedding <ref>` | -             | Which embedder makes the vectors. Omit it to see the choices |
-| `-o`, `--out <dir>` | `./schema-db` | Where the index goes; `$ZEN_SCHEMA_DB` if that is set        |
-| `--batch <n>`       | `96`          | Texts per embedding request, and how often progress prints   |
-| `--no-sources`      | -             | Keep no copy of the documents; `show --source` rebuilds them |
-| `--quiet`           | -             | No narration                                                 |
+| Flag                | Default       | Meaning                                                                                        |
+| ------------------- | ------------- | ---------------------------------------------------------------------------------------------- |
+| `--embedding <ref>` | -             | Which embedder makes the vectors. Omit it to see the choices                                   |
+| `-o`, `--out <dir>` | `./schema-db` | Where the index goes; `$ZEN_SCHEMA_DB` if that is set                                          |
+| `--batch <n>`       | `96`          | Texts per embedding request, and how often progress prints                                     |
+| `--no-sources`      | -             | Keep no copy of the documents; `show --source` rebuilds them, and `restore` becomes impossible |
+| `--quiet`           | -             | No narration                                                                                   |
 
 ```sh
 zen rag schema index openapi.yaml --embedding openai:text-embedding-3-small
@@ -647,14 +672,16 @@ Worked: the invoice total is `Invoice.amount_due` (minor units), returned by
 
 ## When it goes wrong
 
-| Symptom                                          | Cause                                                                               |
-| ------------------------------------------------ | ----------------------------------------------------------------------------------- |
-| "not installed"                                  | `@zenera/rag` is not resolvable - install it, or use the two-`--package` npx form   |
-| Refused for a different embedding                | The index records the model that built it; re-index or pass the right `--embedding` |
-| No manifest / not an index                       | A build that did not finish. `manifest.json` is written last on purpose             |
-| `provider "openai": no api key`                  | `zen key ls` - the keyring, or a real environment variable                          |
-| A usage error before any credential is asked for | Deliberate: everything about the invocation is checked first, so a typo is a typo   |
-| Nothing matched                                  | Exit 0 with an empty answer. Try fewer words, or `--all` instead of a narrow field  |
-| Answers about the wrong version of the API       | Nothing watches the document. Re-index after it changes                             |
-| A search took ten seconds, using no CPU          | One embedding round trip, not the index. `list`/`grep` make none                    |
-| `search <word> <word>` gave ranked nonsense      | Bare words after `search` are the QUERY, not a subcommand. You meant `list`/`grep`  |
+| Symptom                                          | Cause                                                                                                          |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| "not installed"                                  | `@zenera/rag` is not resolvable - install it, or use the two-`--package` npx form                              |
+| Refused for a different embedding                | The index records the model that built it; pass the right `--embedding`, or move it with `restore --embedding` |
+| No manifest / not an index                       | A build that did not finish. `manifest.json` is written last on purpose                                        |
+| `holds no searchable table`                      | A manifest with no vectors - a clone, since `lance/` is git-ignored. `restore` it                              |
+| A step reported `skipped` but nothing can search | The step tested for `manifest.json` instead of asking `ready`                                                  |
+| `provider "openai": no api key`                  | `zen key ls` - the keyring, or a real environment variable                                                     |
+| A usage error before any credential is asked for | Deliberate: everything about the invocation is checked first, so a typo is a typo                              |
+| Nothing matched                                  | Exit 0 with an empty answer. Try fewer words, or `--all` instead of a narrow field                             |
+| Answers about the wrong version of the API       | Nothing watches the document. Re-index after it changes                                                        |
+| A search took ten seconds, using no CPU          | One embedding round trip, not the index. `list`/`grep` make none                                               |
+| `search <word> <word>` gave ranked nonsense      | Bare words after `search` are the QUERY, not a subcommand. You meant `list`/`grep`                             |

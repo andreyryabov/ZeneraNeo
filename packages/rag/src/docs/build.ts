@@ -6,6 +6,7 @@ import {
     INDEX_VERSION,
     SOURCES_DIR,
     writeIndex,
+    type ChunkSettings,
     type Counts,
     type DocRecord,
     type Manifest,
@@ -39,6 +40,8 @@ export interface BuildOptions {
     /** told the manifest, so a store can say what wrote it */
     indexer: string;
     chunk?: ChunkOptions;
+    /** name the documents relative to this, rather than to their common root */
+    root?: string;
     /**
      * The width asked of the embedder, when one was asked for. Part of the cache
      * key, because a truncated vector is a different vector; left undefined when
@@ -56,6 +59,8 @@ export interface BuildOptions {
     /** documents parsed so far, and what the pool is still on */
     onReading?: (done: number, total: number, pending: readonly string[]) => void;
     onProgress?: (done: number, total: number) => void;
+    /** every vector is in and the search indexes are about to be built, silently */
+    onWriting?: (rows: number) => void;
 }
 
 export interface BuildSummary {
@@ -101,6 +106,7 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
     try {
         const corpus = await loadDocuments(options.files, options.cwd, {
             chunk: options.chunk,
+            root: options.root,
             cache: options.cache !== false,
             cacheDir: options.cacheDir,
             onProgress: (done, total, pending) => {
@@ -136,6 +142,7 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
         writer = await openChunks(options.out);
         const dimensions = await embedAll(chunks, options, journal, cache, writer);
         journal.phase('writing');
+        options.onWriting?.(chunks.length);
         const written = await writer.finish();
 
         const manifest: Manifest = {
@@ -151,6 +158,7 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
             },
             sources,
             counts,
+            chunk: settingsOf(options.chunk),
             indexes: { fts: written.fts, vector: written.vector },
         };
         const outline: Outline = { files: corpus.docs.map((doc) => doc.outline) };
@@ -171,6 +179,26 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
         journal.fail(err);
         throw err;
     }
+}
+
+/**
+ * What the manifest keeps of the chunk settings: the numbers, and only the ones
+ * actually given. A `tokenCount` function cannot be written down, and a build
+ * handed one is a build a restore cannot reproduce from the manifest alone —
+ * which the omission says, rather than a recorded default pretending otherwise.
+ */
+function settingsOf(chunk: ChunkOptions | undefined): ChunkSettings | undefined {
+    if (!chunk) {
+        return undefined;
+    }
+    const { chunkTokens, minChunkTokens, maxChunkTokens, tableSliceTokens } = chunk;
+    const settings: ChunkSettings = {
+        ...(chunkTokens === undefined ? {} : { chunkTokens }),
+        ...(minChunkTokens === undefined ? {} : { minChunkTokens }),
+        ...(maxChunkTokens === undefined ? {} : { maxChunkTokens }),
+        ...(tableSliceTokens === undefined ? {} : { tableSliceTokens }),
+    };
+    return Object.keys(settings).length > 0 ? settings : undefined;
 }
 
 /** One row per chunk, with the render set encoded and the document name on it. */

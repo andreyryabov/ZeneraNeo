@@ -58,6 +58,13 @@ export interface Corpus {
 
 export interface LoadOptions {
     chunk?: ChunkOptions;
+    /**
+     * Name documents relative to this, instead of relative to the common root of
+     * whatever was found. A restore pins it to the index's own `sources/`, so a
+     * corpus that is one nested document keeps the name it was indexed under
+     * rather than being renamed to its basename by `commonRoot`.
+     */
+    root?: string;
     /** remember what documents parse to; on by default */
     cache?: boolean;
     /** keep the parses somewhere other than the shared store */
@@ -83,7 +90,7 @@ export async function loadDocuments(
             `no ${DOC_EXTENSIONS.join(', ')} files were found under ${inputs.join(', ')}`,
         );
     }
-    const root = commonRoot(found);
+    const root = options.root ? resolve(cwd, options.root) : commonRoot(found);
     const taken = new Set<string>();
     const chunk = options.chunk ?? {};
     const cache: ParseCache =

@@ -113,8 +113,11 @@ zen check          # the project loads, the models answer
 scripts/_setup.sh  # downloads the docs and builds the index - once
 ```
 
-The setup script skips the work when `assets/docs-db` is already there, so it
-is safe to re-run.
+The setup script skips the work when `assets/docs-db` can already answer - it
+asks `zen rag docs ready`, not whether the directory exists - so it is safe to
+re-run. On a clone of a project whose index is committed, the vectors under
+`lance/` are git-ignored and the step re-embeds them with
+`zen rag docs restore` instead of downloading and indexing everything again.
 
 ## 6. Ask it something
 

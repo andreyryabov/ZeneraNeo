@@ -26,7 +26,8 @@ something in it — and report what was done in enough detail to be checked.
   an index built, a document fetched, a file generated.
 - `scripts/_setup.sh` is the one command that does it, and `scripts/<name>.sh`
   are the steps it runs in order. A step is safe to run twice and reports
-  `skipped` the second time.
+  `skipped` the second time — testing for something that survives a clone, not
+  for a file `.gitignore` excludes.
 - Currently: no steps. Nothing has to be prepared before a run.
 
 ## Agents

@@ -189,7 +189,7 @@ export class ChunkStore {
             throw new CliError(
                 `${dir} holds no searchable table`,
                 EXIT.invalid,
-                'rebuild it with `zen rag docs index`',
+                'put the vectors back with `zen rag docs restore`, or rebuild it with `zen rag docs index`',
             );
         }
     }

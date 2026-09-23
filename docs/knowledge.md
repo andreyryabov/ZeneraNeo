@@ -177,19 +177,35 @@ Indexing is a setup step, so it goes in `scripts/`, as one file named in the
 # scripts/docs_index.sh
 set -eu
 cd "$(dirname "$0")/.."
-if [ "${FORCE:-0}" = 0 ] && [ -f assets/docs-db/manifest.json ]; then
-    echo "assets/docs-db is already built"
+OUT=assets/docs-db
+
+if [ "${FORCE:-0}" = 0 ] && zen rag docs ready --dir "$OUT" --quiet; then
+    echo "$OUT is already built"
     exit 3
+fi
+# The index is committed and `lance/` is not, so a clone has the documents and
+# no vectors: re-embed from the copies rather than indexing everything again.
+if [ "${FORCE:-0}" = 0 ] && [ -f "$OUT/manifest.json" ]; then
+    zen rag docs restore --dir "$OUT"
+    exit 0
 fi
 rm -rf .tmp/docs-db
 zen rag docs index assets/docs --embedding openai:text-embedding-3-small --out .tmp/docs-db
-rm -rf assets/docs-db
-mv .tmp/docs-db assets/docs-db
+rm -rf "$OUT"
+mv .tmp/docs-db "$OUT"
 ```
 
 It builds into `.tmp/` and moves the result into place, so an interrupted run
 never leaves a half-built index where a whole one should be. Nothing watches the
 corpus: rebuild when the documents change.
+
+The `ready` test is the part worth copying. `manifest.json` is written last and
+is committed; `lance/` is binary and is git-ignored. Testing for the manifest
+therefore reports `skipped` on a fresh clone that cannot search at all, and the
+failure surfaces much later as a search error nobody connects to setup. `zen rag
+docs ready` opens the store and answers with its exit code — 0 searchable, 3
+not — and `zen rag docs restore` puts the vectors back from the index's own
+`sources/`, which is also how an index moves to another embedding model.
 
 Say in `SPECIFICATION.md` that the project has a document index, what is in it,
 and which agents may read it - then `/spec-sync-project` maintains the skill, the

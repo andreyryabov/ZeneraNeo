@@ -29,8 +29,8 @@ zen sandbox  [status|up|pull|clean|disk] [options]
 zen version
 
 zen faker    <serve|build|cache> [spec...]
-zen rag      schema <index|search|list|grep|trace|show|stats> [spec...]
-zen rag      docs <index|search|list|grep|show|stats> [path...]
+zen rag      schema <index|restore|ready|search|list|grep|trace|show|stats> [spec...]
+zen rag      docs <index|restore|ready|search|list|grep|show|stats> [path...]
 ```
 
 ## Read the reference before answering

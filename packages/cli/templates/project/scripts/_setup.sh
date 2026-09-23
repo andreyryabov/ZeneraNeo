@@ -20,6 +20,13 @@
 #   - writes under .tmp/ and moves the result into place, so an interrupted run
 #     never leaves half an artefact behind
 #
+# A step decides it has nothing to do by testing for something that SURVIVES A
+# CLONE. Files that are git-ignored do not: a vector index commits its manifest
+# and ignores `lance/`, so `[ -f .../manifest.json ]` is true on a fresh
+# checkout that cannot search at all, and every step reports `skipped` until the
+# first search fails for a reason nobody connects to setup. Ask the tool instead
+# of guessing at files — `zen rag docs ready` answers exactly that question.
+#
 # Running this twice has to be safe, and the second run is what proves it: every
 # step should report `skipped`.
 
@@ -45,15 +52,23 @@ LOGS=.tmp/logs
 #
 #   set -eu
 #   cd "$(dirname "$0")/.."
-#   if [ "${FORCE:-0}" = 0 ] && [ -f assets/docs-db/manifest.json ]; then
-#       echo "assets/docs-db is already built"
+#   OUT=assets/docs-db
+#
+#   if [ "${FORCE:-0}" = 0 ] && zen rag docs ready --dir "$OUT" --quiet; then
+#       echo "$OUT is already built"
 #       exit 3
+#   fi
+#   # Committed index, git-ignored vectors: re-embed from the copies the index
+#   # already holds rather than indexing the documents over again.
+#   if [ "${FORCE:-0}" = 0 ] && [ -f "$OUT/manifest.json" ]; then
+#       zen rag docs restore --dir "$OUT"
+#       exit 0
 #   fi
 #   rm -rf .tmp/docs-db
 #   zen rag docs index assets/docs \
 #       --embedding openai:text-embedding-3-small --out .tmp/docs-db
-#   rm -rf assets/docs-db
-#   mv .tmp/docs-db assets/docs-db
+#   rm -rf "$OUT"
+#   mv .tmp/docs-db "$OUT"
 #
 STEPS=""
 

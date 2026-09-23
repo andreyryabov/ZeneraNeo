@@ -15,14 +15,24 @@ import {
     type Command,
     type Context,
 } from '@zenera/cli/lib';
-import { relative, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
 import { resolveEmbedder } from '../common/embedder.ts';
 import { locateIndex, outputDir } from '../common/locate.ts';
-import { assertSameEmbedding } from '../common/manifest.ts';
+import { assertSameEmbedding, inspectIndex } from '../common/manifest.ts';
 import { isGlob, loose, matcher, PatternError, wildcard, type Matcher } from '../common/match.ts';
-import { breakdown } from '../common/prose.ts';
+import { breakdown, indexing } from '../common/prose.ts';
+import { announce, reportReady, stagingFor, swapIn } from '../common/restore.ts';
 import { buildIndex } from './build.ts';
-import { openIndex, readManifest, readSource, SCHEMA_INDEX, type SourceRecord } from './files.ts';
+import {
+    openIndex,
+    readManifest,
+    readSource,
+    SCHEMA_INDEX,
+    SOURCES_DIR,
+    type Manifest,
+    type SourceRecord,
+} from './files.ts';
 import type { ApiGraph, NodeKind } from './graph.ts';
 import { fields, grepNodes, listNodes, propertyCount, type Row } from './lookup.ts';
 import { isFormat, present, type Format } from './present.ts';
@@ -30,6 +40,7 @@ import { isEmpty, parseQuery, QueryError } from './query.ts';
 import { sourceTag } from './render.ts';
 import { repl } from './repl.ts';
 import { SchemaIndex, type SchemaQuery } from './search.ts';
+import { EntityStore } from './store.ts';
 import { select, stitch } from './subgraph.ts';
 import { chainOf, DEFAULT_TRACE_HOPS, traceNodes } from './trace.ts';
 
@@ -57,9 +68,11 @@ const { defaultDir: DEFAULT_DIR, envName: DIR_ENV } = SCHEMA_INDEX;
 // a model or a credential for permission.
 // ---------------------------------------------------------------------------
 
-const USAGE = 'zen rag schema <index|search|list|grep|trace|show|stats> [spec...]';
+const USAGE = 'zen rag schema <index|restore|ready|search|list|grep|trace|show|stats> [spec...]';
 
 const INDEX_USAGE = 'zen rag schema index --embedding <ref> [--out <dir>] <spec...>';
+const RESTORE_USAGE = 'zen rag schema restore [--dir <dir>] [--embedding <ref>]';
+const READY_USAGE = 'zen rag schema ready [--dir <dir>] [--quiet]';
 const SEARCH_USAGE = 'zen rag schema search [--dir <dir>] [query...]';
 const LIST_USAGE = 'zen rag schema list <methods|types|properties> [--dir <dir>]';
 const GREP_USAGE = 'zen rag schema grep <pattern> [--dir <dir>]';
@@ -73,6 +86,8 @@ export const command: Command = {
         'Commands',
         ...table([
             ['  index <spec...>', dim('Read the documents and write a searchable index.')],
+            ['  restore', dim('Re-embed an index from its own copies of the documents.')],
+            ['  ready', dim('Ask whether an index can answer. Exit 0 if it can, 3 if it cannot.')],
             ['  search', dim('Ask it something. --interactive for a prompt.')],
             ['  list <what>', dim('Every method, type or property matching a pattern.')],
             ['  grep <pattern>', dim('Every literal match, ranked by nothing.')],
@@ -103,6 +118,26 @@ export const command: Command = {
             ],
             ['  --cache-dir <dir>', dim('Keep the vectors somewhere other than the shared cache.')],
         ]),
+        '',
+        'Restore — the vectors, from the copies the index already holds',
+        ...table([
+            ['  -d, --dir <dir>', dim(`Which index. Found from here if unset; see ${DIR_ENV}.`)],
+            ['  --embedding <ref>', dim('Move to another embedder. Default: the one recorded.')],
+            ['  --dimensions <n>', dim('Narrower vectors. Default: the width recorded.')],
+            ['  --batch <n>', dim("Texts per embedding request. Default: the model's own cap.")],
+            ['  --no-cache', dim('Embed everything again, ignoring what this machine has.')],
+            ['  --cache-dir <dir>', dim('Take them from somewhere other than the shared cache.')],
+            ['  --quiet', dim('No narration.')],
+        ]),
+        '',
+        dim('  `lance/` is binary and rebuildable, so it is usually git-ignored while the'),
+        dim('  rest of the index is committed. A clone then has an index that looks built'),
+        dim(`  and cannot answer: ${cyan('ready')} says so, and this puts the vectors back`),
+        dim('  without going to find the documents again. It needs an index built with'),
+        dim('  sources — one made with --no-sources has nothing to rebuild from.'),
+        '',
+        dim('  It is also how an index changes embedder: --embedding re-embeds everything'),
+        dim('  and rewrites the manifest, so later searches ask for the new model.'),
         '',
         'Search terms (repeatable)',
         ...table([
@@ -198,6 +233,10 @@ export const command: Command = {
         switch (name) {
             case 'index':
                 return await index(tail, ctx);
+            case 'restore':
+                return await restore(tail, ctx);
+            case 'ready':
+                return await ready(tail, ctx);
             case 'search':
                 return await search(tail, ctx);
             case 'list':
@@ -290,6 +329,7 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
                       ),
                   )
             : undefined,
+        onWriting: loud ? (rows) => notes(indexing(rows, 'entities').map(aside)) : undefined,
     });
 
     if (ctx.json) {
@@ -314,6 +354,134 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
     const where =
         out === resolve(ctx.cwd, DEFAULT_DIR) ? '' : ` --dir ${relative(ctx.cwd, out) || out}`;
     note(dim(`  search it: ${cyan(`zen rag schema search${where} --all "what you are after"`)}`));
+}
+
+// ---------------------------------------------------------------------------
+// restore
+// ---------------------------------------------------------------------------
+
+interface RestoreFlags {
+    dir?: string;
+    embedding?: string;
+    batch?: string;
+    dimensions?: string;
+    'no-cache'?: boolean;
+    'cache-dir'?: string;
+    quiet?: boolean;
+}
+
+async function restore(args: readonly string[], ctx: Context): Promise<void> {
+    const { values } = parse<RestoreFlags>(
+        args,
+        {
+            dir: { type: 'string', short: 'd' },
+            embedding: { type: 'string' },
+            batch: { type: 'string' },
+            dimensions: { type: 'string' },
+            'no-cache': { type: 'boolean' },
+            'cache-dir': { type: 'string' },
+            quiet: { type: 'boolean' },
+        },
+        RESTORE_USAGE,
+    );
+
+    const dir = indexDir(ctx, values.dir);
+    const manifest = await readManifest(dir);
+    const files = bundled(dir, manifest);
+    const loud = !values.quiet && !ctx.json;
+    const cacheDir = values['cache-dir'] ? resolve(ctx.cwd, values['cache-dir']) : paths.cache();
+    // Every setting defaults to what the index recorded, so a restore that is
+    // asked for nothing produces the index it already had, minus the loss.
+    const ref = values.embedding ?? manifest.embedding.ref;
+    const dimensions = values.dimensions
+        ? count(values.dimensions, '--dimensions')
+        : manifest.embedding.requested;
+    const chosen = await resolveEmbedder(ref, {
+        maxBatch: values.batch ? count(values.batch, '--batch') : undefined,
+        dimensions,
+    });
+    const started = Date.now();
+    if (loud) {
+        announce(manifest, ref, `${manifest.counts.entities} entities`);
+    }
+
+    const staging = stagingFor(dir);
+    const built = await buildIndex({
+        files,
+        out: staging.dir,
+        embedder: chosen,
+        embeddingRef: ref,
+        // The index is the same index; what rebuilt its vectors is not a new
+        // author of it.
+        indexer: manifest.indexer,
+        sources: true,
+        dimensions,
+        cache: !values['no-cache'],
+        cacheDir: values['cache-dir'] ? cacheDir : undefined,
+        onProgress: loud
+            ? (done, total) =>
+                  note(
+                      dim(
+                          `  embedded ${done}/${total} · ${Math.floor((done / total) * 100)}% · ${elapsed(started)}`,
+                      ),
+                  )
+            : undefined,
+        onWriting: loud ? (rows) => notes(indexing(rows, 'entities').map(aside)) : undefined,
+    });
+    await swapIn(dir, staging);
+
+    if (ctx.json) {
+        json({ dir, manifest: built.manifest });
+        return;
+    }
+    note();
+    write(dir);
+    note(
+        `  restored ${bold(String(built.manifest.counts.entities))} entities in ${bold(dir)}, ` +
+            `embedded with ${built.manifest.embedding.ref} ` +
+            `(${built.manifest.embedding.dimensions}d)`,
+    );
+    note(dim(`  ${breakdown(built.timings)}`));
+    note(
+        dim(
+            `  reused ${built.reused}/${built.manifest.counts.entities} vectors` +
+                `${values['no-cache'] ? ' (--no-cache)' : ` from ${cacheDir}`}`,
+        ),
+    );
+}
+
+/**
+ * The documents to rebuild from, in the order the index recorded them — which
+ * is what keeps the slugs the same, since two documents with the same filename
+ * are told apart by which was read first.
+ */
+function bundled(dir: string, manifest: Manifest): string[] {
+    const missing = manifest.sources.filter((s) => !s.path || !existsSync(join(dir, s.path)));
+    if (missing.length > 0) {
+        throw new CliError(
+            `${dir} has no copy of ${missing.map((s) => s.name).join(', ')}`,
+            EXIT.invalid,
+            manifest.sources.some((s) => s.path)
+                ? `the ${SOURCES_DIR}/ directory is incomplete; rebuild with \`zen rag schema index\``
+                : 'it was built with --no-sources; rebuild it from the documents with `zen rag schema index`',
+        );
+    }
+    return manifest.sources.map((s) => join(dir, s.path!));
+}
+
+// ---------------------------------------------------------------------------
+// ready
+// ---------------------------------------------------------------------------
+
+async function ready(args: readonly string[], ctx: Context): Promise<void> {
+    const { values } = parse<{ dir?: string; quiet?: boolean }>(
+        args,
+        { dir: { type: 'string', short: 'd' }, quiet: { type: 'boolean' } },
+        READY_USAGE,
+    );
+    const dir = indexDir(ctx, values.dir);
+    const health = await inspectIndex<Manifest>(dir, SCHEMA_INDEX, (at) => EntityStore.open(at));
+    reportReady(health, ctx, values.quiet === true);
 }
 
 const HEADERS = ['PATHS', 'OPERATIONS', 'SCHEMAS', 'FIELDS'] as const;
@@ -1112,9 +1280,10 @@ async function stats(args: readonly string[], ctx: Context): Promise<void> {
     );
     const dir = indexDir(ctx, values.dir);
     const manifest = await readManifest(dir);
+    const health = await inspectIndex<Manifest>(dir, SCHEMA_INDEX, (at) => EntityStore.open(at));
 
     if (ctx.json) {
-        json(manifest);
+        json({ ...manifest, state: health.state });
         return;
     }
     note(bold(dir));
@@ -1127,6 +1296,9 @@ async function stats(args: readonly string[], ctx: Context): Promise<void> {
                 '  indexes',
                 `fts ${yes(manifest.indexes.fts)} · vector ${yes(manifest.indexes.vector)}`,
             ],
+            // `stats` reports and never refuses, so a missing store is a row
+            // here rather than the error `search` would raise.
+            ['  vectors', health.state === 'ready' ? 'present' : dim('missing — `restore` them')],
         ]),
     );
     printSources(manifest.sources);
@@ -1138,6 +1310,8 @@ function notes(lines: readonly string[]): void {
         note(line);
     }
 }
+
+const aside = (line: string): string => dim(`  ${line}`);
 
 const yes = (value: boolean): string => (value ? 'yes' : 'no');
 

@@ -1,7 +1,7 @@
 # API search - `zen rag`
 
 ```
-zen rag schema <index|search|list|grep|trace|show|stats> [spec...]
+zen rag schema <index|restore|ready|search|list|grep|trace|show|stats> [spec...]
 ```
 
 Provided by `@zenera/rag` - `npm i -g @zenera/rag` if `zen rag` says it is not
@@ -50,6 +50,36 @@ lance/            the vector and full-text indexes
 
 The manifest records the embedding ref **and** the embedder's own id, so a
 search with a different model is refused rather than quietly returning nonsense.
+
+## `ready` and `restore`
+
+```
+zen rag <docs|schema> ready   [-d <dir>] [--quiet] [--json]
+zen rag <docs|schema> restore [-d <dir>] [--embedding <ref>] [--dimensions <n>]
+```
+
+`lance/` is binary and rebuildable, so a project commits the index and
+git-ignores the vectors. A clone then holds an index that looks built and cannot
+search. `ready` is the question "can this answer", and the answer is the **exit
+code**: 0 searchable, 3 absent or missing its vectors. It needs no embedder and
+no credential.
+
+`restore` re-embeds the index from the copies in its own `sources/`, so nothing
+has to be fetched or found again. It is also how an index changes model:
+`--embedding <ref>` re-embeds everything and rewrites the manifest. The rebuild
+is staged beside the index and renamed into place, so a failure leaves the old
+one intact - and needs room for both meanwhile. A schema index built with
+`--no-sources` has nothing to restore from and is refused.
+
+In a setup step, in this order:
+
+```sh
+if [ "${FORCE:-0}" = 0 ] && zen rag docs ready --dir "$OUT" --quiet; then exit 3; fi
+if [ "${FORCE:-0}" = 0 ] && [ -f "$OUT/manifest.json" ]; then
+    zen rag docs restore --dir "$OUT"; exit 0
+fi
+# … otherwise index it from the documents
+```
 
 ## Which index gets read
 
@@ -331,7 +361,7 @@ They share the group `schema`, so an agent takes them with `schema:*` in its
 # Document search - `zen rag docs`
 
 ```
-zen rag docs <index|search|list|grep|show|stats> [args...]
+zen rag docs <index|restore|ready|search|list|grep|show|stats> [args...]
 ```
 
 The second subject of the same command. Where `schema` reads an API description
@@ -364,11 +394,15 @@ relative to the common root of everything indexed, which is what keeps
 
 ```
 docs-db/
-manifest.json     written last; its presence means the index is complete
+manifest.json     written last; its presence means the build finished
 outline.json      every heading and table, with the lines they cover
 sources/          the documents, verbatim
 lance/            one row per chunk: two texts, one vector, the filter columns
 ```
+
+The manifest means the build finished, not that the index can answer here:
+`lance/` is usually git-ignored. `ready` and `restore` above are the pair that
+closes the difference, for both subjects.
 
 ## `search`
 

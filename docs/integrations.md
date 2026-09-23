@@ -146,6 +146,10 @@ Indexing is a setup step. It goes in `scripts/`, named in the `STEPS` list of
 [specification.md](specification.md#setup-steps-are-scripts) and the worked
 example in [knowledge.md](knowledge.md#keep-it-built).
 
+"Already there" means `zen rag schema ready` exits 0, not that a manifest is on
+disk: the index is committed and its `lance/` vectors are not, so a clone needs
+`zen rag schema restore` rather than a full re-index.
+
 Rebuild when the API description changes. Nothing watches it, and a stale index
 answers about the API as it used to be.
 

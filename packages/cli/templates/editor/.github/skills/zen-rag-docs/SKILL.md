@@ -19,17 +19,19 @@ hits for `limit` are not an answer; the eight lines around one of them are.
 ## The commands
 
 ```
-zen rag docs <index|search|list|grep|show|stats> [path...]
+zen rag docs <index|restore|ready|search|list|grep|show|stats> [path...]
 ```
 
-| Command  | Answers                                    | Embedder? | Typical |
-| -------- | ------------------------------------------ | --------- | ------- |
-| `index`  | builds the thing                           | yes       | minutes |
-| `search` | _where does this corpus talk about X?_     | **yes**   | seconds |
-| `list`   | _what documents/headings/tables are here?_ | no        | instant |
-| `grep`   | _does the string X appear anywhere?_       | no        | instant |
-| `show`   | _print this section, verbatim_             | no        | instant |
-| `stats`  | _what is in this index?_                   | no        | instant |
+| Command   | Answers                                    | Embedder? | Typical |
+| --------- | ------------------------------------------ | --------- | ------- |
+| `index`   | builds the thing                           | yes       | minutes |
+| `restore` | _put the vectors back_                     | **yes**   | minutes |
+| `ready`   | _can this index answer at all?_            | no        | instant |
+| `search`  | _where does this corpus talk about X?_     | **yes**   | seconds |
+| `list`    | _what documents/headings/tables are here?_ | no        | instant |
+| `grep`    | _does the string X appear anywhere?_       | no        | instant |
+| `show`    | _print this section, verbatim_             | no        | instant |
+| `stats`   | _what is in this index?_                   | no        | instant |
 
 Only `search` ranks, and only `search` costs a network round trip - it embeds
 the query before it can compare anything. The other four read `outline.json`
@@ -79,6 +81,35 @@ the answer.)
 
 `manifest.json` records **which embedder made the vectors**, so a search with a
 different model is refused rather than answered with noise.
+
+### What survives a clone
+
+`lance/` is binary, large, and rebuildable, so a project commits the index and
+git-ignores the vectors. What a fresh checkout holds is therefore an index that
+**looks built and cannot answer**: the manifest is there, `sources/` is there,
+and the first search fails deep in the store with `holds no searchable table`.
+
+Two commands close that gap, and neither needs the original documents:
+
+```sh
+zen rag docs ready --dir assets/docs-db      # exit 0 searchable, exit 3 not
+zen rag docs restore --dir assets/docs-db    # re-embed from sources/
+```
+
+`ready` answers with its **exit code**, so a setup step branches on it without
+parsing anything; `--json` gives the same answer as `{ ready, state, embedding }`
+for a caller that wants the detail. `restore` reads the documents back out of
+`sources/`, re-embeds them with the model the manifest names, and renames the
+result into place - so a failed restore leaves the old index untouched, at the
+cost of room for both while it runs.
+
+> **Never test for a built index with `[ -f .../manifest.json ]`.** The manifest
+> is committed and the vectors are not, so that test is true on exactly the
+> machine where it is wrong. `zen rag docs ready` is the test.
+
+`restore` is also how an index **changes embedder**: `--embedding <ref>`
+re-embeds everything and rewrites the manifest, so later searches ask for the
+new model. Same corpus, same names, same chunk ids - only the vectors are new.
 
 ### How a document is cut up
 
@@ -582,17 +613,19 @@ sections down. Cite the document name and the line numbers.
 
 ## When it goes wrong
 
-| Symptom                                          | Cause                                                                                 |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------- |
-| "not installed"                                  | `@zenera/rag` is not resolvable - install it, or use the two-`--package` npx form     |
-| `nothing to index`                               | No `.md`/`.markdown`/`.txt`/`.text` under those paths, or they are all hidden         |
-| A document you expected is missing               | Hidden directory, `node_modules`, an unlisted extension, or over 16 MB - check stderr |
-| Refused for a different embedding                | The index records the model that built it; re-index or pass the right `--embedding`   |
-| No manifest / not an index                       | A build that did not finish. `manifest.json` is written last on purpose               |
-| A build is refused                               | `.lock` - another build is running. It is taken over when the process is gone         |
-| `provider "openai": no api key`                  | `zen key ls` - the keyring, or a real environment variable                            |
-| A usage error before any credential is asked for | Deliberate: everything about the invocation is checked first, so a typo is a typo     |
-| `no document matched --file`                     | The pattern is matched against the document **name**; `list files` prints them        |
-| Nothing matched                                  | Exit 0 with an empty answer. Try fewer words, or `--mode text` for an exact string    |
-| Answers quoting text that is no longer there     | Nothing watches the documents. Re-index after they change                             |
-| A search took ten seconds, using no CPU          | One embedding round trip, not the index. `list`/`grep`/`show` make none               |
+| Symptom                                          | Cause                                                                                                          |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| "not installed"                                  | `@zenera/rag` is not resolvable - install it, or use the two-`--package` npx form                              |
+| `nothing to index`                               | No `.md`/`.markdown`/`.txt`/`.text` under those paths, or they are all hidden                                  |
+| A document you expected is missing               | Hidden directory, `node_modules`, an unlisted extension, or over 16 MB - check stderr                          |
+| Refused for a different embedding                | The index records the model that built it; pass the right `--embedding`, or move it with `restore --embedding` |
+| No manifest / not an index                       | A build that did not finish. `manifest.json` is written last on purpose                                        |
+| `holds no searchable table`                      | A manifest with no vectors - a clone, since `lance/` is git-ignored. `restore` it                              |
+| A step reported `skipped` but nothing can search | The step tested for `manifest.json` instead of asking `ready`                                                  |
+| A build is refused                               | `.lock` - another build is running. It is taken over when the process is gone                                  |
+| `provider "openai": no api key`                  | `zen key ls` - the keyring, or a real environment variable                                                     |
+| A usage error before any credential is asked for | Deliberate: everything about the invocation is checked first, so a typo is a typo                              |
+| `no document matched --file`                     | The pattern is matched against the document **name**; `list files` prints them                                 |
+| Nothing matched                                  | Exit 0 with an empty answer. Try fewer words, or `--mode text` for an exact string                             |
+| Answers quoting text that is no longer there     | Nothing watches the documents. Re-index after they change                                                      |
+| A search took ten seconds, using no CPU          | One embedding round trip, not the index. `list`/`grep`/`show` make none                                        |

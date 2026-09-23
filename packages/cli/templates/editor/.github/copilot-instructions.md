@@ -1860,6 +1860,9 @@ input`, or tools quietly unused). This is not a config error and `zen check`
   publishes no embeddings API. Point it at another provider - §3.1.1.
 - **Changing `dimensions:` on an embedding invalidates every stored vector.**
   Widths are not comparable, so anything already indexed has to be re-embedded.
+  For a `zen rag` index that is `zen rag <subject> restore --dimensions <n>`,
+  which rebuilds from the copies the index already holds rather than from the
+  documents; the same command with `--embedding <ref>` moves it to another model.
 
 ### 7.8 How to choose, in practice
 

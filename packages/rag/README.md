@@ -113,6 +113,8 @@ standalone OpenAPI document.
 
 ```
 zen rag schema index <spec...>   Read the documents and write a searchable index.
+zen rag schema restore           Re-embed an index from its own copies of the documents.
+zen rag schema ready             Can this index answer? Exit 0 if it can, 3 if it cannot.
 zen rag schema search            Ask it something. --interactive for a prompt.
 zen rag schema list <what>       Every method, type or property. No ranking.
 zen rag schema grep <pattern>    Every literal match across the whole index.
@@ -306,6 +308,8 @@ in line numbers and the file can be edited from the answer.
 
 ```
 zen rag docs index <path...>     Read the documents and write a searchable index.
+zen rag docs restore             Re-embed an index from its own copies of the documents.
+zen rag docs ready               Can this index answer? Exit 0 if it can, 3 if it cannot.
 zen rag docs search [text]       Ask it something. --interactive for a prompt.
 zen rag docs list <what>         Every document, section or table. No ranking.
 zen rag docs grep <pattern>      Every matching line, with the section it sits in.
@@ -471,6 +475,17 @@ references; document indexes preserve the source material used for retrieval.
 For documents, search results are always grounded in the original text, with
 source names and line ranges available for inspection and follow-up work.
 
+Because the documents travel inside the index, it can be rebuilt from itself.
+Vector files are large and binary, so a project typically commits the index and
+git-ignores `lance/`; a fresh checkout then has an index that looks complete and
+cannot answer. `ready` reports that in an exit code, and `restore` re-embeds
+from the copies already present.
+
+```sh
+zen rag docs ready --dir assets/docs-db      # exit 0 searchable, 3 not
+zen rag docs restore --dir assets/docs-db    # re-embed from sources/
+```
+
 <details>
 <summary>Built for project workflows</summary>
 
@@ -492,6 +507,10 @@ zen rag schema index --embedding openai:text-embedding-3-small ./specs
 
 The selected provider stays associated with the index, ensuring search uses a
 compatible representation of its content.
+
+To change it later, `restore --embedding <ref>` re-embeds an existing index from
+its own copies and rewrites the manifest, so no source material has to be
+located again.
 
 ### Efficient rebuilds
 

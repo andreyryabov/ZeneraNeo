@@ -38,8 +38,9 @@ export const SCHEMA_INDEX: IndexSpec = {
 export const GRAPH_FILE = 'graph.json';
 export const SCHEMAS_FILE = 'schemas.json';
 export const OPERATIONS_FILE = 'operations.json';
-export const LANCE_DIR = 'lance';
 export const SOURCES_DIR = 'sources';
+
+export { LANCE_DIR, lancePath } from '../common/manifest.ts';
 
 export interface SourceRecord {
     /** the document's name within the index: what every entity's `source` says */
@@ -88,8 +89,6 @@ export interface OpenIndex {
     /** the operations, likewise */
     operations(): Promise<Operation[]>;
 }
-
-export const lancePath = (dir: string): string => join(dir, LANCE_DIR);
 
 export async function writeIndex(dir: string, index: WrittenIndex): Promise<void> {
     await mkdir(dir, { recursive: true });

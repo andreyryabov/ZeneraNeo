@@ -2,6 +2,7 @@ import { CliError, EXIT } from '@zenera/cli/lib';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { MANIFEST_FILE, readHead, type IndexHead, type IndexSpec } from '../common/manifest.ts';
+import type { ChunkOptions } from './chunk.ts';
 import type { DocFormat } from './parse.ts';
 
 // ---------------------------------------------------------------------------
@@ -46,8 +47,9 @@ export const DOCS_INDEX: IndexSpec = {
 };
 
 export const OUTLINE_FILE = 'outline.json';
-export const LANCE_DIR = 'lance';
 export const SOURCES_DIR = 'sources';
+
+export { LANCE_DIR, lancePath } from '../common/manifest.ts';
 
 export interface HeadingRecord {
     /** the heading's own line, 1-based */
@@ -112,9 +114,18 @@ export interface Counts {
     tables: number;
 }
 
+/**
+ * The chunk settings a build was given, so a restore can cut the documents the
+ * same way rather than silently re-chunking them. Numbers only: `tokenCount` is
+ * a function and does not survive a manifest, and absent means the defaults.
+ */
+export type ChunkSettings = Omit<ChunkOptions, 'tokenCount'>;
+
 export interface Manifest extends IndexHead {
     sources: DocRecord[];
     counts: Counts;
+    /** absent in indexes built before this was recorded, which means the defaults */
+    chunk?: ChunkSettings;
 }
 
 export interface WrittenIndex {
@@ -129,8 +140,6 @@ export interface OpenDocs {
     manifest: Manifest;
     outline: Outline;
 }
-
-export const lancePath = (dir: string): string => join(dir, LANCE_DIR);
 
 export async function writeIndex(dir: string, index: WrittenIndex): Promise<void> {
     await mkdir(dir, { recursive: true });
