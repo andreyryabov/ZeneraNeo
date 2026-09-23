@@ -1,6 +1,6 @@
 {
     "name": "@zenera/cli",
-    "version": "1.1.22",
+    "version": "1.1.23",
     "description": "Command-line front end for @zenera/neo: agentic projects you can run, share and commit.",
     "keywords": [
         "agents",
@@ -52,7 +52,7 @@
         "@google/genai": "^2.18.0",
         "@inkjs/ui": "^2.0.0",
         "@openrouter/sdk": "^1.2.80",
-        "@zenera/neo": "^1.1.22",
+        "@zenera/neo": "^1.1.23",
         "google-auth-library": "^10.0.0",
         "ink": "^7.1.1",
         "openai": "^6.0.0",
