@@ -966,7 +966,7 @@ describe('apply_patch', () => {
         });
 
         /**
-         * Models invent headings — `@@ class DfwRiskScanner` for a file of
+         * Models invent headings — `@@ class RiskScanner` for a file of
          * plain functions. The heading only narrows the search, so when the
          * context occurs once it was never needed.
          */
@@ -974,7 +974,7 @@ describe('apply_patch', () => {
             seed('invented.py', SOURCE);
             const out = await patch(
                 '*** Update File: invented.py',
-                '@@ class DfwRiskScanner',
+                '@@ class RiskScanner',
                 "-        alg = entry.get('alg', '').upper()",
                 "+        alg = entry.get('alg', '').title()",
             );

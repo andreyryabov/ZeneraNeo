@@ -939,8 +939,8 @@ async function grep(args: readonly string[], ctx: Context): Promise<void> {
 // Search reaches part of the way: it stitches its seeds into one connected
 // piece and prints what each operation accepts and returns. But it only joins
 // what RANKED, only within --max-hops, and it never names the chain. And the
-// operation almost never says the word: `POST /transport-nodes` and
-// `audit_password` share no vocabulary at all, so the field has to rank on its
+// operation almost never says the word: `POST /devices` and
+// `backup_password` share no vocabulary at all, so the field has to rank on its
 // own and the call has to land near it. The $refs between them are certain;
 // the ranking is not.
 // ---------------------------------------------------------------------------

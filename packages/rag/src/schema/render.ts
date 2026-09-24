@@ -24,7 +24,7 @@ const HIT = '»';
 
 /**
  * Which document something came from, spelled one way everywhere. An index
- * over four revisions of one API has four `GET /infra/tier-0s`, and a listing
+ * over four revisions of one API has four `GET /v1/gateways`, and a listing
  * that does not say which is which is a listing you have to go and check.
  */
 export const sourceTag = (source: string): string => (source ? `[source: ${source}]` : '');

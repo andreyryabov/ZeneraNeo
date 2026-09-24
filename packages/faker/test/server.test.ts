@@ -243,17 +243,15 @@ describe('the server', () => {
             'action.yaml',
         );
         const at = async (search: string): Promise<Response> =>
-            fetch(`${base}/api/v1/transport-node-collections/123${search}`, { method: 'POST' });
+            fetch(`${base}/api/v1/device-groups/123${search}`, { method: 'POST' });
 
         const retry = await at('?action=retry_profile_realization');
         expect(retry.status).toBe(200);
-        expect(retry.headers.get('x-faker-operation')).toBe(
-            'RetryTransportNodeCollectionRealization',
-        );
+        expect(retry.headers.get('x-faker-operation')).toBe('RetryDeviceGroupRealization');
         expect(await retry.json()).toEqual({ state: 'retry_profile_realization' });
 
         const apply = await at('?action=apply_profile');
-        expect(apply.headers.get('x-faker-operation')).toBe('ApplyTransportNodeCollectionProfile');
+        expect(apply.headers.get('x-faker-operation')).toBe('ApplyDeviceGroupProfile');
 
         // Not a 405: the method is defined here, the query was not.
         const bare = await at('');

@@ -3,9 +3,9 @@ info:
     title: actions
     version: '1.0'
 paths:
-    '/api/v1/transport-node-collections/{id}?action=retry_profile_realization':
+    '/api/v1/device-groups/{id}?action=retry_profile_realization':
         post:
-            operationId: RetryTransportNodeCollectionRealization
+            operationId: RetryDeviceGroupRealization
             parameters:
                 - name: id
                   in: path
@@ -21,9 +21,9 @@ paths:
                                 required: [state]
                                 properties:
                                     state: { type: string }
-    '/api/v1/transport-node-collections/{id}?action=apply_profile':
+    '/api/v1/device-groups/{id}?action=apply_profile':
         post:
-            operationId: ApplyTransportNodeCollectionProfile
+            operationId: ApplyDeviceGroupProfile
             parameters:
                 - name: id
                   in: path
@@ -39,9 +39,9 @@ paths:
                                 required: [state]
                                 properties:
                                     state: { type: string }
-    '/api/v1/transport-node-collections/{id}':
+    '/api/v1/device-groups/{id}':
         get:
-            operationId: ReadTransportNodeCollection
+            operationId: ReadDeviceGroup
             parameters:
                 - name: id
                   in: path

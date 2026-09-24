@@ -160,7 +160,7 @@ export const called = (op: Operation): string =>
     op.fixed ? `${op.path}?${new URLSearchParams(op.fixed).toString()}` : op.path;
 
 /**
- * A path template has no query string, but VMware, Oracle and others write one
+ * A path template has no query string, but some vendors write one
  * anyway — `/x/{id}?action=retry` — because they need two `post`s under one
  * path and the object model gives them one. Taken verbatim the key matches
  * nothing, since a request path never contains a `?`. So it is read for what

@@ -812,7 +812,7 @@ function patchLines(
             const at = findHeading(out, heading, cursor);
             if (at < 0) {
                 // A heading only narrows the search. Models invent them —
-                // `@@ class DfwRiskScanner` for a file of plain functions — and
+                // `@@ class RiskScanner` for a file of plain functions — and
                 // when the context occurs once the heading was never needed, so
                 // refusing spends a turn to learn nothing.
                 if (countMatches(out, chunk.before, cursor) === 1) {

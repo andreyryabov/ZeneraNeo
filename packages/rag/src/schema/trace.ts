@@ -9,15 +9,15 @@ import { listNodes } from './lookup.ts';
 // person actually needs it read: from a field they can name to the operations
 // that carry it, which is the only place they can do anything about it.
 //
-// Done by hand it is three searches and a guess. `audit_password` sits on
-// `NodeUserSettings`; nothing calls that, so you look for what holds it, find
-// `TransportNodePlacementConfig`, and look again for what accepts *that* — and
+// Done by hand it is three searches and a guess. `backup_password` sits on
+// `UserSettings`; nothing calls that, so you look for what holds it, find
+// `DevicePlacementConfig`, and look again for what accepts *that* — and
 // the answer is only right if you got every branch. It is a breadth-first walk
 // up containment, so it is one command, it is complete, and it says which side
 // of the call each answer is on.
 //
 // A ranking cannot do this at all. The operation that takes a field usually
-// does not mention it: `POST /transport-nodes` and `audit_password` have no
+// does not mention it: `POST /devices` and `backup_password` have no
 // word in common, which is exactly why the edge between them was built.
 // ---------------------------------------------------------------------------
 

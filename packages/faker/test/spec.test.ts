@@ -135,16 +135,14 @@ describe('loading documents', () => {
 
     it('reads a query string in a path key as a query value the call must carry', async () => {
         const ops = await loadSpec(spec('action.yaml'));
-        const retry = ops.find((o) => o.operationId === 'RetryTransportNodeCollectionRealization');
-        expect(retry?.path).toBe('/api/v1/transport-node-collections/{id}');
+        const retry = ops.find((o) => o.operationId === 'RetryDeviceGroupRealization');
+        expect(retry?.path).toBe('/api/v1/device-groups/{id}');
         expect(retry?.fixed).toEqual({ action: 'retry_profile_realization' });
         // As a parameter too, so the request check and the page know the rule.
         const action = retry?.params.find((p) => p.name === 'action');
         expect(action).toMatchObject({ in: 'query', required: true });
         expect(action?.schema.enum).toEqual(['retry_profile_realization']);
-        expect(called(retry!)).toBe(
-            '/api/v1/transport-node-collections/{id}?action=retry_profile_realization',
-        );
+        expect(called(retry!)).toBe('/api/v1/device-groups/{id}?action=retry_profile_realization');
     });
 });
 
@@ -192,22 +190,17 @@ describe('routing', () => {
     it('tells two operations on one path and method apart by their query value', async () => {
         const router = new Router(await loadSpec(spec('action.yaml')));
         const at = (search: string): string | undefined =>
-            router.match(
-                'post',
-                '/api/v1/transport-node-collections/123',
-                new URLSearchParams(search),
-            )?.operation.operationId;
-        expect(at('action=retry_profile_realization')).toBe(
-            'RetryTransportNodeCollectionRealization',
-        );
-        expect(at('action=apply_profile')).toBe('ApplyTransportNodeCollectionProfile');
+            router.match('post', '/api/v1/device-groups/123', new URLSearchParams(search))
+                ?.operation.operationId;
+        expect(at('action=retry_profile_realization')).toBe('RetryDeviceGroupRealization');
+        expect(at('action=apply_profile')).toBe('ApplyDeviceGroupProfile');
         expect(at('action=nonsense')).toBeUndefined();
         expect(at('')).toBeUndefined();
     });
 
     it('does not offer a method whose query value was missed, and says what it wanted', async () => {
         const router = new Router(await loadSpec(spec('action.yaml')));
-        const path = '/api/v1/transport-node-collections/123';
+        const path = '/api/v1/device-groups/123';
         expect(router.allowed(path, new URLSearchParams(''))).toEqual(['get']);
         expect(router.expects('post', path)).toEqual([
             '?action=retry_profile_realization',
