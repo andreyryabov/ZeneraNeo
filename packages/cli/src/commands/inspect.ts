@@ -22,6 +22,7 @@ import {
     listRuns,
     listSessions,
     newestRun,
+    readRunMeta,
     requireSession,
     runPaths,
     runPathsAt,
@@ -165,7 +166,7 @@ export const inspect: Command = {
 async function report(at: Located, values: Flags, cwd: string, asJson: boolean): Promise<void> {
     const { project, session, run } = at;
     if (values.rebuild || !existsSync(run.report)) {
-        await rebuild(session, run, await memory(project, values.memory, cwd));
+        await rebuild(session, run, await memory(project, run, values.memory, cwd));
     }
 
     if (asJson) {
@@ -447,14 +448,20 @@ async function readState(run: RunPaths): Promise<AgentState> {
  * The project's memory, unlocked, when it has one. Without it the memory view
  * has the shape of what the run recalled but not a word of it; a run that
  * never touched memory pays nothing, because the report asks for no node.
+ *
+ * The run's own record of where it read comes before the config, so rebuilding
+ * an old report shows the graph that run saw rather than the one the project
+ * points at today.
  */
 async function memory(
     dir: string,
+    run: RunPaths,
     override: string | undefined,
     cwd: string,
 ): Promise<MemoryStore | undefined> {
-    const { config } = readProjectConfig(dir);
-    const at = memoryDir(dir, config, override && resolve(cwd, override));
+    const at = override
+        ? resolve(cwd, override)
+        : ((await readRunMeta(run)).memory ?? memoryDir(dir, readProjectConfig(dir).config));
     if (!at || !existsSync(join(at, 'manifest.json'))) {
         return undefined;
     }

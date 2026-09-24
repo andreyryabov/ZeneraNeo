@@ -171,6 +171,10 @@ missing is built before either; `--rebuild` builds one that already exists
 again, which is always safe because the report is derived and `state.json` is
 the truth. That is also what makes an old run readable by a newer renderer.
 
+The memory pane is filled from the graph the run itself recorded in `meta.json`,
+not from wherever the project points today, so rebuilding an old report shows
+what that run saw. `--memory <dir>` overrides both.
+
 `graph` prints the diagram on stdout; `--json` gives
 `{ session, run, dir, mermaid, nodes }`, where `nodes` is the index on its own -
 `{ id, nodeId, kind, agent, branch, ts, label }` per node.

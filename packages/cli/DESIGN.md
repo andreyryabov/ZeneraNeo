@@ -76,7 +76,7 @@ sessions that ran against it.
             workspace/           what the agent can see and write
             .data/
                 state.json       the live, resumable session state
-                memory/          MemoryStore (file)
+                session.json     when it was made, and the workspace it is rooted at
                 blobs/           PayloadStore (file)
             .lock                present only while a run holds it
             runs/
@@ -85,7 +85,8 @@ sessions that ran against it.
                     output.md
                     state.json    immutable snapshot of this run
                     report.html   `renderReportHtml` output
-                    meta.json     model, usage, duration, exit
+                    meta.json     usage, duration, exit, and the workspace and
+                                  memory it read
 ```
 
 `agents.yaml` is the marker, and there is no second one. A directory the loader

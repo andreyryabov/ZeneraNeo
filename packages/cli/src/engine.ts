@@ -9,6 +9,7 @@ import {
     exaTools,
     lastText,
     loadProject,
+    memoryDir,
     readProjectConfig,
     renderReportHtml,
     sandboxTools,
@@ -33,6 +34,7 @@ import {
     acquire,
     createRun,
     readSessionMeta,
+    writeRunMeta,
     writeSessionMeta,
     type Held,
     type RunPaths,
@@ -74,6 +76,8 @@ export interface Engine {
     /** whether the agent was denied every writing tool */
     readOnly: boolean;
     session: SessionPaths;
+    /** the graph this session remembers into, when any agent has one */
+    memory?: string;
     /** the session's accumulated state, when it has one */
     state?: AgentState;
     /** the containers this session may start; present whether or not it does */
@@ -117,6 +121,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
     let sandbox: SandboxSetup;
     let project: AgentProject;
     let files: Workspace;
+    let memory: string | undefined;
     try {
         const { root, config } = readProjectConfig(opts.project.dir);
         // Naming a directory declares the graph, but it cannot bind anyone to
@@ -124,6 +129,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
         if (opts.memoryDir && !config.agents.some((a) => a.memory)) {
             warn('--memory names a directory no agent uses — none has `memory: true`');
         }
+        memory = memoryDir(root, config, opts.memoryDir);
         // Assets and the skill catalog are mounted for both, under one name.
         const mounts = projectMounts(root, config, opts.memoryDir);
         sandbox = buildSandbox({
@@ -201,6 +207,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
         workspaceMount: sandbox.spec.workdir ?? SANDBOX_MOUNT,
         readOnly: Boolean(opts.readOnly),
         session: opts.session,
+        memory,
         state,
         sandbox,
         lock,
@@ -336,24 +343,21 @@ async function record(
         // A report is a convenience. Losing it must not lose the run.
     }
 
-    writeJson(
-        run.meta,
-        {
-            version: 1,
-            id: run.id,
-            session: session.id,
-            startedAt: startedAt.toISOString(),
-            finishedAt: new Date().toISOString(),
-            durationMs,
-            agent: result.agent,
-            stopReason: result.stopReason,
-            turns: turns(result.state),
-            usage: result.usage,
-            workspace: engine.workspace,
-            error: result.state.error,
-        },
-        0o644,
-    );
+    writeRunMeta(run, {
+        version: 1,
+        id: run.id,
+        session: session.id,
+        startedAt: startedAt.toISOString(),
+        finishedAt: new Date().toISOString(),
+        durationMs,
+        agent: result.agent,
+        stopReason: result.stopReason,
+        turns: turns(result.state),
+        usage: result.usage,
+        workspace: engine.workspace,
+        memory: engine.memory,
+        error: result.state.error,
+    });
 
     return { run, result, text, durationMs, report };
 }

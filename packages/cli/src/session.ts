@@ -26,7 +26,6 @@ export interface SessionPaths {
     data: string;
     /** the live, resumable state — rewritten after every run */
     state: string;
-    memory: string;
     blobs: string;
     runs: string;
     lock: string;
@@ -45,7 +44,6 @@ export function sessionPaths(projectDir: string, id: string): SessionPaths {
         workspace: join(dir, 'workspace'),
         data,
         state: join(data, 'state.json'),
-        memory: join(data, 'memory'),
         blobs: join(data, 'blobs'),
         runs: join(dir, 'runs'),
         lock: join(dir, '.lock'),
@@ -297,11 +295,20 @@ export interface RunMeta {
     turns: number;
     usage: unknown;
     workspace: string;
+    memory?: string;
     error?: string;
 }
 
 export function writeRunMeta(p: RunPaths, meta: RunMeta): void {
     writeJson(p.meta, meta, 0o644);
+}
+
+/**
+ * Partial, because a run killed before it recorded anything still has a
+ * directory, and every field here is worth having on its own.
+ */
+export async function readRunMeta(p: RunPaths): Promise<Partial<RunMeta>> {
+    return await readJson<Partial<RunMeta>>(p.meta, {});
 }
 
 export interface RunSummary {
@@ -319,7 +326,7 @@ export async function listRuns(session: SessionPaths): Promise<RunSummary[]> {
     for (const id of runIds(session.dir).reverse()) {
         // A run killed before it recorded anything still has an id, and the id
         // says when it started, so it is listable without its meta.
-        const meta = await readJson<Partial<RunMeta>>(runPaths(session, id).meta, {});
+        const meta = await readRunMeta(runPaths(session, id));
         out.push({
             id,
             startedAt: meta.startedAt ?? stampInstant(id),
