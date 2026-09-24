@@ -10,10 +10,9 @@ import {
     type AgentState,
 } from '@zenera/neo';
 import { spawn } from 'node:child_process';
-import { createReadStream, existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:http';
-import { extname, join, normalize, resolve, sep } from 'node:path';
+import { join, resolve } from 'node:path';
 import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { sessionIds } from '../projects.ts';
@@ -29,6 +28,7 @@ import {
     type RunPaths,
     type SessionPaths,
 } from '../session.ts';
+
 import {
     ago,
     bold,
@@ -42,7 +42,7 @@ import {
     write,
 } from '../term.ts';
 
-const USAGE = 'zen inspect [run] [--session <id>] [--open] [--rebuild] [--serve [port]]';
+const USAGE = 'zen inspect [run] [--session <id>] [--open] [--rebuild]';
 
 interface Flags {
     project?: string;
@@ -50,7 +50,6 @@ interface Flags {
     memory?: string;
     open?: boolean;
     rebuild?: boolean;
-    serve?: string;
 }
 
 export const inspect: Command = {
@@ -60,7 +59,6 @@ export const inspect: Command = {
     details: [
         'With no arguments: asks which session and run, or takes the newest of',
         'each when there is nothing to ask on.',
-        '--serve starts a local server, which the report needs for its assets.',
         '--memory <dir> reads that memory instead of the project’s, for a run',
         'that was given `zen run --memory`.',
     ],
@@ -73,7 +71,6 @@ export const inspect: Command = {
                 memory: { type: 'string' },
                 open: { type: 'boolean' },
                 rebuild: { type: 'boolean' },
-                serve: { type: 'string' },
             },
             USAGE,
         );
@@ -92,11 +89,6 @@ export const inspect: Command = {
 
         if (ctx.json) {
             json({ session: session.id, run: run.id, report: run.report });
-            return;
-        }
-
-        if (values.serve !== undefined) {
-            await serve(run, Number(values.serve) || 0, Boolean(values.open));
             return;
         }
 
@@ -252,64 +244,6 @@ async function memory(
     } catch {
         return undefined;
     }
-}
-
-// ---------------------------------------------------------------------------
-// Serving
-//
-// `file://` is enough for the report itself, but not for anything it fetches:
-// browsers treat every local file as its own origin. A server exists only so
-// those requests resolve, and so it binds to the loopback address — a run
-// report is a transcript of everything the model was sent.
-// ---------------------------------------------------------------------------
-
-const TYPES: Record<string, string> = {
-    '.html': 'text/html; charset=utf-8',
-    '.json': 'application/json; charset=utf-8',
-    '.md': 'text/markdown; charset=utf-8',
-    '.txt': 'text/plain; charset=utf-8',
-};
-
-async function serve(run: RunPaths, port: number, open: boolean): Promise<void> {
-    const root = resolve(run.dir);
-
-    const server = createServer((req, res) => {
-        const url = new URL(req.url ?? '/', 'http://localhost');
-        const rel = decodeURIComponent(url.pathname);
-        const path = rel === '/' ? run.report : resolve(root, `.${normalize(rel)}`);
-
-        // Containment, not obscurity: anything resolving outside the run
-        // directory is refused, so a crafted path cannot walk to $HOME.
-        if (path !== root && !path.startsWith(root + sep)) {
-            res.writeHead(403).end('forbidden');
-            return;
-        }
-        if (!existsSync(path)) {
-            res.writeHead(404).end('not found');
-            return;
-        }
-        res.writeHead(200, { 'content-type': TYPES[extname(path)] ?? 'application/octet-stream' });
-        createReadStream(path).pipe(res);
-    });
-
-    await new Promise<void>((ok) => server.listen(port, '127.0.0.1', ok));
-    const address = server.address();
-    const at = typeof address === 'object' && address ? `http://127.0.0.1:${address.port}/` : '';
-
-    write(at);
-    note(`${bold('serving')} ${dim(display(run.dir))}`);
-    note(dim('ctrl-c to stop'));
-    if (open) {
-        reveal(at);
-    }
-
-    await new Promise<void>((done) => {
-        const stop = (): void => {
-            server.close(() => done());
-        };
-        process.once('SIGINT', stop);
-        process.once('SIGTERM', stop);
-    });
 }
 
 /**

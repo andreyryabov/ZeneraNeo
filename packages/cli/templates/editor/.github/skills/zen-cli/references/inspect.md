@@ -1,7 +1,7 @@
 # Reports - `zen inspect`
 
 ```
-zen inspect [run] [--session <id>] [--open] [--rebuild] [--serve [port]]
+zen inspect [run] [--session <id>] [--open] [--rebuild]
 ```
 
 Alias: `report`.
@@ -11,16 +11,16 @@ hand-off, in order, with what each one cost. With no arguments it asks which
 session and which run; where there is nothing to ask on — a script, `--json`,
 an agent — it takes the newest run of the newest session that has one.
 
-| Flag             | Meaning                                                 |
-| ---------------- | ------------------------------------------------------- |
-| `[run]`          | A run id, in whichever session holds it                 |
-| `--session <id>` | Which session the run belongs to                        |
-| `--open`         | Open the report in a browser                            |
-| `--rebuild`      | Rebuild `report.html` from the recorded state           |
-| `--serve [port]` | Serve it locally, which the report needs for its assets |
+| Flag             | Meaning                                       |
+| ---------------- | --------------------------------------------- |
+| `[run]`          | A run id, in whichever session holds it       |
+| `--session <id>` | Which session the run belongs to              |
+| `--open`         | Open the report in a browser                  |
+| `--rebuild`      | Rebuild `report.html` from the recorded state |
 
-Use `--serve` rather than opening the file directly when the report has media in
-it; the page fetches its assets and `file://` will not give them to it.
+The report is one self-contained file: every prompt, request and tool result is
+inlined, so `file://` is all it needs. Only the diagram library comes off a CDN,
+and without it the timeline on the left still has every node.
 
 ## Why it is the first thing to look at
 

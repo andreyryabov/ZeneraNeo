@@ -1192,7 +1192,7 @@ read first, because they are on your screen and not in somebody else's zip.
 
 - **No daemon.** Nothing runs between commands. "Is a run live" is answered by a
   lockfile holding a pid, not by a service that has to be kept alive to answer.
-- **No server** beyond `inspect --serve`, which is a static file handler.
+- **No server.** Nothing listens on a port; a report is a file you open.
 - **No project config of its own.** `agents.yaml` is the configuration, and the
   CLI adds nothing beside it.
 - **No credential logic in the library.** The keyring ends at `process.env`.
