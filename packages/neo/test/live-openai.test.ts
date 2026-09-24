@@ -106,7 +106,9 @@ live('openai live run', () => {
         expect(snapshot.phase).toBe('awaiting_tools');
         expect(snapshot.pendingToolCalls).toHaveLength(1);
 
-        const resumed = await runner.resume(snapshot).final();
+        // A Zod schema cannot ride in the serialized state: without it the run
+        // falls back to a required-fields check and `steps: []` would pass.
+        const resumed = await runner.resume(snapshot, { output: Plan }).final();
         expect(resumed.agent).toBe('planner');
         expect(resumed.stopReason).toBe('final');
         expect(resumed.state.phase).toBe('done');
@@ -128,7 +130,9 @@ live('openai live run', () => {
         expect(Plan.parse(finalOutput.parsed)).toEqual(Plan.parse(resumed.output));
 
         const followUp = await runner
-            .send(resumed.state, 'Now make it even shorter while keeping the same schema.')
+            .send(resumed.state, 'Now make it even shorter while keeping the same schema.', {
+                output: Plan,
+            })
             .final();
         expect(followUp.agent).toBe('planner');
         expect(followUp.stopReason).toBe('final');
