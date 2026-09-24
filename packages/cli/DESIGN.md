@@ -127,7 +127,7 @@ two.
 | `models`  | What this machine can use: list, search, test, pick (§6.5).                |
 | `run`     | Runs the project - the TUI on a terminal, one shot otherwise (§7).         |
 | `meta`    | Runs the meta agent over the project, on the keyring (§7.5).               |
-| `inspect` | Opens or rebuilds a run's `report.html`.                                   |
+| `inspect` | Reads a run: `report.html`, or the graph a model reads (§7.6).             |
 | `memory`  | The memory graph from outside the agents (§10).                            |
 | `check`   | Reports on the project in full: files, wiring, credentials, models (§9.2). |
 |           | `--fix` rewrites the files a project copies but does not own (§9.3).       |
@@ -764,6 +764,66 @@ One sharp edge: copilot offers its tools as OpenAI _custom_ tools, which the
 completions API rejects outright - `400 Invalid value: 'custom'`. Only the
 responses API accepts them, so the wire API follows the model rather than being
 a flag nobody would know to set.
+
+## 7.6. Reading a run - `zen inspect`
+
+`report.html` is written for a person: every message, every payload, pan and
+zoom. It is the wrong artefact for the reader who now does most of the looking.
+An agent asked "why did that run go wrong" cannot open a page, and handing it
+the trajectory is worse than useless - a run of any length is far larger than a
+context window and overwhelmingly repetitive, so the cost is paid on forty
+copies of the same failing shell command before anything interesting is read.
+
+So `zen inspect graph` writes the same trajectory as an **index**, and
+`zen inspect node` **dereferences** it. That is the only idea here, and it is
+the one everything large is read by.
+
+The index is one Mermaid flowchart, a line per node:
+
+- **Ids are sequential** - `n1`, `n2`, `n3` - in the order the run appended
+  nodes. A ULID is unquotable and carries no ordering a reader can see; the
+  whole point is an id short enough to notice, compare and ask for. The ULID is
+  still in `--json` and in what `node` prints, because that is where identity
+  matters and legibility does not.
+- **Declarations come first, and every edge is in one block at the bottom.**
+  Interleaving them is what makes generated Mermaid unreadable: the sequence is
+  the thing you want ninety per cent of the time, and it is exactly what arrows
+  between declarations destroy. Grouped as `flow`, `branches` and `calls`, the
+  edges are a section to consult rather than noise to skip.
+- **A branch is numbered where it ran** - between its fork and its join, which
+  means recursing into `join.branches[].nodes` _before_ the join takes its own
+  number. Any other order makes the ids lie about what happened first.
+- **The `%%` header counts things.** Mermaid drops those lines and a reader does
+  not, so the header is where the run explains itself: the tools tallied by
+  name, the branches and their outcomes, how many nodes a compaction hid. A
+  tally is what turns "this looks repetitive" into something actionable. It
+  stays a tally: the command counts, the reader concludes.
+
+The index is lossy on purpose, and `node <id...>` is where the loss is paid
+back - payloads resolved, nothing truncated, nothing filtered. A missing blob
+costs that one part and falls back to its preview, because an inspector that
+refuses to answer at all when a store has been pruned is no inspector.
+
+**Every label is built from types and identifiers and then stripped to a narrow
+character set.** Tool arguments and tool results are model output, which is to
+say attacker-influenced input as far as the Mermaid parser is concerned. A
+quote closes a label; a bracket opens a node; `%%{` is a directive; `-->` is an
+edge. None of them survives the filter, so the worst a payload can do is read
+oddly. Widen the length budget when a name needs room; never widen the class.
+
+The emitter lives in the CLI rather than in `@zenera/neo` because it needs both
+halves: the trajectory types from the library, and the `describeCall` /
+`summarise` tables that already know what a tool call _means_ rather than what
+it contains. Those tables are how `run_command` with a JSON blob of arguments
+becomes `run_command npm test -- --run`, which is the difference between a
+diagram and a dump.
+
+**A run directory is a handle.** `zen run --json` reports one, so `--dir` takes
+it back without the caller having to decompose it into a project, a session and
+a run first. The ids are read out of the path and still go through `isStamp`,
+so a path from anywhere cannot name a directory this layout would never have
+produced. Blobs live one level up, per session, which is why resolving a path
+returns the session as well as the run.
 
 ## 8. Distribution - the `zen` binary
 

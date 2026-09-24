@@ -291,10 +291,24 @@ export function isInteractive(): boolean {
     return Boolean(process.stdin.isTTY && process.stderr.isTTY);
 }
 
+// A banner is for whoever is sitting there, and the only proof that anyone is
+// sitting there is that we are about to ask them something. Commands whose
+// stdout is the answer hand theirs over here instead of printing it, and it
+// appears if — and only if — the run turns out to need a person. Held as a
+// thunk so this module stays below the banner, which is drawn with its colours.
+let pending: (() => void) | undefined;
+
+export function deferBanner(print: () => void): void {
+    pending = print;
+}
+
 function requireTty(what: string, flag: string): void {
     if (!isInteractive()) {
         throw usageError(`cannot ask for ${what} without a terminal`, `pass ${flag} instead`);
     }
+    const banner = pending;
+    pending = undefined;
+    banner?.();
 }
 
 export async function ask(question: string, fallback?: string): Promise<string> {

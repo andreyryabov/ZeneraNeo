@@ -23,7 +23,7 @@ zen open     [project] [--editor <cmd>] [--wait]
 zen key      <ls|add|use|check|rm|show|env> [ref] [options]
 zen models   <providers|ls|search|show|test|pick> [ref] [options]
 zen check    [name|dir] [--project <name|dir>] [--no-sandbox] [--no-models] [--strict] [--quiet]
-zen inspect  [run] [--session <id>] [--open] [--rebuild]
+zen inspect  [report|graph|node] [run] [--dir <run dir>] [--open]
 zen memory   [stats|ls|show|export|merge|forget] [args] [options]
 zen export   [project] [--out <file>] [--no-vectors] [--no-memory] [--force]
 zen import   <file.zip> [dir] [--name <name>] [--force] [--no-register]
@@ -51,6 +51,7 @@ guess a flag, and do not read them all.
 | Which models exist, whether one works, recovering from a refusal    | [models.md](./references/models.md)                             |
 | The container shell commands run in, images, `persist`              | [sandbox.md](./references/sandbox.md) (and `zen-sandbox` skill) |
 | Run reports, trajectories, what a session directory holds           | [inspect.md](./references/inspect.md)                           |
+| Reading a run yourself: the node graph, opening a node by id        | [inspect.md](./references/inspect.md)                           |
 | What the agents remember, why something was recalled, forgetting    | [memory.md](./references/memory.md)                             |
 | Sharing a project: archives, what travels, importing one safely     | [export.md](./references/export.md)                             |
 | `zen faker` - a mock API from an OpenAPI/Swagger document           | [faker.md](./references/faker.md)                               |
@@ -64,6 +65,8 @@ zen check                             validate everything before spending a turn
 zen run                               the TUI
 zen run "what changed?"               one answer, this directory as the workspace
 zen inspect --open                    what the model was actually given
+zen inspect graph --dir <run dir>     the same run as a graph you can read
+zen inspect node n14..n20 --dir <d>   the nodes behind the ids, in full
 zen memory export --open              the whole memory graph, as a page
 zen export                            the project as a zip you can send
 zen import a.zip                      unpack one somebody sent, run nothing in it

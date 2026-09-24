@@ -26,6 +26,12 @@ export interface Command {
     /** printed instead of the `zen` banner, so the sub-brand shows through */
     readonly banner?: BannerText;
     /**
+     * True when this invocation's stdout is the answer rather than a report on
+     * it. The banner is then held back rather than dropped: if the run turns
+     * out to need a prompt, someone is there to see it, and it appears.
+     */
+    readonly quiet?: (args: readonly string[]) => boolean;
+    /**
      * Answers `--help` itself, for a command whose arguments select a page the
      * frame cannot see. Without it the frame prints this command's own page.
      */

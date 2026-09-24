@@ -144,6 +144,7 @@ Then, day to day:
 zen run my-project              # no prompt given: opens a full-screen terminal app (a TUI)
 zen check my-project            # validate the project and every file it names
 zen inspect                     # open the last run's report.html
+zen inspect graph               # the same run as a graph a model can read
 zen list --sessions             # every project, its sessions and last run
 echo "triage this" | zen run my-project --json | jq
 ```
@@ -249,6 +250,18 @@ edit SPECIFICATION.md → /spec-sync-project → zen check → zen run
 statistics, agent architecture, and memory used during the run.
 
 ![Run inspection: trace, agent architecture, and memory](https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/0910_480.gif)
+
+The agent in your editor can close the same loop without the page. `zen inspect
+graph` writes the whole run as one Mermaid flowchart - a line per node, short
+sequential ids, the tools counted in a header - which is small enough to read
+whole. Having spotted the loop or the branch that failed, it opens the two or
+three nodes that explain it:
+
+```sh
+DIR=$(zen run my-project "fix the tests" --json | jq -r .run.dir)
+zen inspect graph --dir "$DIR"        # the shape of the run
+zen inspect node n14..n20 --dir "$DIR"  # the nodes behind the ids, in full
+```
 
 Every step is a command, and everything each one reads or writes is a plain
 file: the specification, the findings `zen check` prints with a code, a location
