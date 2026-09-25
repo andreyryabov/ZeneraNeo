@@ -81,28 +81,29 @@ agents:
 
 | Field        | Type                       | Default         | Meaning                                      |
 | ------------ | -------------------------- | --------------- | -------------------------------------------- |
-| `access`     | `read`/`read-write`/`full` | `read-write`    | Which of the four tools this agent gets      |
+| `access`     | `read`/`read-write`/`full` | `read-write`    | Which of the five tools this agent gets      |
 | `sees`       | name[]                     | `[]`            | Private slices it may read, on top of `*`    |
 | `writes`     | name[]                     | `[*]`           | Labels it may commit under                   |
 | `autoRecall` | boolean or `{ limit }`     | `true`, limit 5 | Recall before a turn that follows user input |
 
 `memory: true` is shorthand for all four defaults.
 
-## The four tools
+## The five tools
 
 They are **not** listed in an agent's `tools:`. They are derived from the
 binding and appear when it exists, so `access` is the only thing that decides
 which of them the model is offered:
 
-| Level        | Tools                           |
-| ------------ | ------------------------------- |
-| `read`       | `memory_search`, `memory_load`  |
-| `read-write` | the above, plus `memory_commit` |
-| `full`       | the above, plus `memory_forget` |
+| Level        | Tools                                         |
+| ------------ | --------------------------------------------- |
+| `read`       | `memory_search`, `memory_grep`, `memory_load` |
+| `read-write` | the above, plus `memory_commit`               |
+| `full`       | the above, plus `memory_forget`               |
 
 | Tool            | Does                                                                       |
 | --------------- | -------------------------------------------------------------------------- |
 | `memory_search` | Ranks, then stitches. Returns an outline of a subgraph and a legend of ids |
+| `memory_grep`   | Exact and complete. Every node containing a string, with the lines         |
 | `memory_load`   | Reads whole nodes by id. **The only call that counts as use**              |
 | `memory_commit` | Writes a subgraph - nodes and the edges between them - in one transaction  |
 | `memory_forget` | Removes nodes, their vectors and their file bytes together                 |
@@ -111,6 +112,15 @@ Search and load are split on purpose. Search hands back context the model never
 asked for; counting that as use would poison recency ranking. Commit is one
 call because a remembered thing is a subgraph, and building it with three calls
 leaves the graph half-formed when the model stops early.
+
+Grep is separate from search because exactness is not a tuning of nearness. A
+ranking returns the top of a list, so "nothing came back" and "nothing is there"
+are the same result - and the second is what you need when the question is
+whether a host, a flag or a command was already written down. Grep reads the
+text, the metadata and the bytes of remembered files, applies the mask, leaves
+out superseded nodes unless asked, and names any file it could not read. It is
+also what an agent is supposed to reach for instead of running a shell `grep`
+over `/memory`, which the house rules forbid.
 
 `agents/memory-instructions.md` already explains all of this to the agent - how
 to read a recollection, when committing is worthwhile, why correction is a new
@@ -610,7 +620,7 @@ can act on.
 ## Inspecting and repairing it
 
 ```
-zen memory [stats|ls|show|export|merge|forget] [args] [options]
+zen memory [stats|ls|grep|show|export|merge|forget] [args] [options]
 ```
 
 `zen memory export --open` is the one to reach for: one self-contained HTML
@@ -619,23 +629,26 @@ content in the detail pane. It reads **unmasked** - when the mask is what is
 wrong, the hidden part is exactly the part you need - and it contacts no model,
 so inspection is free and offline.
 
-| Question                                 | Command                          |
-| ---------------------------------------- | -------------------------------- |
-| Is memory even on, and is it embedded?   | `zen memory stats`               |
-| What has this project learned?           | `zen memory export --open`       |
-| What is in one private slice?            | `zen memory ls --audience audit` |
-| What has been corrected?                 | `zen memory ls --stale`          |
-| What files are being kept?               | `zen memory ls --files`          |
-| Why was that recalled?                   | `zen memory show <id>`           |
-| Fold parallel warmup graphs into one     | `zen memory merge <dir...>`      |
-| That should never have been written down | `zen memory forget <id>`         |
+| Question                                 | Command                           |
+| ---------------------------------------- | --------------------------------- |
+| Is memory even on, and is it embedded?   | `zen memory stats`                |
+| What has this project learned?           | `zen memory export --open`        |
+| Is this host/flag/path in there at all?  | `zen memory grep <pattern>`       |
+| Everywhere a thing is mentioned          | `zen memory grep <pattern> --all` |
+| What is in one private slice?            | `zen memory ls --audience audit`  |
+| What has been corrected?                 | `zen memory ls --stale`           |
+| What files are being kept?               | `zen memory ls --files`           |
+| Why was that recalled?                   | `zen memory show <id>`            |
+| Fold parallel warmup graphs into one     | `zen memory merge <dir...>`       |
+| That should never have been written down | `zen memory forget <id>`          |
 
 The directory is not fixed. `zen run --memory <dir>` sends one run's memory
 somewhere else - a scratch graph for a trial, one per branch, or a shared one
 outside the repository - and `zen memory --dir <dir>` reads any such directory
 with no project around it. Together they are also how you read a graph while a
 run holds its `.lock`: copy the directory, delete the copy's `.lock`, and point
-`--dir` at the copy.
+`--dir` at the copy. `grep` needs none of that - it declines the lock, so it
+reads a memory a run is writing, and the read-only `/memory` mount as well.
 
 `zen inspect` answers the other half: a run report shows the recollection block
 exactly as the model received it, which is how you tell "memory had nothing"

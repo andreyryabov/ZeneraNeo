@@ -1,7 +1,7 @@
 # Memory - `zen memory`
 
 ```
-zen memory [stats|ls|show|export|merge|forget] [args] [options]
+zen memory [stats|ls|grep|show|export|merge|forget] [args] [options]
 ```
 
 Alias: `mem`.
@@ -22,34 +22,66 @@ skill.
 | ------------------------- | ------------------------------------------- |
 | `zen memory stats`        | Size, vocabulary, whether it is embedded    |
 | `zen memory ls`           | Nodes, newest first. Changes nothing        |
+| `zen memory grep <pat>`   | Every node containing it, with the lines    |
 | `zen memory show <id>`    | One node in full, with what it links to     |
 | `zen memory export [f]`   | The whole graph as one HTML page            |
 | `zen memory merge <dir…>` | Fold other memories into this one           |
 | `zen memory forget <id…>` | Remove nodes, their vectors and their files |
 
-| Flag                    | Meaning                                       |
-| ----------------------- | --------------------------------------------- |
-| `--project <name\|dir>` | Which project. Inferred from the directory    |
-| `--dir <dir>`           | Read this memory directory instead            |
-| `--kind <name>`         | Only this kind of node                        |
-| `--audience <name>`     | Only nodes committed under this label         |
-| `--files`               | Only nodes that remember a file               |
-| `--stale`               | Only nodes something has superseded           |
-| `--limit <n>`           | Rows to list. Default 30                      |
-| `--out <file>`          | Where `export` writes. Default `memory.html`  |
-| `--open`                | Open the exported page                        |
-| `--dry-run`             | Say what `merge` would do, and stop           |
-| `--no-dedupe`           | Keep memories `merge` would otherwise fold    |
-| `--force`               | Let `merge` pick a winner where copies differ |
-| `--yes`                 | Do not ask before removing or merging         |
+| Flag                          | Meaning                                        |
+| ----------------------------- | ---------------------------------------------- |
+| `--project <name\|dir>`       | Which project. Inferred from the directory     |
+| `--dir <dir>`                 | Read this memory directory instead             |
+| `--kind <name>`               | Only this kind of node                         |
+| `--audience <name>`           | Only nodes committed under this label          |
+| `--files`                     | Only nodes that remember a file                |
+| `--stale`                     | Only nodes something has superseded            |
+| `--all`                       | For `grep`: superseded nodes too, marked       |
+| `--regex`                     | Read the `grep` pattern as a regex, per line   |
+| `--case-sensitive`            | Match case exactly. Off by default             |
+| `--in <text\|metadata\|file>` | Where `grep` looks. Repeatable. All by default |
+| `--ids-only`                  | Print bare ids, for piping into `show`         |
+| `--limit <n>`                 | Rows to list. Default 30                       |
+| `--out <file>`                | Where `export` writes. Default `memory.html`   |
+| `--open`                      | Open the exported page                         |
+| `--dry-run`                   | Say what `merge` would do, and stop            |
+| `--no-dedupe`                 | Keep memories `merge` would otherwise fold     |
+| `--force`                     | Let `merge` pick a winner where copies differ  |
+| `--yes`                       | Do not ask before removing or merging          |
+
+## `grep` answers what recall cannot
+
+Recall ranks, and a ranking returns the top of a list. It can say what is
+closest; it can never say that nothing is there. `grep` reads every node
+exactly - the text, the metadata, and the bytes of every remembered file - and
+reports the lines it matched on:
+
+```sh
+zen memory grep 'staging.example.com'        everywhere that host is mentioned
+zen memory grep 'API_KEY' --in file          only inside remembered files
+zen memory grep '^def ' --regex --kind file  matched per line, as grep does
+zen memory grep pandas --ids-only | xargs -n1 zen memory show
+```
+
+The count it prints is the true one even when `--limit` cut the list, and a
+remembered file it could not read - too big, binary, missing - is named rather
+than silently skipped, because a file that went unsearched must not pass for one
+with no match.
+
+Superseded nodes are left out unless you ask: `--all` includes them marked, and
+`--stale` narrows to them alone.
+
+It is also the one subcommand that does not take the directory lock, so it works
+while a run is writing the memory, and against the read-only `/memory` mount
+inside a sandbox.
 
 ## A graph that is not the project's
 
 `--dir` opens a memory directory as it stands, and skips project resolution
 entirely: there need be no `agents.yaml` anywhere above it. That is what to use
 for a graph a run was pointed at with `zen run --memory <dir>`, and for a copy
-taken out of a running session - copy the directory, delete its `.lock`, and
-read the copy while the run continues.
+taken out of a running session - though for reading a live memory, `grep` needs
+no copy at all.
 
 ```
 zen run --memory .tmp/mem "…"     remember into .tmp/mem for this run

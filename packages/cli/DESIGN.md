@@ -1140,7 +1140,40 @@ hostile - node text and remembered files are model output. Data reaches the
 document only inside an inert `application/json` block and leaves it only
 through `textContent`.
 
-### 10.2 `merge` - putting a fanned-out warmup back together
+### 10.2 `grep` - the exhaustive read
+
+Recall ranks, and a ranking can only return the top of a list. That makes
+"nothing came back" and "nothing is there" the same result, which is no use at
+all for the question anyone actually arrives with: _was this already written
+down?_ `zen memory grep` is the other instrument. One pass over every node -
+its text, its metadata, and the bytes of the file it remembers - reporting the
+lines that matched, and reporting `found` as the true total even when `--limit`
+cut the list, so a short answer cannot pass for a complete one.
+
+The engine is `grepMemory` in `@zenera/neo`, shared with the `memory_grep`
+tool, because two implementations of "does this string appear" would be two
+answers to one question. The CLI passes no audience mask and the tool passes
+the agent's; everything else is identical.
+
+Three rules keep it honest, and each is there because a raw `grep` over
+`/memory` gets it wrong:
+
+- **Superseded nodes are left out** unless asked for, and come back marked when
+  they are. Serving a withdrawn correction as current is the failure this
+  replaces, not one to reproduce.
+- **A file that could not be read is named**, with why - too big, binary,
+  missing, unreadable. An answer whose whole value is completeness must not have
+  silent holes in it.
+- **Nothing is touched.** `lastUsedAt` tracks what an agent opened; a finder
+  that bumped it would make every scan look like a read and skew recall.
+
+It is also the one subcommand that opens the store with `lock: false`. The lock
+exists to stop two writers losing each other's edges, and a reader that took it
+would only be refusing itself - at exactly the two moments grep is most wanted:
+while a run is writing, and against the read-only `/memory` mount in a sandbox,
+where claiming a lock fails outright.
+
+### 10.3 `merge` - putting a fanned-out warmup back together
 
 The memory lock is per directory, which is what keeps two runs of one project
 from interleaving commits. It also means warming a memory in parallel is N runs
@@ -1171,7 +1204,7 @@ before a byte is written and lists the ids with both revisions, because which
 piece of work was right is a question, and answering it silently is how a merge
 loses the answer. `--force` answers it with the highest revision.
 
-### 10.3 Forgetting
+### 10.4 Forgetting
 
 `forget` asks before it removes, and refuses outright when there is no terminal
 to ask at; `--yes` is the only way through a script. It then delegates to the

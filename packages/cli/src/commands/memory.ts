@@ -1,16 +1,21 @@
 import {
     ALL_AGENTS,
     buildMemoryReport,
+    GREP_FIELDS,
+    grepMemory,
     hostPath,
     memoryDir,
+    MemoryError,
     MemoryIndex,
     MemoryStore,
     MergeConflicts,
     mergeMemories,
     readProjectConfig,
     renderMemoryHtml,
+    type GrepField,
     type MemoryNode,
     type MergeReport,
+    type SkippedFile,
 } from '@zenera/neo';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -40,7 +45,7 @@ import {
     yellow,
 } from '../term.ts';
 
-const USAGE = 'zen memory [stats|ls|show|export|merge|forget] [args] [options]';
+const USAGE = 'zen memory [stats|ls|grep|show|export|merge|forget] [args] [options]';
 
 interface Flags {
     project?: string;
@@ -49,6 +54,11 @@ interface Flags {
     audience?: string;
     files?: boolean;
     stale?: boolean;
+    all?: boolean;
+    regex?: boolean;
+    'case-sensitive'?: boolean;
+    in?: string[];
+    'ids-only'?: boolean;
     limit?: string;
     out?: string;
     open?: boolean;
@@ -58,7 +68,7 @@ interface Flags {
     'no-dedupe'?: boolean;
 }
 
-const SUBCOMMANDS = ['stats', 'ls', 'show', 'export', 'merge', 'forget'];
+const SUBCOMMANDS = ['stats', 'ls', 'grep', 'show', 'export', 'merge', 'forget'];
 
 /** Enough to see the shape of it; the rest is a number. */
 const LISTED = 30;
@@ -89,6 +99,7 @@ export const memory: Command = {
     details: [
         '  stats                  Size, vocabulary, and whether it is embedded.',
         '  ls                     Nodes, newest first. Changes nothing.',
+        '  grep <pattern>         Every node containing it, with the matching lines.',
         '  show <id>              One node in full, with what it links to.',
         '  export [file]          The whole graph as one HTML page.',
         '  merge <dir...>         Fold other memories into this one.',
@@ -100,6 +111,11 @@ export const memory: Command = {
         '  --audience <name>      Only nodes committed under this label.',
         '  --files                Only nodes that remember a file.',
         '  --stale                Only nodes something has superseded.',
+        '  --all                  For `grep`: superseded nodes too, marked as such.',
+        '  --regex                Read the pattern as a regular expression, per line.',
+        '  --case-sensitive       Match case exactly. Off by default.',
+        '  --in <text|metadata|file>  Where to look. Repeatable. All three by default.',
+        '  --ids-only             Print bare ids, for piping into `zen memory show`.',
         '  --limit <n>            Rows to list. Default 30.',
         '  --out <file>           Where `export` writes. Default memory.html.',
         '  --open                 Open the exported page.',
@@ -116,6 +132,17 @@ export const memory: Command = {
         'page: the node list on the left, the graph in the middle, and whatever',
         'you click on the right, file contents and all.',
         '',
+        '`grep` is the other one. Recall ranks, so it answers “what is closest”',
+        'and can never answer “is this in here at all”; `grep` reads every node',
+        'exactly — text, metadata and the bytes of remembered files — and the',
+        'count it reports is the true one even when the list was cut:',
+        '',
+        '  zen memory grep ‘staging.example.com’ --in metadata --in file',
+        '',
+        'It is the only subcommand that does not take the directory lock, so it',
+        'works on a memory a run is writing, and on the read-only /memory mount',
+        'inside a sandbox.',
+        '',
         '`merge` is for warming a memory in parallel. The lock is per directory,',
         'so N runs write N memories; this folds them back into one:',
         '',
@@ -131,6 +158,11 @@ export const memory: Command = {
                 audience: { type: 'string' },
                 files: { type: 'boolean' },
                 stale: { type: 'boolean' },
+                all: { type: 'boolean' },
+                regex: { type: 'boolean' },
+                'case-sensitive': { type: 'boolean' },
+                in: { type: 'string', multiple: true },
+                'ids-only': { type: 'boolean' },
                 limit: { type: 'string' },
                 out: { type: 'string' },
                 open: { type: 'boolean' },
@@ -149,7 +181,13 @@ export const memory: Command = {
         const rest = positionals.slice(1);
         // `merge` is the one subcommand that may write a memory into existence;
         // every other one is an inspector and a missing manifest is a mistake.
-        const opened = await open(ctx.cwd, values.project, values.dir, what === 'merge');
+        // And `grep` is the one that declines the lock: the two moments it is
+        // most wanted are while a run is writing, and against the read-only
+        // /memory mount — in both of which claiming it fails.
+        const opened = await open(ctx.cwd, values.project, values.dir, {
+            create: what === 'merge',
+            lock: what !== 'grep',
+        });
 
         try {
             switch (what) {
@@ -157,6 +195,8 @@ export const memory: Command = {
                     return stats(opened, ctx.json);
                 case 'ls':
                     return list(opened, values, ctx.json);
+                case 'grep':
+                    return await grep(opened, rest, values, ctx.json);
                 case 'show':
                     return show(opened, rest, ctx.json);
                 case 'export':
@@ -195,19 +235,24 @@ interface Opened {
  * `create` drops the requirement that anything be there yet, for `merge`,
  * which has somewhere to put what it reads even when the destination is a name
  * nothing has written to.
+ *
+ * `lock` is off for a read that must not fail on a busy or read-only memory.
+ * The lock exists to stop two writers losing each other's edges; a reader that
+ * took it would only be refusing itself.
  */
 async function open(
     cwd: string,
     want: string | undefined,
     at: string | undefined,
-    create = false,
+    opts: { create?: boolean; lock?: boolean } = {},
 ): Promise<Opened> {
+    const { create = false, lock = true } = opts;
     if (at) {
         const dir = resolve(cwd, at);
         if (!create && !existsSync(join(dir, 'manifest.json'))) {
             throw usageError(`${dir} is not a memory`, 'no manifest.json in it');
         }
-        return { store: await MemoryStore.open(dir), dir, project: basename(dir) };
+        return { store: await MemoryStore.open(dir, { lock }), dir, project: basename(dir) };
     }
     const project = await resolveProject({ cwd, project: want });
     const { config } = readProjectConfig(project.dir);
@@ -224,7 +269,7 @@ async function open(
             'it is written the first time an agent commits something',
         );
     }
-    return { store: await MemoryStore.open(dir), dir, project: project.name };
+    return { store: await MemoryStore.open(dir, { lock }), dir, project: project.name };
 }
 
 // ---------------------------------------------------------------------------
@@ -364,6 +409,112 @@ function list(o: Opened, flags: Flags, asJson: boolean): void {
         write();
         note(dim(`${all.length - limit} more — raise --limit, or use \`zen memory export\``));
     }
+}
+
+// ---------------------------------------------------------------------------
+// grep
+// ---------------------------------------------------------------------------
+
+/**
+ * The exhaustive read, and the counterpart to recall rather than a variant of
+ * it. Recall ranks, and a ranking returns the top of a list, so it cannot tell
+ * "there is nothing" from "nothing was close enough" — which is the question
+ * anyone actually has when they come to a memory looking for a name, a path or
+ * a command they think an agent wrote down.
+ */
+async function grep(o: Opened, rest: string[], flags: Flags, asJson: boolean): Promise<void> {
+    const pattern = rest[0];
+    if (!pattern || rest.length > 1) {
+        throw usageError('grep takes exactly one pattern', 'zen memory grep <pattern>');
+    }
+    const limit = Number(flags.limit ?? LISTED);
+    if (!Number.isInteger(limit) || limit < 1) {
+        throw usageError(`--limit wants a positive whole number, got ${flags.limit}`, USAGE);
+    }
+    for (const field of flags.in ?? []) {
+        if (!(GREP_FIELDS as readonly string[]).includes(field)) {
+            throw usageError(`--in wants one of ${GREP_FIELDS.join(', ')}, got ${field}`, USAGE);
+        }
+    }
+
+    let res;
+    try {
+        res = await grepMemory(o.store, pattern, {
+            // Unmasked, like everything else here: this is the person who owns
+            // the files, not an agent inside a run.
+            kinds: flags.kind ? [flags.kind] : undefined,
+            audience: flags.audience,
+            files: flags.files,
+            in: flags.in as GrepField[] | undefined,
+            stale: flags.stale ? 'only' : flags.all ? 'include' : 'exclude',
+            regex: flags.regex,
+            caseSensitive: flags['case-sensitive'],
+            limit,
+        });
+    } catch (err) {
+        if (err instanceof MemoryError) {
+            throw new CliError(err.message, EXIT.usage, err.hint);
+        }
+        throw err;
+    }
+
+    if (asJson) {
+        json({
+            found: res.found,
+            truncated: res.truncated,
+            matches: res.matches.map((m) => ({
+                id: m.node.id,
+                kind: m.node.kind,
+                stale: m.stale,
+                file: m.node.file ? hostPath(o.dir, m.node.file) : undefined,
+                hits: m.hits,
+                more: m.more,
+            })),
+            unsearched: res.skipped,
+        });
+        return;
+    }
+    if (flags['ids-only']) {
+        writeAll(res.matches.map((m) => m.node.id));
+        return;
+    }
+    if (!res.found) {
+        note(`nothing matches ${pattern}`);
+        unsearched(res.skipped);
+        return;
+    }
+
+    for (const m of res.matches) {
+        write(
+            cyan(m.node.id) +
+                ' ' +
+                m.node.kind +
+                (m.stale ? ' ' + yellow('superseded') : '') +
+                (m.node.file ? ' ' + dim(m.node.file.path) : ''),
+        );
+        writeAll(table(m.hits.map((h) => [`  ${dim(h.where + ':' + h.line)}`, clip(h.text, 120)])));
+        if (m.more) {
+            write(dim(`  … ${count(m.more, 'more line')} in this node`));
+        }
+        write();
+    }
+    if (res.truncated) {
+        note(dim(`${res.found - res.matches.length} more nodes — raise --limit`));
+    }
+    unsearched(res.skipped);
+}
+
+/**
+ * Named rather than counted. A file that was not read is a hole in an answer
+ * whose whole value is that it has none, so the ids have to be printable.
+ */
+function unsearched(skipped: readonly SkippedFile[]): void {
+    if (!skipped.length) {
+        return;
+    }
+    write();
+    note(yellow(`${count(skipped.length, 'file')} not searched`));
+    writeAll(table(skipped.map((s) => [`  ${cyan(s.id)}`, dim(s.reason), s.path])));
 }
 
 // ---------------------------------------------------------------------------

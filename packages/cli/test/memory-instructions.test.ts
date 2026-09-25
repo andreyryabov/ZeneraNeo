@@ -2,6 +2,7 @@ import {
     frontmatter,
     MEMORY_COMMIT_TOOL,
     MEMORY_FORGET_TOOL,
+    MEMORY_GREP_TOOL,
     MEMORY_LOAD_TOOL,
     MEMORY_SEARCH_TOOL,
     renderRecollection,
@@ -40,7 +41,13 @@ const REFERENCE = join('.github', 'skills', 'zen-memory', 'references', 'memory-
 
 const rules = readFileSync(TEMPLATE, 'utf8');
 
-const TOOLS = [MEMORY_SEARCH_TOOL, MEMORY_LOAD_TOOL, MEMORY_COMMIT_TOOL, MEMORY_FORGET_TOOL];
+const TOOLS = [
+    MEMORY_SEARCH_TOOL,
+    MEMORY_GREP_TOOL,
+    MEMORY_LOAD_TOOL,
+    MEMORY_COMMIT_TOOL,
+    MEMORY_FORGET_TOOL,
+];
 
 describe('the tools the house rules name', () => {
     it('all exist', () => {

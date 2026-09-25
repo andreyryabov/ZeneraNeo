@@ -11,6 +11,7 @@ export * from './inspect/index.ts';
 export * as Kernel from './kernel.ts';
 export * from './memory/files.ts';
 export * from './memory/graph.ts';
+export * from './memory/grep.ts';
 export * from './memory/index.ts';
 export * from './memory/merge.ts';
 export * from './memory/page.ts';

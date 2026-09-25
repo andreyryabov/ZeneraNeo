@@ -752,18 +752,18 @@ agents:
 
 | Field        | Type                       | Default         | Meaning                                      |
 | ------------ | -------------------------- | --------------- | -------------------------------------------- |
-| `access`     | `read`/`read-write`/`full` | `read-write`    | Which of the four tools this agent gets      |
+| `access`     | `read`/`read-write`/`full` | `read-write`    | Which of the five tools this agent gets      |
 | `sees`       | name[]                     | `[]`            | Private slices this agent may read, plus `*` |
 | `writes`     | name[]                     | `[*]`           | Labels it may write under                    |
 | `autoRecall` | boolean or `{ limit }`     | `true`, limit 5 | Recall before a turn that follows user input |
 
 `access` decides the tools, and nothing else does:
 
-| Level        | Tools                           |
-| ------------ | ------------------------------- |
-| `read`       | `memory_search`, `memory_load`  |
-| `read-write` | the above, plus `memory_commit` |
-| `full`       | the above, plus `memory_forget` |
+| Level        | Tools                                         |
+| ------------ | --------------------------------------------- |
+| `read`       | `memory_search`, `memory_grep`, `memory_load` |
+| `read-write` | the above, plus `memory_commit`               |
+| `full`       | the above, plus `memory_forget`               |
 
 **One memory, masked - not one memory each.** Every node carries an audience,
 and `sees` is the set of audiences an agent reads. `*` is the public slice and

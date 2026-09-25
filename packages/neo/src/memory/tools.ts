@@ -1,12 +1,14 @@
 /**
- * The four tools an agent gets. Deliberately four and not seven: `search` and
- * `load` are split because finding is not reading — search returns stitched
- * context the model never asked for, and counting that as use would poison
- * recency. `commit` is one transaction because a remembered thing is a
- * subgraph, and building it with three calls leaves the graph half-formed if
- * the model stops early. `forget` is separate because deleting rarely happens
- * in the same breath as creating, and a `forget` buried inside a truncated
- * commit preview would be both irreversible and invisible.
+ * The five tools an agent gets. `search` and `load` are split because finding
+ * is not reading — search returns stitched context the model never asked for,
+ * and counting that as use would poison recency. `grep` is separate from
+ * `search` because exactness is not a tuning of nearness: a ranking returns the
+ * top of a list, so it can say what is closest but never that nothing is there.
+ * `commit` is one transaction because a remembered thing is a subgraph, and
+ * building it with three calls leaves the graph half-formed if the model stops
+ * early. `forget` is separate because deleting rarely happens in the same
+ * breath as creating, and a `forget` buried inside a truncated commit preview
+ * would be both irreversible and invisible.
  *
  * `audience` reaches the schema only when the binding grants more than one
  * label, and `sees` never does: an agent that could name its own audience
@@ -17,12 +19,14 @@ import {
     type AnyTool,
     MEMORY_COMMIT_TOOL,
     MEMORY_FORGET_TOOL,
+    MEMORY_GREP_TOOL,
     MEMORY_LOAD_TOOL,
     MEMORY_SEARCH_TOOL,
     tool,
     type ToolContext,
     withEffects,
 } from '../types.ts';
+import { GREP_FIELDS, type GrepField, grepMemory } from './grep.ts';
 import type { CommitEdge, CommitNode, MemoryIndex } from './index.ts';
 import { renderRecollection } from './render.ts';
 import {
@@ -40,6 +44,9 @@ export function memoryOpId(runId: string, callId: string): string {
     return hash(`${runId}\u0000${callId}`);
 }
 
+/** Enough nodes to settle a question, few enough not to be a context dump. */
+const GREPPED = 20;
+
 export interface MemoryToolsOptions {
     index: MemoryIndex;
     binding: ResolvedMemoryBinding;
@@ -56,6 +63,16 @@ interface SearchArgs {
 
 interface LoadArgs {
     ids: string[];
+}
+
+interface GrepArgs {
+    pattern: string;
+    regex?: boolean;
+    case_sensitive?: boolean;
+    kinds?: string[];
+    in?: GrepField[];
+    include_superseded?: boolean;
+    limit?: number;
 }
 
 interface CommitArgs {
@@ -189,6 +206,101 @@ export function memoryTools<TCtx>(opts: MemoryToolsOptions): AnyTool<TCtx>[] {
                             : undefined,
                         content: l.content,
                     })),
+                    { kind: 'memory_op', spec },
+                );
+            },
+        }),
+        tool<GrepArgs, TCtx>({
+            name: MEMORY_GREP_TOOL,
+            description:
+                'Find an exact string in memory, the way grep does: every node whose text, ' +
+                'metadata or remembered file contains it, with the matching lines. Use this ' +
+                `instead of ${MEMORY_SEARCH_TOOL} when the answer has to be complete rather ` +
+                'than close — whether something was already recorded, or where a name, path, ' +
+                'id or command appears. This is the only correct way to search the memory ' +
+                'directly; never run a shell grep over /memory. Read a whole node with ' +
+                `${MEMORY_LOAD_TOOL}.`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    pattern: {
+                        type: 'string',
+                        description: 'the exact text to look for; matched case-insensitively',
+                    },
+                    regex: {
+                        type: 'boolean',
+                        description: 'read the pattern as a regular expression, matched per line',
+                    },
+                    case_sensitive: { type: 'boolean', description: 'match case exactly' },
+                    kinds: {
+                        type: 'array',
+                        items: { type: 'string', enum: kinds },
+                        description: 'restrict to these kinds',
+                    },
+                    in: {
+                        type: 'array',
+                        items: { type: 'string', enum: [...GREP_FIELDS] },
+                        description: 'which parts to look in; all of them by default',
+                    },
+                    include_superseded: {
+                        type: 'boolean',
+                        description:
+                            'also search nodes that have been corrected by a newer one; they come back marked stale',
+                    },
+                    limit: { type: 'integer', description: `nodes to return; default ${GREPPED}` },
+                },
+                required: ['pattern'],
+                additionalProperties: false,
+            },
+            execute: async (args, tc) => {
+                const opId = memoryOpId(tc.state.runId, tc.callId);
+                let res;
+                try {
+                    res = await grepMemory(index.store, args.pattern, {
+                        sees: binding.sees,
+                        regex: args.regex,
+                        caseSensitive: args.case_sensitive,
+                        kinds: args.kinds,
+                        in: args.in,
+                        stale: args.include_superseded ? 'include' : 'exclude',
+                        limit: args.limit ?? GREPPED,
+                    });
+                } catch (err) {
+                    return refusal(err);
+                }
+                // A complete answer, so nothing found is information rather than
+                // a failed lookup — that is the whole reason this tool exists.
+                if (!res.found && !res.skipped.length) {
+                    return `nothing in memory contains ${JSON.stringify(args.pattern)}`;
+                }
+                const spec: MemoryOpSpec = {
+                    kind: 'op',
+                    op: 'grep',
+                    opId,
+                    nodes: res.matches.map((m) => ({
+                        id: m.node.id,
+                        kind: m.node.kind,
+                        revision: m.node.revision,
+                    })),
+                    edges: [],
+                    files: 0,
+                };
+                return withEffects(
+                    {
+                        found: res.found,
+                        truncated: res.truncated || undefined,
+                        matches: res.matches.map((m) => ({
+                            id: m.node.id,
+                            kind: m.node.kind,
+                            stale: m.stale || undefined,
+                            file: m.node.file?.path,
+                            hits: m.hits.map((h) => ({ in: h.where, line: h.line, text: h.text })),
+                            more: m.more || undefined,
+                        })),
+                        // Named, because a file that was not read means a hit in
+                        // it would not have been reported either.
+                        unsearched: res.skipped.length ? res.skipped : undefined,
+                    },
                     { kind: 'memory_op', spec },
                 );
             },
