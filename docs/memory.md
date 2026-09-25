@@ -143,12 +143,12 @@ leaves the agent to decide when to search.
 
 Recall is masked, ranked and truncated by design, so what an agent sees is never
 the whole picture - and when the picture is what is wrong, you need the part
-that was hidden. `zen memory` reads the graph **unmasked**, locally, without
-contacting a model:
+that was hidden. `zen memory` reads the graph **unmasked**, locally:
 
 ```sh
 zen memory stats            # size, vocabulary, whether it is embedded
 zen memory ls --files       # nodes, newest first
+zen memory search <query>   # recall it, the way an agent does. ranked
 zen memory grep <pattern>   # every node containing it, with the matching lines
 zen memory show <id>        # one node in full, with what it links to
 zen memory export --open    # the whole graph as one self-contained HTML page
@@ -159,14 +159,23 @@ zen memory forget <id...>   # remove nodes, their vectors and their files
 `export` is the one to reach for: node list on the left, graph in the middle,
 whatever you clicked on the right, file contents and all.
 
-`grep` is the other one, and it is the counterpart to recall rather than a
-variant of it. Recall ranks, and a ranking returns the top of a list, so it can
-say what is closest but never that nothing is there. `grep` reads every node
-exactly - the text, the metadata and the bytes of remembered files - reports the
-lines it matched on, and reports the true total even when `--limit` cut the
-list. It is the only subcommand that does not take the directory lock, so it
-works on a memory a run is writing, and on the read-only `/memory` mount inside
-a sandbox. Agents get the same thing as `memory_grep`.
+`search` is recall itself, run from a terminal. It embeds the query with the
+project's own model and prints the block a model would have been handed, scores
+and all - so _why did it recall that?_ has a direct answer. `--audience <label>`
+recalls as an agent that sees only that label, which is how the harder question
+gets one too: a memory that is present but masked, or superseded, or merely
+ranked sixth looks exactly like a memory that was never written, and only the
+ranking can tell you which. It is the one subcommand that contacts a model; when
+it cannot, it falls back to term overlap and says so.
+
+`grep` is the counterpart to recall rather than a variant of it. Recall ranks,
+and a ranking returns the top of a list, so it can say what is closest but never
+that nothing is there. `grep` reads every node exactly - the text, the metadata
+and the bytes of remembered files - reports the lines it matched on, and reports
+the true total even when `--limit` cut the list. It is the only subcommand that
+does not take the directory lock, so it works on a memory a run is writing, and
+on the read-only `/memory` mount inside a sandbox. Agents get the same thing as
+`memory_grep`.
 
 `--dir <dir>` reads a memory directory as it stands, with no project around it:
 the graph a run was given with `zen run --memory`, or a copy taken out of a

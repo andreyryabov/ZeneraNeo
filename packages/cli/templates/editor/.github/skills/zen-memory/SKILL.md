@@ -620,27 +620,34 @@ can act on.
 ## Inspecting and repairing it
 
 ```
-zen memory [stats|ls|grep|show|export|merge|forget] [args] [options]
+zen memory [stats|ls|search|grep|show|export|merge|forget] [args] [options]
 ```
 
 `zen memory export --open` is the one to reach for: one self-contained HTML
 page with every node, the graph as a diagram, and the remembered file's actual
 content in the detail pane. It reads **unmasked** - when the mask is what is
-wrong, the hidden part is exactly the part you need - and it contacts no model,
-so inspection is free and offline.
+wrong, the hidden part is exactly the part you need - and like everything here
+bar `search`, it contacts no model, so inspection is free and offline.
 
-| Question                                 | Command                           |
-| ---------------------------------------- | --------------------------------- |
-| Is memory even on, and is it embedded?   | `zen memory stats`                |
-| What has this project learned?           | `zen memory export --open`        |
-| Is this host/flag/path in there at all?  | `zen memory grep <pattern>`       |
-| Everywhere a thing is mentioned          | `zen memory grep <pattern> --all` |
-| What is in one private slice?            | `zen memory ls --audience audit`  |
-| What has been corrected?                 | `zen memory ls --stale`           |
-| What files are being kept?               | `zen memory ls --files`           |
-| Why was that recalled?                   | `zen memory show <id>`            |
-| Fold parallel warmup graphs into one     | `zen memory merge <dir...>`       |
-| That should never have been written down | `zen memory forget <id>`          |
+`zen memory search <query>` is recall itself, run from a terminal: the same
+ranker, the same walk, the same block a model would have been given, scores and
+all. It is the only one that embeds, and the only one that can distinguish a
+memory that is missing from a memory that is merely ranked sixth.
+
+| Question                                 | Command                              |
+| ---------------------------------------- | ------------------------------------ |
+| Is memory even on, and is it embedded?   | `zen memory stats`                   |
+| What has this project learned?           | `zen memory export --open`           |
+| Is this host/flag/path in there at all?  | `zen memory grep <pattern>`          |
+| Everywhere a thing is mentioned          | `zen memory grep <pattern> --all`    |
+| What would an agent recall for this?     | `zen memory search <query>`          |
+| Why did it _not_ recall that?            | `zen memory search <q> --audience a` |
+| What is in one private slice?            | `zen memory ls --audience audit`     |
+| What has been corrected?                 | `zen memory ls --stale`              |
+| What files are being kept?               | `zen memory ls --files`              |
+| One node in full, with what it links to  | `zen memory show <id>`               |
+| Fold parallel warmup graphs into one     | `zen memory merge <dir...>`          |
+| That should never have been written down | `zen memory forget <id>`             |
 
 The directory is not fixed. `zen run --memory <dir>` sends one run's memory
 somewhere else - a scratch graph for a trial, one per branch, or a shared one

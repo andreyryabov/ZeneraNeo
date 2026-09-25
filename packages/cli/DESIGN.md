@@ -1104,12 +1104,14 @@ model: the mask keeps agents apart, and this command is a person at a terminal
 in the project directory, who already owns the files. Withholding a node from
 them would protect nothing and hide the bug.
 
-**Nothing here contacts a model.** The store is opened with no embedder, so
-inspection is free, offline, and cannot fail on a missing credential - which is
-precisely the state a project is in when someone starts debugging it. The price
-is that `ls` filters on text rather than on meaning, and that is the right way
-round for a tool whose job is to show what is there rather than to find what is
-relevant.
+**Only `search` contacts a model.** Everything else opens the store with no
+embedder, so inspection is free, offline, and cannot fail on a missing
+credential - which is precisely the state a project is in when someone starts
+debugging it. The price is that `ls` filters on text rather than on meaning,
+and that is the right way round for a tool whose job is to show what is there
+rather than to find what is relevant. `search` is the exception because it has
+to be: it reproduces recall, and a recall ranked by anything but the project's
+own embedder is a different answer wearing the same shape.
 
 For the same reason it does not call `loadProject`. Loading would resolve every
 model and read every prompt file in order to inspect a graph that needs none of
@@ -1140,7 +1142,44 @@ hostile - node text and remembered files are model output. Data reaches the
 document only inside an inert `application/json` block and leaves it only
 through `textContent`.
 
-### 10.2 `grep` - the exhaustive read
+### 10.2 `search` - recall, from outside a run
+
+The section opens by saying the command exists to answer _why did it recall
+that?_ - and for a long time it could only answer it indirectly, by showing
+what was in the graph and leaving the ranking to be imagined. `zen memory
+search` closes that. It runs `MemoryIndex.search` against the same store, with
+the same ranker, the same traversal and the same renderer the runtime uses, and
+prints `renderRecollection(rec, { tagged: false })` - the block a model would
+have been handed, untagged because a person is reading it. Scores, kinds, ids
+and the edge each node was reached by are all on the screen.
+
+The harder question is the one it answers better: _why did it **not** recall
+that?_ A memory that is present but ranked sixth, or masked, or superseded,
+looks exactly like a memory that was never written - from `ls` they are
+indistinguishable. `--audience <label>` recalls as an agent that sees only that
+label, and `--all` puts the superseded nodes back, so each of those three
+causes can be told apart from the others.
+
+Reproducing a ranking means reproducing its vectors, so the embedder is
+resolved the way a run resolves it: `memory.embedding` then `embedding`,
+through the project's `embeddings:` alias table, with `.env` loaded and the
+keyring materialised first. `--embedding <ref>` overrides it, which is also how
+a `--dir` graph with no project around it gets ranked.
+
+What cannot be built falls back to term overlap rather than failing - a graph
+whose credentials have gone missing is one worth looking at - but **the
+fallback is reported**, in the human output and as `ranking.by` in `--json`. A
+lexical ordering is not the one an agent sees, and a block that passed for
+recall without being it would send someone chasing a difference that exists
+only in the tool. A store with no vectors at all short-circuits to the same
+fallback before any embedder is built, because embedding a query against an
+empty block returns nothing, and nothing reads as _this was never remembered_.
+
+The `stale` option on `MemoryIndex.search` exists for this and nothing else. No
+tool passes it: an agent has no business seeing a correction and the thing it
+corrected as equals, whereas that is exactly the view an audit wants.
+
+### 10.3 `grep` - the exhaustive read
 
 Recall ranks, and a ranking can only return the top of a list. That makes
 "nothing came back" and "nothing is there" the same result, which is no use at
@@ -1173,7 +1212,7 @@ would only be refusing itself - at exactly the two moments grep is most wanted:
 while a run is writing, and against the read-only `/memory` mount in a sandbox,
 where claiming a lock fails outright.
 
-### 10.3 `merge` - putting a fanned-out warmup back together
+### 10.4 `merge` - putting a fanned-out warmup back together
 
 The memory lock is per directory, which is what keeps two runs of one project
 from interleaving commits. It also means warming a memory in parallel is N runs
@@ -1204,7 +1243,7 @@ before a byte is written and lists the ids with both revisions, because which
 piece of work was right is a question, and answering it silently is how a merge
 loses the answer. `--force` answers it with the highest revision.
 
-### 10.4 Forgetting
+### 10.5 Forgetting
 
 `forget` asks before it removes, and refuses outright when there is no terminal
 to ask at; `--yes` is the only way through a script. It then delegates to the
