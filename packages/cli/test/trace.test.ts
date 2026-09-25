@@ -257,6 +257,20 @@ describe('the diagram', () => {
             expect(line.startsWith('%%{')).toBe(false);
         }
     });
+
+    // The reader of a graph is somewhere else by the time it has a question,
+    // and reconstructing these three from a run id is work nobody should do.
+    it('names the directories the run used, and leaves out the ones it had none of', () => {
+        const head = (opts: object): string =>
+            traceMermaid(state(trunk()), opts).split('flowchart TD')[0] as string;
+
+        const full = head({ dir: '/p/sessions/s/runs/r', workspace: '/p/ws', memory: '/p/memory' });
+        expect(full).toContain('%% dir       /p/sessions/s/runs/r');
+        expect(full).toContain('%% workspace /p/ws');
+        expect(full).toContain('%% memory    /p/memory');
+
+        expect(head({ workspace: '/p/ws' })).not.toContain('%% memory');
+    });
 });
 
 describe('untrusted text', () => {

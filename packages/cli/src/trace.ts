@@ -513,6 +513,11 @@ function header(state: AgentState, trace: Trace, opts: TraceOptions): string[] {
     const lines = [
         '%% Zenera Neo run trajectory — every node of one run, in order.',
         row('run', safe(opts.runId ?? state.runId, 80)),
+        // The three directories a reader needs to go further, spelt out rather
+        // than left to be reconstructed from the run id.
+        ...(opts.dir ? [row('dir', safe(opts.dir, 200))] : []),
+        ...(opts.workspace ? [row('workspace', safe(opts.workspace, 200))] : []),
+        ...(opts.memory ? [row('memory', safe(opts.memory, 200))] : []),
         row(
             'agent',
             `${safe(state.agentName, 40)} · started as ${safe(state.spec.startAgent, 40)}`,
@@ -568,6 +573,10 @@ export interface TraceOptions {
     runId?: string;
     /** the run directory, so the header can spell the command that opens a node */
     dir?: string;
+    /** the files the run worked on */
+    workspace?: string;
+    /** the memory graph the run read, when it had one */
+    memory?: string;
     timing?: boolean;
     usage?: boolean;
     /** false drops the palette: a model reads the labels, not the colours */

@@ -27,6 +27,7 @@ import {
     runPaths,
     runPathsAt,
     sessionPaths,
+    type RunMeta,
     type RunPaths,
     type SessionPaths,
 } from '../session.ts';
@@ -153,7 +154,7 @@ export const inspect: Command = {
         }
         const at = await locate(ctx.cwd, values, rest[0], asking);
         if (what === 'graph') {
-            return await graph(at, values, ctx.json);
+            return await graph(at, values, ctx.cwd, ctx.json);
         }
         return await report(at, values, ctx.cwd, ctx.json);
     },
@@ -187,12 +188,17 @@ async function report(at: Located, values: Flags, cwd: string, asJson: boolean):
  * The run as a flowchart. Straight to stdout, because the thing a caller does
  * with this is paste it somewhere — a file, a prompt, a pipe.
  */
-async function graph(at: Located, values: Flags, asJson: boolean): Promise<void> {
-    const { session, run } = at;
+async function graph(at: Located, values: Flags, cwd: string, asJson: boolean): Promise<void> {
+    const { project, session, run } = at;
     const state = await readState(run);
+    const meta = await readRunMeta(run);
+    const workspace = meta.workspace ?? session.workspace;
+    const memoryAt = values.memory ? resolve(cwd, values.memory) : memoryPath(project, meta);
     const mermaid = traceMermaid(state, {
         runId: run.id,
         dir: run.dir,
+        workspace,
+        memory: memoryAt,
         timing: !values['no-timing'],
         style: !values['no-style'],
     });
@@ -201,6 +207,8 @@ async function graph(at: Located, values: Flags, asJson: boolean): Promise<void>
             session: session.id,
             run: run.id,
             dir: run.dir,
+            workspace,
+            memory: memoryAt,
             mermaid,
             nodes: traceIndex(traceOf(state)),
         });
@@ -459,9 +467,7 @@ async function memory(
     override: string | undefined,
     cwd: string,
 ): Promise<MemoryStore | undefined> {
-    const at = override
-        ? resolve(cwd, override)
-        : ((await readRunMeta(run)).memory ?? memoryDir(dir, readProjectConfig(dir).config));
+    const at = override ? resolve(cwd, override) : memoryPath(dir, await readRunMeta(run));
     if (!at || !existsSync(join(at, 'manifest.json'))) {
         return undefined;
     }
@@ -470,6 +476,23 @@ async function memory(
     } catch {
         return undefined;
     }
+}
+
+/**
+ * Where the run read memory, if anywhere. A run directory is a handle on its
+ * own, so a project with no readable `agents.yaml` costs the caller the config
+ * fallback rather than the answer.
+ */
+function memoryPath(dir: string, meta: Partial<RunMeta>): string | undefined {
+    let at = meta.memory;
+    if (!at) {
+        try {
+            at = memoryDir(dir, readProjectConfig(dir).config);
+        } catch {
+            return undefined;
+        }
+    }
+    return at && existsSync(join(at, 'manifest.json')) ? at : undefined;
 }
 
 /**
