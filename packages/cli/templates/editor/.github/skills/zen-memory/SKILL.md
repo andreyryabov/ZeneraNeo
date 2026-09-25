@@ -671,6 +671,12 @@ run holds its `.lock`: copy the directory, delete the copy's `.lock`, and point
 `--dir` at the copy. `grep` needs none of that - it declines the lock, so it
 reads a memory a run is writing, and the read-only `/memory` mount as well.
 
+`zen run batch` is where parallel graphs usually come from now. Each item gets
+its own copy to write into and the summary prints the `merge` line; a batch
+that is only asking says `--memory-read-only` instead, and then every item
+recalls from the one graph, because nothing writes and so nothing needs the
+lock.
+
 `zen inspect` answers the other half: a run report shows the recollection block
 exactly as the model received it, which is how you tell "memory had nothing"
 apart from "memory had it and the model ignored it". A run given `--memory`

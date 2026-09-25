@@ -892,6 +892,33 @@ describe('memory in agents.yaml', () => {
         }
     });
 
+    it('clamps every agent to recall when the host opens the memory read-only', async () => {
+        const root = project(withMemory('    memory:\n      access: full\n'));
+        // A read-only open has to find a memory, so make one the ordinary way.
+        const made = await loadProject(root);
+        await made.memory!.commit(
+            { nodes: [{ ref: 'a', kind: 'fact', text: 'the invoice threshold is 500' }] },
+            {
+                writes: ['*'],
+                sees: ['*'],
+                clock: { newId: () => 'ID1', now: () => '2026-01-01T00:00:00.000Z' },
+            },
+        );
+        made.close();
+
+        const p = await loadProject(root, { memoryReadOnly: true });
+        try {
+            expect(p.agents[0]!.memoryBinding(undefined)?.access).toBe('read');
+            const names = await toolNames(p);
+            expect(names).toContain('memory_search');
+            expect(names).toContain('memory_load');
+            expect(names).not.toContain('memory_commit');
+            expect(names).not.toContain('memory_forget');
+        } finally {
+            p.close();
+        }
+    });
+
     it('adds the public slice to `sees` rather than replacing it', async () => {
         const p = await loadProject(
             project(withMemory('    memory:\n      sees: [triage]\n      writes: [triage]\n')),

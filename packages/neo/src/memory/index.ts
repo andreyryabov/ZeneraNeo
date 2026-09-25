@@ -197,7 +197,11 @@ export class MemoryIndex {
                         : undefined,
             });
         }
-        await this.store.commit();
+        // The bump is bookkeeping, and persisting it is what would make a
+        // read-only recall rewrite the graph every other run is reading.
+        if (!this.store.readOnly) {
+            await this.store.commit();
+        }
         return out;
     }
 

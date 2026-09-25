@@ -195,6 +195,28 @@ and `merge` is how they come back together:
 zen memory merge .tmp/warmup-20260923/memory-*
 ```
 
+`zen run batch` is that fan-out made into a command. It gives every item a copy
+of the memory under its own directory, never touches the project's, and prints
+the `merge` line when it is done:
+
+```sh
+zen run batch --input cases.json --batch-dir .tmp/cases
+zen memory merge .tmp/cases/*/memory
+```
+
+Leaving `--batch-dir` out picks `<project>/batches/<stamp>` instead, and prints
+it on stdout - which is the other way to write the pair:
+
+```sh
+dir=$(zen run batch --input cases.json)
+zen memory merge "$dir"/*/memory
+```
+
+When the batch is asking questions rather than learning, `--memory-read-only`
+is the other half of the same fact: nobody writes, so nobody needs the lock,
+and all sixteen runs recall from the one graph. It works on a single `zen run`
+too — it is how you ask what the agents know without changing what they know.
+
 Sources are positional, the target is the project you are in or whatever
 `--dir` names, and a target that does not exist yet is created. It is offline -
 no model, no re-embedding - so every side must already share an embedder.

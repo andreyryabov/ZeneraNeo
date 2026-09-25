@@ -176,7 +176,9 @@ export const memory: Command = {
         '`merge` is for warming a memory in parallel. The lock is per directory,',
         'so N runs write N memories; this folds them back into one:',
         '',
-        '  zen memory merge .tmp/warmup-*/memory',
+        '  zen memory merge <batch-dir>/*/memory',
+        '',
+        'which is where `zen run batch` leaves them.',
     ],
     run: async (ctx) => {
         const { values, positionals } = parse<Flags>(

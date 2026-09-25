@@ -24,7 +24,7 @@ the CLI can take dependencies the library refuses to.
 4. **stdout is the answer, stderr is the narration.** Progress, warnings and
    errors never touch stdout, so `zen run … | jq` always works.
 5. **Zero dependencies for the frame.** `parseArgs` and `styleText` are Node's.
-   Only the drawing surface (§7.3) may add one, and only behind a dynamic import.
+   Only the drawing surface (§7.4) may add one, and only behind a dynamic import.
 6. **Never prompt when nobody is there.** Every interactive step has a flag, and
    off a TTY the missing flag is an error rather than a hang.
 
@@ -127,8 +127,8 @@ two.
 | `key`     | The credential store (§6).                                                 |
 | `models`  | What this machine can use: list, search, test, pick (§6.5).                |
 | `run`     | Runs the project - the TUI on a terminal, one shot otherwise (§7).         |
-| `meta`    | Runs the meta agent over the project, on the keyring (§7.5).               |
-| `inspect` | Reads a run: `report.html`, or the graph a model reads (§7.6).             |
+| `meta`    | Runs the meta agent over the project, on the keyring (§7.6).               |
+| `inspect` | Reads a run: `report.html`, or the graph a model reads (§7.7).             |
 | `memory`  | The memory graph from outside the agents (§10).                            |
 | `check`   | Reports on the project in full: files, wiring, credentials, models (§9.2). |
 |           | `--fix` rewrites the files a project copies but does not own (§9.3).       |
@@ -623,7 +623,71 @@ Every run, either way, writes `runs/<id>/` in full - input, output, state,
 report, meta. The TUI is a view, not a mode: nothing is recorded only when you
 are watching.
 
-### 7.3 What the TUI shows
+### 7.3 Many at once - `zen run batch`
+
+`zen run batch --input cases.json` is an evaluation harness rather than a loop
+with a semaphore, and the difference is forced by two facts about a run. A
+workspace is a directory the agent writes into, so two runs cannot share one.
+A memory takes an exclusive lock on its directory, so two runs cannot share
+that either. A batch is therefore a set of **isolated** runs that happen to
+have been asked together, and the batch directory is where the isolation is
+kept:
+
+```
+<batch-dir>/                     <project>/batches/<stamp>, or --batch-dir
+    batch.json                   the index
+    <id>/workspace/              this item's, unless the file named one
+    <id>/memory/                 this item's copy, in the copying mode
+    <id>/output.json             what `zen run --json` prints, byte for byte
+```
+
+It lives in the batch directory rather than in `runs/<id>/` because a run
+directory does not exist until the turn is over: `createRun` is called _after_
+the model has answered, and the workspace has to be there before it is asked.
+The session still records the workspace, so `zen inspect` on any item's run
+reports the right one.
+
+**Memory comes in two modes because the lock leaves exactly two honest
+arrangements.** `--memory-read-only` opens one graph for all of them and writes
+nothing; without it each item gets a copy and the project's own memory is never
+touched, with `zen memory merge <batch-dir>/*/memory` printed in the summary.
+The copies are taken serially, before the first model call - sixteen recursive
+copies of one tree at once is the only moment a batch is disk-bound, and it
+would be spent racing itself. The `.lock` is never copied, and a batch refuses
+to start while another run holds the source's.
+
+Read-only had to become real in the runtime first. `access: read` withheld the
+writing tools but `MemoryIndex.load()` still committed, to persist the
+`lastUsedAt` bump recency decay is computed from - a write, therefore a lock,
+therefore a batch of one. `MemoryStore` now takes `readOnly`, which skips the
+lock, refuses `commit()` loudly rather than dropping it, and refuses a
+directory holding no manifest instead of creating one; `loadProject` clamps
+every agent's `access` to `read` so the tools and the house rules agree about
+it. The bump still happens in memory and is discarded, which is right: a
+read-only run must not reorder another run's recall.
+
+**A failure is data, not a stop.** One item that cannot be answered writes
+`{ ok: false, error }` and the other ninety-nine keep their answers. Each
+`output.json` lands the moment its item finishes rather than at the end, so a
+batch killed half way still has everything it got. The exit code says how many
+failed and is raised only after `batch.json` is written.
+
+`batch.json` is an **index**, not a second copy: it points at each item's file
+and carries the question, with inlined media named rather than repeated - the
+bytes are in that item's own input file already, and forty base64 screenshots
+in a combined file is an index of nothing.
+
+stdout is the batch directory and nothing else, so `$(zen run batch ...)` is
+usable; `--json` puts the index there instead. `--json` could not simply be
+dropped - the frame lifts it out of every command's arguments - so the command
+declares `quiet` on the first positional instead, and the banner stays off
+stdout either way.
+
+`--session`, `--new`, `--workspace`, `--plain` and `--theme` are refused by
+name. A flag that was quietly ignored is a batch whose answers came from
+somewhere else.
+
+### 7.4 What the TUI shows
 
 The drawing mode is the only thing in the CLI that repaints rather than prints.
 It renders the event stream live - thinking, tool calls, handoffs, usage - which
@@ -655,7 +719,7 @@ with `overflow="hidden"` - a miscount clips rather than corrupts. Nothing is
 lost: the finished answer lands in `Static` whole, and the full reasoning chain
 is in the trajectory.
 
-### 7.4 Light and dark
+### 7.5 Light and dark
 
 The terminal already has a colour scheme. The answer is drawn in its own
 foreground, asides are drawn dim, and only four things take a colour: the
@@ -669,7 +733,7 @@ the terminal asked directly (OSC 11, before Ink takes stdin), then `COLORFGBG`,
 then dark. The override comes first because detection can be wrong and nobody
 should have to argue with a terminal about what colour it is.
 
-### 7.5 The meta agent - `zen meta`
+### 7.6 The meta agent - `zen meta`
 
 `zen run` runs the agents a project describes. `zen meta` runs an agent _over_
 the project: a coding agent rooted at the project directory, spending the same
@@ -766,7 +830,7 @@ completions API rejects outright - `400 Invalid value: 'custom'`. Only the
 responses API accepts them, so the wire API follows the model rather than being
 a flag nobody would know to set.
 
-## 7.6. Reading a run - `zen inspect`
+## 7.7. Reading a run - `zen inspect`
 
 `report.html` is written for a person: every message, every payload, pan and
 zoom. It is the wrong artefact for the reader who now does most of the looking.
@@ -1224,8 +1288,8 @@ else is an inspector, and a target with no `manifest.json` is a mistake worth
 naming; a merge target that does not exist yet is the ordinary case, because
 the warmed graph is usually assembled somewhere new before it is promoted.
 Sources are positional and the target is `--dir`, so the shell expands
-`.tmp/warmup-$STAMP/memory-*` and the command shape matches every other
-subcommand's.
+`<batch-dir>/*/memory` - which is where `zen run batch` leaves them - and the
+command shape matches every other subcommand's.
 
 The work itself is `mergeMemories` in `@zenera/neo`, for the same reason
 `forget` delegates: the rules for what two memories mean together belong beside

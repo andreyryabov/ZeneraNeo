@@ -19,12 +19,13 @@ failed, `2` usage, `3` invalid project, `4` no usable credential, `5` sandbox.
 zen init     [dir] [--name <name>] [--model <ref>] [--force]
 zen list     [--sessions] [--prune]
 zen run      [project] [prompt] [options]
+zen run      batch --input <file> [--batch-dir <dir>] [--concurrency <n>] [--memory-read-only]
 zen open     [project] [--editor <cmd>] [--wait]
 zen key      <ls|add|use|check|rm|show|env> [ref] [options]
 zen models   <providers|ls|search|show|test|pick> [ref] [options]
 zen check    [name|dir] [--project <name|dir>] [--no-sandbox] [--no-models] [--strict] [--quiet]
 zen inspect  [report|graph|node] [run] [--dir <run dir>] [--open]
-zen memory   [stats|ls|show|export|merge|forget] [args] [options]
+zen memory   [stats|ls|search|grep|show|export|merge|forget] [args] [options]
 zen export   [project] [--out <file>] [--no-vectors] [--no-memory] [--force]
 zen import   <file.zip> [dir] [--name <name>] [--force] [--no-register]
 zen sandbox  [status|up|pull|clean|disk] [options]
@@ -46,6 +47,7 @@ guess a flag, and do not read them all.
 | Global flags, `--json`, exit codes, environment, where files live   | [frame.md](./references/frame.md)                               |
 | Creating, finding or opening a project                              | [projects.md](./references/projects.md)                         |
 | Running: the TUI, one-shot answers, sessions, workspaces, overrides | [run.md](./references/run.md)                                   |
+| Many questions at once: `zen run batch`, its file, where answers go | [run.md](./references/run.md)                                   |
 | Validating: `zen check`, what it can and cannot see                 | [check.md](./references/check.md)                               |
 | API keys, providers, the keyring, "no credential" errors            | [keys.md](./references/keys.md)                                 |
 | Which models exist, whether one works, recovering from a refusal    | [models.md](./references/models.md)                             |
@@ -64,6 +66,7 @@ zen init                              scaffold a project here, pick a model
 zen check                             validate everything before spending a turn
 zen run                               the TUI
 zen run "what changed?"               one answer, this directory as the workspace
+zen run batch --input cases.json      many questions at once, each isolated
 zen inspect --open                    what the model was actually given
 zen inspect graph --dir <run dir>     the same run as a graph you can read
 zen inspect node n14..n20 --dir <d>   the nodes behind the ids, in full

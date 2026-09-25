@@ -147,6 +147,7 @@ zen inspect                     # open the last run's report.html
 zen inspect graph               # the same run as a graph a model can read
 zen list --sessions             # every project, its sessions and last run
 echo "triage this" | zen run my-project --json | jq
+zen run batch --input cases.json   # a file full of questions, 16 at a time
 ```
 
 Standing inside the project, the name is optional: a bare `zen run`, `zen check`
@@ -155,6 +156,15 @@ or `zen inspect` means the one you are in.
 Giving a prompt on the command line skips every question: it starts a fresh
 session and uses the current directory as the workspace, with write access.
 `--session`, `--workspace` and `--read-only` override that.
+
+`zen run batch` is the same thing for an evaluation set: one project, many
+questions, each in a session, workspace and memory of its own under a batch
+directory. It prints that directory, writes each item's answer the moment it
+lands, and treats a failure as data rather than a stop. Sharing one memory is
+the exception that needs saying out loud - `--memory-read-only` lets every item
+recall from the same graph, because nothing is written and so nothing needs the
+lock. Without it each item gets a copy, and `zen memory merge <batch-dir>/*/memory`
+folds what they learned back in.
 
 To change what the system does, update `SPECIFICATION.md` and send
 `/spec-sync-project` again. The next section explains that workflow in detail.

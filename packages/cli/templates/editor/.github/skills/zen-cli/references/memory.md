@@ -163,9 +163,16 @@ The lock is per directory, so two runs cannot warm the same memory at once.
 They each warm their own, and `merge` puts the results back together:
 
 ```sh
-zen memory merge .tmp/warmup-*/memory                    into the project’s
+zen memory merge .tmp/warmup-*/batch/*/memory            into the project’s
 zen memory merge a/memory b/memory --dir merged/memory   into a named one
+zen memory merge <batch-dir>/*/memory                    after `zen run batch`
 ```
+
+`zen run batch` is the fan-out with the bookkeeping done for you: each item
+gets its own copy of the memory, the project's is left alone, and the summary
+prints the `merge` line. A batch that is only asking should say
+`--memory-read-only` instead — nobody writes, so nobody needs the lock, and
+every item recalls from the one graph.
 
 Sources are positional and the target is `--dir`, or the project you are in —
 the same shape as everywhere else here. The shell expands the glob, so a

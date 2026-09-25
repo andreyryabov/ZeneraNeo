@@ -17,12 +17,15 @@ answers once on stdout and exits.
 | `--input <file>`        | Read the whole request from JSON; `-` is stdin           |
 | `--workspace <dir>`     | What the agent may read and write                        |
 | `--memory <dir>`        | Where the agents remember into, instead of the project's |
+| `--memory-read-only`    | Recall from it; write nothing back                       |
 | `--model <ref>`         | Override the default model for this run                  |
 | `--image <ref>`         | Override the container image commands run in             |
 | `--read-only`           | Withhold every tool that can write                       |
 | `--plain`               | Never open the TUI; a prompt is then required            |
 | `--theme <dark\|light>` | Palette for the TUI; `auto` detects. `$ZENERA_THEME`     |
 | `--out <file>`          | Put the answer in this file instead of on stdout         |
+| `--batch-dir <dir>`     | Where a batch's runs live. `<project>/batches/<stamp>`   |
+| `--concurrency <n>`     | How many of a batch run at once. Default 16, most 32     |
 | `--yes`                 | Say yes to the workspace and install questions           |
 
 Flags always beat the file: the repository states intent, the invocation
@@ -130,6 +133,123 @@ zen run --input case.json --session 20260825-143012-a7f3   continue, don't start
 prompt, so with `--plain` the prompt has to be there already - in the argument
 or on stdin - and `zen run --plain` with neither is an error instead of a
 window. Say it in a script that must not meet one.
+
+## Many at once - `zen run batch`
+
+```
+zen run batch --input cases.json [--batch-dir <dir>] [--concurrency 16]
+              [--memory <dir>] [--memory-read-only] [--out <file>] [--json]
+```
+
+The same file, pluralised. One project, many questions, sixteen at a time by
+default:
+
+```json
+{
+    "batch": [
+        { "id": "vat", "input": "what is the VAT threshold?" },
+        { "input": [{ "text": "what is this?" }, { "image": "./shot.png" }] },
+        { "id": "ws", "input": "read the notes", "workspace": "./cases/ws" }
+    ]
+}
+```
+
+An item takes `input`, an optional `id` and an optional `workspace`, and nothing
+else. `project` and `memory` belong to the batch rather than to an item, so they
+are flags: a file that names either is refused rather than half-honoured. An
+`id` names a directory, so it has to be one - letters, digits, dot, dash and
+underscore - and it defaults to the item's index. Two items may not share an
+`id` or a `workspace`, because they run at the same time.
+
+Everything refusable is refused before the first model call. A batch pays for a
+mistake once per item.
+
+### What it leaves behind
+
+```
+<batch-dir>/
+    batch.json          the index: every item, whether it worked, where it is
+    <id>/
+        workspace/      what that item could read and write
+        memory/         its own copy, in the copying mode only
+        output.json     exactly what `zen run --json` prints for one run
+```
+
+Each `output.json` is written the moment its item finishes, so a batch stopped
+half way still has every answer it managed to get. `batch.json` is an index, not
+a second copy - it points at the files:
+
+```json
+{
+    "batch": {
+        "dir": "...",
+        "items": 3,
+        "ok": 2,
+        "failed": 1,
+        "concurrency": 16,
+        "memory": { "source": "...", "mode": "read-only" },
+        "durationMs": 0
+    },
+    "batch_results": [
+        { "index": 0, "id": "vat", "ok": true, "input": "…", "output": ".../vat/output.json" },
+        {
+            "index": 1,
+            "id": "1",
+            "ok": false,
+            "input": "…",
+            "output": "...",
+            "error": { "message": "…" }
+        }
+    ]
+}
+```
+
+A failure is data. One item that cannot be answered costs one answer, not the
+other ninety-nine; the exit code says how many failed, and it is set after
+everything is written.
+
+stdout is the batch directory and nothing else, so `ls "$(zen run batch --input
+cases.json)"` works. `--json` prints the index there instead. Progress is on
+stderr either way. `--out` puts the index in a second file as well.
+
+### Memory, in two modes
+
+A memory is a locked directory, so sixteen runs cannot hold one. Which leaves
+two honest arrangements, and the flag picks between them:
+
+| Mode                 | What happens                                                       |
+| -------------------- | ------------------------------------------------------------------ |
+| `--memory-read-only` | Every item recalls from the one graph. Nothing is written, no lock |
+| default              | Each item gets a copy under `<batch-dir>/<id>/memory`              |
+
+In the copying mode the project's own memory is never touched. Fold what the
+items learned back in afterwards, having read it:
+
+```
+zen memory merge <batch-dir>/*/memory
+```
+
+An item that committed nothing leaves no `memory/` behind, so that line never
+names a directory `merge` would refuse.
+
+`--memory <dir>` names the source in both modes; without it the source is the
+project's own memory, and a project with none runs the batch with none. A
+source that does not exist yet is not an error in the copying mode: a project
+declares its memory directory and the first run makes it, so every item simply
+starts from an empty graph. That is how a cold project is warmed, and pointing
+`--memory` at a directory that is not there is how you ask for it deliberately.
+A batch refuses to start while another run holds that memory's lock.
+
+`--memory-read-only` works on a single `zen run` too. It is how you ask a
+question of what the agents know without changing what they know.
+
+### What means nothing in a batch
+
+`--session`, `--new`, `--workspace`, `--plain` and `--theme` are refused by
+name rather than ignored. Every item is a new session of its own, they cannot
+share a workspace, and a batch never draws the TUI.
+
+For a project or a prompt actually called "batch", say `--project batch`.
 
 ## Which word is the project
 

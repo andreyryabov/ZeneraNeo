@@ -27,6 +27,29 @@ export interface RunRequest {
     memory?: string;
 }
 
+// ---------------------------------------------------------------------------
+// A batch of them
+//
+// The same format with the singular taken out: one project, one memory
+// arrangement, many questions. Neither is per item because neither can be —
+// two runs cannot share a workspace without treading on each other, and the
+// memory lock is per directory, so a writable graph is copied rather than
+// shared. Both are decisions about the batch, so both are flags.
+// ---------------------------------------------------------------------------
+
+export interface BatchItem {
+    /** names this item's directory under the batch dir; defaults to its index */
+    id: string;
+    index: number;
+    input: Input;
+    /** absolute; without one the item gets a directory of its own */
+    workspace?: string;
+}
+
+export interface BatchRequest {
+    items: BatchItem[];
+}
+
 /**
  * Local media is read and inlined, so the state a run is resumed from carries
  * the picture rather than a path that meant something on another machine. That
@@ -119,6 +142,124 @@ export function parseRequest(body: string, base: string, where: string): RunRequ
         workspace: path(raw.workspace, base, where, 'workspace'),
         memory: path(raw.memory, base, where, 'memory'),
     };
+}
+
+/** The batch file. `-` is stdin, and then the cwd is what paths mean. */
+export async function readBatch(file: string, cwd: string, piped?: string): Promise<BatchRequest> {
+    if (file === '-') {
+        const body = piped ?? (await readStdin());
+        if (body === undefined) {
+            throw usageError('--input - expects the batch on stdin', 'pipe a JSON object in');
+        }
+        return parseBatch(body, cwd, '<stdin>');
+    }
+    const at = resolve(cwd, file);
+    let body: string;
+    try {
+        body = readFileSync(at, 'utf8');
+    } catch {
+        throw usageError(`cannot read ${at}`);
+    }
+    return parseBatch(body, dirname(at), at);
+}
+
+/**
+ * Everything refusable is refused here, before a single model is called: a
+ * batch that fails on item 80 has already spent seventy-nine runs finding out
+ * something its file could have been read for.
+ */
+export function parseBatch(body: string, base: string, where: string): BatchRequest {
+    let raw: Record<string, unknown>;
+    try {
+        raw = JSON.parse(body) as Record<string, unknown>;
+    } catch (err) {
+        throw usageError(`${where}: ${(err as Error).message}`, 'the batch must be JSON');
+    }
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+        throw usageError(`${where}: expected a JSON object`, 'see: zen run batch --help');
+    }
+    for (const key of ['memory', 'workspace', 'project'] as const) {
+        if (raw[key] !== undefined) {
+            throw usageError(
+                `${where}: "${key}" is not part of a batch file`,
+                `it applies to every item, so it is a flag: --${key}`,
+            );
+        }
+    }
+    if (!Array.isArray(raw.batch)) {
+        throw usageError(`${where}: no "batch" array`, 'a batch is a list of requests');
+    }
+    if (raw.batch.length === 0) {
+        throw usageError(`${where}: "batch" is empty`, 'there is nothing to run');
+    }
+
+    const items = raw.batch.map((item, index) => toItem(item, index, base, `${where}: batch`));
+    unique(
+        items.map((i) => i.id),
+        'id',
+        where,
+    );
+    unique(
+        items.flatMap((i) => (i.workspace ? [i.workspace] : [])),
+        'workspace',
+        where,
+    );
+    return { items };
+}
+
+function toItem(raw: unknown, index: number, base: string, where: string): BatchItem {
+    const at = `${where}[${index}]`;
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+        throw usageError(`${at}: expected an object`, 'see: zen run batch --help');
+    }
+    const obj = raw as Record<string, unknown>;
+    for (const key of ['memory', 'project'] as const) {
+        if (obj[key] !== undefined) {
+            throw usageError(
+                `${at}: "${key}" is not part of a batch item`,
+                `every item shares one, so it is a flag: --${key}`,
+            );
+        }
+    }
+    if (obj.input === undefined) {
+        throw usageError(`${at}: no "input"`, 'an item has to say what to ask');
+    }
+    return {
+        id: id(obj.id, index, at),
+        index,
+        input: toInput(obj.input, base, at),
+        workspace: path(obj.workspace, base, at, 'workspace'),
+    };
+}
+
+/** An id names a directory, so it has to be one path segment and nothing else. */
+function id(value: unknown, index: number, at: string): string {
+    if (value === undefined) {
+        return String(index);
+    }
+    if (typeof value !== 'string' || !value) {
+        throw usageError(`${at}: "id" must be a non-empty string`);
+    }
+    if (!/^[\w.-]+$/.test(value) || value === '.' || value === '..') {
+        throw usageError(
+            `${at}: "${value}" cannot be an id`,
+            'it names a directory: letters, digits, dot, dash and underscore',
+        );
+    }
+    return value;
+}
+
+function unique(values: string[], what: string, where: string): void {
+    const seen = new Set<string>();
+    for (const value of values) {
+        if (seen.has(value)) {
+            throw usageError(
+                `${where}: two items share the ${what} "${value}"`,
+                'every item runs at the same time as the others; give each its own',
+            );
+        }
+        seen.add(value);
+    }
 }
 
 /**

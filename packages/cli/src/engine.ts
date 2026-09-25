@@ -60,10 +60,18 @@ export interface EngineOptions {
     image?: string;
     /** another directory to remember into — `--memory` */
     memoryDir?: string;
+    /** recall only: nothing is written and several runs may share one graph */
+    memoryReadOnly?: boolean;
     /** whether credentials reach the sandbox — `--no-keys` sets this false */
     keys?: boolean;
     /** answer the sandbox's install question without asking — `--yes` */
     yes?: boolean;
+    /**
+     * Hold back the warnings about the project rather than the run. A batch
+     * opens one project a hundred times, and a hundred copies of the same
+     * complaint is a worse report than one.
+     */
+    quiet?: boolean;
 }
 
 export interface Engine {
@@ -105,7 +113,9 @@ export async function open(opts: EngineOptions): Promise<Engine> {
     // build: one SDK's words about one model, when the useful answer is which
     // of the project's models are reachable and which are not.
     for (const issue of auditModels(opts.project.dir, keys)) {
-        warn(describeIssue(issue));
+        if (!opts.quiet) {
+            warn(describeIssue(issue));
+        }
     }
 
     const meta = await readSessionMeta(opts.session);
@@ -126,7 +136,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
         const { root, config } = readProjectConfig(opts.project.dir);
         // Naming a directory declares the graph, but it cannot bind anyone to
         // it — so say when the run is pointed at a memory no agent will touch.
-        if (opts.memoryDir && !config.agents.some((a) => a.memory)) {
+        if (opts.memoryDir && !opts.quiet && !config.agents.some((a) => a.memory)) {
             warn('--memory names a directory no agent uses — none has `memory: true`');
         }
         memory = memoryDir(root, config, opts.memoryDir);
@@ -167,6 +177,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
             ],
             skillsAt: SKILLS_MOUNT,
             memoryDir: opts.memoryDir,
+            memoryReadOnly: opts.memoryReadOnly,
             payloads,
             resolveFile: (path: string) => files.within(path),
         });
@@ -265,6 +276,33 @@ export interface RunOutcome {
     durationMs: number;
     /** where the report landed, when one could be rendered */
     report?: string;
+}
+
+/**
+ * What one finished run looks like to a program: `zen run --json` prints it,
+ * and a batch writes one beside every item. The same function on purpose — a
+ * batch whose items were shaped differently would make every consumer of a
+ * single run a special case.
+ */
+export function envelope(engine: Engine, outcome: RunOutcome): Record<string, unknown> {
+    return {
+        session: { id: engine.session.id, dir: engine.session.dir },
+        run: {
+            id: outcome.run.id,
+            dir: outcome.run.dir,
+            input: outcome.run.input,
+            output: outcome.run.output,
+            state: outcome.run.state,
+            meta: outcome.run.meta,
+            ...(outcome.report ? { report: outcome.report } : {}),
+        },
+        mounts: mounts(engine),
+        agent: outcome.result.agent,
+        stopReason: outcome.result.stopReason,
+        durationMs: outcome.durationMs,
+        usage: outcome.result.usage,
+        output: outcome.text,
+    };
 }
 
 /**
