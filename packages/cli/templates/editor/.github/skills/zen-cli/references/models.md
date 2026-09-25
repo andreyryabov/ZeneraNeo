@@ -71,7 +71,7 @@ This is what the command is for.
 ```
 $ zen models test vertex:gemini-embedding-001
 vertex:gemini-embedding-001  blocked  Vertex AI API has not been used in project my-proj …
-vertex:gemini-embedding-001: gcloud services enable aiplatform.googleapis.com --project my-proj
+fix vertex:gemini-embedding-001 gcloud services enable aiplatform.googleapis.com --project my-proj
 error 1 of 1 did not answer
         find one that does: zen models pick --embedding
 ```

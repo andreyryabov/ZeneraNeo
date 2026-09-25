@@ -25,6 +25,26 @@ const RATE_LIMITED = new Set([429, 503]);
 /** Worth another attempt, but says nothing about the rate. */
 const TRANSIENT = new Set([408, 409, 500, 502, 504]);
 
+/**
+ * The vendor's own words for an account that authenticated and then declined
+ * to serve. These arrive as 429s — the same status as "slow down" — but no
+ * wait clears them, so the symbol has to beat the status.
+ *
+ * Only the unambiguous ones. Google spends RESOURCE_EXHAUSTED on ordinary rate
+ * limits, and a message mentioning a quota is what a rate limit says too.
+ */
+const UNFUNDED = new Set([
+    'insufficient_quota',
+    'credit_balance_exhausted',
+    'billing_not_active',
+    'billing_hard_limit_reached',
+    'account_deactivated',
+]);
+
+/** Whether a vendor's word for a refusal is one only an empty account gets. */
+export const unfundedSymbol = (word: unknown): boolean =>
+    typeof word === 'string' && UNFUNDED.has(word.toLowerCase());
+
 /** Undici's words for a connection that never produced a response. */
 const NETWORK = new Set([
     'ECONNRESET',
@@ -44,6 +64,7 @@ interface Shaped {
     status?: unknown;
     statusCode?: unknown;
     code?: unknown;
+    type?: unknown;
     name?: unknown;
     headers?: unknown;
     cause?: unknown;
@@ -70,9 +91,26 @@ export function statusOf(err: unknown): number | undefined {
     return undefined;
 }
 
+/**
+ * An account with nothing left in it, which every SDK reports as a 429 and
+ * every backoff therefore waits out for nothing.
+ */
+export function isUnfunded(err: unknown): boolean {
+    for (const link of chain(err)) {
+        if (unfundedSymbol(link.code) || unfundedSymbol(link.type)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 export function classify(err: unknown): Failure {
     // An abort is the caller changing its mind, so it is never retried.
     if (isAbort(err)) {
+        return 'fatal';
+    }
+    // Ahead of the status, which says 429 here and means the opposite of one.
+    if (isUnfunded(err)) {
         return 'fatal';
     }
     const status = statusOf(err);

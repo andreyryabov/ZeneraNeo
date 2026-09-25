@@ -111,6 +111,7 @@ beforeEach(() => {
 
 afterEach(() => {
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
 });
 
 // ---------------------------------------------------------------------------
@@ -228,6 +229,34 @@ describe('retries', () => {
     it('gives openrouter a backoff strategy', async () => {
         const p = await load('openrouter');
         expect(orConn(p.models.client('openrouter')).retryConfig?.strategy).toBe('backoff');
+    });
+
+    // The one 429 that is not a rate limit. The SDK retries every one of them,
+    // so an exhausted balance spends the whole schedule — a minute of waiting
+    // per call — on a refusal no wait can clear. The account is named in the
+    // body, which is why the client is handed a fetch that reads it.
+    it('refuses to retry a 429 that means an empty account', async () => {
+        const refusal = (code: string): Response =>
+            new Response(JSON.stringify({ error: { code, message: 'no credits' } }), {
+                status: 429,
+                headers: { 'content-type': 'application/json' },
+            });
+        let code = 'credit_balance_exhausted';
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(() => Promise.resolve(refusal(code))),
+        );
+        const p = await load('providers');
+        const { fetch: sent } = p.models.client('primary') as unknown as { fetch: typeof fetch };
+
+        const empty = await sent('https://example.invalid/v1/responses', { method: 'POST' });
+        expect(empty.headers.get('x-should-retry')).toBe('false');
+        // The body still has to arrive: it is the sentence the error reports.
+        expect(await empty.json()).toMatchObject({ error: { message: 'no credits' } });
+
+        code = 'rate_limit_exceeded';
+        const busy = await sent('https://example.invalid/v1/responses', { method: 'POST' });
+        expect(busy.headers.get('x-should-retry')).toBeNull();
     });
 });
 

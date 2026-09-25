@@ -2896,6 +2896,12 @@ describe('telling a blocked account from a bad key', () => {
         expect(classify(fails('Your credit balance is too low', 400)).state).toBe('blocked');
         // 429 is this minute's problem; the account is fine.
         expect(classify(fails('Rate limit exceeded, quota exceeded', 429)).state).toBe('live');
+        // Unless the vendor named the account: this one is also a 429, and no
+        // amount of waiting turns it into a working key.
+        const empty = Object.assign(fails('You have no credits remaining.', 429), {
+            code: 'credit_balance_exhausted',
+        });
+        expect(classify(empty).state).toBe('blocked');
     });
 
     it('keeps an unreachable provider out of both', () => {

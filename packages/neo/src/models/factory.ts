@@ -11,6 +11,7 @@ import { GeminiEmbedder, type GeminiEmbedderOptions } from '../embeddings/gemini
 import { DEFAULT_START, RateLimiter } from '../embeddings/limiter.ts';
 import { OpenAIEmbedder, type OpenAIEmbedderOptions } from '../embeddings/openai.ts';
 import { OpenRouterEmbedder, type OpenRouterEmbedderOptions } from '../embeddings/openrouter.ts';
+import { unfundedSymbol } from '../embeddings/rate-limit.ts';
 import type { Model } from '../model.ts';
 import { AnthropicModel, type AnthropicModelOptions } from './anthropic.ts';
 import { GeminiModel, type GeminiModelOptions } from './gemini.ts';
@@ -730,7 +731,7 @@ function buildClient(
         defaultHeaders: headers,
         timeout: opts.timeoutMs,
         maxRetries: retriesOf(opts),
-        ...(opts.token ? { fetch: bearerFetch(opts.token) } : {}),
+        fetch: funded(opts.token ? bearerFetch(opts.token) : fetch),
     };
     if (defaults.protocol === 'anthropic') {
         const { Anthropic } = sdk<AnthropicModule>('@anthropic-ai/sdk', kind);
@@ -902,6 +903,48 @@ function bearerFetch(token: () => string | Promise<string>): typeof fetch {
         headers.set('Authorization', `Bearer ${await token()}`);
         return fetch(input, { ...init, headers });
     };
+}
+
+/**
+ * Tells the client not to wait out a 429 that no wait will clear.
+ *
+ * Both SDKs retry every 429, because a 429 is normally this minute's rate
+ * limit — but an exhausted balance answers with the same status, and the whole
+ * backoff schedule is then spent on a call that cannot succeed. The account is
+ * named in the body rather than the status, so the body is what decides, and
+ * `x-should-retry` is the SDKs' own override for exactly this.
+ */
+function funded(inner: typeof fetch): typeof fetch {
+    return async (input, init) => {
+        const res = await inner(input, init);
+        if (res.status !== 429) {
+            return res;
+        }
+        // A 429 body is a sentence long, and the client is about to read it
+        // anyway to build the error it throws.
+        const body = await res.text();
+        const headers = new Headers(res.headers);
+        // The transfer is already undone by the time a body is text.
+        headers.delete('content-encoding');
+        headers.delete('content-length');
+        if (unfunded(body)) {
+            headers.set('x-should-retry', 'false');
+        }
+        return new Response(body, { status: res.status, statusText: res.statusText, headers });
+    };
+}
+
+/** Whether a refusal body names the account rather than the rate. */
+function unfunded(body: string): boolean {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(body);
+    } catch {
+        return false;
+    }
+    const root = parsed as { error?: unknown };
+    const said = (root?.error ?? root) as { code?: unknown; type?: unknown } | null;
+    return Boolean(said) && (unfundedSymbol(said?.code) || unfundedSymbol(said?.type));
 }
 
 function expandHeaders(
