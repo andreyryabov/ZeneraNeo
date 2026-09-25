@@ -85,6 +85,10 @@ interface Flags {
 // That split is the whole idea. A trajectory is far too big to hand to a model
 // and far too repetitive to need to; an index plus a way to dereference it is
 // how anything large gets read.
+//
+// The full reference is the one every project is scaffolded with:
+// templates/editor/.github/skills/zen-cli/references/inspect.md. Keep it in
+// step with the flags and the `--json` shapes below.
 // ---------------------------------------------------------------------------
 
 export const inspect: Command = {
@@ -119,6 +123,10 @@ export const inspect: Command = {
         '',
         '  zen inspect graph --dir "$(zen run --json "…" | jq -r .run.dir)"',
         '  zen inspect node n14..n20 --dir <run dir>',
+        '',
+        '`node` takes node ids only: name the run with --run, --session or --dir.',
+        '',
+        'All of it, at length: .github/skills/zen-cli/references/inspect.md',
     ],
     run: async (ctx) => {
         const { values, positionals } = parse<Flags>(

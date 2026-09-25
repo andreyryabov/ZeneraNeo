@@ -16,20 +16,37 @@ Three ways to read one run, for two different readers.
 
 `report` is the default, so `zen inspect` on its own is unchanged.
 
-| Flag             | Meaning                                             |
-| ---------------- | --------------------------------------------------- |
-| `[run]`          | A run id, in whichever session holds it             |
-| `--session <id>` | Which session the run belongs to                    |
-| `--run <id>`     | Which run, as a flag rather than an argument        |
-| `--dir <dir>`    | A run directory, as `zen run --json` reports it     |
-| `--open`         | Open the report in a browser                        |
-| `--rebuild`      | Rebuild `report.html` from the recorded state       |
-| `--no-timing`    | Leave the clock off the graph                       |
-| `--no-style`     | Leave the colours off the graph, to read it cheaply |
+| Flag                    | For           | Meaning                                              |
+| ----------------------- | ------------- | ---------------------------------------------------- |
+| `[run]`                 | report, graph | A run id, in whichever session holds it              |
+| `--project <name\|dir>` | all           | Which project. Defaults to the one you are in        |
+| `--session <id>`        | all           | Which session the run belongs to                     |
+| `--run <id>`            | all           | Which run, as a flag rather than an argument         |
+| `--dir <dir>`           | all           | A run directory, as `zen run --json` reports it      |
+| `--memory <dir>`        | report, graph | Read this memory instead of the one the run recorded |
+| `--open`                | report        | Open the report in a browser                         |
+| `--rebuild`             | report        | Rebuild `report.html` from the recorded state        |
+| `--no-timing`           | graph         | Leave the clock off the graph                        |
+| `--no-style`            | graph         | Leave the colours off the graph, to read it cheaply  |
 
 With no arguments it asks which session and which run; where there is nothing
 to ask on - a script, `--json`, an agent - it takes the newest run of the newest
-session that has one.
+session that has one. "Newest" means the newest session that actually recorded a
+run, not simply the newest session: a session exists before its first run, so
+the latest one is routinely empty.
+
+**`node` has no room for a run.** Every positional it takes is a node id, so
+name the run with `--run`, `--session` or `--dir` - `zen inspect node <run> n13`
+reads the run id as an id and fails.
+
+For `report` and `graph` the positional is a run id unless it contains a `/`, in
+which case it is read as a run directory. A run id is a stamp and never has a
+separator in it, so the two can never be confused, and a caller holding a
+directory can pass it bare:
+
+```sh
+zen inspect "$(zen run --json 'fix the tests' | jq -r .run.dir)"
+```
 
 ## `report` - for a person
 
@@ -62,11 +79,28 @@ zen inspect graph --dir "$(zen run --json 'fix the tests' | jq -r .run.dir)"
 ```
 
 ```mermaid
+%% Zenera Neo run trajectory — every node of one run, in order.
 %% run       20260825-143012-a7f3
+%% dir       /w/demo/sessions/20260825-142901/runs/20260825-143012-a7f3
+%% workspace /w/demo/workspace
+%% memory    /w/demo/memory
+%% agent     researcher · started as planner
+%% phase     done
 %% nodes     41 · 12 llm · 10 tool calls · 1 forks
 %% tokens    55k in · 4.0k out
 %% elapsed   2m17s
+%% agents    planner, researcher
 %% tools     run_command x6, read_file x3, find_files x1
+%% branches  each subgraph below is one branch of a fork
+%%   n24 joins docs (researcher, ok), tests (researcher, ok)
+%% compacted 3 nodes are marked "hidden by" a later summary
+%%           they still ran; the model simply stopped seeing them
+%%
+%% reading   nN is a node id · t+ counts from the start of the turn
+%%           dotted edges are fork/join and calls answered out of order
+%%           nodes are declared in run order; every edge is in one block below
+%% detail    zen inspect node n1 n2 n5..n9 --dir <run dir>
+%%
 flowchart TD
     n11["n11 llm claude-opus-5 · 4.2k in 310 out · calls run_command · t+32.7s"]
     n12["n12 run_command npm test -- --run · t+34.7s · took 3.0s"]
@@ -91,7 +125,13 @@ Four things are deliberate:
   it. Nesting is free: a fork inside a branch is another subgraph.
 - **The `%%` header counts things.** Mermaid ignores those lines; you should
   not. Forty shell commands is a number in the header rather than something to
-  count by eye, which is the difference between spotting a loop and not.
+  count by eye, which is the difference between spotting a loop and not. It
+  also spells out the three directories a reader needs to go further - the run
+  directory, the workspace, and the memory graph the run read - and ends with
+  the command that opens a node, so nothing has to be reconstructed from the
+  run id. Rows that do not apply are left out: no `memory` row for a run that
+  read none, no `agents` row for a run with one, no `compacted` row for a run
+  nothing summarised.
 
 A node marked `hidden by n23` was compacted: it ran, and then a summary
 replaced it in what the model could see. `ERROR` marks a tool call that failed.
@@ -117,8 +157,9 @@ Payloads come back resolved and whole - the request, the arguments, the result,
 the branch instructions - with no truncation and no filtering. That is the
 point of the split: the index is cheap, and you only pay for what you open.
 
-Each node is framed, and each payload inside it is framed with its own byte
-count:
+Two `#` lines come first - which run, how many of its nodes you asked for, and
+a reminder of what part text is. Then each node is framed, and each payload
+inside it is framed with its own byte count:
 
 ```
 === n13 · tool_call · researcher · 2026-08-25T14:31:07.220Z
@@ -172,12 +213,13 @@ again, which is always safe because the report is derived and `state.json` is
 the truth. That is also what makes an old run readable by a newer renderer.
 
 The memory pane is filled from the graph the run itself recorded in `meta.json`,
-not from wherever the project points today, so rebuilding an old report shows
-what that run saw. `--memory <dir>` overrides both.
+falling back to wherever the project points, so rebuilding an old report shows
+what that run saw. `--memory <dir>` overrides both, for `graph` as well - there
+it is the `memory` row of the header.
 
 `graph` prints the diagram on stdout; `--json` gives
-`{ session, run, dir, mermaid, nodes }`, where `nodes` is the index on its own -
-`{ id, nodeId, kind, agent, branch, ts, label }` per node.
+`{ session, run, dir, workspace, memory, mermaid, nodes }`, where `nodes` is the
+index on its own - `{ id, nodeId, kind, agent, branch, ts, label }` per node.
 
 `node` prints each node as plain text; `--json` gives `{ session, run, dir,
 nodes }` with `facts` and resolved `parts`.

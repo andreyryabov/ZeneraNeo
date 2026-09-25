@@ -1,6 +1,6 @@
 ---
 name: zen-memory
-description: How agent memory is organised and how to configure it in `agents.yaml` - the `memory:` block, per-agent `access`/`sees`/`writes`/`autoRecall`, the four `memory_*` tools, kinds and relations, how recall ranks and stitches a subgraph, and how to design a memory strategy for a project. Includes the default usage rules every memory-enabled project must carry in `agents/memory-instructions.md` (references/memory-instructions.md), the script that says whether that copy is still current (scripts/check-instructions.sh), where a project's own customisations go instead (`agents/memory-policy-instructions.md`, under `requires: [memory]`), what to commit and what never to, how to keep a working file under `/memory` and re-run it later, and how to put memory in front of a `zen rag schema` or `zen rag docs` index so a search that already succeeded once is not paid for again.
+description: How agent memory is organised and how to configure it in `agents.yaml` - the `memory:` block, per-agent `access`/`sees`/`writes`/`autoRecall`, the five `memory_*` tools, kinds and relations, how recall ranks and stitches a subgraph, when an agent should reach for `memory_grep` instead of `memory_search`, how to inspect a graph with `zen memory search`/`grep`/`export`, and how to design a memory strategy for a project. Includes the default usage rules every memory-enabled project must carry in `agents/memory-instructions.md` (references/memory-instructions.md), the script that says whether that copy is still current (scripts/check-instructions.sh), where a project's own customisations go instead (`agents/memory-policy-instructions.md`, under `requires: [memory]`), what to commit and what never to, how to keep a working file under `/memory` and re-run it later, and how to put memory in front of a `zen rag schema` or `zen rag docs` index so a search that already succeeded once is not paid for again.
 ---
 
 # Memory
@@ -121,6 +121,20 @@ text, the metadata and the bytes of remembered files, applies the mask, leaves
 out superseded nodes unless asked, and names any file it could not read. It is
 also what an agent is supposed to reach for instead of running a shell `grep`
 over `/memory`, which the house rules forbid.
+
+It is not a diagnostic instrument, though - it is ordinary retrieval, and an
+agent is expected to reach for it mid-run as readily as for search. The line
+between them is what is being looked for: **a subject goes to `memory_search`,
+a string goes to `memory_grep`** - a name, path, id, host, flag or command
+spelled exactly, everywhere a thing is mentioned before it is changed, or
+whether it was ever recorded at all. `agents/memory-instructions.md` puts that
+division in front of the agent as a table, at the point where it chooses.
+
+It takes `pattern` plus `in` (`text`, `metadata`, `file` - all three by
+default), `regex`, `case_sensitive`, `kinds`, `include_superseded` and `limit`
+(20 nodes). **`in: ["file"]` is the one worth knowing about**: only a node's
+`text` is embedded, so the contents of a remembered script or config are
+unreachable by any ranking, and grep is the only tool that reads them at all.
 
 `agents/memory-instructions.md` already explains all of this to the agent - how
 to read a recollection, when committing is worthwhile, why correction is a new
@@ -712,6 +726,9 @@ agents:
 - [ ] `autoRecall: false` on any agent whose user message is a payload.
 - [ ] Nothing authoritative is expected to live here - that is a skill's job.
 - [ ] The project's index skill says to verify a recalled route.
+- [ ] `zen memory search` on a question the project actually gets back returns
+      what you expected, and says `ranked by meaning` rather than falling back to
+      term overlap.
 - [ ] `zen memory export --open` after a week of use, to see what it actually
       learned rather than what you hoped.
 
@@ -722,6 +739,8 @@ agents:
 | The `memory_*` tools are missing                    | No `memory:` on the agent. They come from the binding, never from `tools:`                                                      |
 | `zen memory` says the project has none              | Neither a `memory:` block nor an agent binding - nothing is opened and no directory is made                                     |
 | Recall finds a memory only when reworded            | No embedder. `zen memory stats` says `embedding none`                                                                           |
+| A memory is in the graph but never comes back       | Ask `zen memory search` for it: a score under `0.15` is dropped as noise, and `--audience <label>` shows whether a mask hid it  |
+| `zen memory search` says `ranked by term overlap`   | It could not build the project's embedder - no credential, or the graph holds no vectors. That order is not the one a run gets  |
 | Recall finds nothing after changing the embedder    | Refused rather than mixed - a manifest records the model. Change it back, or start a new memory                                 |
 | Vectors fewer than nodes                            | Some nodes were committed with no embedder; they are only reachable by term overlap                                             |
 | The graph fills with restated requests              | The commit rule is not in a prompt or skill. State the "would a later run redo this" test                                       |
