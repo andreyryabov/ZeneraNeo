@@ -206,7 +206,12 @@ export function writeAll(lines: readonly string[]): void {
 
 /** Machine-readable output. Pretty-printed: it is read by people too. */
 export function json(value: unknown): void {
-    process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+    process.stdout.write(jsonText(value));
+}
+
+/** The same bytes, for a caller sending them somewhere other than stdout. */
+export function jsonText(value: unknown): string {
+    return `${JSON.stringify(value, null, 2)}\n`;
 }
 
 export function note(line = ''): void {

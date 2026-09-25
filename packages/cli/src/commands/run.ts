@@ -1,3 +1,4 @@
+import type { Input } from '@zenera/neo';
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parse } from '../args.ts';
@@ -5,9 +6,10 @@ import type { Command } from '../command.ts';
 import * as Engine from '../engine.ts';
 import { duration, Narrator, stopMark, summary } from '../narrate.ts';
 import * as Projects from '../projects.ts';
+import { readRequest } from '../request.ts';
 import { target, type Target } from '../resolve.ts';
 import { display } from '../session.ts';
-import { bold, cyan, dim, json, note, readStdin, usageError, write } from '../term.ts';
+import { bold, cyan, dim, json, jsonText, note, readStdin, usageError, write } from '../term.ts';
 import { parseChoice } from '../tui/theme.ts';
 
 const USAGE = 'zen run [project] [prompt] [options]';
@@ -16,6 +18,7 @@ interface Flags {
     project?: string;
     session?: string;
     new?: boolean;
+    input?: string;
     workspace?: string;
     memory?: string;
     model?: string;
@@ -41,6 +44,7 @@ export const run: Command = {
         '  --project <name|dir>   Which project to run. Default: the one you are in.',
         '  --session <id>         Continue this session.',
         '  --new                  Start a new session without asking which one.',
+        '  --input <file>         Read the whole request from JSON. `-` is stdin.',
         '  --workspace <dir>      Directory the agent can read and write.',
         '  --memory <dir>         Directory the agents remember into.',
         '  --model <ref>          Use this model instead of the default.',
@@ -50,6 +54,7 @@ export const run: Command = {
         '  --plain                Never open the TUI. Needs a prompt.',
         '  --theme <dark|light>   Colours for the TUI. Default: auto.',
         '  --out <file>           Put the answer in this file instead of on screen.',
+        '                         With --json, the file gets the whole JSON envelope.',
         '  --yes                  Answer yes to every question.',
         '  --json                 Print machine-readable JSON (session, run, mounts, output, etc...).',
         '',
@@ -60,6 +65,13 @@ export const run: Command = {
         'A prompt always starts a new session, so --new is for the TUI, where the',
         'alternative is being asked which session to continue.',
         '',
+        '--input names a file holding the whole request - project, input, workspace,',
+        'memory - and what it says wins over the same flag on the line. Its paths are',
+        'relative to the file, so a case travels with the images beside it. It is the',
+        'way to ask about a picture, and it never opens the TUI:',
+        '',
+        '  { "input": [{ "text": "what is this?" }, { "image": "./shot.png" }] }',
+        '',
         'Examples:',
         '  zen run                               open the TUI in this project',
         '  zen run acme                          open the TUI in the acme project',
@@ -68,6 +80,8 @@ export const run: Command = {
         '  zen run "what changed?" > out.md      redirect the answer into a file',
         '  zen run --out out.md "what changed?"  write the answer to out.md only',
         '  zen run --json "what changed?"        output JSON with workspace, run paths, state, etc...',
+        '  zen run --input case.json --json      run a request from a file, answer as JSON',
+        '  zen run --input case.json --json --out result.json    ... into a file',
         '  zen run --read-only "what changed?"   let it read but not write',
         '  zen run --memory ./mem                remember into ./mem, not the project',
         '  zen run --new                         open the TUI in a new session',
@@ -79,6 +93,7 @@ export const run: Command = {
                 project: { type: 'string' },
                 session: { type: 'string' },
                 new: { type: 'boolean' },
+                input: { type: 'string' },
                 workspace: { type: 'string' },
                 memory: { type: 'string' },
                 model: { type: 'string' },
@@ -103,11 +118,22 @@ export const run: Command = {
         // there for the day a project is called "why".
         const [head, ...rest] = positionals;
         const named = !values.project && head ? await Projects.find(head) : undefined;
-        const prompt = (named ? rest : positionals).join(' ').trim() || piped;
+        const typed = (named ? rest : positionals).join(' ').trim();
 
+        if (values.input && typed) {
+            throw usageError(
+                'a prompt and --input both say what to ask',
+                'put the prompt in the file, or drop --input',
+            );
+        }
         if (values.theme !== undefined && !parseChoice(values.theme)) {
             throw usageError(`unknown theme: ${values.theme}`, 'dark, light or auto');
         }
+
+        // With `--input -` the pipe carries the request, not the prompt, so it
+        // is read here and never looked at again below.
+        const request = values.input ? await readRequest(values.input, ctx.cwd, piped) : undefined;
+        const prompt = typed || (request ? '' : (piped ?? ''));
 
         // A prompt on the command line is a request for an answer, not a
         // conversation to pick up. So it answers the three questions itself:
@@ -115,14 +141,15 @@ export const run: Command = {
         // and no confirmation for it — `zen run acme "what changed?"` should
         // read the code that is right there. Every flag still wins, and the
         // TUI, where there is someone to ask, still asks.
-        const shot = Boolean(prompt);
+        const input = request ? request.input : prompt;
+        const shot = Boolean(prompt) || Boolean(request);
 
         const where = await target({
             cwd: ctx.cwd,
-            project: values.project ?? (named ? head : undefined),
+            project: request?.project ?? values.project ?? (named ? head : undefined),
             session: values.session,
             fresh: values.new || (shot && !values.session),
-            workspace: values.workspace ?? (shot ? ctx.cwd : undefined),
+            workspace: request?.workspace ?? values.workspace ?? (shot ? ctx.cwd : undefined),
             yes: values.yes || shot,
         });
 
@@ -133,8 +160,10 @@ export const run: Command = {
             model: values.model,
             image: values.image,
             // Relative to where it was typed, like every other path on the line
-            // — the project root is not the cwd.
-            memoryDir: values.memory ? resolve(ctx.cwd, values.memory) : undefined,
+            // — the project root is not the cwd. A request's paths are already
+            // absolute, resolved against the file rather than against this.
+            memoryDir:
+                request?.memory ?? (values.memory ? resolve(ctx.cwd, values.memory) : undefined),
             keys: values['no-keys'] ? false : undefined,
             yes: values.yes || ctx.json,
         });
@@ -145,7 +174,7 @@ export const run: Command = {
             // is a request for an answer, and drawing a full-screen interface
             // over it would be worse than not drawing one.
             const drawing =
-                !prompt &&
+                !shot &&
                 !values.plain &&
                 !ctx.json &&
                 Boolean(process.stdout.isTTY && process.stdin.isTTY);
@@ -160,10 +189,10 @@ export const run: Command = {
                 return;
             }
 
-            if (!prompt) {
+            if (!shot) {
                 throw usageError('nothing to ask', 'give a prompt, or pipe one in');
             }
-            await once(engine, prompt, values, ctx.json, ctx.cwd, where);
+            await once(engine, input, values, ctx.json, ctx.cwd, where);
         } finally {
             await engine.close();
         }
@@ -176,7 +205,7 @@ export const run: Command = {
 
 async function once(
     engine: Engine.Engine,
-    prompt: string,
+    input: Input,
     values: Flags,
     asJson: boolean,
     cwd: string,
@@ -212,18 +241,16 @@ async function once(
 
     let outcome: Engine.RunOutcome;
     try {
-        outcome = await Engine.run(engine, prompt, narrator.handle, stopping.signal);
+        outcome = await Engine.run(engine, input, narrator.handle, stopping.signal);
     } finally {
         narrator.done();
         process.off('SIGINT', onInterrupt);
     }
 
-    if (values.out) {
-        await writeFile(values.out, `${outcome.text}\n`, 'utf8');
-    }
-
     if (asJson) {
-        json({
+        // --out is a destination, not a copy, and with --json the answer *is*
+        // the envelope — so that is what lands in the file, not the prose.
+        const body = {
             session: { id: engine.session.id, dir: engine.session.dir },
             run: {
                 id: outcome.run.id,
@@ -240,13 +267,19 @@ async function once(
             durationMs: outcome.durationMs,
             usage: outcome.result.usage,
             output: outcome.text,
-        });
+        };
+        if (values.out) {
+            await writeFile(values.out, jsonText(body), 'utf8');
+        } else {
+            json(body);
+        }
         return;
     }
 
-    // --out is a destination, not a copy: the answer goes there instead of to
+    // The same rule for prose: the answer goes to the file instead of to
     // stdout, so a redirect and a file cannot both end up holding it.
     if (values.out) {
+        await writeFile(values.out, `${outcome.text}\n`, 'utf8');
         note(dim(`answer: ${cyan(values.out)}`));
     } else {
         write(outcome.text);

@@ -69,6 +69,7 @@ import {
 } from '../src/meta.ts';
 import { engineDisk, ensurePodmanReady, ownedContainers } from '../src/podman.ts';
 import { dirSize, lastUsedAt, projectMounts } from '../src/projects.ts';
+import { parseRequest, readRequest } from '../src/request.ts';
 import { chooseWorkspace } from '../src/resolve.ts';
 import { scaffold } from '../src/scaffold.ts';
 import { sessionPaths } from '../src/session.ts';
@@ -1524,6 +1525,107 @@ describe('choosing the workspace', () => {
             confirmSpy.mockRestore();
             interactiveSpy.mockRestore();
         }
+    });
+});
+
+describe('a run request in a file', () => {
+    const root = mkdtempSync(join(tmpdir(), 'zen-request-'));
+    const base = join(root, 'cases');
+
+    // The smallest thing that is really a PNG, so the extension is not a lie.
+    const png = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+        'base64',
+    );
+
+    beforeEach(() => {
+        mkdirSync(base, { recursive: true });
+        writeFileSync(join(base, 'shot.png'), png);
+    });
+    afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+    const parse = (body: unknown): ReturnType<typeof parseRequest> =>
+        parseRequest(JSON.stringify(body), base, 'case.json');
+
+    it('takes a plain string as the whole input', () => {
+        expect(parse({ input: 'what changed?' }).input).toBe('what changed?');
+    });
+
+    it('inlines a local image relative to the file, not the cwd', () => {
+        const parts = parse({
+            input: [{ text: 'what is this?' }, { image: './shot.png' }],
+        }).input;
+        expect(parts).toEqual([
+            { type: 'text', text: 'what is this?' },
+            {
+                type: 'image',
+                url: `data:image/png;base64,${png.toString('base64')}`,
+                mimeType: 'image/png',
+            },
+        ]);
+    });
+
+    it('leaves a url the model can already fetch alone', () => {
+        expect(parse({ input: [{ image: 'https://example.com/a.png' }] }).input).toEqual([
+            { type: 'image', url: 'https://example.com/a.png', mimeType: undefined },
+        ]);
+        expect(parse({ input: [{ file: 'data:text/plain;base64,aGk=' }] }).input).toEqual([
+            { type: 'file', url: 'data:text/plain;base64,aGk=', mimeType: undefined },
+        ]);
+    });
+
+    it('accepts the canonical part shape as well as the shorthand', () => {
+        expect(parse({ input: ['bare', { type: 'text', text: 'typed' }] }).input).toEqual([
+            { type: 'text', text: 'bare' },
+            { type: 'text', text: 'typed' },
+        ]);
+    });
+
+    it('asks for a mimeType rather than guessing one', () => {
+        writeFileSync(join(base, 'thing.xyz'), 'hi');
+        expect(() => parse({ input: [{ file: './thing.xyz' }] })).toThrow(/nothing known about/);
+        expect(parse({ input: [{ file: './thing.xyz', mimeType: 'text/plain' }] }).input).toEqual([
+            { type: 'file', url: 'data:text/plain;base64,aGk=', mimeType: 'text/plain' },
+        ]);
+    });
+
+    it('names the field it could not read', () => {
+        expect(() => parse({ workspace: './ws' })).toThrow(/no "input"/);
+        expect(() => parse({ input: [{ nope: 1 }] })).toThrow(/input\[0\]/);
+        expect(() => parse({ input: [{ image: './missing.png' }] })).toThrow(/cannot read/);
+        expect(() => parse({ input: 7 })).toThrow(/"input" must be/);
+        expect(() => parseRequest('{', base, 'case.json')).toThrow(/case\.json/);
+    });
+
+    it('resolves paths against the file but leaves a project name alone', () => {
+        const req = parse({
+            input: 'hi',
+            project: 'acme',
+            workspace: './ws',
+            memory: '../mem',
+        });
+        expect(req.project).toBe('acme');
+        expect(req.workspace).toBe(join(base, 'ws'));
+        expect(req.memory).toBe(join(root, 'mem'));
+        expect(parse({ input: 'hi', project: './other' }).project).toBe(join(base, 'other'));
+    });
+
+    it('reads a piped request against the cwd, because there is no file', async () => {
+        const req = await readRequest('-', base, '{"input":"hi","workspace":"./ws"}');
+        expect(req.workspace).toBe(join(base, 'ws'));
+        expect(req.input).toBe('hi');
+    });
+
+    it('reads a file and resolves its images from beside it', async () => {
+        writeFileSync(join(base, 'case.json'), JSON.stringify({ input: [{ image: 'shot.png' }] }));
+        const req = await readRequest('cases/case.json', root);
+        expect(req.input).toEqual([
+            {
+                type: 'image',
+                url: `data:image/png;base64,${png.toString('base64')}`,
+                mimeType: 'image/png',
+            },
+        ]);
     });
 });
 

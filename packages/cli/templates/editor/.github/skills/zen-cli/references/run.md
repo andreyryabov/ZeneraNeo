@@ -14,6 +14,7 @@ answers once on stdout and exits.
 | `--project <name\|dir>` | Which project. Inferred from the directory otherwise     |
 | `--session <id>`        | Continue a particular session                            |
 | `--new`                 | Start a new session rather than continuing one           |
+| `--input <file>`        | Read the whole request from JSON; `-` is stdin           |
 | `--workspace <dir>`     | What the agent may read and write                        |
 | `--memory <dir>`        | Where the agents remember into, instead of the project's |
 | `--model <ref>`         | Override the default model for this run                  |
@@ -38,6 +39,7 @@ the file is the only place it lands.
 zen run "what changed?" > out.md              answer in the file, progress on screen
 zen run "what changed?" > out.md 2>/dev/null  ... and nothing on screen at all
 zen run --out out.md "what changed?"          the same file, stdout left empty
+zen run --json --out run.json "what changed?" the whole envelope, in a file
 ```
 
 There is no `--quiet`. Narration is on stderr already, so a redirect is enough;
@@ -46,7 +48,9 @@ There is no `--quiet`. Narration is on stderr already, so a redirect is enough;
 `--json` answers with the paths as well as the answer: the session and run
 directories, every file the run left behind, and every tree the agent could see,
 with the path it had on this machine beside the path it had inside the
-container.
+container. `--out` takes that envelope off stdout the same way it takes the
+prose — with `--json` the envelope _is_ the answer, so the file holds all of it
+and stdout is left empty.
 
 ```json
 {
@@ -75,6 +79,52 @@ container.
 
 `mounts` also lists the container's `$HOME` and, when keys are forwarded, the
 credential files mounted under `/run/zenera/keys`.
+
+## A request in a file
+
+`--input <file.json>` is the whole invocation written down. It is the only way
+to ask about a picture - a command line cannot carry one - and it is what makes
+a run reproducible: a case is a file, so it can be checked in, diffed and re-run.
+
+```json
+{
+    "project": "acme",
+    "input": [{ "text": "what is in this picture?" }, { "image": "./shot.png" }],
+    "workspace": "./ws",
+    "memory": "./mem"
+}
+```
+
+Only `input` is required, and it may be a plain string instead of an array. Each
+part is a bare string, `{ "text": "…" }`, one of `{ "image" | "audio" | "video" |
+"file": "…" }`, or the canonical `{ "type", "url", "mimeType" }` - the same shapes
+the library's `Input` accepts, because the file is a JSON projection of it.
+
+Three rules, and they are the whole of the format:
+
+- **Paths are relative to the file**, not to the directory you ran from, so a
+  case travels with the images beside it. With `--input -` there is no file, so
+  they are relative to the cwd. A bare `project` is a registered name and is
+  left alone; one starting with `.` or `/` is a directory.
+- **The file wins** over the same flag on the command line. A field it leaves
+  out falls through to the flag, then to the usual default. This is the one
+  place the rule above the options table is reversed - the file _is_ the
+  invocation, not a repository's standing intent.
+- **A local media path is inlined** as a `data:` url, so the state a run resumes
+  from carries the picture rather than a path that meant something elsewhere.
+  `http(s):` and `data:` urls are passed through untouched. The bytes land in
+  `state.json` and are rewritten on every later turn of that session, so there
+  is a 20 MB ceiling and a warning well before it.
+
+A request never opens the TUI and never asks about the workspace, exactly like a
+prompt on the command line. Giving both a prompt and `--input` is an error.
+
+```
+zen run --input case.json --json | jq -r .output
+cat case.json | zen run --input - --json
+zen run --input case.json --json --out result.json          everything, in a file
+zen run --input case.json --session 20260825-143012-a7f3   continue, don't start
+```
 
 `--plain` never opens the TUI. The TUI is the only thing that can ask for a
 prompt, so with `--plain` the prompt has to be there already - in the argument
