@@ -164,7 +164,9 @@ lands, and treats a failure as data rather than a stop. Sharing one memory is
 the exception that needs saying out loud - `--memory-read-only` lets every item
 recall from the same graph, because nothing is written and so nothing needs the
 lock. Without it each item gets a copy, and `zen memory merge <batch-dir>/*/memory`
-folds what they learned back in.
+folds what they learned back in. While it runs, `<batch-dir>/README.md` is a
+dashboard rewritten every second: what each item is doing right now, what the
+finished ones cost, and what is still queued.
 
 To change what the system does, update `SPECIFICATION.md` and send
 `/spec-sync-project` again. The next section explains that workflow in detail.

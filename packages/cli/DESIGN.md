@@ -635,6 +635,7 @@ kept:
 
 ```
 <batch-dir>/                     <project>/batches/<stamp>, or --batch-dir
+    README.md                    the dashboard, rewritten every second
     batch.json                   the index
     <id>/workspace/              this item's, unless the file named one
     <id>/memory/                 this item's copy, in the copying mode
@@ -676,6 +677,29 @@ failed and is raised only after `batch.json` is written.
 and carries the question, with inlined media named rather than repeated - the
 bytes are in that item's own input file already, and forty base64 screenshots
 in a combined file is an index of nothing.
+
+**Progress is a file, not a terminal.** Sixteen agents narrating at once into
+one terminal is not progress, it is interleaved noise, and a batch is usually
+left running anyway. So the events every item emits are folded per item and
+rendered into `<batch-dir>/README.md` once a second: what each running item is
+doing right now - its stage, its last tool, the tail of its thinking and of
+what it is writing, its turn count and its tokens - over a table of the ones
+that have finished and a list of the ones still queued. Watch it with an editor
+preview or `watch -n1 cat`, and when the batch ends the same file is already
+the report, so nothing has to be written twice.
+
+The running section is **drawn at a fixed height**, because it is the only part
+that is redrawn rather than appended to and a section that breathes drags the
+rest of the page up and down between ticks. It is a preformatted block, which
+never wraps; every item takes the same four clipped lines whether or not it has
+anything to say; a worker with nothing to run is drawn as an idle slot rather
+than left out, for as long as anything is still queued. The same reasoning puts
+`Average run` in the facts table from the first tick, showing a dash.
+
+The dashboard is deliberately **not load-bearing**: every write is swallowed,
+the timer is unref'd, and an item interrupted by a kill is recorded as such on
+the way out. A batch must not fail because its progress file could not be
+written.
 
 stdout is the batch directory and nothing else, so `$(zen run batch ...)` is
 usable; `--json` puts the index there instead. `--json` could not simply be

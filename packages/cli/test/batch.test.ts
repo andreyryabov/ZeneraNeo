@@ -1,9 +1,11 @@
+import type { AgentEvent } from '@zenera/neo';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { concurrency, keepWritten, pool, prepareMemories } from '../src/batch.ts';
+import { BatchProgress } from '../src/progress.ts';
 import { type BatchItem, parseBatch, readBatch } from '../src/request.ts';
 
 /**
@@ -267,5 +269,139 @@ describe('the memory each item is given', () => {
         expect(kept).toBe(1);
         expect(existsSync(wrote)).toBe(true);
         expect(existsSync(did_not)).toBe(false);
+    });
+});
+
+/**
+ * A batch narrates nowhere else, so the file IS the progress. What is asserted
+ * here is what someone watching it needs: which item is running, what it is
+ * doing right now, and what the finished ones cost.
+ */
+describe('the dashboard a batch writes', () => {
+    let dir: string;
+    const items = [
+        { index: 0, id: 'vat', input: 'what is VAT?' },
+        { index: 1, id: 'paye', input: [{ text: 'and PAYE?' }, { image: './p.png' }] },
+    ] as BatchItem[];
+
+    const progress = (): BatchProgress =>
+        new BatchProgress({
+            dir,
+            project: 'acme',
+            projectDir: dir,
+            input: 'cases.json',
+            concurrency: 4,
+            memory: 'copied',
+            items,
+        });
+
+    const event = (e: Record<string, unknown>) =>
+        ({ runId: 'r1', agent: 'default', ...e }) as unknown as AgentEvent;
+
+    beforeEach(async () => {
+        dir = await mkdtemp(join(tmpdir(), 'zen-batch-dash-'));
+    });
+
+    afterEach(async () => {
+        await rm(dir, { recursive: true, force: true });
+    });
+
+    it('says what every item is doing, and what it has spent', () => {
+        const board = progress();
+        const watch = board.watch('vat');
+        watch(event({ type: 'before_tool_call', state: {}, call: { name: 'run_command' } }));
+        watch(event({ type: 'thinking_delta', delta: 'the rate has been 20% since 2011' }));
+
+        const text = board.render();
+        expect(text).toContain('# acme — batch');
+        expect(text).toContain('0/2');
+        expect(text).toContain('## Running now');
+        expect(text).toContain('▶ #0 vat');
+        expect(text).toContain('what is VAT?');
+        expect(text).toContain('thinking · ');
+        expect(text).toContain('↳ the rate has been 20% since 2011');
+        expect(text).toContain('## Waiting');
+        expect(text).toContain('`paye`');
+    });
+
+    /**
+     * A panel that grows and shrinks as items come and go drags everything
+     * below it up and down the screen, which is unreadable at a glance. While
+     * work is still queued it is drawn at the height it will keep.
+     */
+    it('holds its height while there is work left to start', () => {
+        const board = new BatchProgress({
+            dir,
+            project: 'acme',
+            projectDir: dir,
+            input: 'cases.json',
+            concurrency: 2,
+            memory: 'copied',
+            items: [...items, { index: 2, id: 'cgt', input: 'and CGT?' }] as BatchItem[],
+        });
+        const height = (text: string) =>
+            text.split('## Running now')[1]?.split('\n## ')[0]?.split('\n').length;
+
+        board.watch('vat');
+        const started = height(board.render());
+        expect(board.render()).toContain('· idle');
+
+        board.finish('vat', { ok: true });
+        board.watch('paye');
+        expect(height(board.render())).toBe(started);
+    });
+
+    it('keeps the media out of the question it prints', () => {
+        const board = progress();
+        board.watch('paye');
+        expect(board.render()).toContain('and PAYE? [image]');
+    });
+
+    it('counts the tokens a finished item reported, not the ones it streamed', () => {
+        const board = progress();
+        const watch = board.watch('vat');
+        watch(
+            event({
+                type: 'after_llm_call',
+                state: {},
+                node: {
+                    usage: {
+                        inputTokens: 10,
+                        outputTokens: 2,
+                        cachedInputTokens: 0,
+                        reasoningTokens: 0,
+                    },
+                },
+            }),
+        );
+        board.finish('vat', {
+            ok: true,
+            usage: {
+                inputTokens: 12_000,
+                outputTokens: 1200,
+                cachedInputTokens: 0,
+                reasoningTokens: 400,
+            },
+        });
+
+        const text = board.render();
+        expect(text).toContain('## Finished');
+        expect(text).toContain('12k in · 1.2k out (400 thinking)');
+    });
+
+    it('leaves the file as the record, with an interrupted item accounted for', async () => {
+        const board = progress();
+        board.watch('vat');
+        board.finish('vat', { ok: false, error: 'the model refused' });
+        board.watch('paye');
+        board.begin();
+        await board.close();
+
+        const text = await readFile(join(dir, 'README.md'), 'utf8');
+        expect(text).toContain('**Finished**');
+        expect(text).toContain('## What went wrong');
+        expect(text).toContain('the model refused');
+        expect(text).toContain('interrupted');
+        expect(text).not.toContain('## Running now');
     });
 });

@@ -96,6 +96,7 @@ export const run: Command = {
         '  <batch-dir>/<id>/memory/        its own copy, in the copying mode',
         '  <batch-dir>/<id>/output.json    exactly what `zen run --json` prints',
         '  <batch-dir>/batch.json          the index: every item, ok, and its file',
+        '  <batch-dir>/README.md           a dashboard, rewritten every second',
         '',
         'Memory comes in two modes, because a memory is a locked directory and',
         'sixteen runs cannot hold one lock. With --memory-read-only they all recall',

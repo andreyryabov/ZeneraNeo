@@ -12,6 +12,7 @@ import { basename, join, resolve } from 'node:path';
 import * as Engine from './engine.ts';
 import { stamp } from './ids.ts';
 import { duration } from './narrate.ts';
+import { BatchProgress } from './progress.ts';
 import type { BatchItem, BatchRequest } from './request.ts';
 import { project as resolveProject, target } from './resolve.ts';
 import { display } from './session.ts';
@@ -153,8 +154,21 @@ export async function runBatch(opts: BatchOptions): Promise<void> {
             ),
         );
         note(dim(`batch:  ${display(dir, opts.cwd)}`));
+        note(dim(`watch:  ${display(join(dir, 'README.md'), opts.cwd)}`));
         note('');
     }
+
+    // The dashboard, from here until the last item lands.
+    const progress = new BatchProgress({
+        dir,
+        project: project.name,
+        projectDir: project.dir,
+        input: opts.input,
+        concurrency: opts.concurrency,
+        memory: source ? `${mode}${seeded ? '' : ' (new)'} — \`${source}\`` : 'none',
+        items,
+    });
+    progress.begin();
 
     const startedAt = new Date();
     let done = 0;
@@ -166,6 +180,7 @@ export async function runBatch(opts: BatchOptions): Promise<void> {
             memory: prepared.get(item.id),
             memoryReadOnly: mode === 'read-only',
             signal: stopping.signal,
+            progress,
         });
         done += 1;
         if (!opts.json) {
@@ -178,6 +193,7 @@ export async function runBatch(opts: BatchOptions): Promise<void> {
         return result;
     });
     process.off('SIGINT', onInterrupt);
+    await progress.close();
 
     // An item that was given an empty graph and found nothing worth keeping
     // leaves a directory that is not a memory, and `merge` rightly refuses
@@ -189,6 +205,7 @@ export async function runBatch(opts: BatchOptions): Promise<void> {
     const body = {
         batch: {
             dir,
+            readme: join(dir, 'README.md'),
             input: opts.input,
             project: project.dir,
             items: items.length,
@@ -246,6 +263,7 @@ interface ItemContext {
     memory?: string;
     memoryReadOnly: boolean;
     signal: AbortSignal;
+    progress: BatchProgress;
 }
 
 /**
@@ -256,6 +274,7 @@ interface ItemContext {
 async function runItem(item: BatchItem, ctx: ItemContext): Promise<ItemResult> {
     const at = join(ctx.dir, item.id);
     const output = join(at, 'output.json');
+    const watch = ctx.progress.watch(item.id);
 
     try {
         const where = await target({
@@ -283,12 +302,14 @@ async function runItem(item: BatchItem, ctx: ItemContext): Promise<ItemResult> {
         });
 
         try {
-            // No narrator: a hundred interleaved streams is not progress, it is
-            // noise. The line per finished item is the progress.
-            const outcome = await Engine.run(engine, item.input, undefined, ctx.signal);
+            // Nothing is narrated to the terminal — a hundred interleaved
+            // streams there is not progress, it is noise. The events go to the
+            // dashboard instead, where each item has a line of its own.
+            const outcome = await Engine.run(engine, item.input, watch, ctx.signal);
             // Written the moment it is known, not at the end — a batch killed
             // halfway still has every answer it managed to get.
             await writeFile(output, jsonText(Engine.envelope(engine, outcome)), 'utf8');
+            ctx.progress.finish(item.id, { ok: true, usage: outcome.result.usage });
             return { index: item.index, id: item.id, ok: true, input: index(item.input), output };
         } finally {
             await engine.close();
@@ -299,6 +320,7 @@ async function runItem(item: BatchItem, ctx: ItemContext): Promise<ItemResult> {
             ...(err instanceof CliError && err.hint ? { hint: err.hint } : {}),
         };
         await writeFile(output, jsonText({ ok: false, id: item.id, error }), 'utf8');
+        ctx.progress.finish(item.id, { ok: false, error: error.message });
         return {
             index: item.index,
             id: item.id,

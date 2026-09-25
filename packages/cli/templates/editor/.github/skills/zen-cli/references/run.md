@@ -168,12 +168,22 @@ mistake once per item.
 
 ```
 <batch-dir>/
+    README.md           a live dashboard, rewritten every second
     batch.json          the index: every item, whether it worked, where it is
     <id>/
         workspace/      what that item could read and write
         memory/         its own copy, in the copying mode only
         output.json     exactly what `zen run --json` prints for one run
 ```
+
+`README.md` is where the progress of a batch lives. Sixteen agents narrating at
+once would be noise, so instead the file is rewritten once a second: a
+fixed-height panel showing every worker - what it is running, the tail of what
+it is thinking or writing, its turns and its tokens - over a table of the
+finished ones and a list of the ones still waiting. The panel keeps its height
+while there is work left to start, so nothing jumps between ticks. Watch it in
+an editor preview, or `watch -n1 cat "$DIR/README.md"`. When the batch ends the
+same file is the report.
 
 Each `output.json` is written the moment its item finishes, so a batch stopped
 half way still has every answer it managed to get. `batch.json` is an index, not
@@ -209,8 +219,9 @@ other ninety-nine; the exit code says how many failed, and it is set after
 everything is written.
 
 stdout is the batch directory and nothing else, so `ls "$(zen run batch --input
-cases.json)"` works. `--json` prints the index there instead. Progress is on
-stderr either way. `--out` puts the index in a second file as well.
+cases.json)"` works. `--json` prints the index there instead. Progress is in
+`<batch-dir>/README.md` either way. `--out` puts the index in a second file as
+well.
 
 ### Memory, in two modes
 
