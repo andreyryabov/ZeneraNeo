@@ -174,6 +174,30 @@ describe('the build loop', () => {
         expect(model.seen).toHaveLength(3);
     });
 
+    // The next attempt overwrites gen.py, so whoever wants to know why one
+    // hung has to be handed the file while it still exists.
+    it('hands the rejected file to onAttempt before writing over it', async () => {
+        const { box } = boxWith(() => ({ crash: 'boom' }));
+        const model = fakeModel(['# broken']);
+        const seen: { attempt: number; source: string; limit: number }[] = [];
+
+        await expect(
+            build(operation, {
+                model,
+                box,
+                checks,
+                attempts: 2,
+                onAttempt: (attempt, _diagnostics, source, limit) => {
+                    seen.push({ attempt, source, limit });
+                },
+            }),
+        ).rejects.toBeInstanceOf(BuildFailed);
+        expect(seen).toEqual([
+            { attempt: 1, source: '# broken', limit: 2 },
+            { attempt: 2, source: '# broken', limit: 2 },
+        ]);
+    });
+
     it('varies the probes, so a generator cannot pass by hard-coding one id', async () => {
         const seen: unknown[] = [];
         const { box } = boxWith((input) => {
@@ -419,6 +443,37 @@ describe('the cache', () => {
         await expect(cache.ensure(operation)).rejects.toBeInstanceOf(BuildFailed);
         await expect(cache.ensure(operation)).rejects.toBeInstanceOf(BuildFailed);
         expect(generate).toHaveBeenCalledTimes(1);
+    });
+
+    // Without this the only account of a build that timed out is one line of
+    // narration, and the file that hung is gone.
+    it('writes one report per failed build, source and all', async () => {
+        const engine = fakeEngine(root, () => ({ crash: 'boom' }));
+        const box = new Box({ root, image: 'stub', exec: engine.exec });
+        let failure: { error: Error; dump?: string } | undefined;
+        const cache = new Cache({
+            box,
+            checks: new Checks(),
+            model: fakeModel(['# broken']),
+            attempts: 2,
+            cacheDir: cacheDir(),
+            onFail: (e) => {
+                failure = e;
+            },
+        });
+
+        await expect(cache.ensure(operation)).rejects.toBeInstanceOf(BuildFailed);
+        const dump = failure!.dump!;
+        expect(dump.startsWith(join(root, 'builds'))).toBe(true);
+        expect((failure!.error as BuildFailed).dump).toBe(dump);
+
+        const report = readFileSync(dump, 'utf8');
+        expect(report).toContain('getUserById');
+        expect(report).toContain('gave up after 2 of 2');
+        expect(report).toContain('## Attempt 1 of 2');
+        expect(report).toContain('## Attempt 2 of 2');
+        expect(report).toContain('# broken');
+        expect(report).toContain('boom');
     });
 
     // A rate limit is about this minute, not about this operation. Remembering

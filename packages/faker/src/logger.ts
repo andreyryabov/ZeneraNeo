@@ -43,6 +43,8 @@ export interface RequestDumpData {
     errorKind?: ErrorKind;
     errorMessage?: string;
     stderr?: string;
+    /** the build report, when the answer was "there is no generator" */
+    buildDump?: string;
     cacheStatus?: 'hit' | 'miss' | 'regenerated';
     regenerated?: boolean;
     regenAttempts?: number;
@@ -157,6 +159,9 @@ export async function saveRequestDump(dir: string, data: RequestDumpData): Promi
     if (data.note) {
         lines.push(`- **Note**: ${data.note}`);
     }
+    if (data.buildDump) {
+        lines.push(`- **Build report**: [${data.buildDump}](file://${data.buildDump})`);
+    }
 
     lines.push('', '---', '', '## Request Info', '');
     lines.push(
@@ -263,6 +268,99 @@ export async function saveRequestDump(dir: string, data: RequestDumpData): Promi
 }
 
 // ---------------------------------------------------------------------------
+// Markdown Build Report
+//
+// The request dump answers "what did this call do". This one answers "why is
+// there nothing to call", which is a longer story: every attempt the judge
+// threw out, what was wrong with it, and the file itself — because the next
+// attempt overwrites `gen.py`, and a generator that merely hung leaves no
+// traceback behind, so the code is the only evidence there will ever be.
+//
+// One file per build, rewritten as the attempts go by rather than one file per
+// attempt: the path is then stable enough to be handed to the request that was
+// refused, which is where somebody will be looking.
+// ---------------------------------------------------------------------------
+
+export interface BuildAttempt {
+    attempt: number;
+    at: Date;
+    diagnostics: readonly string[];
+    source: string;
+}
+
+export interface BuildDumpData {
+    started: Date;
+    operationId?: string;
+    method: string;
+    path: string;
+    /** the operation's cache key, which is also its directory in the box */
+    key: string;
+    limit: number;
+    /** rewriting a generator that already existed rather than writing the first */
+    regeneration?: boolean;
+    model?: string;
+    attempts: readonly BuildAttempt[];
+    /** the attempts ran out — no generator was produced */
+    gaveUp?: boolean;
+}
+
+export async function saveBuildDump(dir: string, data: BuildDumpData): Promise<string> {
+    mkdirSync(dir, { recursive: true });
+
+    const safePath = data.path.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/^_+|_+$/g, '') || 'root';
+    const isoPrefix = data.started.toISOString().replace(/[:.]/g, '-');
+    const what = data.regeneration ? 'regen' : 'build';
+    const fullPath = join(dir, `${isoPrefix}-${what}-${data.method.toUpperCase()}-${safePath}.md`);
+
+    const outcome = data.gaveUp
+        ? `gave up after ${data.attempts.length} of ${data.limit}`
+        : `attempt ${data.attempts.length} of ${data.limit} rejected`;
+
+    const lines: string[] = [
+        `# ${data.regeneration ? 'Regeneration' : 'Build'}: ` +
+            `${data.method.toUpperCase()} ${data.path}`,
+        '',
+        `- **Operation ID**: ${data.operationId ? `\`${data.operationId}\`` : '_None_'}`,
+        `- **Key**: \`${data.key}\``,
+        `- **Started**: ${data.started.toISOString()}`,
+        `- **Model**: ${data.model ? `\`${data.model}\`` : '_Unknown_'}`,
+        `- **Outcome**: ${outcome}`,
+        '',
+    ];
+
+    for (const a of data.attempts) {
+        const elapsed = Math.max(0, a.at.getTime() - data.started.getTime());
+        lines.push(
+            '---',
+            '',
+            `## Attempt ${a.attempt} of ${data.limit}`,
+            '',
+            `_Rejected ${a.at.toISOString()}, ${elapsed}ms into the build._`,
+            '',
+            '### Why it was rejected',
+            '',
+            ...(a.diagnostics.length > 0
+                ? a.diagnostics.map((d) => (d.trimStart().startsWith('-') ? d : `- ${d}`))
+                : ['_No diagnostics._']),
+            '',
+            '### Generator',
+            '',
+            '```python',
+            a.source,
+            '```',
+            '',
+        );
+    }
+
+    await writeFile(fullPath, lines.join('\n'), 'utf8');
+    return resolve(fullPath);
+}
+
+export function formatDumpPath(label: string, path: string): string {
+    return `  ${dim(`↳ ${label}:`)} ${cyan(`file://${resolve(path)}`)}`;
+}
+
+// ---------------------------------------------------------------------------
 // Log Line Formatter
 // ---------------------------------------------------------------------------
 
@@ -297,6 +395,10 @@ export function formatLogLine(data: RequestDumpData, dumpPath: string): string {
     if (dumpPath) {
         const fileUrl = `file://${resolve(dumpPath)}`;
         lines.push(`  ${dim('↳ dump:')} ${cyan(fileUrl)}`);
+    }
+
+    if (data.buildDump) {
+        lines.push(formatDumpPath('build', data.buildDump));
     }
 
     return lines.join('\n');

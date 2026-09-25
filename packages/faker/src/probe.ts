@@ -18,13 +18,26 @@ import type { Issue } from './validate.ts';
 // and fails the second, which is the mistake this catches.
 // ---------------------------------------------------------------------------
 
+/**
+ * How many items a probe asks a paged operation for.
+ *
+ * Not the schema's maximum. `bounded` below answers an unbounded want with
+ * `maximum - 1`, so a `page_size` declared `maximum: 1000` used to make every
+ * probe ask for 999 fabricated objects — minutes of Faker inside a container
+ * with a 30s budget, reported as "the file took longer than 30s" and blamed on
+ * a generator that was doing exactly what it was told. A page is judged on its
+ * shape, and three rows show it.
+ */
+const PROBE_PAGE_SIZE = 3;
+
 export function probesFor(operation: Operation): GeneratorInput[] {
+    const size = operation.paging?.size;
     return [0, 1].map((variant) => ({
         operationId: operation.operationId,
         method: operation.method,
         path: operation.path,
-        pathParams: values(operation.params, 'path', variant),
-        query: values(operation.params, 'query', variant),
+        pathParams: values(operation.params, 'path', variant, size),
+        query: values(operation.params, 'query', variant, size),
         headers: {},
         body: operation.requestBody
             ? sample(operation.requestBody.schema, variant, 0, operation.requestBody.schema)
@@ -37,6 +50,7 @@ function values(
     params: readonly ParamSpec[],
     where: 'path' | 'query',
     variant: number,
+    size?: string,
 ): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     for (const p of params) {
@@ -48,7 +62,10 @@ function values(
         if (!p.required && variant === 1) {
             continue;
         }
-        out[p.name] = sample(p.schema, variant, 0, p.schema);
+        out[p.name] =
+            p.name === size
+                ? bounded(p.schema, PROBE_PAGE_SIZE, true)
+                : sample(p.schema, variant, 0, p.schema);
     }
     return out;
 }

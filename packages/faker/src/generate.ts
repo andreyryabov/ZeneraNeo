@@ -34,7 +34,13 @@ export interface BuildOptions {
     checks: Checks;
     /** how many times the model may be asked before giving up */
     attempts?: number;
-    onAttempt?: (attempt: number, diagnostics: readonly string[]) => void;
+    // Awaited: the next attempt overwrites the file this one was judged on.
+    onAttempt?: (
+        attempt: number,
+        diagnostics: readonly string[],
+        source: string,
+        limit: number,
+    ) => void | Promise<void>;
     signal?: AbortSignal;
 }
 
@@ -42,6 +48,14 @@ export interface Built {
     source: string;
     attempts: number;
 }
+
+/**
+ * Tries per generator. Each one carries the previous file and what was wrong
+ * with it, so the later attempts are the informed ones — a model that has seen
+ * its own traceback usually needs two or three goes at a fiddly schema, and the
+ * whole loop costs nothing once the file is cached.
+ */
+export const DEFAULT_ATTEMPTS = 5;
 
 export interface RegenerateOptions extends BuildOptions {
     currentSource: string;
@@ -54,6 +68,8 @@ export interface RegenerateOptions extends BuildOptions {
 export class BuildFailed extends Error {
     readonly operation: Operation;
     readonly diagnostics: readonly string[];
+    /** the build report on disk, filled in by whoever was writing one */
+    dump?: string;
 
     constructor(operation: Operation, diagnostics: readonly string[]) {
         super(
@@ -95,7 +111,7 @@ export function reason(err: unknown): string {
 }
 
 export async function build(operation: Operation, opts: BuildOptions): Promise<Built> {
-    const limit = Math.max(1, opts.attempts ?? 3);
+    const limit = Math.max(1, opts.attempts ?? DEFAULT_ATTEMPTS);
     const probes = probesFor(operation);
     const response = opts.checks.for(operation).response;
     const messages: Message[] = [
@@ -121,7 +137,7 @@ export async function build(operation: Operation, opts: BuildOptions): Promise<B
             }
         }
 
-        opts.onAttempt?.(attempt, last);
+        await opts.onAttempt?.(attempt, last, source, limit);
         messages.push(
             { role: 'assistant', content: source },
             { role: 'user', content: [{ type: 'text', text: retry(last) }] },
@@ -132,7 +148,7 @@ export async function build(operation: Operation, opts: BuildOptions): Promise<B
 }
 
 export async function regenerate(operation: Operation, opts: RegenerateOptions): Promise<Built> {
-    const limit = Math.max(1, opts.attempts ?? 3);
+    const limit = Math.max(1, opts.attempts ?? DEFAULT_ATTEMPTS);
     const exampleInputs = opts.examples?.map((e) => e.input) ?? [];
     const probes = [opts.failingInput, ...exampleInputs, ...probesFor(operation)];
     const response = opts.checks.for(operation).response;
@@ -174,7 +190,7 @@ export async function regenerate(operation: Operation, opts: RegenerateOptions):
             }
         }
 
-        opts.onAttempt?.(attempt, last);
+        await opts.onAttempt?.(attempt, last, source, limit);
         messages.push(
             { role: 'assistant', content: source },
             { role: 'user', content: [{ type: 'text', text: retry(last) }] },

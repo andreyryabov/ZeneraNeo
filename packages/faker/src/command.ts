@@ -29,6 +29,7 @@ import { join, relative, resolve } from 'node:path';
 import { GENERATORS } from './box.ts';
 import { FAKER_KIND, type GeneratorMeta } from './cache.ts';
 import { reason } from './generate.ts';
+import { formatDumpPath } from './logger.ts';
 import { listen } from './server.ts';
 import {
     chooseModel,
@@ -115,7 +116,7 @@ export const command: Command = {
             ['  --image <ref>', dim('Skip the baked image and use this one.')],
             ['  --cache <dir>', dim("The container's workspace. Default ~/.zenera/neo/faker.")],
             ['  --seed <n>', dim('Answer the same request the same way every time.')],
-            ['  --attempts <n>', dim('Tries per generator before giving up. Default 3.')],
+            ['  --attempts <n>', dim('Tries per generator before giving up. Default 5.')],
             ['  --concurrency <n>', dim('Generators written at once. Default 4.')],
             ['  --timeout <s>', dim('Seconds one generator may take. Default 30.')],
             ['  --max-body <n>', dim('Largest request body accepted, in bytes.')],
@@ -193,6 +194,7 @@ async function serve(args: readonly string[], ctx: Context): Promise<void> {
         }
         note(dim(`generators: ${setup.root}/${GENERATORS}`));
         note(dim(`request logs: ${requestsDir ?? `${setup.root}/requests`}`));
+        note(dim(`failed builds: ${setup.root}/builds`));
     }
     // The address is the answer; the rest was narration.
     write(`http://${host}:${listener.port}`);
@@ -520,8 +522,12 @@ async function start(
                               : note(`  ${green('ready')} ${dim(operation.operationId)}`)
                     : undefined,
             onFail: loud
-                ? ({ operation, error }) =>
-                      note(`  ${red('gave up')} ${dim(operation.operationId)} ${reason(error)}`)
+                ? ({ operation, error, dump }) => {
+                      note(`  ${red('gave up')} ${dim(operation.operationId)} ${reason(error)}`);
+                      if (dump) {
+                          note(formatDumpPath('report', dump));
+                      }
+                  }
                 : undefined,
         },
     });
