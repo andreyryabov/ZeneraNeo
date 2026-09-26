@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { join, relative, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { readJson, writeJson } from './home.ts';
 import { isStamp, stamp, stampInstant } from './ids.ts';
 import { alive, isBusy, runIds, sessionIds, sessionsDir } from './projects.ts';
@@ -26,7 +26,6 @@ export interface SessionPaths {
     data: string;
     /** the live, resumable state — rewritten after every run */
     state: string;
-    memory: string;
     blobs: string;
     runs: string;
     lock: string;
@@ -45,7 +44,6 @@ export function sessionPaths(projectDir: string, id: string): SessionPaths {
         workspace: join(dir, 'workspace'),
         data,
         state: join(data, 'state.json'),
-        memory: join(data, 'memory'),
         blobs: join(data, 'blobs'),
         runs: join(dir, 'runs'),
         lock: join(dir, '.lock'),
@@ -241,6 +239,50 @@ export function createRun(session: SessionPaths): RunPaths {
     return p;
 }
 
+/**
+ * The same paths, reached from a directory instead of from a pair of ids.
+ *
+ * `zen run --json` hands back a run directory, and a caller holding one has no
+ * reason to take it apart again to ask a second question about the same run.
+ * The layout is fixed, so the ids can be read back out of the path — and both
+ * still go through `isStamp`, so a path from anywhere cannot name a directory
+ * this layout would never have produced.
+ *
+ * The session comes back too, not only the run: blobs are stored per session,
+ * so anything that resolves a payload needs both halves — and the project, so
+ * a command reached this way can still read the project's config.
+ */
+export function runPathsAt(dir: string): {
+    project: string;
+    session: SessionPaths;
+    run: RunPaths;
+} {
+    const full = resolve(dir);
+    const runId = basename(full);
+    const sessionDir = dirname(dirname(full));
+    const wrong = (): CliError =>
+        usageError(
+            `${display(full)} is not a run directory`,
+            'runs live at <project>/sessions/<session>/runs/<run>',
+        );
+    if (!isStamp(runId) || !isStamp(basename(sessionDir)) || basename(dirname(full)) !== 'runs') {
+        throw wrong();
+    }
+    const project = dirname(dirname(sessionDir));
+    const session = sessionPaths(project, basename(sessionDir));
+    const run = runPaths(session, runId);
+    if (resolve(run.dir) !== full) {
+        throw wrong();
+    }
+    if (!existsSync(run.state)) {
+        throw invalidError(
+            `run ${runId} has no state.json`,
+            'only a run that got far enough to save state can be inspected',
+        );
+    }
+    return { project, session, run };
+}
+
 export interface RunMeta {
     version: 1;
     id: string;
@@ -253,11 +295,20 @@ export interface RunMeta {
     turns: number;
     usage: unknown;
     workspace: string;
+    memory?: string;
     error?: string;
 }
 
 export function writeRunMeta(p: RunPaths, meta: RunMeta): void {
     writeJson(p.meta, meta, 0o644);
+}
+
+/**
+ * Partial, because a run killed before it recorded anything still has a
+ * directory, and every field here is worth having on its own.
+ */
+export async function readRunMeta(p: RunPaths): Promise<Partial<RunMeta>> {
+    return await readJson<Partial<RunMeta>>(p.meta, {});
 }
 
 export interface RunSummary {
@@ -275,7 +326,7 @@ export async function listRuns(session: SessionPaths): Promise<RunSummary[]> {
     for (const id of runIds(session.dir).reverse()) {
         // A run killed before it recorded anything still has an id, and the id
         // says when it started, so it is listable without its meta.
-        const meta = await readJson<Partial<RunMeta>>(runPaths(session, id).meta, {});
+        const meta = await readRunMeta(runPaths(session, id));
         out.push({
             id,
             startedAt: meta.startedAt ?? stampInstant(id),

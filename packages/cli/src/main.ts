@@ -6,7 +6,19 @@ import { NEO_BANNER, printBanner } from './banner.ts';
 import { ALIASES, COMMANDS, EXTERNAL } from './commands/index.ts';
 import { cliManifest, versionOf } from './commands/version.ts';
 import { hasExternal, loadExternal } from './external.ts';
-import { CliError, EXIT, bold, cyan, dim, fail, note, pad, title, write } from './term.ts';
+import {
+    CliError,
+    EXIT,
+    bold,
+    cyan,
+    deferBanner,
+    dim,
+    fail,
+    note,
+    pad,
+    title,
+    write,
+} from './term.ts';
 
 /** What the user typed: `zen`, `zn` or `zenera` all arrive here. */
 const NAME = invokedAs('zen');
@@ -78,9 +90,13 @@ async function main(argv: readonly string[]): Promise<number> {
     const ragSearch =
         name === 'rag' && ['docs', 'schema'].includes(rest[0]) && rest[1] === 'search';
     const interactive = rest.includes('--interactive');
+    const answers = command?.quiet?.(rest) === true;
     if (!json && (!ragSearch || interactive)) {
         const brand = external && hasExternal(external) ? external.banner : command?.banner;
-        printBanner(brand ?? NEO_BANNER, { full: ragSearch && interactive });
+        const show = (): void =>
+            printBanner(brand ?? NEO_BANNER, { full: ragSearch && interactive });
+        // A command that answers holds its banner back until it has to ask.
+        answers ? deferBanner(show) : show();
     }
 
     if (parts.name === 'help') {

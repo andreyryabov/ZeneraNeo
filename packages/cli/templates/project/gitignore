@@ -2,6 +2,9 @@
 # None of it is source.
 sessions/
 
+# The same, one level up: a batch's workspaces, memory copies and answers.
+batches/
+
 # Memory is worth keeping: `graph.json`, `files/` and the vectors are what the
 # agents learned. The vectors are binary, but nothing rebuilds them from the
 # graph, so a clone without them recalls by term overlap until every node is

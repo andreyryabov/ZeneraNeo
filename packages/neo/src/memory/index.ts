@@ -128,8 +128,18 @@ export class MemoryIndex {
         return [...this.#relations];
     }
 
-    /** Read-only: a search returns nodes the model has not read, so nothing is touched. */
-    async search(query: MemoryQuery, sees: readonly string[]): Promise<Recollection> {
+    /**
+     * Read-only: a search returns nodes the model has not read, so nothing is
+     * touched. `stale` is the audit view — it puts back the superseded nodes
+     * recall drops, which is the only way to see the correction and the thing
+     * it corrected at once. No tool passes it; it is for `zen memory search`,
+     * where the question is why a run recalled what it did.
+     */
+    async search(
+        query: MemoryQuery,
+        sees: readonly string[],
+        opts: { stale?: boolean } = {},
+    ): Promise<Recollection> {
         const vector = query.text ? await this.#embed([query.text], 'query') : undefined;
         return recall({
             graph: this.graph,
@@ -137,6 +147,7 @@ export class MemoryIndex {
             sees,
             vector: vector?.[0],
             vectors: this.store.vectors,
+            stale: opts.stale,
         });
     }
 
@@ -186,7 +197,11 @@ export class MemoryIndex {
                         : undefined,
             });
         }
-        await this.store.commit();
+        // The bump is bookkeeping, and persisting it is what would make a
+        // read-only recall rewrite the graph every other run is reading.
+        if (!this.store.readOnly) {
+            await this.store.commit();
+        }
         return out;
     }
 

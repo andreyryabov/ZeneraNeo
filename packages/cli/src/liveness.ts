@@ -1,5 +1,6 @@
 import {
     EXA_BASE_URL,
+    isUnfunded,
     ModelRegistry,
     text,
     type Embedder,
@@ -112,8 +113,13 @@ export function classify(err: unknown): KeyCheck {
         };
     }
     // A 429 is this minute's rate limit, not an empty account, and the two
-    // share vocabulary — so a status that says "slow down" wins.
-    if (status !== 429 && UNFUNDED.some((needle) => haystack.includes(needle))) {
+    // share vocabulary — so a status that says "slow down" wins. Unless the
+    // vendor named the refusal itself: `credit_balance_exhausted` is a 429 too,
+    // and it is the account.
+    if (
+        isUnfunded(err) ||
+        (status !== 429 && UNFUNDED.some((needle) => haystack.includes(needle)))
+    ) {
         return {
             state: 'blocked',
             at,

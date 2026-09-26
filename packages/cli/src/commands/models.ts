@@ -542,6 +542,19 @@ function verdict(probe: ModelProbe): string {
 }
 
 /**
+ * What the provider said, in the verdict's own colour. Grey is for the half of
+ * the output nobody needs to read, and the one line explaining a refusal is not
+ * in that half.
+ */
+function reason(probe: ModelProbe): string {
+    const detail = probe.check.detail ?? '';
+    if (detail === '' || probe.check.state === 'live') {
+        return dim(detail);
+    }
+    return probe.check.state === 'dead' ? red(detail) : yellow(detail);
+}
+
+/**
  * Which project and region a Vertex call was actually made in. A publisher
  * model is only missing *somewhere*, and the somewhere is the part nobody
  * typed: it comes off the key, or out of the service-account file itself.
@@ -588,13 +601,13 @@ const test: Sub = async (ctx, args) => {
                     cyan(p.ref),
                     verdict(p),
                     dim(p.dimensions ? `${p.dimensions} dims` : ''),
-                    dim(p.check.detail ?? ''),
+                    reason(p),
                 ]),
             ),
         );
         for (const p of probes) {
             if (p.check.fix) {
-                note(dim(`${p.ref}: ${p.check.fix}`));
+                note(`${yellow('fix')} ${bold(p.ref)} ${p.check.fix}`);
             }
         }
         // A Vertex refusal is about a model *in a project*, and the project is

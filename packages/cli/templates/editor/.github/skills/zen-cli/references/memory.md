@@ -1,7 +1,7 @@
 # Memory - `zen memory`
 
 ```
-zen memory [stats|ls|show|export|merge|forget] [args] [options]
+zen memory [stats|ls|search|grep|show|export|merge|forget] [args] [options]
 ```
 
 Alias: `mem`.
@@ -22,34 +22,97 @@ skill.
 | ------------------------- | ------------------------------------------- |
 | `zen memory stats`        | Size, vocabulary, whether it is embedded    |
 | `zen memory ls`           | Nodes, newest first. Changes nothing        |
+| `zen memory search <q>`   | Recall it, the way an agent does. Ranked    |
+| `zen memory grep <pat>`   | Every node containing it, with the lines    |
 | `zen memory show <id>`    | One node in full, with what it links to     |
 | `zen memory export [f]`   | The whole graph as one HTML page            |
 | `zen memory merge <dir…>` | Fold other memories into this one           |
 | `zen memory forget <id…>` | Remove nodes, their vectors and their files |
 
-| Flag                    | Meaning                                       |
-| ----------------------- | --------------------------------------------- |
-| `--project <name\|dir>` | Which project. Inferred from the directory    |
-| `--dir <dir>`           | Read this memory directory instead            |
-| `--kind <name>`         | Only this kind of node                        |
-| `--audience <name>`     | Only nodes committed under this label         |
-| `--files`               | Only nodes that remember a file               |
-| `--stale`               | Only nodes something has superseded           |
-| `--limit <n>`           | Rows to list. Default 30                      |
-| `--out <file>`          | Where `export` writes. Default `memory.html`  |
-| `--open`                | Open the exported page                        |
-| `--dry-run`             | Say what `merge` would do, and stop           |
-| `--no-dedupe`           | Keep memories `merge` would otherwise fold    |
-| `--force`               | Let `merge` pick a winner where copies differ |
-| `--yes`                 | Do not ask before removing or merging         |
+| Flag                          | Meaning                                        |
+| ----------------------------- | ---------------------------------------------- |
+| `--project <name\|dir>`       | Which project. Inferred from the directory     |
+| `--dir <dir>`                 | Read this memory directory instead             |
+| `--kind <name>`               | Only this kind of node                         |
+| `--audience <name>`           | Only this label; for `search`, recall as it    |
+| `--files`                     | Only nodes that remember a file                |
+| `--stale`                     | Only nodes something has superseded            |
+| `--all`                       | Superseded nodes too, marked. `search`, `grep` |
+| `--regex`                     | Read the `grep` pattern as a regex, per line   |
+| `--case-sensitive`            | Match case exactly. Off by default             |
+| `--in <text\|metadata\|file>` | Where `grep` looks. Repeatable. All by default |
+| `--ids-only`                  | Print bare ids, for piping into `show`         |
+| `--limit <n>`                 | Rows to list, or seeds to rank. 30, search 5   |
+| `--hops <n>`                  | How far `search` follows links. Default 2      |
+| `--nodes <n>`                 | Cap on the subgraph `search` returns. 25       |
+| `--min-score <n>`             | Drop seeds scoring below this. Default 0.15    |
+| `--embedding <ref>`           | Rank `search` with this model, not the project |
+| `--out <file>`                | Where `export` writes. Default `memory.html`   |
+| `--open`                      | Open the exported page                         |
+| `--dry-run`                   | Say what `merge` would do, and stop            |
+| `--no-dedupe`                 | Keep memories `merge` would otherwise fold     |
+| `--force`                     | Let `merge` pick a winner where copies differ  |
+| `--yes`                       | Do not ask before removing or merging          |
+
+## `search` is recall, run from here
+
+The same ranker, the same walk, the same renderer the runtime uses. What it
+prints is the block a model would have been handed - scores, kinds, ids, and the
+edges the walk followed:
+
+```sh
+zen memory search 'how do we deploy'               what an agent would recall
+zen memory search 'deploy' --audience reviewer     recall as that agent sees it
+zen memory search 'deploy' --hops 0                the seeds, nothing stitched
+zen memory search 'deploy' --all                   superseded nodes too
+```
+
+It embeds the query with the project's own model, so the order is the order an
+agent gets. When it cannot - no key, no vectors in the store - it falls back to
+term overlap and **says so**; that ranking is not the one a run sees, and a
+block that looked like recall without being it would send you chasing a
+difference that is only in the tool.
+
+`--audience <label>` is the useful one. It recalls as an agent that sees only
+that label, which is how _why did it **not** recall that?_ gets an answer: a
+memory that is present but masked looks exactly like a memory that was never
+written, and `ls` cannot tell you which it is.
+
+It is the one subcommand that contacts a model. Everything else is offline.
+
+## `grep` answers what recall cannot
+
+Recall ranks, and a ranking returns the top of a list. It can say what is
+closest; it can never say that nothing is there. `grep` reads every node
+exactly - the text, the metadata, and the bytes of every remembered file - and
+reports the lines it matched on:
+
+```sh
+zen memory grep 'staging.example.com'        everywhere that host is mentioned
+zen memory grep 'API_KEY' --in file          only inside remembered files
+zen memory grep '^def ' --regex --kind file  matched per line, as grep does
+zen memory grep pandas --ids-only | xargs -n1 zen memory show
+```
+
+The count it prints is the true one even when `--limit` cut the list, and a
+remembered file it could not read - too big, binary, missing - is named rather
+than silently skipped, because a file that went unsearched must not pass for one
+with no match.
+
+Superseded nodes are left out unless you ask: `--all` includes them marked, and
+`--stale` narrows to them alone.
+
+It is also the one subcommand that does not take the directory lock, so it works
+while a run is writing the memory, and against the read-only `/memory` mount
+inside a sandbox.
 
 ## A graph that is not the project's
 
 `--dir` opens a memory directory as it stands, and skips project resolution
 entirely: there need be no `agents.yaml` anywhere above it. That is what to use
 for a graph a run was pointed at with `zen run --memory <dir>`, and for a copy
-taken out of a running session - copy the directory, delete its `.lock`, and
-read the copy while the run continues.
+taken out of a running session - though for reading a live memory, `grep` needs
+no copy at all.
 
 ```
 zen run --memory .tmp/mem "…"     remember into .tmp/mem for this run
@@ -100,9 +163,16 @@ The lock is per directory, so two runs cannot warm the same memory at once.
 They each warm their own, and `merge` puts the results back together:
 
 ```sh
-zen memory merge .tmp/warmup-*/memory                    into the project’s
+zen memory merge .tmp/warmup-*/batch/*/memory            into the project’s
 zen memory merge a/memory b/memory --dir merged/memory   into a named one
+zen memory merge <batch-dir>/*/memory                    after `zen run batch`
 ```
+
+`zen run batch` is the fan-out with the bookkeeping done for you: each item
+gets its own copy of the memory, the project's is left alone, and the summary
+prints the `merge` line. A batch that is only asking should say
+`--memory-read-only` instead — nobody writes, so nobody needs the lock, and
+every item recalls from the one graph.
 
 Sources are positional and the target is `--dir`, or the project you are in —
 the same shape as everywhere else here. The shell expands the glob, so a

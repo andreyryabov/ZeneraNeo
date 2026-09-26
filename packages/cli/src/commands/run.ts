@@ -1,13 +1,16 @@
+import type { Input } from '@zenera/neo';
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parse } from '../args.ts';
-import type { Command } from '../command.ts';
+import { concurrency, runBatch } from '../batch.ts';
+import type { Command, Context } from '../command.ts';
 import * as Engine from '../engine.ts';
 import { duration, Narrator, stopMark, summary } from '../narrate.ts';
 import * as Projects from '../projects.ts';
+import { readBatch, readRequest } from '../request.ts';
 import { target, type Target } from '../resolve.ts';
 import { display } from '../session.ts';
-import { bold, cyan, dim, json, note, readStdin, usageError, write } from '../term.ts';
+import { bold, cyan, dim, json, jsonText, note, readStdin, usageError, write } from '../term.ts';
 import { parseChoice } from '../tui/theme.ts';
 
 const USAGE = 'zen run [project] [prompt] [options]';
@@ -16,8 +19,10 @@ interface Flags {
     project?: string;
     session?: string;
     new?: boolean;
+    input?: string;
     workspace?: string;
     memory?: string;
+    'memory-read-only'?: boolean;
     model?: string;
     image?: string;
     'no-keys'?: boolean;
@@ -26,23 +31,31 @@ interface Flags {
     plain?: boolean;
     theme?: string;
     out?: string;
+    'batch-dir'?: string;
+    concurrency?: string;
 }
 
 export const run: Command = {
     summary: 'Run the project — the TUI on a terminal, one shot otherwise.',
     usage: USAGE,
     banner: { head: 'Zenera', accent: 'Neo', subtitle: 'Agentic Runtime', hue: 'orange' },
+    // A batch prints the path of its directory, and a banner above a path is a
+    // banner inside `$(zen run batch ...)`. True whether or not --json is on.
+    quiet: (args) => args[0] === 'batch',
     details: [
         'Arguments:',
         '  [project]   Name of a project. Default: the one you are in.',
         '  [prompt]    Your question, in quotes. Without one, the TUI opens.',
+        '  batch       Run a file full of questions at once. See below.',
         '',
         'Options:',
         '  --project <name|dir>   Which project to run. Default: the one you are in.',
         '  --session <id>         Continue this session.',
         '  --new                  Start a new session without asking which one.',
+        '  --input <file>         Read the whole request from JSON. `-` is stdin.',
         '  --workspace <dir>      Directory the agent can read and write.',
         '  --memory <dir>         Directory the agents remember into.',
+        '  --memory-read-only     Recall from it, write nothing back.',
         '  --model <ref>          Use this model instead of the default.',
         '  --image <ref>          Use this container image to run commands in.',
         '  --read-only            Take away every tool that can write.',
@@ -50,8 +63,13 @@ export const run: Command = {
         '  --plain                Never open the TUI. Needs a prompt.',
         '  --theme <dark|light>   Colours for the TUI. Default: auto.',
         '  --out <file>           Put the answer in this file instead of on screen.',
+        '                         With --json, the file gets the whole JSON envelope.',
         '  --yes                  Answer yes to every question.',
         '  --json                 Print machine-readable JSON (session, run, mounts, output, etc...).',
+        '',
+        'Batch options:',
+        '  --batch-dir <dir>      Where the runs live. Default: <project>/batches/<stamp>.',
+        '  --concurrency <n>      How many at a time. Default: 16, most: 32.',
         '',
         'The first word is the project when it names one, otherwise the prompt.',
         'The answer goes to stdout and the progress to stderr, so `> out.md` keeps',
@@ -59,6 +77,39 @@ export const run: Command = {
         '',
         'A prompt always starts a new session, so --new is for the TUI, where the',
         'alternative is being asked which session to continue.',
+        '',
+        '--input names a file holding the whole request - project, input, workspace,',
+        'memory - and what it says wins over the same flag on the line. Its paths are',
+        'relative to the file, so a case travels with the images beside it. It is the',
+        'way to ask about a picture, and it never opens the TUI:',
+        '',
+        '  { "input": [{ "text": "what is this?" }, { "image": "./shot.png" }] }',
+        '',
+        '`zen run batch --input cases.json` asks a whole file of them at once. The',
+        'file is the same shape, pluralised, and nothing else is allowed in it:',
+        '',
+        '  { "batch": [{ "id": "vat", "input": "what is VAT?" }, { "input": "..." }] }',
+        '',
+        'Every item is its own session, in its own directory under the batch dir:',
+        '',
+        '  <batch-dir>/<id>/workspace/     what that item could read and write',
+        '  <batch-dir>/<id>/memory/        its own copy, in the copying mode',
+        '  <batch-dir>/<id>/output.json    exactly what `zen run --json` prints',
+        '  <batch-dir>/batch.json          the index: every item, ok, and its file',
+        '  <batch-dir>/README.md           a dashboard, rewritten every second',
+        '',
+        'Memory comes in two modes, because a memory is a locked directory and',
+        'sixteen runs cannot hold one lock. With --memory-read-only they all recall',
+        'from the one graph and write nothing. Without it, each gets a copy, and the',
+        "project's own memory is never touched - fold them back in afterwards with",
+        '`zen memory merge <batch-dir>/*/memory`. An item that committed nothing',
+        'leaves no memory behind, and a --memory that does not exist yet starts every',
+        'item from an empty graph - which is how a cold project is warmed.',
+        '',
+        'A batch prints the path of its directory and nothing else; --json prints',
+        'the index there instead. An item that fails is written down like any other',
+        'and the exit code says how many did, so one bad question costs one answer.',
+        'For a project or a prompt actually called "batch", say --project batch.',
         '',
         'Examples:',
         '  zen run                               open the TUI in this project',
@@ -68,9 +119,14 @@ export const run: Command = {
         '  zen run "what changed?" > out.md      redirect the answer into a file',
         '  zen run --out out.md "what changed?"  write the answer to out.md only',
         '  zen run --json "what changed?"        output JSON with workspace, run paths, state, etc...',
+        '  zen run --input case.json --json      run a request from a file, answer as JSON',
+        '  zen run --input case.json --json --out result.json    ... into a file',
         '  zen run --read-only "what changed?"   let it read but not write',
         '  zen run --memory ./mem                remember into ./mem, not the project',
         '  zen run --new                         open the TUI in a new session',
+        '  zen run batch --input cases.json      ask them all, 16 at a time',
+        '  zen run batch --input cases.json --memory-read-only    ... sharing one memory',
+        '  zen run batch --input cases.json --json | jq .batch_results',
     ],
     run: async (ctx) => {
         const { values, positionals } = parse<Flags>(
@@ -79,8 +135,10 @@ export const run: Command = {
                 project: { type: 'string' },
                 session: { type: 'string' },
                 new: { type: 'boolean' },
+                input: { type: 'string' },
                 workspace: { type: 'string' },
                 memory: { type: 'string' },
+                'memory-read-only': { type: 'boolean' },
                 model: { type: 'string' },
                 image: { type: 'string' },
                 'no-keys': { type: 'boolean' },
@@ -89,11 +147,20 @@ export const run: Command = {
                 plain: { type: 'boolean' },
                 theme: { type: 'string' },
                 out: { type: 'string' },
+                'batch-dir': { type: 'string' },
+                concurrency: { type: 'string' },
             },
             USAGE,
         );
 
         const piped = await readStdin();
+
+        // Before the first positional is read as a project name, because in a
+        // batch it is not one and `batch` is not a prompt either.
+        if (positionals[0] === 'batch') {
+            await batch(ctx, values, positionals.slice(1), piped);
+            return;
+        }
 
         // `zen run acme` is what everyone types before finding --project, and a
         // project name is a bare word where a prompt is a sentence. So the
@@ -103,11 +170,22 @@ export const run: Command = {
         // there for the day a project is called "why".
         const [head, ...rest] = positionals;
         const named = !values.project && head ? await Projects.find(head) : undefined;
-        const prompt = (named ? rest : positionals).join(' ').trim() || piped;
+        const typed = (named ? rest : positionals).join(' ').trim();
 
+        if (values.input && typed) {
+            throw usageError(
+                'a prompt and --input both say what to ask',
+                'put the prompt in the file, or drop --input',
+            );
+        }
         if (values.theme !== undefined && !parseChoice(values.theme)) {
             throw usageError(`unknown theme: ${values.theme}`, 'dark, light or auto');
         }
+
+        // With `--input -` the pipe carries the request, not the prompt, so it
+        // is read here and never looked at again below.
+        const request = values.input ? await readRequest(values.input, ctx.cwd, piped) : undefined;
+        const prompt = typed || (request ? '' : (piped ?? ''));
 
         // A prompt on the command line is a request for an answer, not a
         // conversation to pick up. So it answers the three questions itself:
@@ -115,14 +193,15 @@ export const run: Command = {
         // and no confirmation for it — `zen run acme "what changed?"` should
         // read the code that is right there. Every flag still wins, and the
         // TUI, where there is someone to ask, still asks.
-        const shot = Boolean(prompt);
+        const input = request ? request.input : prompt;
+        const shot = Boolean(prompt) || Boolean(request);
 
         const where = await target({
             cwd: ctx.cwd,
-            project: values.project ?? (named ? head : undefined),
+            project: request?.project ?? values.project ?? (named ? head : undefined),
             session: values.session,
             fresh: values.new || (shot && !values.session),
-            workspace: values.workspace ?? (shot ? ctx.cwd : undefined),
+            workspace: request?.workspace ?? values.workspace ?? (shot ? ctx.cwd : undefined),
             yes: values.yes || shot,
         });
 
@@ -133,8 +212,11 @@ export const run: Command = {
             model: values.model,
             image: values.image,
             // Relative to where it was typed, like every other path on the line
-            // — the project root is not the cwd.
-            memoryDir: values.memory ? resolve(ctx.cwd, values.memory) : undefined,
+            // — the project root is not the cwd. A request's paths are already
+            // absolute, resolved against the file rather than against this.
+            memoryDir:
+                request?.memory ?? (values.memory ? resolve(ctx.cwd, values.memory) : undefined),
+            memoryReadOnly: values['memory-read-only'],
             keys: values['no-keys'] ? false : undefined,
             yes: values.yes || ctx.json,
         });
@@ -145,7 +227,7 @@ export const run: Command = {
             // is a request for an answer, and drawing a full-screen interface
             // over it would be worse than not drawing one.
             const drawing =
-                !prompt &&
+                !shot &&
                 !values.plain &&
                 !ctx.json &&
                 Boolean(process.stdout.isTTY && process.stdin.isTTY);
@@ -160,10 +242,10 @@ export const run: Command = {
                 return;
             }
 
-            if (!prompt) {
+            if (!shot) {
                 throw usageError('nothing to ask', 'give a prompt, or pipe one in');
             }
-            await once(engine, prompt, values, ctx.json, ctx.cwd, where);
+            await once(engine, input, values, ctx.json, ctx.cwd, where);
         } finally {
             await engine.close();
         }
@@ -171,12 +253,69 @@ export const run: Command = {
 };
 
 // ---------------------------------------------------------------------------
+// Many shots
+// ---------------------------------------------------------------------------
+
+/**
+ * Flags that mean something to one run and nothing to a hundred. Refused by
+ * name rather than ignored: a `--workspace` that was quietly dropped is a batch
+ * whose answers came from somewhere else.
+ */
+const NOT_IN_A_BATCH: [keyof Flags, string][] = [
+    ['session', 'every item is a new session of its own'],
+    ['new', 'every item is new already'],
+    ['workspace', 'they cannot share one; each item gets its own, or names one in the file'],
+    ['plain', 'a batch never draws the TUI'],
+    ['theme', 'a batch never draws the TUI'],
+];
+
+async function batch(
+    ctx: Context,
+    values: Flags,
+    rest: readonly string[],
+    piped?: string,
+): Promise<void> {
+    if (rest.length > 0) {
+        throw usageError(
+            `zen run batch: nothing goes after "batch" (got "${rest[0]}")`,
+            'the questions live in the file named by --input',
+        );
+    }
+    for (const [flag, why] of NOT_IN_A_BATCH) {
+        if (values[flag] !== undefined && values[flag] !== false) {
+            throw usageError(`--${flag} means nothing in a batch`, why);
+        }
+    }
+    if (!values.input) {
+        throw usageError('zen run batch needs --input <file>', 'a JSON file holding the batch');
+    }
+
+    await runBatch({
+        request: await readBatch(values.input, ctx.cwd, piped),
+        input: values.input === '-' ? '<stdin>' : resolve(ctx.cwd, values.input),
+        dir: values['batch-dir'],
+        cwd: ctx.cwd,
+        project: values.project,
+        memory: values.memory ? resolve(ctx.cwd, values.memory) : undefined,
+        memoryReadOnly: values['memory-read-only'],
+        concurrency: concurrency(values.concurrency),
+        model: values.model,
+        image: values.image,
+        readOnly: values['read-only'],
+        keys: values['no-keys'] ? false : undefined,
+        yes: values.yes,
+        out: values.out,
+        json: ctx.json,
+    });
+}
+
+// ---------------------------------------------------------------------------
 // One shot
 // ---------------------------------------------------------------------------
 
 async function once(
     engine: Engine.Engine,
-    prompt: string,
+    input: Input,
     values: Flags,
     asJson: boolean,
     cwd: string,
@@ -212,41 +351,28 @@ async function once(
 
     let outcome: Engine.RunOutcome;
     try {
-        outcome = await Engine.run(engine, prompt, narrator.handle, stopping.signal);
+        outcome = await Engine.run(engine, input, narrator.handle, stopping.signal);
     } finally {
         narrator.done();
         process.off('SIGINT', onInterrupt);
     }
 
-    if (values.out) {
-        await writeFile(values.out, `${outcome.text}\n`, 'utf8');
-    }
-
     if (asJson) {
-        json({
-            session: { id: engine.session.id, dir: engine.session.dir },
-            run: {
-                id: outcome.run.id,
-                dir: outcome.run.dir,
-                input: outcome.run.input,
-                output: outcome.run.output,
-                state: outcome.run.state,
-                meta: outcome.run.meta,
-                ...(outcome.report ? { report: outcome.report } : {}),
-            },
-            mounts: Engine.mounts(engine),
-            agent: outcome.result.agent,
-            stopReason: outcome.result.stopReason,
-            durationMs: outcome.durationMs,
-            usage: outcome.result.usage,
-            output: outcome.text,
-        });
+        // --out is a destination, not a copy, and with --json the answer *is*
+        // the envelope — so that is what lands in the file, not the prose.
+        const body = Engine.envelope(engine, outcome);
+        if (values.out) {
+            await writeFile(values.out, jsonText(body), 'utf8');
+        } else {
+            json(body);
+        }
         return;
     }
 
-    // --out is a destination, not a copy: the answer goes there instead of to
+    // The same rule for prose: the answer goes to the file instead of to
     // stdout, so a redirect and a file cannot both end up holding it.
     if (values.out) {
+        await writeFile(values.out, `${outcome.text}\n`, 'utf8');
         note(dim(`answer: ${cyan(values.out)}`));
     } else {
         write(outcome.text);

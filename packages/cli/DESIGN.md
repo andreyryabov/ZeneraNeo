@@ -24,7 +24,7 @@ the CLI can take dependencies the library refuses to.
 4. **stdout is the answer, stderr is the narration.** Progress, warnings and
    errors never touch stdout, so `zen run … | jq` always works.
 5. **Zero dependencies for the frame.** `parseArgs` and `styleText` are Node's.
-   Only the drawing surface (§7.3) may add one, and only behind a dynamic import.
+   Only the drawing surface (§7.4) may add one, and only behind a dynamic import.
 6. **Never prompt when nobody is there.** Every interactive step has a flag, and
    off a TTY the missing flag is an error rather than a hang.
 
@@ -76,7 +76,7 @@ sessions that ran against it.
             workspace/           what the agent can see and write
             .data/
                 state.json       the live, resumable session state
-                memory/          MemoryStore (file)
+                session.json     when it was made, and the workspace it is rooted at
                 blobs/           PayloadStore (file)
             .lock                present only while a run holds it
             runs/
@@ -85,7 +85,8 @@ sessions that ran against it.
                     output.md
                     state.json    immutable snapshot of this run
                     report.html   `renderReportHtml` output
-                    meta.json     model, usage, duration, exit
+                    meta.json     usage, duration, exit, and the workspace and
+                                  memory it read
 ```
 
 `agents.yaml` is the marker, and there is no second one. A directory the loader
@@ -126,8 +127,8 @@ two.
 | `key`     | The credential store (§6).                                                 |
 | `models`  | What this machine can use: list, search, test, pick (§6.5).                |
 | `run`     | Runs the project - the TUI on a terminal, one shot otherwise (§7).         |
-| `meta`    | Runs the meta agent over the project, on the keyring (§7.5).               |
-| `inspect` | Opens or rebuilds a run's `report.html`.                                   |
+| `meta`    | Runs the meta agent over the project, on the keyring (§7.6).               |
+| `inspect` | Reads a run: `report.html`, or the graph a model reads (§7.7).             |
 | `memory`  | The memory graph from outside the agents (§10).                            |
 | `check`   | Reports on the project in full: files, wiring, credentials, models (§9.2). |
 |           | `--fix` rewrites the files a project copies but does not own (§9.3).       |
@@ -622,7 +623,95 @@ Every run, either way, writes `runs/<id>/` in full - input, output, state,
 report, meta. The TUI is a view, not a mode: nothing is recorded only when you
 are watching.
 
-### 7.3 What the TUI shows
+### 7.3 Many at once - `zen run batch`
+
+`zen run batch --input cases.json` is an evaluation harness rather than a loop
+with a semaphore, and the difference is forced by two facts about a run. A
+workspace is a directory the agent writes into, so two runs cannot share one.
+A memory takes an exclusive lock on its directory, so two runs cannot share
+that either. A batch is therefore a set of **isolated** runs that happen to
+have been asked together, and the batch directory is where the isolation is
+kept:
+
+```
+<batch-dir>/                     <project>/batches/<stamp>, or --batch-dir
+    README.md                    the dashboard, rewritten every second
+    batch.json                   the index
+    <id>/workspace/              this item's, unless the file named one
+    <id>/memory/                 this item's copy, in the copying mode
+    <id>/output.json             what `zen run --json` prints, byte for byte
+```
+
+It lives in the batch directory rather than in `runs/<id>/` because a run
+directory does not exist until the turn is over: `createRun` is called _after_
+the model has answered, and the workspace has to be there before it is asked.
+The session still records the workspace, so `zen inspect` on any item's run
+reports the right one.
+
+**Memory comes in two modes because the lock leaves exactly two honest
+arrangements.** `--memory-read-only` opens one graph for all of them and writes
+nothing; without it each item gets a copy and the project's own memory is never
+touched, with `zen memory merge <batch-dir>/*/memory` printed in the summary.
+The copies are taken serially, before the first model call - sixteen recursive
+copies of one tree at once is the only moment a batch is disk-bound, and it
+would be spent racing itself. The `.lock` is never copied, and a batch refuses
+to start while another run holds the source's.
+
+Read-only had to become real in the runtime first. `access: read` withheld the
+writing tools but `MemoryIndex.load()` still committed, to persist the
+`lastUsedAt` bump recency decay is computed from - a write, therefore a lock,
+therefore a batch of one. `MemoryStore` now takes `readOnly`, which skips the
+lock, refuses `commit()` loudly rather than dropping it, and refuses a
+directory holding no manifest instead of creating one; `loadProject` clamps
+every agent's `access` to `read` so the tools and the house rules agree about
+it. The bump still happens in memory and is discarded, which is right: a
+read-only run must not reorder another run's recall.
+
+**A failure is data, not a stop.** One item that cannot be answered writes
+`{ ok: false, error }` and the other ninety-nine keep their answers. Each
+`output.json` lands the moment its item finishes rather than at the end, so a
+batch killed half way still has everything it got. The exit code says how many
+failed and is raised only after `batch.json` is written.
+
+`batch.json` is an **index**, not a second copy: it points at each item's file
+and carries the question, with inlined media named rather than repeated - the
+bytes are in that item's own input file already, and forty base64 screenshots
+in a combined file is an index of nothing.
+
+**Progress is a file, not a terminal.** Sixteen agents narrating at once into
+one terminal is not progress, it is interleaved noise, and a batch is usually
+left running anyway. So the events every item emits are folded per item and
+rendered into `<batch-dir>/README.md` once a second: what each running item is
+doing right now - its stage, its last tool, the tail of its thinking and of
+what it is writing, its turn count and its tokens - over a table of the ones
+that have finished and a list of the ones still queued. Watch it with an editor
+preview or `watch -n1 cat`, and when the batch ends the same file is already
+the report, so nothing has to be written twice.
+
+The running section is **drawn at a fixed height**, because it is the only part
+that is redrawn rather than appended to and a section that breathes drags the
+rest of the page up and down between ticks. It is a preformatted block, which
+never wraps; every item takes the same four clipped lines whether or not it has
+anything to say; a worker with nothing to run is drawn as an idle slot rather
+than left out, for as long as anything is still queued. The same reasoning puts
+`Average run` in the facts table from the first tick, showing a dash.
+
+The dashboard is deliberately **not load-bearing**: every write is swallowed,
+the timer is unref'd, and an item interrupted by a kill is recorded as such on
+the way out. A batch must not fail because its progress file could not be
+written.
+
+stdout is the batch directory and nothing else, so `$(zen run batch ...)` is
+usable; `--json` puts the index there instead. `--json` could not simply be
+dropped - the frame lifts it out of every command's arguments - so the command
+declares `quiet` on the first positional instead, and the banner stays off
+stdout either way.
+
+`--session`, `--new`, `--workspace`, `--plain` and `--theme` are refused by
+name. A flag that was quietly ignored is a batch whose answers came from
+somewhere else.
+
+### 7.4 What the TUI shows
 
 The drawing mode is the only thing in the CLI that repaints rather than prints.
 It renders the event stream live - thinking, tool calls, handoffs, usage - which
@@ -654,7 +743,7 @@ with `overflow="hidden"` - a miscount clips rather than corrupts. Nothing is
 lost: the finished answer lands in `Static` whole, and the full reasoning chain
 is in the trajectory.
 
-### 7.4 Light and dark
+### 7.5 Light and dark
 
 The terminal already has a colour scheme. The answer is drawn in its own
 foreground, asides are drawn dim, and only four things take a colour: the
@@ -668,7 +757,7 @@ the terminal asked directly (OSC 11, before Ink takes stdin), then `COLORFGBG`,
 then dark. The override comes first because detection can be wrong and nobody
 should have to argue with a terminal about what colour it is.
 
-### 7.5 The meta agent - `zen meta`
+### 7.6 The meta agent - `zen meta`
 
 `zen run` runs the agents a project describes. `zen meta` runs an agent _over_
 the project: a coding agent rooted at the project directory, spending the same
@@ -764,6 +853,66 @@ One sharp edge: copilot offers its tools as OpenAI _custom_ tools, which the
 completions API rejects outright - `400 Invalid value: 'custom'`. Only the
 responses API accepts them, so the wire API follows the model rather than being
 a flag nobody would know to set.
+
+## 7.7. Reading a run - `zen inspect`
+
+`report.html` is written for a person: every message, every payload, pan and
+zoom. It is the wrong artefact for the reader who now does most of the looking.
+An agent asked "why did that run go wrong" cannot open a page, and handing it
+the trajectory is worse than useless - a run of any length is far larger than a
+context window and overwhelmingly repetitive, so the cost is paid on forty
+copies of the same failing shell command before anything interesting is read.
+
+So `zen inspect graph` writes the same trajectory as an **index**, and
+`zen inspect node` **dereferences** it. That is the only idea here, and it is
+the one everything large is read by.
+
+The index is one Mermaid flowchart, a line per node:
+
+- **Ids are sequential** - `n1`, `n2`, `n3` - in the order the run appended
+  nodes. A ULID is unquotable and carries no ordering a reader can see; the
+  whole point is an id short enough to notice, compare and ask for. The ULID is
+  still in `--json` and in what `node` prints, because that is where identity
+  matters and legibility does not.
+- **Declarations come first, and every edge is in one block at the bottom.**
+  Interleaving them is what makes generated Mermaid unreadable: the sequence is
+  the thing you want ninety per cent of the time, and it is exactly what arrows
+  between declarations destroy. Grouped as `flow`, `branches` and `calls`, the
+  edges are a section to consult rather than noise to skip.
+- **A branch is numbered where it ran** - between its fork and its join, which
+  means recursing into `join.branches[].nodes` _before_ the join takes its own
+  number. Any other order makes the ids lie about what happened first.
+- **The `%%` header counts things.** Mermaid drops those lines and a reader does
+  not, so the header is where the run explains itself: the tools tallied by
+  name, the branches and their outcomes, how many nodes a compaction hid. A
+  tally is what turns "this looks repetitive" into something actionable. It
+  stays a tally: the command counts, the reader concludes.
+
+The index is lossy on purpose, and `node <id...>` is where the loss is paid
+back - payloads resolved, nothing truncated, nothing filtered. A missing blob
+costs that one part and falls back to its preview, because an inspector that
+refuses to answer at all when a store has been pruned is no inspector.
+
+**Every label is built from types and identifiers and then stripped to a narrow
+character set.** Tool arguments and tool results are model output, which is to
+say attacker-influenced input as far as the Mermaid parser is concerned. A
+quote closes a label; a bracket opens a node; `%%{` is a directive; `-->` is an
+edge. None of them survives the filter, so the worst a payload can do is read
+oddly. Widen the length budget when a name needs room; never widen the class.
+
+The emitter lives in the CLI rather than in `@zenera/neo` because it needs both
+halves: the trajectory types from the library, and the `describeCall` /
+`summarise` tables that already know what a tool call _means_ rather than what
+it contains. Those tables are how `run_command` with a JSON blob of arguments
+becomes `run_command npm test -- --run`, which is the difference between a
+diagram and a dump.
+
+**A run directory is a handle.** `zen run --json` reports one, so `--dir` takes
+it back without the caller having to decompose it into a project, a session and
+a run first. The ids are read out of the path and still go through `isStamp`,
+so a path from anywhere cannot name a directory this layout would never have
+produced. Blobs live one level up, per session, which is why resolving a path
+returns the session as well as the run.
 
 ## 8. Distribution - the `zen` binary
 
@@ -1043,12 +1192,14 @@ model: the mask keeps agents apart, and this command is a person at a terminal
 in the project directory, who already owns the files. Withholding a node from
 them would protect nothing and hide the bug.
 
-**Nothing here contacts a model.** The store is opened with no embedder, so
-inspection is free, offline, and cannot fail on a missing credential - which is
-precisely the state a project is in when someone starts debugging it. The price
-is that `ls` filters on text rather than on meaning, and that is the right way
-round for a tool whose job is to show what is there rather than to find what is
-relevant.
+**Only `search` contacts a model.** Everything else opens the store with no
+embedder, so inspection is free, offline, and cannot fail on a missing
+credential - which is precisely the state a project is in when someone starts
+debugging it. The price is that `ls` filters on text rather than on meaning,
+and that is the right way round for a tool whose job is to show what is there
+rather than to find what is relevant. `search` is the exception because it has
+to be: it reproduces recall, and a recall ranked by anything but the project's
+own embedder is a different answer wearing the same shape.
 
 For the same reason it does not call `loadProject`. Loading would resolve every
 model and read every prompt file in order to inspect a graph that needs none of
@@ -1079,7 +1230,77 @@ hostile - node text and remembered files are model output. Data reaches the
 document only inside an inert `application/json` block and leaves it only
 through `textContent`.
 
-### 10.2 `merge` - putting a fanned-out warmup back together
+### 10.2 `search` - recall, from outside a run
+
+The section opens by saying the command exists to answer _why did it recall
+that?_ - and for a long time it could only answer it indirectly, by showing
+what was in the graph and leaving the ranking to be imagined. `zen memory
+search` closes that. It runs `MemoryIndex.search` against the same store, with
+the same ranker, the same traversal and the same renderer the runtime uses, and
+prints `renderRecollection(rec, { tagged: false })` - the block a model would
+have been handed, untagged because a person is reading it. Scores, kinds, ids
+and the edge each node was reached by are all on the screen.
+
+The harder question is the one it answers better: _why did it **not** recall
+that?_ A memory that is present but ranked sixth, or masked, or superseded,
+looks exactly like a memory that was never written - from `ls` they are
+indistinguishable. `--audience <label>` recalls as an agent that sees only that
+label, and `--all` puts the superseded nodes back, so each of those three
+causes can be told apart from the others.
+
+Reproducing a ranking means reproducing its vectors, so the embedder is
+resolved the way a run resolves it: `memory.embedding` then `embedding`,
+through the project's `embeddings:` alias table, with `.env` loaded and the
+keyring materialised first. `--embedding <ref>` overrides it, which is also how
+a `--dir` graph with no project around it gets ranked.
+
+What cannot be built falls back to term overlap rather than failing - a graph
+whose credentials have gone missing is one worth looking at - but **the
+fallback is reported**, in the human output and as `ranking.by` in `--json`. A
+lexical ordering is not the one an agent sees, and a block that passed for
+recall without being it would send someone chasing a difference that exists
+only in the tool. A store with no vectors at all short-circuits to the same
+fallback before any embedder is built, because embedding a query against an
+empty block returns nothing, and nothing reads as _this was never remembered_.
+
+The `stale` option on `MemoryIndex.search` exists for this and nothing else. No
+tool passes it: an agent has no business seeing a correction and the thing it
+corrected as equals, whereas that is exactly the view an audit wants.
+
+### 10.3 `grep` - the exhaustive read
+
+Recall ranks, and a ranking can only return the top of a list. That makes
+"nothing came back" and "nothing is there" the same result, which is no use at
+all for the question anyone actually arrives with: _was this already written
+down?_ `zen memory grep` is the other instrument. One pass over every node -
+its text, its metadata, and the bytes of the file it remembers - reporting the
+lines that matched, and reporting `found` as the true total even when `--limit`
+cut the list, so a short answer cannot pass for a complete one.
+
+The engine is `grepMemory` in `@zenera/neo`, shared with the `memory_grep`
+tool, because two implementations of "does this string appear" would be two
+answers to one question. The CLI passes no audience mask and the tool passes
+the agent's; everything else is identical.
+
+Three rules keep it honest, and each is there because a raw `grep` over
+`/memory` gets it wrong:
+
+- **Superseded nodes are left out** unless asked for, and come back marked when
+  they are. Serving a withdrawn correction as current is the failure this
+  replaces, not one to reproduce.
+- **A file that could not be read is named**, with why - too big, binary,
+  missing, unreadable. An answer whose whole value is completeness must not have
+  silent holes in it.
+- **Nothing is touched.** `lastUsedAt` tracks what an agent opened; a finder
+  that bumped it would make every scan look like a read and skew recall.
+
+It is also the one subcommand that opens the store with `lock: false`. The lock
+exists to stop two writers losing each other's edges, and a reader that took it
+would only be refusing itself - at exactly the two moments grep is most wanted:
+while a run is writing, and against the read-only `/memory` mount in a sandbox,
+where claiming a lock fails outright.
+
+### 10.4 `merge` - putting a fanned-out warmup back together
 
 The memory lock is per directory, which is what keeps two runs of one project
 from interleaving commits. It also means warming a memory in parallel is N runs
@@ -1091,8 +1312,8 @@ else is an inspector, and a target with no `manifest.json` is a mistake worth
 naming; a merge target that does not exist yet is the ordinary case, because
 the warmed graph is usually assembled somewhere new before it is promoted.
 Sources are positional and the target is `--dir`, so the shell expands
-`.tmp/warmup-$STAMP/memory-*` and the command shape matches every other
-subcommand's.
+`<batch-dir>/*/memory` - which is where `zen run batch` leaves them - and the
+command shape matches every other subcommand's.
 
 The work itself is `mergeMemories` in `@zenera/neo`, for the same reason
 `forget` delegates: the rules for what two memories mean together belong beside
@@ -1110,7 +1331,7 @@ before a byte is written and lists the ids with both revisions, because which
 piece of work was right is a question, and answering it silently is how a merge
 loses the answer. `--force` answers it with the highest revision.
 
-### 10.3 Forgetting
+### 10.5 Forgetting
 
 `forget` asks before it removes, and refuses outright when there is no terminal
 to ask at; `--yes` is the only way through a script. It then delegates to the
@@ -1192,7 +1413,7 @@ read first, because they are on your screen and not in somebody else's zip.
 
 - **No daemon.** Nothing runs between commands. "Is a run live" is answered by a
   lockfile holding a pid, not by a service that has to be kept alive to answer.
-- **No server** beyond `inspect --serve`, which is a static file handler.
+- **No server.** Nothing listens on a port; a report is a file you open.
 - **No project config of its own.** `agents.yaml` is the configuration, and the
   CLI adds nothing beside it.
 - **No credential logic in the library.** The keyring ends at `process.env`.

@@ -1508,6 +1508,8 @@ ENTRIES.forEach(function (entry) {
     x.revision = m.revision;
     if (n.op === 'commit') x.added = true;
     else if (n.op === 'forget') x.gone = true;
+    // A grep returns matching lines, the same clip a recall block carries.
+    else if (n.op === 'grep') x.read = true;
     else x.full = true;
   });
   (n.edges || []).forEach(memEdge);
@@ -1596,7 +1598,7 @@ function memSaw(x) {
 
 const MEM_SAW = {
   full: 'the whole text',
-  summary: 'a clipped line, in the recall block',
+  summary: 'a clipped line \\u2014 a recall block, or a grep hit',
   id: 'the id only \\u2014 never the content'
 };
 

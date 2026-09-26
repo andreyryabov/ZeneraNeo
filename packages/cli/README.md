@@ -144,8 +144,10 @@ Then, day to day:
 zen run my-project              # no prompt given: opens a full-screen terminal app (a TUI)
 zen check my-project            # validate the project and every file it names
 zen inspect                     # open the last run's report.html
+zen inspect graph               # the same run as a graph a model can read
 zen list --sessions             # every project, its sessions and last run
 echo "triage this" | zen run my-project --json | jq
+zen run batch --input cases.json   # a file full of questions, 16 at a time
 ```
 
 Standing inside the project, the name is optional: a bare `zen run`, `zen check`
@@ -154,6 +156,17 @@ or `zen inspect` means the one you are in.
 Giving a prompt on the command line skips every question: it starts a fresh
 session and uses the current directory as the workspace, with write access.
 `--session`, `--workspace` and `--read-only` override that.
+
+`zen run batch` is the same thing for an evaluation set: one project, many
+questions, each in a session, workspace and memory of its own under a batch
+directory. It prints that directory, writes each item's answer the moment it
+lands, and treats a failure as data rather than a stop. Sharing one memory is
+the exception that needs saying out loud - `--memory-read-only` lets every item
+recall from the same graph, because nothing is written and so nothing needs the
+lock. Without it each item gets a copy, and `zen memory merge <batch-dir>/*/memory`
+folds what they learned back in. While it runs, `<batch-dir>/README.md` is a
+dashboard rewritten every second: what each item is doing right now, what the
+finished ones cost, and what is still queued.
 
 To change what the system does, update `SPECIFICATION.md` and send
 `/spec-sync-project` again. The next section explains that workflow in detail.
@@ -249,6 +262,18 @@ edit SPECIFICATION.md → /spec-sync-project → zen check → zen run
 statistics, agent architecture, and memory used during the run.
 
 ![Run inspection: trace, agent architecture, and memory](https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/0910_480.gif)
+
+The agent in your editor can close the same loop without the page. `zen inspect
+graph` writes the whole run as one Mermaid flowchart - a line per node, short
+sequential ids, the tools counted in a header - which is small enough to read
+whole. Having spotted the loop or the branch that failed, it opens the two or
+three nodes that explain it:
+
+```sh
+DIR=$(zen run my-project "fix the tests" --json | jq -r .run.dir)
+zen inspect graph --dir "$DIR"        # the shape of the run
+zen inspect node n14..n20 --dir "$DIR"  # the nodes behind the ids, in full
+```
 
 Every step is a command, and everything each one reads or writes is a plain
 file: the specification, the findings `zen check` prints with a code, a location
@@ -742,7 +767,7 @@ different action:
 ```
 $ zen models test vertex:gemini-embedding-001
 vertex:gemini-embedding-001  blocked  Vertex AI API has not been used in project my-proj …
-vertex:gemini-embedding-001: gcloud services enable aiplatform.googleapis.com --project my-proj
+fix vertex:gemini-embedding-001 gcloud services enable aiplatform.googleapis.com --project my-proj
 error 1 of 1 did not answer
         find one that does: zen models pick --embedding
 ```

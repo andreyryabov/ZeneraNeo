@@ -255,12 +255,22 @@ export function usesSandbox(project: AgentProject): boolean {
 }
 
 /**
+ * Images this process has already settled. A batch opens the same project
+ * dozens of times at once, and without this each one shells out to podman and
+ * the concurrent copies race each other to pull the very same image.
+ */
+const READY = new Set<string>();
+
+/**
  * Asked before the first turn rather than at the first tool call, so a missing
  * container engine costs nothing instead of costing a round trip and half a
  * plan. A project that never shells out never gets here at all.
  */
 export async function preflight(setup: SandboxSetup, yes?: boolean): Promise<void> {
     mkdirSync(setup.home, { recursive: true });
+    if (READY.has(setup.image)) {
+        return;
+    }
     await ensurePodmanReady({
         image: setup.image,
         build: setup.build,
@@ -268,6 +278,7 @@ export async function preflight(setup: SandboxSetup, yes?: boolean): Promise<voi
         memory: setup.spec.memory,
         yes,
     });
+    READY.add(setup.image);
 }
 
 /** Best-effort teardown: losing a container must never lose a run. */

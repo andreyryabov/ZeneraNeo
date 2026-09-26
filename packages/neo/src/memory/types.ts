@@ -240,8 +240,13 @@ export interface MemoryRecallSpec {
 
 export interface MemoryOpSpec {
     kind: 'op';
-    /** `load` is here rather than under recall: it hands the model whole bodies, and it writes. */
-    op: 'commit' | 'forget' | 'load';
+    /**
+     * `load` is here rather than under recall: it hands the model whole bodies,
+     * and it writes. `grep` is here because it is not a recall either — there is
+     * no query vector, no subgraph and no ranking to record, only the nodes a
+     * pattern happened to hit.
+     */
+    op: 'commit' | 'forget' | 'load' | 'grep';
     /** sha256(runId, callId) — deterministic, so a replay is deduplicated */
     opId: string;
     /** nodes this op created, changed, removed or read in full */

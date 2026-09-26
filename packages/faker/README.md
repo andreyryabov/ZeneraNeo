@@ -75,11 +75,17 @@ for. `GET /users/12324` answering with somebody else's id validates perfectly
 and is still wrong.
 
 If it fails, the diagnostics go back to the model and it tries again, up to
-`--attempts`. If it passes, the generator is kept in this machine's shared cache
-under `~/.zenera/neo/cache/faker-generator/`, keyed by the operation's shape, and
-every later request is just `podman exec python3 gen.py in.json out.json` - no
-model, no tokens. The store is the machine's, so the same document served from
-another directory costs nothing the second time.
+`--attempts` (five by default). A build that does not come good leaves a
+**report** in `<cache>/builds/` - one markdown file per build, every rejected
+attempt in it with its diagnostics and its whole source, and the `501` that the
+request gets links to it, in the log line and in the body. The next attempt
+overwrites `gen.py`, and a generator that merely hung leaves no traceback, so
+the code is the only evidence there is. If it passes, the generator is kept in
+this machine's shared cache under `~/.zenera/neo/cache/faker-generator/`, keyed
+by the operation's shape, and every later request is just
+`podman exec python3 gen.py in.json out.json` - no model, no tokens. The store
+is the machine's, so the same document served from another directory costs
+nothing the second time.
 
 Generators run in a container with **no network**, on an image baked once with
 `faker`, `exrex`, `jsonschema` and `python-dateutil`.

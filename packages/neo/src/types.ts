@@ -391,6 +391,7 @@ export const HANDOFF_PREFIX = 'transfer_to_';
 export const FORK_TOOL = 'fork';
 export const FINAL_OUTPUT_TOOL = 'final_output';
 export const MEMORY_SEARCH_TOOL = 'memory_search';
+export const MEMORY_GREP_TOOL = 'memory_grep';
 export const MEMORY_LOAD_TOOL = 'memory_load';
 export const MEMORY_COMMIT_TOOL = 'memory_commit';
 export const MEMORY_FORGET_TOOL = 'memory_forget';

@@ -138,6 +138,7 @@ async function handle(
             errorKind?: ErrorKind;
             errorMessage?: string;
             stderr?: string;
+            buildDump?: string;
             issues?: readonly unknown[];
             note?: string;
             operationId?: string;
@@ -176,6 +177,7 @@ async function handle(
             errorKind: meta.errorKind,
             errorMessage: meta.errorMessage,
             stderr: meta.stderr,
+            buildDump: meta.buildDump,
             cacheStatus: meta.cacheStatus,
             regenerated: meta.regenerated,
             regenAttempts: meta.regenAttempts,
@@ -335,6 +337,7 @@ async function handle(
             error: `no generator for ${operation.operationId}`,
             detail,
             diagnostics: err instanceof BuildFailed ? err.diagnostics : undefined,
+            report: err instanceof BuildFailed ? err.dump : undefined,
         };
         const end = prepareSend(res, status, bodyObj);
         await finish(status, {
@@ -344,6 +347,7 @@ async function handle(
             requestBody: body,
             errorKind: 'GENERATOR_BUILD_FAILED',
             errorMessage: `no generator: ${detail}`,
+            buildDump: err instanceof BuildFailed ? err.dump : undefined,
             responseBody: bodyObj,
             note: `no generator: ${detail}`,
         });

@@ -82,6 +82,13 @@ export interface ProjectOptions<TCtx = unknown> {
      * and writes to another.
      */
     memoryDir?: string;
+    /**
+     * Recall only: the graph is opened read-only and every agent's `access` is
+     * clamped to `read`, so the writing tools are never offered and the house
+     * rules never claim they are. It is what lets several runs share one
+     * warmed memory at once, which the directory lock otherwise forbids.
+     */
+    memoryReadOnly?: boolean;
     /** turns an agent-visible path into a host path, so files can be remembered */
     resolveFile?: (path: string) => string;
     payloads?: PayloadStore;
@@ -142,7 +149,10 @@ export async function loadProject<TCtx = unknown>(
     dir: string,
     opts: ProjectOptions<TCtx> = {},
 ): Promise<AgentProject<TCtx>> {
-    const { root, source, config } = readProjectConfig(dir);
+    const { root, source, config: declared } = readProjectConfig(dir);
+    // Clamped here rather than at each use, so the tools, the house rules and
+    // the report all read the same access and cannot disagree about it.
+    const config = opts.memoryReadOnly ? recallOnly(declared) : declared;
 
     // Read once and share the objects: every agent's prompt then reports the
     // same paths and the same content hashes, so the report says "one document,
@@ -179,7 +189,9 @@ export async function loadProject<TCtx = unknown>(
     // `embedding:` fails at load like a broken `model:` does.
     embedders(config.embedding, 'embedding');
 
-    const memory = opts.memory ?? (await openMemory(root, config, embedders, opts.memoryDir));
+    const memory =
+        opts.memory ??
+        (await openMemory(root, config, embedders, opts.memoryDir, opts.memoryReadOnly));
 
     return new AgentProject<TCtx>({
         root,
@@ -702,6 +714,20 @@ export function memoryDir(
 }
 
 /**
+ * The same project with every memory binding demoted to `read`. A read-only
+ * graph refuses a commit, so an agent offered `memory_commit` would only find
+ * that out by having one fail mid-run.
+ */
+function recallOnly(config: ProjectConfig): ProjectConfig {
+    return {
+        ...config,
+        agents: config.agents.map((spec) =>
+            spec.memory ? { ...spec, memory: { ...spec.memory, access: 'read' as const } } : spec,
+        ),
+    };
+}
+
+/**
  * Opened only when something will use it, so an ordinary project neither
  * creates a directory nor takes a lock. A `memory:` block with no agent bound
  * to it still counts: it is how a project declares the graph `zen memory`
@@ -712,6 +738,7 @@ async function openMemory(
     config: ProjectConfig,
     embedders: (ref: string | undefined, where: string) => Embedder | undefined,
     override?: string,
+    readOnly?: boolean,
 ): Promise<MemoryIndex | undefined> {
     const dir = memoryDir(root, config, override);
     if (!dir) {
@@ -720,7 +747,7 @@ async function openMemory(
     const declared = config.memory;
     const embedder = embedders(declared?.embedding ?? config.embedding, 'memory.embedding');
     return new MemoryIndex({
-        store: await MemoryStore.open(dir),
+        store: await MemoryStore.open(dir, { readOnly }),
         embedder,
         kinds: declared?.kinds,
         relations: declared?.relations,

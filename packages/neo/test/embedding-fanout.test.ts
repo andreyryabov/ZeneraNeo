@@ -51,6 +51,25 @@ describe('classify', () => {
         expect(classify(new Error('answered 1 vector for 8 texts'))).toBe('fatal');
     });
 
+    // An empty account arrives as a 429, so the status alone would have the
+    // limiter narrow its window and spend the whole budget on a call that
+    // cannot succeed. Only the vendor's own word for it tells the two apart.
+    it('never retries an empty account, whatever status it arrives as', () => {
+        expect(classify(Object.assign(refused(429), { code: 'credit_balance_exhausted' }))).toBe(
+            'fatal',
+        );
+        expect(classify(Object.assign(refused(429), { type: 'insufficient_quota' }))).toBe('fatal');
+        // Through the wrapper a provider call is reported in.
+        const wrapped = new Error('embedding failed', {
+            cause: Object.assign(refused(429), { code: 'insufficient_quota' }),
+        });
+        expect(classify(wrapped)).toBe('fatal');
+        // Google says RESOURCE_EXHAUSTED when it means slow down.
+        expect(classify(Object.assign(refused(429), { code: 'resource_exhausted' }))).toBe(
+            'rate-limit',
+        );
+    });
+
     it('finds a dropped connection down the cause chain', () => {
         const err = new Error('fetch failed', {
             cause: Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }),

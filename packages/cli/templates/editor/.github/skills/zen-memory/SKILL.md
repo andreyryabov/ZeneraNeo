@@ -1,6 +1,6 @@
 ---
 name: zen-memory
-description: How agent memory is organised and how to configure it in `agents.yaml` - the `memory:` block, per-agent `access`/`sees`/`writes`/`autoRecall`, the four `memory_*` tools, kinds and relations, how recall ranks and stitches a subgraph, and how to design a memory strategy for a project. Includes the default usage rules every memory-enabled project must carry in `agents/memory-instructions.md` (references/memory-instructions.md), the script that says whether that copy is still current (scripts/check-instructions.sh), where a project's own customisations go instead (`agents/memory-policy-instructions.md`, under `requires: [memory]`), what to commit and what never to, how to keep a working file under `/memory` and re-run it later, and how to put memory in front of a `zen rag schema` or `zen rag docs` index so a search that already succeeded once is not paid for again.
+description: How agent memory is organised and how to configure it in `agents.yaml` - the `memory:` block, per-agent `access`/`sees`/`writes`/`autoRecall`, the five `memory_*` tools, kinds and relations, how recall ranks and stitches a subgraph, when an agent should reach for `memory_grep` instead of `memory_search`, how to inspect a graph with `zen memory search`/`grep`/`export`, and how to design a memory strategy for a project. Includes the default usage rules every memory-enabled project must carry in `agents/memory-instructions.md` (references/memory-instructions.md), the script that says whether that copy is still current (scripts/check-instructions.sh), where a project's own customisations go instead (`agents/memory-policy-instructions.md`, under `requires: [memory]`), what to commit and what never to, how to keep a working file under `/memory` and re-run it later, and how to put memory in front of a `zen rag schema` or `zen rag docs` index so a search that already succeeded once is not paid for again.
 ---
 
 # Memory
@@ -81,28 +81,29 @@ agents:
 
 | Field        | Type                       | Default         | Meaning                                      |
 | ------------ | -------------------------- | --------------- | -------------------------------------------- |
-| `access`     | `read`/`read-write`/`full` | `read-write`    | Which of the four tools this agent gets      |
+| `access`     | `read`/`read-write`/`full` | `read-write`    | Which of the five tools this agent gets      |
 | `sees`       | name[]                     | `[]`            | Private slices it may read, on top of `*`    |
 | `writes`     | name[]                     | `[*]`           | Labels it may commit under                   |
 | `autoRecall` | boolean or `{ limit }`     | `true`, limit 5 | Recall before a turn that follows user input |
 
 `memory: true` is shorthand for all four defaults.
 
-## The four tools
+## The five tools
 
 They are **not** listed in an agent's `tools:`. They are derived from the
 binding and appear when it exists, so `access` is the only thing that decides
 which of them the model is offered:
 
-| Level        | Tools                           |
-| ------------ | ------------------------------- |
-| `read`       | `memory_search`, `memory_load`  |
-| `read-write` | the above, plus `memory_commit` |
-| `full`       | the above, plus `memory_forget` |
+| Level        | Tools                                         |
+| ------------ | --------------------------------------------- |
+| `read`       | `memory_search`, `memory_grep`, `memory_load` |
+| `read-write` | the above, plus `memory_commit`               |
+| `full`       | the above, plus `memory_forget`               |
 
 | Tool            | Does                                                                       |
 | --------------- | -------------------------------------------------------------------------- |
 | `memory_search` | Ranks, then stitches. Returns an outline of a subgraph and a legend of ids |
+| `memory_grep`   | Exact and complete. Every node containing a string, with the lines         |
 | `memory_load`   | Reads whole nodes by id. **The only call that counts as use**              |
 | `memory_commit` | Writes a subgraph - nodes and the edges between them - in one transaction  |
 | `memory_forget` | Removes nodes, their vectors and their file bytes together                 |
@@ -111,6 +112,29 @@ Search and load are split on purpose. Search hands back context the model never
 asked for; counting that as use would poison recency ranking. Commit is one
 call because a remembered thing is a subgraph, and building it with three calls
 leaves the graph half-formed when the model stops early.
+
+Grep is separate from search because exactness is not a tuning of nearness. A
+ranking returns the top of a list, so "nothing came back" and "nothing is there"
+are the same result - and the second is what you need when the question is
+whether a host, a flag or a command was already written down. Grep reads the
+text, the metadata and the bytes of remembered files, applies the mask, leaves
+out superseded nodes unless asked, and names any file it could not read. It is
+also what an agent is supposed to reach for instead of running a shell `grep`
+over `/memory`, which the house rules forbid.
+
+It is not a diagnostic instrument, though - it is ordinary retrieval, and an
+agent is expected to reach for it mid-run as readily as for search. The line
+between them is what is being looked for: **a subject goes to `memory_search`,
+a string goes to `memory_grep`** - a name, path, id, host, flag or command
+spelled exactly, everywhere a thing is mentioned before it is changed, or
+whether it was ever recorded at all. `agents/memory-instructions.md` puts that
+division in front of the agent as a table, at the point where it chooses.
+
+It takes `pattern` plus `in` (`text`, `metadata`, `file` - all three by
+default), `regex`, `case_sensitive`, `kinds`, `include_superseded` and `limit`
+(20 nodes). **`in: ["file"]` is the one worth knowing about**: only a node's
+`text` is embedded, so the contents of a remembered script or config are
+unreachable by any ranking, and grep is the only tool that reads them at all.
 
 `agents/memory-instructions.md` already explains all of this to the agent - how
 to read a recollection, when committing is worthwhile, why correction is a new
@@ -610,32 +634,48 @@ can act on.
 ## Inspecting and repairing it
 
 ```
-zen memory [stats|ls|show|export|merge|forget] [args] [options]
+zen memory [stats|ls|search|grep|show|export|merge|forget] [args] [options]
 ```
 
 `zen memory export --open` is the one to reach for: one self-contained HTML
 page with every node, the graph as a diagram, and the remembered file's actual
 content in the detail pane. It reads **unmasked** - when the mask is what is
-wrong, the hidden part is exactly the part you need - and it contacts no model,
-so inspection is free and offline.
+wrong, the hidden part is exactly the part you need - and like everything here
+bar `search`, it contacts no model, so inspection is free and offline.
 
-| Question                                 | Command                          |
-| ---------------------------------------- | -------------------------------- |
-| Is memory even on, and is it embedded?   | `zen memory stats`               |
-| What has this project learned?           | `zen memory export --open`       |
-| What is in one private slice?            | `zen memory ls --audience audit` |
-| What has been corrected?                 | `zen memory ls --stale`          |
-| What files are being kept?               | `zen memory ls --files`          |
-| Why was that recalled?                   | `zen memory show <id>`           |
-| Fold parallel warmup graphs into one     | `zen memory merge <dir...>`      |
-| That should never have been written down | `zen memory forget <id>`         |
+`zen memory search <query>` is recall itself, run from a terminal: the same
+ranker, the same walk, the same block a model would have been given, scores and
+all. It is the only one that embeds, and the only one that can distinguish a
+memory that is missing from a memory that is merely ranked sixth.
+
+| Question                                 | Command                              |
+| ---------------------------------------- | ------------------------------------ |
+| Is memory even on, and is it embedded?   | `zen memory stats`                   |
+| What has this project learned?           | `zen memory export --open`           |
+| Is this host/flag/path in there at all?  | `zen memory grep <pattern>`          |
+| Everywhere a thing is mentioned          | `zen memory grep <pattern> --all`    |
+| What would an agent recall for this?     | `zen memory search <query>`          |
+| Why did it _not_ recall that?            | `zen memory search <q> --audience a` |
+| What is in one private slice?            | `zen memory ls --audience audit`     |
+| What has been corrected?                 | `zen memory ls --stale`              |
+| What files are being kept?               | `zen memory ls --files`              |
+| One node in full, with what it links to  | `zen memory show <id>`               |
+| Fold parallel warmup graphs into one     | `zen memory merge <dir...>`          |
+| That should never have been written down | `zen memory forget <id>`             |
 
 The directory is not fixed. `zen run --memory <dir>` sends one run's memory
 somewhere else - a scratch graph for a trial, one per branch, or a shared one
 outside the repository - and `zen memory --dir <dir>` reads any such directory
 with no project around it. Together they are also how you read a graph while a
 run holds its `.lock`: copy the directory, delete the copy's `.lock`, and point
-`--dir` at the copy.
+`--dir` at the copy. `grep` needs none of that - it declines the lock, so it
+reads a memory a run is writing, and the read-only `/memory` mount as well.
+
+`zen run batch` is where parallel graphs usually come from now. Each item gets
+its own copy to write into and the summary prints the `merge` line; a batch
+that is only asking says `--memory-read-only` instead, and then every item
+recalls from the one graph, because nothing writes and so nothing needs the
+lock.
 
 `zen inspect` answers the other half: a run report shows the recollection block
 exactly as the model received it, which is how you tell "memory had nothing"
@@ -692,6 +732,9 @@ agents:
 - [ ] `autoRecall: false` on any agent whose user message is a payload.
 - [ ] Nothing authoritative is expected to live here - that is a skill's job.
 - [ ] The project's index skill says to verify a recalled route.
+- [ ] `zen memory search` on a question the project actually gets back returns
+      what you expected, and says `ranked by meaning` rather than falling back to
+      term overlap.
 - [ ] `zen memory export --open` after a week of use, to see what it actually
       learned rather than what you hoped.
 
@@ -702,6 +745,8 @@ agents:
 | The `memory_*` tools are missing                    | No `memory:` on the agent. They come from the binding, never from `tools:`                                                      |
 | `zen memory` says the project has none              | Neither a `memory:` block nor an agent binding - nothing is opened and no directory is made                                     |
 | Recall finds a memory only when reworded            | No embedder. `zen memory stats` says `embedding none`                                                                           |
+| A memory is in the graph but never comes back       | Ask `zen memory search` for it: a score under `0.15` is dropped as noise, and `--audience <label>` shows whether a mask hid it  |
+| `zen memory search` says `ranked by term overlap`   | It could not build the project's embedder - no credential, or the graph holds no vectors. That order is not the one a run gets  |
 | Recall finds nothing after changing the embedder    | Refused rather than mixed - a manifest records the model. Change it back, or start a new memory                                 |
 | Vectors fewer than nodes                            | Some nodes were committed with no embedder; they are only reachable by term overlap                                             |
 | The graph fills with restated requests              | The commit rule is not in a prompt or skill. State the "would a later run redo this" test                                       |

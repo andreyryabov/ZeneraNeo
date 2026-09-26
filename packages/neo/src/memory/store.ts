@@ -60,11 +60,18 @@ export interface OpenOptions {
     embedding?: MemoryEmbedding;
     /** take the directory lock; off for read-only inspection (`zen memory ls`) */
     lock?: boolean;
+    /**
+     * Recall, and nothing else. Writing is refused rather than dropped, the
+     * directory is never created, and no lock is taken — so any number of runs
+     * may share one graph at once, which is the whole point of it.
+     */
+    readOnly?: boolean;
 }
 
 export class MemoryStore {
     readonly dir: string;
     readonly graph: MemoryGraph;
+    readonly readOnly: boolean;
     #embedding?: MemoryEmbedding;
     #vectors?: VectorBlock;
     #locked = false;
@@ -74,16 +81,30 @@ export class MemoryStore {
         graph: MemoryGraph,
         vectors: VectorBlock | undefined,
         embedding: MemoryEmbedding | undefined,
+        readOnly: boolean,
     ) {
         this.dir = dir;
         this.graph = graph;
         this.#vectors = vectors;
         this.#embedding = embedding;
+        this.readOnly = readOnly;
     }
 
     static async open(dir: string, opts: OpenOptions = {}): Promise<MemoryStore> {
-        await mkdir(join(dir, FILES_DIR), { recursive: true });
+        const readOnly = opts.readOnly === true;
+        if (!readOnly) {
+            await mkdir(join(dir, FILES_DIR), { recursive: true });
+        }
         const manifest = await readManifest(dir);
+        // Opening for writing brings a memory into existence; opening one to
+        // read from has to find it, or a mistyped path is an empty graph that
+        // answers every question with silence and reports no error.
+        if (readOnly && !manifest) {
+            throw new MemoryError(
+                `${dir} is not a memory`,
+                `no ${MANIFEST_FILE} in it, and a read-only open cannot create one`,
+            );
+        }
 
         if (manifest?.embedding && opts.embedding) {
             const a = manifest.embedding;
@@ -103,8 +124,10 @@ export class MemoryStore {
         const embedding = opts.embedding ?? manifest?.embedding;
         const vectors = manifest && embedding ? await readVectors(dir, embedding) : undefined;
 
-        const store = new MemoryStore(dir, graph, vectors, embedding);
-        if (opts.lock !== false) {
+        const store = new MemoryStore(dir, graph, vectors, embedding, readOnly);
+        // A reader that claimed the lock would only be refusing itself, and the
+        // readers of one graph are meant to be able to refuse each other least.
+        if (!readOnly && opts.lock !== false) {
             store.#claim();
         }
         return store;
@@ -149,6 +172,14 @@ export class MemoryStore {
 
     /** Manifest last: a torn commit reads as no memory, never as a partial one. */
     async commit(): Promise<void> {
+        // Loudly, not quietly. A write that is silently dropped is a run that
+        // believes it remembered something and did not.
+        if (this.readOnly) {
+            throw new MemoryError(
+                'this memory is open read-only',
+                'nothing this run learns can be kept — point it at a memory of its own',
+            );
+        }
         await atomic(join(this.dir, GRAPH_FILE), JSON.stringify(this.graph.export()));
 
         const vectors = this.#vectors;

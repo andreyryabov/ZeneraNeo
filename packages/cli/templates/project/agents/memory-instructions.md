@@ -7,7 +7,8 @@ requires: [memory]
 This project has a memory: a graph of what earlier runs worked out, kept with
 the project rather than with the session, and shared with every other agent that
 can see it. It is reached **only** through the `memory_*` tools - `memory_search`
-to find, `memory_load` to read.
+to find by meaning, `memory_grep` to find an exact string, `memory_load` to
+read.
 
 Not every agent may write to it. Read what follows against the tools you
 actually have: if `memory_commit` is not among them, everything under
@@ -99,8 +100,9 @@ its own source.
 ## Reading it
 
 `memory_search` hands back an outline of a subgraph with each node's text cut to
-160 characters. `memory_load` is what reads a node whole, by id - load anything
-you are going to rely on.
+160 characters. `memory_grep` hands back the nodes containing an exact string,
+with the lines it matched on. `memory_load` is what reads a node whole, by id -
+load anything you are going to rely on.
 
 ### The shape of a recollection
 
@@ -133,12 +135,17 @@ at that path through `memory_load`, never by looking around in the directory.
 `vectors.json` and `manifest.json` - its internal format. Do not open, list,
 grep, `cat` or `find` them, and do not point a shell command at that directory:
 
-- it is ranked by **meaning**, so substring matching misses the hits;
 - `graph.json` is every node ever committed, as one line;
 - a raw read bypasses the audience mask and serves **superseded** nodes -
   corrections that were withdrawn - as if they were current;
 - it records no use, so the ranking that decides what gets recalled next decays;
 - another run may be writing, and the manifest is written last.
+
+**`memory_grep` is that search, done properly.** It reads every node exactly -
+the text, the metadata and the bytes of remembered files - and hands back the
+matching lines with the node they belong to. It applies the mask, it leaves out
+what has been superseded unless you ask for it, and it names any file it could
+not read, so a file that went unsearched never passes for one with no match.
 
 A memory is a record, not an authority - but checking one is not the same as
 redoing it. Every node names where its content came from, so confirm the
@@ -177,8 +184,32 @@ would use - node texts are written to be found that way. Narrow with `kinds`,
 `newer_than`, `limit`, `max_hops` and `max_nodes` when a recollection comes back
 broad rather than wrong.
 
+### Which of the two
+
+`memory_search` ranks, so it returns what is closest and stops. That makes it
+right for a question and wrong for a fact about the store itself: when nothing
+comes back, you cannot tell whether the memory is empty on the subject or
+merely worded differently.
+
+`memory_grep` is exact and complete. Reach for it when the thing you are looking
+for is a **string** rather than a subject, and when the answer has to be all of
+them:
+
+| Looking for                                                     | Use             |
+| --------------------------------------------------------------- | --------------- |
+| what was learned about a subject, however it was phrased        | `memory_search` |
+| a name, path, id, host, flag or command, spelled exactly        | `memory_grep`   |
+| whether something was already written down at all               | `memory_grep`   |
+| everywhere a thing is mentioned, before changing or retiring it | `memory_grep`   |
+| a starting point, when you do not yet know the vocabulary       | `memory_search` |
+
+Either way, ids from one are ids for the other: grep a name, then `memory_load`
+what it turned up.
+
 Recalling nothing is not proof of anything: work it out normally, then commit
-the result so the next run does not repeat it.
+the result so the next run does not repeat it. A `memory_grep` that found
+nothing is stronger - it means the string is not there - but it says nothing
+about the subject under another name.
 
 ## Updating it
 

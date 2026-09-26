@@ -123,9 +123,9 @@ agents:
           autoRecall: { limit: 3 }
 ```
 
-`access` decides the tools and nothing else does: `read` gets `memory_search`
-and `memory_load`, `read-write` adds `memory_commit`, `full` adds
-`memory_forget`. These four are never named in `tools:` - the binding is what
+`access` decides the tools and nothing else does: `read` gets `memory_search`,
+`memory_grep` and `memory_load`, `read-write` adds `memory_commit`, `full` adds
+`memory_forget`. These five are never named in `tools:` - the binding is what
 grants them.
 
 **One memory, masked - not one memory each.** Every node carries an audience,
@@ -143,12 +143,13 @@ leaves the agent to decide when to search.
 
 Recall is masked, ranked and truncated by design, so what an agent sees is never
 the whole picture - and when the picture is what is wrong, you need the part
-that was hidden. `zen memory` reads the graph **unmasked**, locally, without
-contacting a model:
+that was hidden. `zen memory` reads the graph **unmasked**, locally:
 
 ```sh
 zen memory stats            # size, vocabulary, whether it is embedded
 zen memory ls --files       # nodes, newest first
+zen memory search <query>   # recall it, the way an agent does. ranked
+zen memory grep <pattern>   # every node containing it, with the matching lines
 zen memory show <id>        # one node in full, with what it links to
 zen memory export --open    # the whole graph as one self-contained HTML page
 zen memory merge <dir...>   # fold other memories into this one
@@ -157,6 +158,24 @@ zen memory forget <id...>   # remove nodes, their vectors and their files
 
 `export` is the one to reach for: node list on the left, graph in the middle,
 whatever you clicked on the right, file contents and all.
+
+`search` is recall itself, run from a terminal. It embeds the query with the
+project's own model and prints the block a model would have been handed, scores
+and all - so _why did it recall that?_ has a direct answer. `--audience <label>`
+recalls as an agent that sees only that label, which is how the harder question
+gets one too: a memory that is present but masked, or superseded, or merely
+ranked sixth looks exactly like a memory that was never written, and only the
+ranking can tell you which. It is the one subcommand that contacts a model; when
+it cannot, it falls back to term overlap and says so.
+
+`grep` is the counterpart to recall rather than a variant of it. Recall ranks,
+and a ranking returns the top of a list, so it can say what is closest but never
+that nothing is there. `grep` reads every node exactly - the text, the metadata
+and the bytes of remembered files - reports the lines it matched on, and reports
+the true total even when `--limit` cut the list. It is the only subcommand that
+does not take the directory lock, so it works on a memory a run is writing, and
+on the read-only `/memory` mount inside a sandbox. Agents get the same thing as
+`memory_grep`.
 
 `--dir <dir>` reads a memory directory as it stands, with no project around it:
 the graph a run was given with `zen run --memory`, or a copy taken out of a
@@ -175,6 +194,28 @@ and `merge` is how they come back together:
 ```sh
 zen memory merge .tmp/warmup-20260923/memory-*
 ```
+
+`zen run batch` is that fan-out made into a command. It gives every item a copy
+of the memory under its own directory, never touches the project's, and prints
+the `merge` line when it is done:
+
+```sh
+zen run batch --input cases.json --batch-dir .tmp/cases
+zen memory merge .tmp/cases/*/memory
+```
+
+Leaving `--batch-dir` out picks `<project>/batches/<stamp>` instead, and prints
+it on stdout - which is the other way to write the pair:
+
+```sh
+dir=$(zen run batch --input cases.json)
+zen memory merge "$dir"/*/memory
+```
+
+When the batch is asking questions rather than learning, `--memory-read-only`
+is the other half of the same fact: nobody writes, so nobody needs the lock,
+and all sixteen runs recall from the one graph. It works on a single `zen run`
+too — it is how you ask what the agents know without changing what they know.
 
 Sources are positional, the target is the project you are in or whatever
 `--dir` names, and a target that does not exist yet is created. It is offline -

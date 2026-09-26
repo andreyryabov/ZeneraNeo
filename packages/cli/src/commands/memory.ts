@@ -1,16 +1,28 @@
 import {
     ALL_AGENTS,
     buildMemoryReport,
+    createEmbedder,
+    GREP_FIELDS,
+    grepMemory,
     hostPath,
     memoryDir,
+    MemoryError,
     MemoryIndex,
     MemoryStore,
     MergeConflicts,
     mergeMemories,
     readProjectConfig,
     renderMemoryHtml,
+    renderRecollection,
+    type Embedder,
+    type EmbeddingRef,
+    type GrepField,
     type MemoryNode,
+    type MemoryQuery,
     type MergeReport,
+    type ProjectConfig,
+    type Recollection,
+    type SkippedFile,
 } from '@zenera/neo';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -18,6 +30,8 @@ import { writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
+import { loadProjectEnv } from '../env.ts';
+import { KeyStore } from '../keys.ts';
 import { project as resolveProject } from '../resolve.ts';
 import {
     ago,
@@ -40,7 +54,7 @@ import {
     yellow,
 } from '../term.ts';
 
-const USAGE = 'zen memory [stats|ls|show|export|merge|forget] [args] [options]';
+const USAGE = 'zen memory [stats|ls|search|grep|show|export|merge|forget] [args] [options]';
 
 interface Flags {
     project?: string;
@@ -49,7 +63,16 @@ interface Flags {
     audience?: string;
     files?: boolean;
     stale?: boolean;
+    all?: boolean;
+    regex?: boolean;
+    'case-sensitive'?: boolean;
+    in?: string[];
+    'ids-only'?: boolean;
     limit?: string;
+    hops?: string;
+    nodes?: string;
+    'min-score'?: string;
+    embedding?: string;
     out?: string;
     open?: boolean;
     yes?: boolean;
@@ -58,7 +81,7 @@ interface Flags {
     'no-dedupe'?: boolean;
 }
 
-const SUBCOMMANDS = ['stats', 'ls', 'show', 'export', 'merge', 'forget'];
+const SUBCOMMANDS = ['stats', 'ls', 'search', 'grep', 'show', 'export', 'merge', 'forget'];
 
 /** Enough to see the shape of it; the rest is a number. */
 const LISTED = 30;
@@ -77,9 +100,11 @@ const LISTED = 30;
 // an agent inside a run, and the mask exists to keep agents apart rather than
 // to keep secrets from the person who owns the files.
 //
-// Nothing here contacts a model. The store is opened without an embedder, so
-// inspection is free and works offline; the price is that `ls` filters by text
-// rather than by meaning, which is the right trade for a debugging tool.
+// `search` is the one subcommand that contacts a model, and it has to: the
+// question it answers is what an agent's recall returns, and a recall ranked
+// any other way is a different answer wearing the same shape. Everything else
+// is offline, so inspecting a graph whose credentials have gone missing —
+// which is exactly when someone is debugging — still works.
 // ---------------------------------------------------------------------------
 
 export const memory: Command = {
@@ -89,6 +114,8 @@ export const memory: Command = {
     details: [
         '  stats                  Size, vocabulary, and whether it is embedded.',
         '  ls                     Nodes, newest first. Changes nothing.',
+        '  search <text>          Recall it, the way an agent does. Ranked.',
+        '  grep <pattern>         Every node containing it, with the matching lines.',
         '  show <id>              One node in full, with what it links to.',
         '  export [file]          The whole graph as one HTML page.',
         '  merge <dir...>         Fold other memories into this one.',
@@ -100,7 +127,16 @@ export const memory: Command = {
         '  --audience <name>      Only nodes committed under this label.',
         '  --files                Only nodes that remember a file.',
         '  --stale                Only nodes something has superseded.',
-        '  --limit <n>            Rows to list. Default 30.',
+        '  --all                  For `search` and `grep`: superseded nodes too, marked.',
+        '  --regex                Read the pattern as a regular expression, per line.',
+        '  --case-sensitive       Match case exactly. Off by default.',
+        '  --in <text|metadata|file>  Where to look. Repeatable. All three by default.',
+        '  --ids-only             Print bare ids, for piping into `zen memory show`.',
+        '  --limit <n>            Rows to list, or seeds to rank. Default 30, search 5.',
+        '  --hops <n>             How far `search` follows links from a seed. Default 2.',
+        '  --nodes <n>            Cap on the subgraph `search` returns. Default 25.',
+        '  --min-score <n>        Drop seeds scoring below this. Default 0.15.',
+        '  --embedding <ref>      Rank `search` with this model, not the project’s.',
         '  --out <file>           Where `export` writes. Default memory.html.',
         '  --open                 Open the exported page.',
         '  --dry-run              Say what `merge` would do, and stop.',
@@ -116,10 +152,33 @@ export const memory: Command = {
         'page: the node list on the left, the graph in the middle, and whatever',
         'you click on the right, file contents and all.',
         '',
+        '`search` is recall itself, run from here. It embeds the query with the',
+        'project’s own model and prints the block a model would have been given,',
+        'scores and all — so *why did it recall that?* has an answer, and so does',
+        '*why did it not?*:',
+        '',
+        '  zen memory search ‘how do we deploy’ --audience reviewer',
+        '',
+        'Passing `--audience` recalls as an agent that sees only that label,',
+        'which is how a memory that is present but invisible gives itself away.',
+        '',
+        '`grep` is the counterpart. Recall ranks, so it answers “what is closest”',
+        'and can never answer “is this in here at all”; `grep` reads every node',
+        'exactly — text, metadata and the bytes of remembered files — and the',
+        'count it reports is the true one even when the list was cut:',
+        '',
+        '  zen memory grep ‘staging.example.com’ --in metadata --in file',
+        '',
+        'It is the only subcommand that does not take the directory lock, so it',
+        'works on a memory a run is writing, and on the read-only /memory mount',
+        'inside a sandbox.',
+        '',
         '`merge` is for warming a memory in parallel. The lock is per directory,',
         'so N runs write N memories; this folds them back into one:',
         '',
-        '  zen memory merge .tmp/warmup-*/memory',
+        '  zen memory merge <batch-dir>/*/memory',
+        '',
+        'which is where `zen run batch` leaves them.',
     ],
     run: async (ctx) => {
         const { values, positionals } = parse<Flags>(
@@ -131,7 +190,16 @@ export const memory: Command = {
                 audience: { type: 'string' },
                 files: { type: 'boolean' },
                 stale: { type: 'boolean' },
+                all: { type: 'boolean' },
+                regex: { type: 'boolean' },
+                'case-sensitive': { type: 'boolean' },
+                in: { type: 'string', multiple: true },
+                'ids-only': { type: 'boolean' },
                 limit: { type: 'string' },
+                hops: { type: 'string' },
+                nodes: { type: 'string' },
+                'min-score': { type: 'string' },
+                embedding: { type: 'string' },
                 out: { type: 'string' },
                 open: { type: 'boolean' },
                 yes: { type: 'boolean' },
@@ -149,7 +217,13 @@ export const memory: Command = {
         const rest = positionals.slice(1);
         // `merge` is the one subcommand that may write a memory into existence;
         // every other one is an inspector and a missing manifest is a mistake.
-        const opened = await open(ctx.cwd, values.project, values.dir, what === 'merge');
+        // And `grep` is the one that declines the lock: the two moments it is
+        // most wanted are while a run is writing, and against the read-only
+        // /memory mount — in both of which claiming it fails.
+        const opened = await open(ctx.cwd, values.project, values.dir, {
+            create: what === 'merge',
+            lock: what !== 'grep',
+        });
 
         try {
             switch (what) {
@@ -157,6 +231,10 @@ export const memory: Command = {
                     return stats(opened, ctx.json);
                 case 'ls':
                     return list(opened, values, ctx.json);
+                case 'search':
+                    return await search(opened, rest, values, ctx.json);
+                case 'grep':
+                    return await grep(opened, rest, values, ctx.json);
                 case 'show':
                     return show(opened, rest, ctx.json);
                 case 'export':
@@ -180,6 +258,8 @@ interface Opened {
     store: MemoryStore;
     dir: string;
     project: string;
+    /** the project this memory belongs to; absent when `--dir` named a bare directory */
+    at?: { root: string; config: ProjectConfig };
 }
 
 /**
@@ -195,19 +275,24 @@ interface Opened {
  * `create` drops the requirement that anything be there yet, for `merge`,
  * which has somewhere to put what it reads even when the destination is a name
  * nothing has written to.
+ *
+ * `lock` is off for a read that must not fail on a busy or read-only memory.
+ * The lock exists to stop two writers losing each other's edges; a reader that
+ * took it would only be refusing itself.
  */
 async function open(
     cwd: string,
     want: string | undefined,
     at: string | undefined,
-    create = false,
+    opts: { create?: boolean; lock?: boolean } = {},
 ): Promise<Opened> {
+    const { create = false, lock = true } = opts;
     if (at) {
         const dir = resolve(cwd, at);
         if (!create && !existsSync(join(dir, 'manifest.json'))) {
             throw usageError(`${dir} is not a memory`, 'no manifest.json in it');
         }
-        return { store: await MemoryStore.open(dir), dir, project: basename(dir) };
+        return { store: await MemoryStore.open(dir, { lock }), dir, project: basename(dir) };
     }
     const project = await resolveProject({ cwd, project: want });
     const { config } = readProjectConfig(project.dir);
@@ -224,7 +309,12 @@ async function open(
             'it is written the first time an agent commits something',
         );
     }
-    return { store: await MemoryStore.open(dir), dir, project: project.name };
+    return {
+        store: await MemoryStore.open(dir, { lock }),
+        dir,
+        project: project.name,
+        at: { root: project.dir, config },
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -364,6 +454,294 @@ function list(o: Opened, flags: Flags, asJson: boolean): void {
         write();
         note(dim(`${all.length - limit} more — raise --limit, or use \`zen memory export\``));
     }
+}
+
+// ---------------------------------------------------------------------------
+// search
+// ---------------------------------------------------------------------------
+
+/**
+ * Recall, run from outside a run. `ls` and `grep` read the graph; this asks it
+ * the question an agent asks, through the same ranker, the same traversal and
+ * the same renderer — so what it prints is the block a model would have been
+ * handed, scores and all.
+ *
+ * That is the only way to answer *why did it recall that*, and the harder *why
+ * did it not*: a memory that is present but ranked sixth looks exactly like a
+ * memory that was never written, until the score is on the screen.
+ */
+async function search(o: Opened, rest: string[], flags: Flags, asJson: boolean): Promise<void> {
+    // Joined rather than taken singly. A query is prose, and this is the one
+    // subcommand whose whole argument is prose, so quoting it is the step
+    // everybody forgets.
+    const text = rest.join(' ').trim();
+    if (!text) {
+        throw usageError('search takes something to recall', 'zen memory search <text>');
+    }
+    // Recall either includes what has been superseded or does not; there is no
+    // "only", because a correction alone is not the subgraph anyone wanted.
+    if (flags.stale) {
+        throw usageError('search has no --stale', 'use --all to recall superseded nodes too');
+    }
+    const query: MemoryQuery = {
+        text,
+        kinds: flags.kind ? [flags.kind] : undefined,
+        limit: whole(flags.limit, '--limit'),
+        // Zero hops is a real request — the seeds and nothing they dragged in.
+        maxHops: whole(flags.hops, '--hops', 0),
+        maxNodes: whole(flags.nodes, '--nodes'),
+        minScore: threshold(flags['min-score']),
+    };
+
+    const ranker = await vectoriser(o, flags.embedding);
+    const sees = flags.audience ? [flags.audience] : audiences(o);
+
+    let rec: Recollection;
+    try {
+        const index = new MemoryIndex({ store: o.store, embedder: ranker.embedder });
+        rec = await index.search(query, sees, { stale: flags.all });
+    } catch (err) {
+        if (err instanceof MemoryError) {
+            throw new CliError(err.message, EXIT.usage, err.hint);
+        }
+        throw err;
+    }
+
+    if (asJson) {
+        json({
+            query,
+            sees,
+            // Named field by field: the ranker carries the embedder itself,
+            // which is a client object and no part of an answer.
+            ranking: { by: ranker.by, model: ranker.model, reason: ranker.reason },
+            seeds: rec.seeds,
+            truncated: rec.truncated,
+            nodes: rec.nodes.map((n) => ({
+                id: n.node.id,
+                kind: n.node.kind,
+                score: n.score,
+                seed: n.seed,
+                via: n.via,
+                text: n.node.text,
+                file: n.node.file ? hostPath(o.dir, n.node.file) : undefined,
+            })),
+            edges: rec.edges,
+            // Verbatim, because it is the thing that went into a prompt.
+            block: renderRecollection(rec, { tagged: false }),
+        });
+        return;
+    }
+    if (flags['ids-only']) {
+        writeAll(rec.nodes.map((n) => n.node.id));
+        return;
+    }
+    if (!rec.nodes.length) {
+        note(`nothing recalled for ${text}`);
+        ranking(ranker);
+        return;
+    }
+
+    write(renderRecollection(rec, { tagged: false }));
+    write();
+    ranking(ranker);
+}
+
+interface Ranker {
+    embedder?: Embedder;
+    by: 'meaning' | 'term overlap';
+    model?: string;
+    /** why the ranking is not the one an agent gets */
+    reason?: string;
+}
+
+/**
+ * The embedder the project ranks with. Reproducing a recall means reproducing
+ * its vectors, so the ref is resolved through the same alias table a run uses
+ * and the keyring is materialised the same way.
+ *
+ * What cannot be built falls back to term overlap rather than failing, because
+ * a graph whose credentials have gone missing is one worth looking at. The
+ * fallback is a different ranking, though, so it is reported rather than passed
+ * off as recall.
+ */
+async function vectoriser(o: Opened, override?: string): Promise<Ranker> {
+    // A memory with no vectors cannot be ranked by meaning whatever we build:
+    // embedding a query against an empty block finds nothing, which would read
+    // as "nothing is remembered" rather than "there is nothing to rank with".
+    if (!o.store.embedding) {
+        return { by: 'term overlap', reason: 'this memory holds no vectors' };
+    }
+    const config = o.at?.config;
+    const declared =
+        override ?? config?.memory?.embedding ?? config?.embedding ?? o.store.embedding.model;
+    // The project's own file first, then the keyring — the order `zen run`
+    // uses, so a query embeds here exactly when it would embed there.
+    if (o.at) {
+        loadProjectEnv(o.at.root);
+    }
+    (await KeyStore.open()).materialize();
+    try {
+        const ref = config?.embeddings?.[declared] ?? declared;
+        const embedder = createEmbedder(ref as EmbeddingRef);
+        return { embedder, by: 'meaning', model: embedder.id };
+    } catch (err) {
+        return { by: 'term overlap', reason: err instanceof Error ? err.message : String(err) };
+    }
+}
+
+/**
+ * Which ranking that was. A lexical fallback is not what an agent sees, and a
+ * block that looked like recall without being it would send someone chasing a
+ * difference that exists only in this command.
+ */
+function ranking(r: Ranker): void {
+    if (r.by === 'meaning') {
+        note(dim(`ranked by meaning · ${r.model}`));
+        return;
+    }
+    note(yellow('ranked by term overlap — this is not the order an agent sees'));
+    if (r.reason) {
+        note(dim(`  ${r.reason}`));
+    }
+}
+
+/**
+ * Every label the graph uses. `recall` masks against a list rather than taking
+ * `undefined` for "no mask", so reading unmasked has to be spelled out — and
+ * spelling it out from the graph is exact, since a label nothing carries can
+ * hide nothing.
+ */
+function audiences(o: Opened): string[] {
+    return [...new Set(o.store.graph.nodes().flatMap((n) => n.audience))];
+}
+
+/** Absent stays absent, so the engine's own default is the one on display. */
+function whole(value: string | undefined, flag: string, min = 1): number | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < min) {
+        throw usageError(`${flag} wants a whole number ${min} or more, got ${value}`, USAGE);
+    }
+    return n;
+}
+
+function threshold(value: string | undefined): number | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0 || n > 1) {
+        throw usageError(`--min-score wants a number from 0 to 1, got ${value}`, USAGE);
+    }
+    return n;
+}
+
+// ---------------------------------------------------------------------------
+// grep
+// ---------------------------------------------------------------------------
+
+/**
+ * The exhaustive read, and the counterpart to recall rather than a variant of
+ * it. Recall ranks, and a ranking returns the top of a list, so it cannot tell
+ * "there is nothing" from "nothing was close enough" — which is the question
+ * anyone actually has when they come to a memory looking for a name, a path or
+ * a command they think an agent wrote down.
+ */
+async function grep(o: Opened, rest: string[], flags: Flags, asJson: boolean): Promise<void> {
+    const pattern = rest[0];
+    if (!pattern || rest.length > 1) {
+        throw usageError('grep takes exactly one pattern', 'zen memory grep <pattern>');
+    }
+    const limit = Number(flags.limit ?? LISTED);
+    if (!Number.isInteger(limit) || limit < 1) {
+        throw usageError(`--limit wants a positive whole number, got ${flags.limit}`, USAGE);
+    }
+    for (const field of flags.in ?? []) {
+        if (!(GREP_FIELDS as readonly string[]).includes(field)) {
+            throw usageError(`--in wants one of ${GREP_FIELDS.join(', ')}, got ${field}`, USAGE);
+        }
+    }
+
+    let res;
+    try {
+        res = await grepMemory(o.store, pattern, {
+            // Unmasked, like everything else here: this is the person who owns
+            // the files, not an agent inside a run.
+            kinds: flags.kind ? [flags.kind] : undefined,
+            audience: flags.audience,
+            files: flags.files,
+            in: flags.in as GrepField[] | undefined,
+            stale: flags.stale ? 'only' : flags.all ? 'include' : 'exclude',
+            regex: flags.regex,
+            caseSensitive: flags['case-sensitive'],
+            limit,
+        });
+    } catch (err) {
+        if (err instanceof MemoryError) {
+            throw new CliError(err.message, EXIT.usage, err.hint);
+        }
+        throw err;
+    }
+
+    if (asJson) {
+        json({
+            found: res.found,
+            truncated: res.truncated,
+            matches: res.matches.map((m) => ({
+                id: m.node.id,
+                kind: m.node.kind,
+                stale: m.stale,
+                file: m.node.file ? hostPath(o.dir, m.node.file) : undefined,
+                hits: m.hits,
+                more: m.more,
+            })),
+            unsearched: res.skipped,
+        });
+        return;
+    }
+    if (flags['ids-only']) {
+        writeAll(res.matches.map((m) => m.node.id));
+        return;
+    }
+    if (!res.found) {
+        note(`nothing matches ${pattern}`);
+        unsearched(res.skipped);
+        return;
+    }
+
+    for (const m of res.matches) {
+        write(
+            cyan(m.node.id) +
+                ' ' +
+                m.node.kind +
+                (m.stale ? ' ' + yellow('superseded') : '') +
+                (m.node.file ? ' ' + dim(m.node.file.path) : ''),
+        );
+        writeAll(table(m.hits.map((h) => [`  ${dim(h.where + ':' + h.line)}`, clip(h.text, 120)])));
+        if (m.more) {
+            write(dim(`  … ${count(m.more, 'more line')} in this node`));
+        }
+        write();
+    }
+    if (res.truncated) {
+        note(dim(`${res.found - res.matches.length} more nodes — raise --limit`));
+    }
+    unsearched(res.skipped);
+}
+
+/**
+ * Named rather than counted. A file that was not read is a hole in an answer
+ * whose whole value is that it has none, so the ids have to be printable.
+ */
+function unsearched(skipped: readonly SkippedFile[]): void {
+    if (!skipped.length) {
+        return;
+    }
+    write();
+    note(yellow(`${count(skipped.length, 'file')} not searched`));
+    writeAll(table(skipped.map((s) => [`  ${cyan(s.id)}`, dim(s.reason), s.path])));
 }
 
 // ---------------------------------------------------------------------------

@@ -1,188 +1,212 @@
 ---
 name: zen-memory-warmup
-description: Pre-populating an agent project's memory graph through warm-up queries before production or deployment — isolating scratch memory and workspaces in timestamped .tmp directories, using stronger reasoning models, validating machine-readable JSON output, categorizing queries with limits, shuffling, dry-run execution, fanning queries out across parallel runs and folding the results back with zen memory merge, inspecting the graph with zen memory stats/ls, atomic promotion into the project, and generating automated population scripts in scripts/memory_warmup.sh.
+description: Pre-populating an agent project's memory graph before production by running a curated file of seed queries through `zen run batch` — one parallel batch instead of a hand-rolled fan-out, with per-item workspaces and per-item memories the command makes for you, choosing the source graph with --memory, bounding the parallelism with --concurrency, warming with a stronger --model, reading what each query learned from batch.json and per-item output.json, folding it all back with zen memory merge, validating with zen memory stats, atomic promotion into the project, and generating the population script in scripts/memory_warmup.sh.
 ---
 
 # Memory Warmup
 
-Memory warmup is the process of pre-populating an agent project's knowledge graph
-before deploying it or exposing it to end users.
+Memory warmup is the process of pre-populating an agent project's knowledge
+graph before deploying it or exposing it to end users.
 
-In Zenera Neo, an agent's memory graph (`memory/`) starts completely empty. A cold
-start means early runs cannot recall prior approaches, domain facts, verified
-plans, or tool schemas. Warming up the memory addresses this by executing a
-curated set of representative domain queries ahead of time, allowing agents to
-synthesize, connect, and commit high-value knowledge nodes.
+In Zenera Neo an agent's memory graph (`memory/`) starts empty. A cold start
+means early runs cannot recall prior approaches, domain facts, verified plans
+or tool schemas. Warming up addresses this by asking a curated set of
+representative domain questions ahead of time, so the agents synthesise, link
+and commit high-value knowledge nodes before a user is waiting on them.
+
+Warmup is one command: **`zen run batch`**. A file of questions goes in, a
+directory of memories comes out, and `zen memory merge` folds them into one.
 
 ---
 
 ## Why Warm Up Memory?
 
-1. **Eliminate Cold Starts**: Instead of failing or struggling through initial
-   discovery, the agent recalls established patterns, known schemas, and
-   proven plans on its very first user-facing turn.
-2. **Higher-Quality Graph via Stronger Models**: You can run warmup turns using
-   a more capable reasoning model (`--model`) than your day-to-day runtime
-   model. A smarter model creates cleaner abstractions, links causal relations
-   accurately, and produces superior plans.
-3. **Consistency & Alignment**: Foundational conventions, domain boundaries,
-   and operational rules are seeded as durable `fact` and `plan` nodes rather
-   than rediscovered inconsistently across random user sessions.
+1. **Eliminate cold starts.** Instead of struggling through initial discovery,
+   the agent recalls established patterns, known schemas and proven plans on
+   its very first user-facing turn.
+2. **A better graph, from a stronger model.** Warmup runs are infrequent, so
+   they can afford a flagship reasoning model (`--model`) that the day-to-day
+   runtime model cannot. The superior structure it leaves behind is then
+   recalled by the cheaper model.
+3. **Consistency and alignment.** Conventions, domain boundaries and operating
+   rules are seeded as durable `fact` and `plan` nodes, rather than being
+   rediscovered inconsistently across random user sessions.
 
 ---
 
-## Core Architecture & Safety Rules
+## What the Command Already Does
 
-Warmup is an offline staging process. It must adhere to six safety rules:
+Warmup used to be a script's problem: a memory per run because the lock is per
+directory, a fresh workspace per run, a bounded number of background jobs, and
+a merge at the end. `zen run batch` is that fan-out made into a command, so
+none of it is the script's problem any more.
 
-### 1. Never warm up directly into the project's active `memory/`
+| What warmup needs                    | What `zen run batch` does                                                   |
+| :----------------------------------- | :-------------------------------------------------------------------------- |
+| A memory no other run is writing     | Each item gets its own copy at `<batch-dir>/<id>/memory`                    |
+| The project's own graph left alone   | It is the source to copy from, and is never written                         |
+| A clean working directory per query  | Each item gets `<batch-dir>/<id>/workspace`                                 |
+| Parallelism the machine can stand    | `--concurrency <n>`, default 16, ceiling 32                                 |
+| One bad query not costing the others | The failure is written to its `output.json`; the rest still answer          |
+| A record of what happened            | `batch.json`, the index: every item, whether it worked, where its answer is |
+| The fold back                        | It prints the `zen memory merge <batch-dir>/*/memory` line when it is done  |
 
-If a warmup query fails, hallucinates, or aborts mid-turn, committing directly
-to the project's memory directory corrupts the knowledge graph. Always point
-`zen run` to a timestamped staging directory in `.tmp/` via `--memory` so that
-repeated or concurrent runs never collide:
+What is left for the warmup script is the part that is actually about warmup:
+**which questions to ask, which graph to start from, which model to ask with,
+and whether the result is good enough to promote.**
+
+---
+
+## Core Safety Rules
+
+### 1. Never warm up into the project's active `memory/`
+
+A batch never writes the source graph - it copies it - so the default is
+already safe. Keep the whole staging tree in `.tmp/` under a timestamp so that
+repeated or concurrent warmups cannot collide, and so a failed one can be read
+afterwards rather than being lost:
 
 ```sh
 STAMP="$(date +%Y%m%d-%H%M%S)"
---memory ".tmp/warmup-$STAMP/memory"
+zen run batch --input cases.json --batch-dir ".tmp/warmup-$STAMP/batch"
 ```
 
-### 2. Isolate workspaces in `.tmp/` with per-run timestamps
-
-Warmup queries often instruct agents to investigate repositories, write test
-scripts, or run commands. Running them in the actual project or repository
-working directory risks modifying tracked files or creating untracked clutter.
-
-Always isolate the workspace per run into a fresh, timestamped subdirectory
-under `.tmp/`:
+Without `--batch-dir` the batch picks `<project>/batches/<stamp>` and prints
+the path on stdout, which is the other way to write it:
 
 ```sh
---workspace ".tmp/warmup-$STAMP/workspaces/run-01-$(date +%s)"
+DIR="$(zen run batch --input cases.json)"
 ```
 
-Using timestamps on both the root staging directory and each individual run
-workspace ensures:
+### 2. Choose the graph every item starts from
 
-- Concurrent or repeated warmup attempts never overwrite each other's state.
-- Stale or corrupted files from an earlier failed run cannot leak into subsequent
-  queries.
-- Every turn begins from a completely pristine, deterministic working directory.
+`--memory <dir>` names the source. There are two warmups, and they differ only
+in what they point it at:
 
-### 3. Use stronger models during population
+| Warmup                    | Source                            | Every item starts from      |
+| :------------------------ | :-------------------------------- | :-------------------------- |
+| Building on what is known | the project's `memory/` (default) | a copy of the current graph |
+| From nothing              | a directory that does not exist   | an empty graph              |
+
+A source that is not there yet is not an error in the copying mode: a project
+declares its memory directory and the first run makes it, so a cold project is
+warmed by copying from nothing, and nothing is what each item gets.
+
+**`--memory-read-only` is not a warmup flag.** It means nobody writes, which is
+exactly what a warmup is for. It is for asking a batch of questions _of_ a
+warmed graph afterwards - sixteen runs recalling from the one memory, changing
+nothing.
+
+### 3. Use a stronger model during population
 
 Day-to-day execution might use a fast, cost-effective model (e.g.
-`google:gemini-2.5-flash` or `anthropic:claude-3-5-haiku`). Warmup runs are
-performed infrequently, so it makes sense to use a flagship reasoning model
-(e.g. `anthropic:claude-sonnet-4-5`, `openai:gpt-5`, or
-`google:gemini-3.5-flash`):
+`google:gemini-2.5-flash` or `anthropic:claude-3-5-haiku`). Warm up with a
+flagship reasoning model instead:
 
 ```sh
 --model anthropic:claude-sonnet-4-5
 ```
 
-The superior graph structure created by the flagship model is then recalled and
-utilized by the runtime model.
+It applies to every item in the batch.
 
-### 4. Execute non-interactively with `--json`
+### 4. Read the result before promoting it
 
-Using `--json` guarantees:
+The staging graph is inspected with `zen memory stats --dir ...`, and nothing
+overwrites the project's `memory/` until it holds what it should. Because each
+item kept its own memory, this can be done **per query** as well as in total -
+see below.
 
-- Interactive TUI and confirmation prompts are disabled (assumes `--yes`).
-- Progress narration on stderr is silenced.
-- Machine-readable JSON output on stdout containing `stopReason`, `usage`,
-  `mounts`, run artifact paths (`run.dir`, `run.output`), and the answer.
-- The population script can programmatically verify whether the run finished
-  successfully (`stopReason === "final"`).
+### 5. Promote atomically, and keep the old graph
 
-### 5. Validate before promotion
-
-Track graph accumulation by inspecting `zen memory stats --dir ...` in between
-warmup queries, and do not overwrite the project's `memory/` until the final
-graph in `.tmp/warmup-<timestamp>/memory` has been verified to contain expected
-nodes and vector embeddings.
-
-### 6. Give every parallel run its own memory directory
-
-The memory lock is **per directory**. Two runs pointed at the same `--memory`
-do not interleave — the second one refuses to start. So a warmup that wants to
-use the wall clock has to fan out into one memory per run:
-
-```sh
-.tmp/warmup-$STAMP/memory-1
-.tmp/warmup-$STAMP/memory-2
-...
-```
-
-and fold them back together afterwards with `zen memory merge`, which is
-offline, contacts no model, and preserves node ids:
-
-```sh
-zen memory merge .tmp/warmup-$STAMP/memory-* --dir .tmp/warmup-$STAMP/memory
-```
-
-Merging is what makes `--incremental` safe under fan-out: every shard starts
-from a copy of the same project memory, so most of what comes back is a shared
-ancestor rather than a collision. Shared ancestors reconcile silently; two runs
-that genuinely changed the same memory in different ways stop the merge and
-name the ids, because picking a winner silently is how a merge loses an answer.
+Back the current `memory/` up under a timestamp and move the staging graph into
+place. A warmup that turns out to have been a bad idea is then one `mv` away
+from being undone.
 
 ---
 
-## Fanning Out
+## The Shape of a Warmup
 
 ```mermaid
 flowchart LR
-    A["Selected queries"] --> B1["zen run → memory-1"]
-    A --> B2["zen run → memory-2"]
-    A --> B3["zen run → memory-N"]
-    B1 --> M["zen memory merge memory-* --dir memory"]
-    B2 --> M
-    B3 --> M
+    Q["scripts/warmup-queries.json"] --> S["select: category, shuffle, limit"]
+    S --> C["cases.json"]
+    C --> B["zen run batch --concurrency 4 --model <flagship>"]
+    B --> I1["batch/architecture-01/memory"]
+    B --> I2["batch/workflows-01/memory"]
+    B --> I3["batch/.../memory"]
+    I1 --> M["zen memory merge batch/*/memory --dir memory"]
+    I2 --> M
+    I3 --> M
     M --> V["zen memory stats --dir memory"]
-    V --> P["Backup & promote to memory/"]
+    V --> P["back up and promote to memory/"]
 ```
-
-Bound the fan-out with `--jobs <n>`. Each run is a model call **and** a Podman
-container, so the useful ceiling is set by the machine and the provider's rate
-limit rather than by the number of queries; 4 is a sane default.
-
-Sequential warmup is still the better choice when the queries build on each
-other, because a later query can recall what an earlier one committed. Fan-out
-trades that away for wall-clock time, and `merge` gives back everything except
-the cross-query recall.
-
----
-
-## The Warmup Cycle
 
 ```mermaid
 flowchart TD
-    A[Curated Seed Queries] --> B["Initialize .tmp/warmup-<timestamp>/memory"]
-    B --> C["For each query: Create fresh .tmp/warmup-<timestamp>/workspaces/run-N-<timestamp>"]
-    C --> D["zen run --memory .tmp/warmup-<timestamp>/memory --workspace .tmp/.../run-N-<timestamp> --model <model> --json"]
-    D --> E{Check stopReason & exit code}
-    E -- Success --> F[Accumulate nodes in staging graph]
-    E -- Failure --> G[Log error & abort or retry]
-    F --> T["Log timing: query duration & total elapsed"]
-    T --> S["Inspect progress: zen memory stats --dir .tmp/warmup-<timestamp>/memory"]
-    S --> H{More queries?}
-    H -- Yes --> C
-    H -- No --> I["Validate: zen memory stats --dir .tmp/warmup-<timestamp>/memory"]
-    I --> J{Graph healthy?}
-    J -- Yes --> K["Backup existing memory & promote .tmp/warmup-<timestamp>/memory to memory/"]
-    J -- No --> L[Inspect with zen memory ls / export & discard]
+    A["Curated seed queries"] --> B["Select: --category / --shuffle / --limit"]
+    B --> C{"--dry-run?"}
+    C -- Yes --> D["Print the cases file and the command, write nothing, exit 0"]
+    C -- No --> E["Write .tmp/warmup-<stamp>/cases.json"]
+    E --> F["zen run batch --input cases.json --batch-dir .tmp/warmup-<stamp>/batch"]
+    F --> G{"Exit code"}
+    G -- Non-zero --> H["Name the failed ids from batch.json, promote nothing"]
+    G -- Zero --> I["zen memory merge batch/*/memory --dir .tmp/warmup-<stamp>/memory"]
+    I --> J["zen memory stats --dir .tmp/warmup-<stamp>/memory"]
+    J --> K{"Graph healthy?"}
+    K -- No --> L["Inspect per item, or with zen memory ls / export, and discard"]
+    K -- Yes --> M["Back up memory/ and promote"]
 ```
 
 ---
 
-## Query Categories, Sampling & Dry-Run Preview
+## The Queries File
 
-Warmup suites should be organized across distinct domain categories rather than
-an unstructured flat list of ad-hoc prompts.
+Keep the seed queries in the repository, in the shape the command already
+reads, so warmup is reproducible across environments and model upgrades:
+
+```json
+{
+    "batch": [
+        {
+            "id": "architecture-layout",
+            "input": "Investigate the project architecture and summarize the main components and data flow."
+        },
+        {
+            "id": "architecture-boundaries",
+            "input": "Analyze module boundaries, dependency graphs, and core interfaces."
+        },
+        {
+            "id": "workflows-triage",
+            "input": "Formulate standard operational plans for triaging and resolving common domain tasks."
+        },
+        {
+            "id": "integrations-services",
+            "input": "Identify external services, APIs, and key credential dependencies."
+        },
+        {
+            "id": "errors-handling",
+            "input": "Analyze error handling strategies, recovery routines, and failure modes."
+        },
+        {
+            "id": "conventions-house-rules",
+            "input": "Document project-specific coding standards, house rules, and commit policies."
+        }
+    ]
+}
+```
+
+An item takes `input`, an optional `id` and an optional `workspace`, and
+nothing else. `memory`, `model` and `project` belong to the whole batch, so
+they are flags on the line rather than keys in the file.
+
+**The `id` is the category.** It names the directory the item's answer and
+memory land in, so `architecture-layout` makes `batch/architecture-layout/` -
+readable in a directory listing, greppable in `batch.json`, and selectable by
+prefix. That is the whole of the category mechanism; no extra key is needed.
 
 ### Recommended Categories
 
-| Category       | Objective                                                    | Example Prompt                                                             |
+| Category       | Objective                                                    | Example prompt                                                             |
 | :------------- | :----------------------------------------------------------- | :------------------------------------------------------------------------- |
 | `architecture` | Map high-level layout, component boundaries, and data flow   | "Investigate project architecture and summarize component flow."           |
 | `workflows`    | Formulate multi-step operational plans for common tasks      | "Formulate standard operational plans for triaging common tasks."          |
@@ -190,495 +214,303 @@ an unstructured flat list of ad-hoc prompts.
 | `errors`       | Capture error handling, recovery routines, and failure modes | "Analyze error handling strategies, recovery routines, and failure modes." |
 | `conventions`  | Record coding styles, house rules, and constraints           | "Document project-specific coding standards and house rules."              |
 
-### Why Sampling, Shuffling, and Limits Matter
+### Why Selection Still Matters
 
-1. **Balanced Graph Coverage**: If a warmup suite contains 20+ queries, running
-   them sequentially with a limit (e.g. `--limit 4`) would only execute the
-   first category (`architecture`), leaving workflows and integrations
-   completely cold.
-2. **`--shuffle`**: Randomizes the query sequence before limits are applied,
-   ensuring that a limited budget run draws an even cross-section across
-   different categories.
-3. **`--category <name>`**: Enables focused warmup on a single subsystem (e.g.
-   warming up only `integrations` after adding new API capabilities).
-4. **`--limit <n>`**: Prevents unintended token expenditure by capping the total
-   number of queries executed during test or verification passes.
+Everything runs at once now, so ordering no longer decides what gets asked -
+but a budget still does.
 
-### Dry Run Mode (`--dry-run`)
+1. **Balanced coverage.** A 20-query suite cut to the first four with a limit
+   would warm `architecture` and leave `workflows` and `integrations` cold.
+   Shuffle before limiting so a partial budget draws a cross-section.
+2. **`--category <name>`** re-warms one subsystem after it changes - the
+   `integrations` queries alone once a new API is wired up - without paying for
+   the rest.
+3. **`--limit <n>`** caps what a verification pass costs. With sixteen in
+   flight the wall clock stops being the thing that limits you, so the cap has
+   to be deliberate.
+4. **`--dry-run`** prints the selected cases file and the exact command, writes
+   nothing, creates nothing, and bills nothing. Frontier models are expensive
+   enough that the plan is worth reading first.
 
-Warming up memory with frontier reasoning models (`--model`) can be resource
-intensive. A `--dry-run` flag is essential for:
+---
 
-- Verifying resolved staging paths and backup targets.
-- Inspecting which queries and categories were selected after filtering,
-  shuffling, and limits.
-- Checking the exact `zen run ...` commands that would be executed.
-- Guaranteeing that zero files are written, zero directories are created, and
-  zero model tokens are billed.
+## Reading What Each Query Learned
+
+Because every item kept its own memory, a warmup is auditable per question -
+which a sequential run into one graph never was.
+
+```sh
+DIR=".tmp/warmup-$STAMP/batch"
+
+# Which items worked, and what each was asked
+jq -r '.batch_results[] | "\(.id)\t\(if .ok then "ok" else "FAILED" end)"' "$DIR/batch.json"
+
+# What one query actually committed
+zen memory stats --dir "$DIR/architecture-layout/memory"
+zen memory ls --dir "$DIR/architecture-layout/memory"
+
+# What one query answered, and what it cost
+jq '.stopReason, .usage' "$DIR/architecture-layout/output.json"
+```
+
+A query that taught the graph nothing useful is excluded by leaving its
+directory out of the merge. Nothing else has to be re-run.
+
+An item that committed nothing leaves no `memory/` at all, so
+`<batch-dir>/*/memory` never names a directory `merge` would refuse.
 
 ---
 
 ## Generating the Warmup Script in `scripts/`
 
-A project should maintain a dedicated warmup script located in `scripts/`
-(e.g. `scripts/memory_warmup.sh` or `scripts/memory-warmup.sh`).
+A project should keep its warmup under version control as two files:
 
-The script should automate the entire pipeline:
+- `scripts/warmup-queries.json` - the curated seed queries, in the shape above.
+- `scripts/memory_warmup.sh` - selection, one batch, merge, validate, promote.
 
-1. Accept command-line flags:
-    - `--dry-run`: Preview selected queries, categories, and commands without executing.
-    - `--limit <n>`: Run at most $n$ queries.
-    - `--shuffle`: Randomize query order before applying limits.
-    - `--category <name>`: Filter queries to a specific category.
-    - `--model <provider:model>`: Override model with a reasoning flagship.
-    - `--jobs <n>`: Run up to $n$ queries at once, each into its own memory.
-    - `--incremental`: Copy existing project memory into staging before warming up.
-    - `-y`, `--yes`: Promote memory without interactive confirmation.
-2. Create timestamped staging paths under `.tmp/` (e.g.
-   `.tmp/warmup-$(date +%Y%m%d-%H%M%S)/`) and timestamped per-query workspaces.
-3. Filter, shuffle, and sample from categorized query definitions.
-4. If `--dry-run` is active, print the execution plan and exit 0 before touching disk.
-5. Invoke `zen run` with `--memory`, `--workspace`, `--model`, and `--json`.
-6. Parse each outcome with `jq`, halt if a turn fails, and report per-query execution time and total elapsed time since start.
-7. Under `--jobs <n>`, give each run its own `memory-N` directory and fold them back with `zen memory merge memory-* --dir memory`.
-8. Print graph statistics via `zen memory stats --dir ...` between queries to track graph growth, followed by a final validation.
-9. Safely backup and replace the project's `memory/` directory with the warmed graph.
+The script should:
+
+1. Accept `--category`, `--limit`, `--shuffle`, `--concurrency`, `--model`,
+   `--fresh`, `--dry-run` and `-y/--yes`.
+2. Select from the queries file and write the selection to a timestamped
+   staging directory under `.tmp/`.
+3. Stop before touching disk under `--dry-run`, having printed the plan.
+4. Run **one** `zen run batch`, letting it own the parallelism, the per-item
+   workspaces and the per-item memories.
+5. Refuse to promote anything if any item failed, naming the ids from
+   `batch.json` and leaving the staging tree for inspection.
+6. Merge the item memories, print `zen memory stats`, then back up and promote.
 
 ### Recommended Script Template (`scripts/memory_warmup.sh`)
-
-When generating a warmup script for a project, use the following production-ready
-pattern:
 
 ```bash
 #!/usr/bin/env bash
 #
-# scripts/memory_warmup.sh — Pre-populate project memory using curated seed queries.
+# scripts/memory_warmup.sh — Warm this project's memory with one parallel batch.
 #
 # Usage:
 #   ./scripts/memory_warmup.sh [options]
 #
 # Options:
-#   --dry-run               Preview selected queries and commands without executing
-#   --limit <n>             Maximum number of queries to run
-#   --shuffle               Randomize query order before applying limits
-#   --category <name>       Filter queries to a specific category
-#   --model <ref>           Override model (e.g. anthropic:claude-sonnet-4-5)
-#   --jobs <n>              Run up to n queries at once, one memory each (default 1)
-#   --incremental           Seed staging memory with current memory/ before runs
-#   -y, --yes               Assume yes for memory promotion
-#   -h, --help              Show this help
+#   --category <name>    Only queries whose id starts with "<name>-"
+#   --limit <n>          Run at most n queries
+#   --shuffle            Randomize order before applying --limit
+#   --concurrency <n>    How many at a time (default 4; zen allows up to 32)
+#   --model <ref>        Warm up with a stronger model than the runtime one
+#   --fresh              Start every item from an empty graph, not from memory/
+#   --dry-run            Print the plan and exit; write nothing, bill nothing
+#   -y, --yes            Promote without asking
+#   -h, --help           Show this help
 #
 # Examples:
 #   ./scripts/memory_warmup.sh --dry-run
-#   ./scripts/memory_warmup.sh --dry-run --category workflows --limit 2
+#   ./scripts/memory_warmup.sh --category integrations
 #   ./scripts/memory_warmup.sh --shuffle --limit 5 --model anthropic:claude-sonnet-4-5
-#   ./scripts/memory_warmup.sh --jobs 4
-#   ./scripts/memory_warmup.sh --incremental
+#   ./scripts/memory_warmup.sh --fresh -y
 #
 
 set -euo pipefail
 
-# Find project root regardless of invocation directory
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-# Default configuration
-MODEL="${ZEN_WARMUP_MODEL:-}"
-INCREMENTAL=false
-ASSUME_YES=false
-DRY_RUN=false
-LIMIT=0
-JOBS=1
-SHUFFLE=false
-CATEGORY_FILTER=""
+QUERIES="scripts/warmup-queries.json"
+PROJECT_MEM="memory"
 
-# Helper to format seconds as human-readable duration
-format_duration() {
-    local total_sec=$1
-    local hours=$((total_sec / 3600))
-    local mins=$(((total_sec % 3600) / 60))
-    local secs=$((total_sec % 60))
-    if [ $hours -gt 0 ]; then
-        echo "${hours}h ${mins}m ${secs}s"
-    elif [ $mins -gt 0 ]; then
-        echo "${mins}m ${secs}s"
-    else
-        echo "${secs}s"
-    fi
+CATEGORY=""
+LIMIT=0
+SHUFFLE=false
+CONCURRENCY=4
+MODEL="${ZEN_WARMUP_MODEL:-}"
+FRESH=false
+DRY_RUN=false
+ASSUME_YES=false
+
+usage() {
+    sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
 }
 
-# Parse arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --dry-run)
-            DRY_RUN=true
-            shift
-            ;;
-        --limit)
-            LIMIT="$2"
-            shift 2
-            ;;
-        --shuffle)
-            SHUFFLE=true
-            shift
-            ;;
-        --category)
-            CATEGORY_FILTER="$2"
-            shift 2
-            ;;
-        --model)
-            MODEL="$2"
-            shift 2
-            ;;
-        --jobs)
-            JOBS="$2"
-            shift 2
-            ;;
-        --incremental)
-            INCREMENTAL=true
-            shift
-            ;;
-        -y|--yes)
-            ASSUME_YES=true
-            shift
-            ;;
-        -h|--help)
-            echo "Usage: ./scripts/memory_warmup.sh [options]"
-            echo ""
-            echo "Options:"
-            echo "  --dry-run          Preview selected queries and commands without executing"
-            echo "  --limit <n>        Maximum number of queries to run"
-            echo "  --shuffle          Randomize query order before applying limits"
-            echo "  --category <name>  Filter queries to a specific category"
-            echo "  --model <ref>      Override model (e.g. anthropic:claude-sonnet-4-5)"
-            echo "  --jobs <n>         Run up to n queries at once, one memory each (default 1)"
-            echo "  --incremental      Seed staging memory with current memory/ before runs"
-            echo "  -y, --yes          Assume yes for memory promotion"
-            echo "  -h, --help         Show this help"
-            exit 0
-            ;;
-        *)
-            echo "Error: Unknown option $1" >&2
-            exit 2
-            ;;
+        --category) CATEGORY="$2"; shift 2 ;;
+        --limit) LIMIT="$2"; shift 2 ;;
+        --shuffle) SHUFFLE=true; shift ;;
+        --concurrency) CONCURRENCY="$2"; shift 2 ;;
+        --model) MODEL="$2"; shift 2 ;;
+        --fresh) FRESH=true; shift ;;
+        --dry-run) DRY_RUN=true; shift ;;
+        -y|--yes) ASSUME_YES=true; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Error: unknown option $1" >&2; exit 2 ;;
     esac
 done
 
-STAMP="$(date +%Y%m%d-%H%M%S)"
-SCRATCH_DIR=".tmp/warmup-$STAMP"
-STAGING_MEM="$SCRATCH_DIR/memory"
-WORKSPACES_DIR="$SCRATCH_DIR/workspaces"
-PROJECT_MEM="memory"
+command -v jq >/dev/null 2>&1 || { echo "Error: jq is required." >&2; exit 1; }
+[ -f "$QUERIES" ] || { echo "Error: $QUERIES not found." >&2; exit 1; }
 
-# Define curated seed queries structured by category ("category|prompt")
-ALL_QUERIES=(
-    "architecture|Investigate the project architecture and summarize the main components and data flow."
-    "architecture|Analyze module boundaries, dependency graphs, and core interfaces."
-    "workflows|Formulate standard operational plans for triaging and resolving common domain tasks."
-    "workflows|Trace the end-to-end user request lifecycle and hand-off points."
-    "integrations|Identify external services, APIs, and key credential dependencies."
-    "integrations|Verify database and storage schemas, access patterns, and persistence rules."
-    "errors|Analyze error handling strategies, recovery routines, and failure modes."
-    "errors|Identify retry policies, rate limits, and fallback behaviors."
-    "conventions|Document project-specific coding standards, house rules, and commit policies."
-)
+# --- Select -----------------------------------------------------------------
+# One compact JSON object per line, so ordering and limiting are line work.
+SELECTED="$(jq -c --arg cat "$CATEGORY" \
+    '.batch[] | select($cat == "" or (.id // "" | startswith($cat + "-")))' \
+    "$QUERIES")"
 
-# 1. Filter by category if requested
-FILTERED=()
-for item in "${ALL_QUERIES[@]}"; do
-    cat="${item%%|*}"
-    if [ -z "$CATEGORY_FILTER" ] || [ "$cat" = "$CATEGORY_FILTER" ]; then
-        FILTERED+=("$item")
+if [ "$SHUFFLE" = true ]; then
+    if command -v shuf >/dev/null 2>&1; then
+        SELECTED="$(printf '%s\n' "$SELECTED" | shuf)"
+    else
+        SELECTED="$(printf '%s\n' "$SELECTED" | sort -R)"
     fi
-done
+fi
 
-if [ ${#FILTERED[@]} -eq 0 ]; then
-    echo "Error: No queries matched category '$CATEGORY_FILTER'." >&2
+# awk rather than head: head closes the pipe early, and a SIGPIPE inside a
+# command substitution takes the whole script down under `set -e`.
+if [ "$LIMIT" -gt 0 ]; then
+    SELECTED="$(printf '%s\n' "$SELECTED" | awk -v n="$LIMIT" 'NR <= n')"
+fi
+
+COUNT="$(printf '%s\n' "$SELECTED" | awk 'NF { n++ } END { print n + 0 }')"
+if [ "$COUNT" -eq 0 ]; then
+    echo "Error: no queries matched${CATEGORY:+ category '$CATEGORY'}." >&2
     exit 1
 fi
+CASES="$(printf '%s\n' "$SELECTED" | jq -s '{ batch: . }')"
 
-# 2. Shuffle if requested
-if [ "$SHUFFLE" = true ]; then
-    TEMP=()
-    if command -v python3 >/dev/null 2>&1; then
-        while IFS= read -r line; do
-            [ -n "$line" ] && TEMP+=("$line")
-        done < <(printf '%s\n' "${FILTERED[@]}" | python3 -c 'import sys, random; lines = [l for l in sys.stdin.read().splitlines() if l]; random.shuffle(lines); print("\n".join(lines))')
-    elif command -v shuf >/dev/null 2>&1; then
-        while IFS= read -r line; do
-            [ -n "$line" ] && TEMP+=("$line")
-        done < <(printf '%s\n' "${FILTERED[@]}" | shuf)
-    elif sort -R </dev/null >/dev/null 2>&1; then
-        while IFS= read -r line; do
-            [ -n "$line" ] && TEMP+=("$line")
-        done < <(printf '%s\n' "${FILTERED[@]}" | sort -R)
-    else
-        TEMP=("${FILTERED[@]}")
-    fi
-    FILTERED=("${TEMP[@]}")
+STAMP="$(date +%Y%m%d-%H%M%S)"
+STAGE=".tmp/warmup-$STAMP"
+BATCH_DIR="$STAGE/batch"
+STAGING_MEM="$STAGE/memory"
+CASES_FILE="$STAGE/cases.json"
+
+CMD=(zen run batch --input "$CASES_FILE" --batch-dir "$BATCH_DIR"
+     --concurrency "$CONCURRENCY")
+if [ -n "$MODEL" ]; then
+    CMD+=(--model "$MODEL")
+fi
+if [ "$FRESH" = true ]; then
+    # A source that does not exist yet: every item starts from an empty graph
+    # instead of a copy of what the project already knows.
+    CMD+=(--memory "$STAGE/from-nothing")
 fi
 
-# 3. Apply limit if requested
-SELECTED=()
-if [ "$LIMIT" -gt 0 ] && [ "$LIMIT" -lt "${#FILTERED[@]}" ]; then
-    for ((i = 0; i < LIMIT; i++)); do
-        SELECTED+=("${FILTERED[i]}")
-    done
-else
-    SELECTED=("${FILTERED[@]}")
-fi
-
-# 4. Handle Dry Run mode
+# --- Dry run ----------------------------------------------------------------
 if [ "$DRY_RUN" = true ]; then
-    echo "=== DRY RUN: Previewing Warmup Plan ==="
-    echo "Project root:      $ROOT"
-    echo "Staging memory:    $STAGING_MEM"
-    echo "Target memory:     $PROJECT_MEM"
-    echo "Model override:    ${MODEL:-<default>}"
-    echo "Category filter:   ${CATEGORY_FILTER:-<all>}"
-    echo "Shuffled:          $SHUFFLE"
-    echo "Limit:             ${LIMIT:-none}"
-    echo "Jobs:              $JOBS"
-    echo "Selected queries:  ${#SELECTED[@]} of ${#ALL_QUERIES[@]}"
+    echo "=== DRY RUN: warmup plan ==="
+    echo "Project root:    $ROOT"
+    echo "Staging:         $STAGE"
+    echo "Target memory:   $PROJECT_MEM"
+    echo "Model:           ${MODEL:-<project default>}"
+    echo "Category:        ${CATEGORY:-<all>}"
+    echo "Shuffled:        $SHUFFLE"
+    echo "Limit:           $([ "$LIMIT" -gt 0 ] && echo "$LIMIT" || echo none)"
+    echo "Concurrency:     $CONCURRENCY"
+    echo "Starting from:   $([ "$FRESH" = true ] && echo "an empty graph" || echo "a copy of $PROJECT_MEM")"
+    echo "Queries:         $COUNT"
     echo ""
-    echo "Planned queries:"
-    for item in "${SELECTED[@]}"; do
-        cat="${item%%|*}"
-        q="${item#*|}"
-        printf '  [%-14s] %s\n' "$cat" "$q"
-    done
+    printf '%s\n' "$CASES" | jq -r '.batch[] | "  [\(.id)] \(.input)"'
     echo ""
-    echo "Sample command that would execute:"
-    SAMPLE_Q="${SELECTED[0]#*|}"
-    if [ "$JOBS" -le 1 ]; then
-        SAMPLE_MEM="$STAGING_MEM"
-    else
-        SAMPLE_MEM="$SCRATCH_DIR/memory-1"
-    fi
-    echo "  zen run --memory \"$SAMPLE_MEM\" --workspace \"$WORKSPACES_DIR/run-1-<timestamp>\" ${MODEL:+--model \"$MODEL\" }--json \"$SAMPLE_Q\""
-    if [ "$JOBS" -gt 1 ]; then
-        echo "  zen memory merge \"$SCRATCH_DIR\"/memory-* --dir \"$STAGING_MEM\" --yes"
-    fi
-    echo "  zen memory stats --dir \"$STAGING_MEM\""
+    echo "Would run:"
+    printf '  '; printf '%q ' "${CMD[@]}"; echo ""
+    echo "  zen memory merge $BATCH_DIR/*/memory --dir $STAGING_MEM --yes"
+    echo "  zen memory stats --dir $STAGING_MEM"
     echo ""
-    echo "Post-run validation that would run:"
-    echo "  zen memory stats --dir \"$STAGING_MEM\""
-    echo ""
-    echo "Dry run complete. No files created, no commands executed."
+    echo "Dry run complete. Nothing created, nothing billed."
     exit 0
 fi
 
-WARMUP_START=$(date +%s)
+# --- Run --------------------------------------------------------------------
+mkdir -p "$STAGE"
+printf '%s\n' "$CASES" >"$CASES_FILE"
 
-echo "=== Zenera Neo Memory Warmup ==="
-echo "Project root:      $ROOT"
-echo "Staging directory: $SCRATCH_DIR"
-if [ -n "$MODEL" ]; then
-    echo "Model override:    $MODEL"
-fi
-echo "Selected queries:  ${#SELECTED[@]}"
+echo "=== Zenera Neo memory warmup ==="
+echo "Staging:  $STAGE"
+echo "Queries:  $COUNT, $CONCURRENCY at a time"
 echo ""
 
-# Cleanup scratch on trap unless preserved for inspection on failure
-cleanup() {
-    local rc=$?
-    if [ $rc -ne 0 ]; then
-        echo "" >&2
-        echo "Warmup FAILED (exit code $rc)." >&2
-        echo "Staging files preserved for inspection at: $SCRATCH_DIR" >&2
-    fi
-}
-trap cleanup EXIT
-
-# Prepare staging paths
-mkdir -p "$WORKSPACES_DIR"
-
-seed_memory() {
-    mkdir -p "$1"
-    if [ "$INCREMENTAL" = true ] && [ -d "$PROJECT_MEM" ]; then
-        cp -R "$PROJECT_MEM/." "$1/"
-    fi
-}
-
-# One query, into the memory directory it is handed. The lock is per directory,
-# so this is the unit that more than one of can be in flight at a time.
-run_query() {
-    local index="$1" category="$2" query="$3" mem="$4"
-    local workspace="$WORKSPACES_DIR/run-$index-$(date +%s)"
-    mkdir -p "$workspace"
-
-    local cmd=(zen run --memory "$mem" --workspace "$workspace" --json)
-    if [ -n "$MODEL" ]; then
-        cmd+=(--model "$MODEL")
-    fi
-    cmd+=("$query")
-
-    echo "[$index/${#SELECTED[@]}] [$category] \"$query\""
-    echo "  -> Workspace: $workspace"
-
-    local start out
-    start=$(date +%s)
-    if ! out="$("${cmd[@]}")"; then
-        echo "  -> Command failed" >&2
-        return 1
-    fi
-
-    if command -v jq >/dev/null 2>&1; then
-        local stop agent
-        stop=$(echo "$out" | jq -r '.stopReason // empty')
-        agent=$(echo "$out" | jq -r '.agent // empty')
-        echo "  -> Completed: agent=$agent stopReason=$stop"
-        if [ "$stop" != "final" ]; then
-            echo "  -> Unexpected stop reason: $stop" >&2
-            return 1
-        fi
-    else
-        echo "  -> Turn completed successfully."
-    fi
-
-    local now
-    now=$(date +%s)
-    echo "  -> Timing: query took $(format_duration $((now - start))) | elapsed since start: $(format_duration $((now - WARMUP_START)))"
-}
-
-# `wait` with no arguments always reports success, so every child is waited for
-# by pid. Batches of $JOBS rather than a rolling queue: `wait -n` wants bash
-# 4.3 and macOS still ships 3.2.
-PIDS=()
-FAILED=false
-drain() {
-    if [ ${#PIDS[@]} -eq 0 ]; then
-        return 0
-    fi
-    local pid
-    for pid in "${PIDS[@]}"; do
-        wait "$pid" || FAILED=true
-    done
-    PIDS=()
-}
-
-echo "Running ${#SELECTED[@]} warmup queries (jobs: $JOBS)..."
-echo "----------------------------------------"
-
-if [ "$JOBS" -le 1 ]; then
-    seed_memory "$STAGING_MEM"
-    COUNT=0
-    for item in "${SELECTED[@]}"; do
-        COUNT=$((COUNT + 1))
-        run_query "$COUNT" "${item%%|*}" "${item#*|}" "$STAGING_MEM"
-
-        # Print memory stats between queries to track graph growth
-        if [ -f "$STAGING_MEM/manifest.json" ]; then
-            echo ""
-            echo "Memory stats after query $COUNT:"
-            zen memory stats --dir "$STAGING_MEM"
-        else
-            echo "  -> Memory stats: No memories committed yet."
-        fi
-        echo ""
-    done
-else
-    SHARDS=()
-    COUNT=0
-    for item in "${SELECTED[@]}"; do
-        COUNT=$((COUNT + 1))
-        SHARD="$SCRATCH_DIR/memory-$COUNT"
-        seed_memory "$SHARD"
-        SHARDS+=("$SHARD")
-        run_query "$COUNT" "${item%%|*}" "${item#*|}" "$SHARD" \
-            >"$SCRATCH_DIR/run-$COUNT.log" 2>&1 &
-        PIDS+=($!)
-        if [ ${#PIDS[@]} -ge "$JOBS" ]; then
-            drain
-        fi
-    done
-    drain
-
-    for log in "$SCRATCH_DIR"/run-*.log; do
-        if [ -f "$log" ]; then
-            cat "$log"
-            echo ""
-        fi
-    done
-
-    if [ "$FAILED" = true ]; then
-        echo "One or more warmup runs failed; nothing was promoted." >&2
-        exit 1
-    fi
-
-    # Only a memory something was committed to can be merged; a run that found
-    # nothing worth keeping never writes a manifest.
-    MERGE=()
-    for shard in "${SHARDS[@]}"; do
-        if [ -f "$shard/manifest.json" ]; then
-            MERGE+=("$shard")
-        fi
-    done
-    if [ ${#MERGE[@]} -eq 0 ]; then
-        echo "No warmup run committed anything." >&2
-        exit 1
-    fi
-
-    echo "Merging ${#MERGE[@]} memories into $STAGING_MEM..."
-    zen memory merge "${MERGE[@]}" --dir "$STAGING_MEM" --yes
-    echo ""
+# The batch prints its directory on stdout; we chose it, so we do not need it
+# repeated. Progress and per-item results are on stderr and stay visible.
+if ! "${CMD[@]}" >/dev/null; then
+    echo "" >&2
+    echo "Some queries failed; nothing was promoted." >&2
+    jq -r '.batch_results[] | select(.ok | not) | "  \(.id): \(.error.message)"' \
+        "$BATCH_DIR/batch.json" >&2
+    echo "Staging left for inspection at: $STAGE" >&2
+    exit 1
 fi
 
-echo "----------------------------------------"
-TOTAL_RUN_TIME=$(( $(date +%s) - WARMUP_START ))
-echo "All warmup queries finished successfully in $(format_duration $TOTAL_RUN_TIME)."
-echo ""
+# --- Merge ------------------------------------------------------------------
+# An item that committed nothing leaves no memory behind, so this glob only
+# ever names real graphs.
+MERGE=()
+for mem in "$BATCH_DIR"/*/memory; do
+    [ -d "$mem" ] && MERGE+=("$mem")
+done
 
-# Validate staging memory
-echo "Validating staging memory graph:"
+if [ ${#MERGE[@]} -eq 0 ]; then
+    echo "No query committed anything to memory; nothing to promote." >&2
+    echo "Answers are still at: $BATCH_DIR" >&2
+    exit 1
+fi
+
+echo ""
+echo "Merging ${#MERGE[@]} memories into $STAGING_MEM..."
+zen memory merge "${MERGE[@]}" --dir "$STAGING_MEM" --yes
+
+echo ""
+echo "Warmed graph:"
 zen memory stats --dir "$STAGING_MEM"
 echo ""
 
-# Confirmation and promotion
+# --- Promote ----------------------------------------------------------------
 if [ "$ASSUME_YES" = false ]; then
-    read -r -p "Promote staging memory to '$PROJECT_MEM'? [y/N] " CONFIRM
+    read -r -p "Promote this graph to '$PROJECT_MEM'? [y/N] " CONFIRM
     if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-        echo "Warmup cancelled. Staging files left in $SCRATCH_DIR."
+        echo "Not promoted. Staging left at $STAGE."
         exit 0
     fi
 fi
 
-# Backup existing project memory if present
 if [ -d "$PROJECT_MEM" ]; then
-    BACKUP_MEM="memory.bak.$(date +%Y%m%d-%H%M%S)"
-    echo "Backing up current memory to $BACKUP_MEM..."
-    mv "$PROJECT_MEM" "$BACKUP_MEM"
+    BACKUP="memory.bak.$STAMP"
+    echo "Backing up current memory to $BACKUP..."
+    mv "$PROJECT_MEM" "$BACKUP"
 fi
 
-# Promote staging memory to project root
-echo "Promoting warmed memory to $PROJECT_MEM..."
 mv "$STAGING_MEM" "$PROJECT_MEM"
+rm -rf "$STAGE"
 
-# Clean up remaining scratch workspaces
-rm -rf "$SCRATCH_DIR"
-
-echo "Warmup complete! Project memory is ready."
+echo "Warmup complete. Project memory is ready."
 ```
+
+---
+
+## When Not to Batch
+
+A batch gives every item its own graph, so no item can recall what another one
+just learned. When the queries genuinely build on each other - a later question
+that only makes sense once an earlier one has committed its answer - run those
+few in sequence with plain `zen run --memory`, and batch the rest.
+
+`merge` gives back everything except that cross-query recall. Reach for the
+sequence only where the recall is the point; it costs the wall clock that
+warming in parallel is for.
 
 ---
 
 ## Best Practices for Seed Queries
 
-When authoring or generating queries for the warmup script:
-
-1. **Group by Category**:
-    - Organize queries into clear domain categories (`architecture`, `workflows`,
-      `integrations`, `errors`, `conventions`) so test runs can be sampled or
-      targeted easily.
-2. **Use `--dry-run` First**:
-    - Always verify candidate queries, model overrides, and category distribution
-      with `--dry-run` before initiating a live warmup.
-3. **Prompts That Induce Plan Formation**:
-    - Instruct the agent to "analyze and determine the recommended pattern for..." so
-      it stores durable `plan` and `fact` nodes rather than transient output.
-4. **Verify Node Vectorisation**:
-    - Confirm in `zen memory stats --dir ...` that vector count equals node count
-      (ensuring your embedding model is configured and active).
-5. **Keep Seed Queries Under Version Control**:
-    - Store the seed prompts inside the script or an adjacent `scripts/warmup-queries.txt`
-      so warmup is reproducible across environments and model upgrades.
+1. **Name ids by category.** `architecture-layout`, `workflows-triage`. The id
+   is the directory name, the selector, and the label in every report.
+2. **Dry-run first.** Verify the selection, the model and the source graph
+   before spending a flagship model on twenty questions at once.
+3. **Write prompts that induce plan formation.** "Analyze and determine the
+   recommended pattern for..." stores durable `plan` and `fact` nodes; "list
+   the files in src/" stores nothing worth keeping.
+4. **Verify vectorisation.** In `zen memory stats`, the vector count should
+   equal the node count. If it does not, the embedding model is not configured
+   and recall will fall back to text alone.
+5. **Keep the queries under version control.** `scripts/warmup-queries.json` is
+   the record of what the project's memory was built from, and the thing to
+   re-run after a model upgrade.
+6. **Warm in one batch, not many.** A second batch cannot see what the first
+   learned unless it has been merged and promoted first - so either merge in
+   between, or ask everything at once.
