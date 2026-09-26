@@ -443,6 +443,14 @@ describe('runPathsAt', () => {
         );
     });
 
+    it('names the graph beside the report', () => {
+        const dir = layout('20260101-120000-aaaa', '20260101-120500-bbbb');
+        writeFileSync(join(dir, 'state.json'), '{}');
+        const { run } = runPathsAt(dir);
+        expect(run.report).toBe(join(dir, 'report.html'));
+        expect(run.graph).toBe(join(dir, 'graph.mmd'));
+    });
+
     it('refuses a directory this layout never made', () => {
         const dir = join(root, 'somewhere', 'else');
         mkdirSync(dir, { recursive: true });

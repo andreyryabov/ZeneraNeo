@@ -65,7 +65,8 @@ and stdout is left empty.
         "output": ".../output.md",
         "state": ".../state.json",
         "meta": ".../meta.json",
-        "report": ".../report.html"
+        "report": ".../report.html",
+        "graph": ".../graph.mmd"
     },
     "mounts": [
         { "host": "...", "at": "/workspace", "readOnly": false },
@@ -319,7 +320,7 @@ run history. Ids look like `20260825-143012-a7f3`.
 ```
 <project>/sessions/<id>/
     workspace/          what the agent sees, unless --workspace said otherwise
-    runs/<run-id>/      input.md, output.md, state.json, report.html, meta.json
+    runs/<run-id>/      input.md, output.md, state.json, report.html, graph.mmd, meta.json
     .data/
         state.json      the live, resumable state, rewritten after every run
         session.json    when it was made, and the workspace it is rooted at
@@ -343,4 +344,6 @@ definition and is taken over.
 ## Afterwards
 
 Each run writes a `report.html` next to its state; the run prints a
-`file://` link to it. See [inspect.md](inspect.md).
+`file://` link to it. It writes a `graph.mmd` beside it too - the same
+trajectory as one Mermaid flowchart, which is what `zen inspect graph` prints.
+See [inspect.md](inspect.md).

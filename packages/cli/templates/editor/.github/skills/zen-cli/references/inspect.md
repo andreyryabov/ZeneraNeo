@@ -189,6 +189,7 @@ ready to paste.
     output.md     what came back
     state.json    the whole trajectory
     report.html   the rendering, rebuilt from state.json on demand
+    graph.mmd     the Mermaid flowchart, written when the run finished
     meta.json     when it ran, how long it took
 ```
 

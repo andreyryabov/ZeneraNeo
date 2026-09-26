@@ -214,6 +214,8 @@ export interface RunPaths {
     output: string;
     state: string;
     report: string;
+    /** the same run as one Mermaid flowchart, for a model to read */
+    graph: string;
     meta: string;
 }
 
@@ -229,6 +231,7 @@ export function runPaths(session: SessionPaths, id: string): RunPaths {
         output: join(dir, 'output.md'),
         state: join(dir, 'state.json'),
         report: join(dir, 'report.html'),
+        graph: join(dir, 'graph.mmd'),
         meta: join(dir, 'meta.json'),
     };
 }

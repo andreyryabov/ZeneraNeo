@@ -323,6 +323,7 @@ than the report - the report is derived from it and rebuilt on demand.
     output.md     what came back
     state.json    the whole trajectory - the truth
     report.html   the rendering, rebuilt from state.json on demand
+    graph.mmd     the Mermaid flowchart, written when the run finished
     meta.json     when it ran, how long it took
 ```
 

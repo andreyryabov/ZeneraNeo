@@ -434,7 +434,7 @@ my-project/
     sessions/                    one workspace, memory and trajectory each
         <id>/
             workspace/           what the agents can read and write
-            runs/<id>/           input, output, state, report.html, meta
+            runs/<id>/           input, output, state, report.html, graph.mmd, meta
 ```
 
 Everything above the `sessions/` line is the system; everything below it is what

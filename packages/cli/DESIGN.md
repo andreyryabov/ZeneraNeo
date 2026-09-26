@@ -85,6 +85,7 @@ sessions that ran against it.
                     output.md
                     state.json    immutable snapshot of this run
                     report.html   `renderReportHtml` output
+                    graph.mmd     the same run as one Mermaid flowchart
                     meta.json     usage, duration, exit, and the workspace and
                                   memory it read
 ```

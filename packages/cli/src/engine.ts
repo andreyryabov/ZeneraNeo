@@ -41,6 +41,7 @@ import {
     type SessionPaths,
 } from './session.ts';
 import { CliError, EXIT, invalidError, warn } from './term.ts';
+import { traceMermaid } from './trace.ts';
 
 // ---------------------------------------------------------------------------
 // The engine
@@ -276,6 +277,8 @@ export interface RunOutcome {
     durationMs: number;
     /** where the report landed, when one could be rendered */
     report?: string;
+    /** where the Mermaid graph landed, when one could be emitted */
+    graph?: string;
 }
 
 /**
@@ -295,6 +298,7 @@ export function envelope(engine: Engine, outcome: RunOutcome): Record<string, un
             state: outcome.run.state,
             meta: outcome.run.meta,
             ...(outcome.report ? { report: outcome.report } : {}),
+            ...(outcome.graph ? { graph: outcome.graph } : {}),
         },
         mounts: mounts(engine),
         agent: outcome.result.agent,
@@ -381,6 +385,27 @@ async function record(
         // A report is a convenience. Losing it must not lose the run.
     }
 
+    // The same trajectory for the other reader. `report.html` is for a person;
+    // this is what `zen inspect graph` prints, written down while the state is
+    // already in hand — a batch of a hundred items is otherwise a hundred more
+    // commands to run before anything can be read.
+    let graph: string | undefined;
+    try {
+        await writeFile(
+            run.graph,
+            traceMermaid(result.state, {
+                runId: run.id,
+                dir: run.dir,
+                workspace: engine.workspace,
+                memory: engine.memory,
+            }),
+            'utf8',
+        );
+        graph = run.graph;
+    } catch {
+        // Same rule as the report: a view of the run is not the run.
+    }
+
     writeRunMeta(run, {
         version: 1,
         id: run.id,
@@ -397,7 +422,7 @@ async function record(
         error: result.state.error,
     });
 
-    return { run, result, text, durationMs, report };
+    return { run, result, text, durationMs, report, graph };
 }
 
 function asText(input: Input): string {
