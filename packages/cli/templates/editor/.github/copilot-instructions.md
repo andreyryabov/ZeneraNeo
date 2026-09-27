@@ -1638,7 +1638,9 @@ over one connection.
 | `includeThoughts`       | gemini                        | Thought summaries; default `true`                                                                          |
 | `routing` / `fallbacks` | openrouter                    | Upstream provider preferences, and models to fall back to - §7.5                                           |
 
-Knobs that do not apply to the chosen vendor are ignored, not rejected.
+Knobs that do not apply to the chosen vendor are rejected, not dropped: the
+schema accepts every one on every model, and building it fails with `does not
+read "<knob>"`. `zen check` reports the same thing as `model.knob`.
 `api:` exists only for the OpenAI protocol - naming it on a Gemini or Anthropic
 model is an error.
 

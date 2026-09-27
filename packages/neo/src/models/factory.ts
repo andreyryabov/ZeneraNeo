@@ -162,8 +162,9 @@ export interface ProviderSpec extends Credentials {
 
 /**
  * What to ask for, and of whom. Vendor differences live in the *provider*, so
- * there is nothing here to discriminate on: the option interfaces are unioned
- * and the knobs that do not apply to the chosen vendor are ignored.
+ * there is nothing here to discriminate on: the option interfaces are unioned,
+ * which makes every vendor's knobs type-legal on every model. `model()` rejects
+ * the ones the resolved adapter would not read — see `KNOBS`.
  *
  * `Credentials` are still accepted inline, for a one-off model that does not
  * warrant a declared provider. Using them opts out of the shared client.
@@ -324,6 +325,64 @@ export function isProviderKind(name: string): name is ProviderKind {
 }
 
 // ---------------------------------------------------------------------------
+// Tuning knobs
+// ---------------------------------------------------------------------------
+
+/**
+ * Which knobs each adapter actually reads.
+ *
+ * `ModelSpec` unions every vendor's option interface, so `reasoningEffort` on a
+ * Gemini model is type-legal and the yaml schema accepts it too — and until
+ * this table it was dropped in silence, which is the worst outcome available:
+ * the config claims a setting is in force, the request never carries it, and
+ * the run looks healthy. No static type could have caught it either, because
+ * `provider` is a free name and its kind is not known until resolution.
+ *
+ * Translating instead was the alternative, and it is worse. The vendors do not
+ * mean the same thing by the same word: effort is a coarse level on OpenAI, a
+ * token budget on Anthropic, and *both* on Google depending on the model
+ * generation. A silent remap would make one line mean four things and bury the
+ * 2.5/3 split that `gemini.ts` deliberately refuses to paper over.
+ */
+const KNOBS = {
+    'openai/chat': ['reasoningEffort'],
+    'openai/responses': ['reasoningEffort', 'reasoningSummary', 'store'],
+    anthropic: ['maxTokens', 'thinkingBudgetTokens'],
+    gemini: ['maxTokens', 'thinkingBudget', 'thinkingLevel', 'includeThoughts'],
+    openrouter: [
+        'maxTokens',
+        'reasoningEffort',
+        'reasoningSummary',
+        'routing',
+        'fallbacks',
+        'plugins',
+        'serviceTier',
+    ],
+} as const satisfies Record<string, readonly string[]>;
+
+/** An adapter, in the terms `KNOBS` is keyed by: a protocol, split by api where there are two. */
+export type KnobTarget = keyof typeof KNOBS;
+
+/** Every knob some adapter reads. A key outside it is a connection field, not tuning. */
+const TUNING = new Set<string>(Object.values(KNOBS).flat());
+
+/** A knob a spec carries that the adapter it resolves to will never read. */
+export interface KnobIssue {
+    knob: string;
+    /** the adapter that would have had to read it */
+    target: KnobTarget;
+    /** what that adapter does read */
+    supported: readonly string[];
+}
+
+function unreadKnobs(spec: ModelSpec, target: KnobTarget): KnobIssue[] {
+    const supported: readonly string[] = KNOBS[target];
+    return Object.entries(spec)
+        .filter(([k, v]) => v !== undefined && TUNING.has(k) && !supported.includes(k))
+        .map(([knob]) => ({ knob, target, supported }));
+}
+
+// ---------------------------------------------------------------------------
 // Environment references
 // ---------------------------------------------------------------------------
 
@@ -454,6 +513,23 @@ export class ModelRegistry {
         return built;
     }
 
+    /**
+     * Knobs a ref carries that its adapter will never read — the same check
+     * `model()` refuses on, minus the client, so a report can name them before
+     * a credential is resolved or anything is contacted.
+     */
+    knobs(ref: ModelRef): KnobIssue[] {
+        const spec = typeof ref === 'string' ? this.parse(ref) : ref;
+        const defaults = KINDS[this.kindOf(spec.provider ?? this.#default)];
+        if (defaults.protocol !== 'openai') {
+            return unreadKnobs(spec, defaults.protocol);
+        }
+        // An api this vendor does not speak already has an error of its own;
+        // answering about its knobs would only bury it.
+        const api = spec.api ?? defaults.apis[0];
+        return api && defaults.apis.includes(api) ? unreadKnobs(spec, `openai/${api}`) : [];
+    }
+
     /** Turns a shorthand or a spec into a `Model`. */
     model(ref: ModelRef): Model {
         const spec = typeof ref === 'string' ? this.parse(ref) : ref;
@@ -461,6 +537,16 @@ export class ModelRegistry {
         const provider = this.#spec(name);
         const kind = this.kindOf(name);
         const defaults = KINDS[kind];
+
+        // Before the client, so a knob for the wrong vendor is reported as the
+        // config mistake it is rather than behind a missing credential.
+        const [stray] = this.knobs(spec);
+        if (stray) {
+            throw new TypeError(
+                `provider "${name}" (${kind}) does not read "${stray.knob}" — a ` +
+                    `${stray.target} model takes: ${stray.supported.join(', ')}`,
+            );
+        }
 
         // Inline credentials opt out of the shared client: they describe a
         // different connection, and handing back the memoized one would

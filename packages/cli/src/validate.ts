@@ -2019,6 +2019,22 @@ function checkModels(
             if (resolved !== name) {
                 report.ref = resolved;
             }
+            // Reported here rather than left to the probe below: a knob for the
+            // wrong vendor is a config mistake that wants naming whether or not
+            // there is a credential to build the model with.
+            if (role === 'model') {
+                for (const stray of registry.knobs(ref as ModelRef)) {
+                    add({
+                        severity: 'error',
+                        code: 'model.knob',
+                        where: whereFor(config, role, name, usedBy),
+                        message:
+                            `\`${stray.knob}\` means nothing to a ${stray.target} model — ` +
+                            'it would never reach the request',
+                        fix: `this model takes: ${stray.supported.join(', ')}`,
+                    });
+                }
+            }
         } catch (err) {
             add({
                 severity: 'error',

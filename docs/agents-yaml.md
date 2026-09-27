@@ -459,9 +459,12 @@ bare id, with `provider:` beside it.
 | `fallbacks`              | openrouter                    | Models to try when none of them can                                             |
 | `serviceTier`            | openrouter                    | `auto` \| `default` \| `fast` \| `flex` \| `priority` \| `scale`                |
 
-Knobs that do not apply to the chosen vendor are ignored rather than rejected -
-vendor differences live in the provider, so there is nothing here to
-discriminate on.
+Knobs are rejected when they do not apply to the chosen vendor. The schema
+accepts every one of them on every model - vendor differences live in the
+provider, so there is nothing in the _file_ to discriminate on - but building
+the model resolves the provider to a kind, and a knob that adapter would never
+read fails there and is reported by `zen check` as `model.knob`. Dropping it
+silently was worse: the config claimed a setting that no request carried.
 
 `reasoningEffort` is a plain string on purpose. The vendor's accepted set
 changes faster than this schema would, and the request that carries a bad value
