@@ -378,8 +378,8 @@ whole of what you know is one line long.
 **The file must exist in the workspace first.** `memory_commit` copies an
 existing file from the workspace; it is not an upload channel and does not
 write file contents from raw arguments. Write the file to the workspace first
-(using `write_file`, `apply_patch`, or a command saving under `/workspace`),
-then pass its workspace path (e.g. `"file": "report.py"` or
+(using `write_file`, `apply_patch`, `copy_file`, or a command saving under
+`/workspace`), then pass its workspace path (e.g. `"file": "report.py"` or
 `"file": "/workspace/report.py"`).
 
 | Which files to commit  | What belongs in them                                                       |

@@ -69,6 +69,19 @@ Example patch:
 Use `write_file` only to create a **new** file or to overwrite a small file completely.
 Never use `write_file` to update an existing file when only a few lines need to change.
 
+### Copying: `copy_file`
+
+Use `copy_file` to duplicate a file rather than reading it and writing it back out.
+The bytes go straight from one path to the other without passing through the
+conversation, so the size cap on `read_file` does not apply and a binary arrives
+intact.
+
+- The source may be in a read-only mount; only the destination has to be writable.
+  This is how something under `/assets`, `/skills` or `/memory` is brought into
+  `/workspace`.
+- Set `overwrite: true` only when intentionally replacing an existing destination.
+- Copying a directory and its contents requires `recursive: true`.
+
 ### Moving and deleting
 
 - Use `move_file` to rename or relocate a file or directory. It creates parent directories

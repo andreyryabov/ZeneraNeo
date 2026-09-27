@@ -4,13 +4,13 @@ import {
     SANDBOX_MOUNT,
     Sandbox,
     exaTools,
+    fileTools,
     frontmatter,
     projectRegistry,
     readProjectConfig,
     sandboxTools,
     selectTools,
     toList,
-    workspaceTools,
     type AgentConfig,
     type AnyTool,
     type EmbeddingRef,
@@ -267,11 +267,18 @@ const FILE_TOOLS = [
     'find_files',
     'write_file',
     'apply_patch',
+    'copy_file',
     'move_file',
     'delete_file',
 ] as const;
 
-const FILE_WRITE_TOOLS = new Set(['write_file', 'apply_patch', 'move_file', 'delete_file']);
+const FILE_WRITE_TOOLS = new Set([
+    'write_file',
+    'apply_patch',
+    'copy_file',
+    'move_file',
+    'delete_file',
+]);
 
 function activeFileTools(selectors: readonly string[] | undefined): Set<string> {
     const active = new Set<string>();
@@ -940,7 +947,7 @@ export function availableTools(root: string, config: ProjectConfig): AnyTool<unk
     // Constructed, not started: a pool creates its container on the first
     // command, so naming one here costs nothing and needs no container engine.
     return [
-        ...workspaceTools<unknown>({
+        ...fileTools<unknown>({
             root,
             mount: config.sandbox?.workdir ?? SANDBOX_MOUNT,
         }),

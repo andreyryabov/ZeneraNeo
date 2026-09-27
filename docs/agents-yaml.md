@@ -625,6 +625,8 @@ It is mounted at `/assets`, always read-only, for every agent:
   both.
 - `write_file`, `apply_patch`, `move_file` and `delete_file` refuse it. A
   patch that touches one file under `/assets` writes none of its files.
+- `copy_file` reads out of it but not into it: the destination has to be
+  writable, which is how an asset is brought into the workspace.
 - `run_command` sees the same directory at the same path, bind-mounted `:ro`.
 
 There is no per-agent `assets:`. An agent that may see only part of the
@@ -1172,20 +1174,20 @@ exception to the line above it:
 tools: [files:*, -delete_file, -move_file, policy_lookup]
 ```
 
-Groups come from the tool, not from config: `workspaceTools()` tags its seven
-with `files` (with `workspace` recognized as an alias), `sandboxTools()` tags
-its four with `sandbox`, and a host's own tools can carry any `group` they like.
-The model never sees a group - it gets the same flat list of names either way.
+Groups come from the tool, not from config: `fileTools()` tags its eight with
+`files` (with `workspace` recognized as an alias), `sandboxTools()` tags its four
+with `sandbox`, and a host's own tools can carry any `group` they like. The
+model never sees a group - it gets the same flat list of names either way.
 
 The same grammar resolves a skill's `tools:` frontmatter against the tools
 registered on its provider.
 
 The two groups the CLI registers:
 
-| Group                        | Tools                                                                                          |
-| ---------------------------- | ---------------------------------------------------------------------------------------------- |
-| `files:*` (or `workspace:*`) | `read_file`, `list_dir`, `find_files`, `write_file`, `apply_patch`, `move_file`, `delete_file` |
-| `sandbox:*`                  | `run_command`, `run_command_background`, `read_command_output`, `stop_command`                 |
+| Group                        | Tools                                                                                                       |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `files:*` (or `workspace:*`) | `read_file`, `list_dir`, `find_files`, `write_file`, `apply_patch`, `copy_file`, `move_file`, `delete_file` |
+| `sandbox:*`                  | `run_command`, `run_command_background`, `read_command_output`, `stop_command`                              |
 
 Declaring file tools makes the operations available. How to discover files, read
 ranges without blowing context, and safely patch files is in the house rules

@@ -7,6 +7,7 @@ import {
     assertState,
     buildRunReport,
     exaTools,
+    fileTools,
     lastText,
     loadProject,
     memoryDir,
@@ -14,7 +15,6 @@ import {
     renderReportHtml,
     sandboxTools,
     turns,
-    workspaceTools,
     type AgentEvent,
     type AgentProject,
     type AgentState,
@@ -168,7 +168,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
                 // Both groups are pointed at one directory, so both are told the
                 // one name for it: whatever `run_command` prints a path as,
                 // `read_file` accepts.
-                ...workspaceTools(workspaceOptions),
+                ...fileTools(workspaceOptions),
                 ...sandboxTools(sandbox.pool),
                 // Registered whether or not a key exists: the credential is
                 // read when a tool is called, so a project that names `exa:*`

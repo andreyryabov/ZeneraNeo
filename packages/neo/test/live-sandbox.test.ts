@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { fileTools } from '../src/tools/files.ts';
 import {
     DEFAULT_SANDBOX_IMAGE,
     runProcess,
@@ -10,7 +11,6 @@ import {
     SandboxPool,
     sandboxTools,
 } from '../src/tools/sandbox.ts';
-import { workspaceTools } from '../src/tools/workspace.ts';
 import type { AnyTool, ToolContext } from '../src/types.ts';
 
 // ---------------------------------------------------------------------------
@@ -320,7 +320,7 @@ describe.skipIf(!ENABLED)('a real container', () => {
          * container, and `afterAll`'s dispose covers this one too.
          */
         const toolsets = (): { file: AnyTool[]; shell: AnyTool[] } => ({
-            file: workspaceTools({ root, mount: SANDBOX_MOUNT }),
+            file: fileTools({ root, mount: SANDBOX_MOUNT }),
             shell: sandboxTools({ root, key: 'live-sandbox', image: IMAGE, engine: ENGINE }),
         });
 
@@ -586,7 +586,7 @@ describe.skipIf(!ENABLED)('mounted reference material', () => {
             { host: assets, at: '/assets', readOnly: true },
             { host: skills, at: '/skills', readOnly: true },
         ];
-        file = workspaceTools({ root, mount: SANDBOX_MOUNT, mounts });
+        file = fileTools({ root, mount: SANDBOX_MOUNT, mounts });
         shell = sandboxTools({
             root,
             key: 'live-mounts',

@@ -4,11 +4,11 @@ import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { tool, type AnyTool, type ToolContext } from '../types.ts';
 
 // ---------------------------------------------------------------------------
-// File tools
+// Workspace tools
 //
 // Nothing here is wired in by default: what an agent may touch is a deployment
 // decision, not a runtime one, so a host that wants filesystem access asks for
-// it by calling `fileTools` and handing the result to a project. What the
+// it by calling `workspaceTools` and handing the result to a project. What the
 // library does provide is the containment, once — every tool below resolves
 // through `within`, so there is a single place where a path is allowed to
 // become real.
@@ -900,7 +900,7 @@ function patchLines(
 /** The family name config selects the whole set by: `tools: [files:*]` (or legacy `workspace:*`). */
 const GROUP = 'files';
 
-export function fileTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<TCtx>[] {
+export function workspaceTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<TCtx>[] {
     const ws = new Workspace(opts);
 
     // What the model is told about naming a file. The long form goes in
@@ -1406,9 +1406,6 @@ export function fileTools<TCtx = unknown>(opts: WorkspaceOptions): AnyTool<TCtx>
               ],
     );
 }
-
-/** @deprecated The group has been `files` for a while; this is the old spelling. */
-export const workspaceTools = fileTools;
 
 /** What each errno means, said the way the rest of these tools say things. */
 const ERRNO: Record<string, string> = {

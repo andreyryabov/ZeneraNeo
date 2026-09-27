@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MEMORY_MOUNT, forgetFile, hostPath, rememberFile } from '../src/memory/files.ts';
 import { FILES_DIR } from '../src/memory/store.ts';
 import { MemoryError } from '../src/memory/types.ts';
-import { workspaceTools } from '../src/tools/workspace.ts';
+import { fileTools } from '../src/tools/files.ts';
 
 const SCRIPT = 'print("risky ports")\n';
 
@@ -117,7 +117,7 @@ describe('the /memory mount', () => {
             root,
             mounts: [{ host: join(dir, FILES_DIR), at: MEMORY_MOUNT }],
         };
-        const tools = workspaceTools(opts);
+        const tools = fileTools(opts);
         call = async (name, args) => {
             const found = tools.find((t) => t.name === name);
             if (!found) {

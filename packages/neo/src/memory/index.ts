@@ -30,7 +30,7 @@ import {
 // `ref` — it cannot know an id that has not been minted — and edges join refs
 // and existing ids indiscriminately, so a whole subgraph arrives in one call.
 // Everything is validated, and every source file stat-ed, before the first
-// mutation, on the same principle as `runPatch` in tools/workspace.ts: a
+// mutation, on the same principle as `runPatch` in tools/files.ts: a
 // commit that fails must leave no half-built graph behind.
 // ---------------------------------------------------------------------------
 

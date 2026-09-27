@@ -854,7 +854,7 @@ export function sandboxTools<TCtx = unknown>(
         description:
             'Runs a shell command in a Linux container and waits for it to finish. The ' +
             `workspace is mounted at ${SANDBOX_MOUNT} and is the working directory, so files you ` +
-            'read and write here are the same files the workspace tools see. Everything ' +
+            'read and write here are the same files the file tools see. Everything ' +
             'else is throwaway. Use this for builds, tests, and package installs; use ' +
             'run_command_background for anything that does not end on its own, such as a ' +
             'server or a watcher.',

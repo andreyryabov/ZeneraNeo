@@ -254,9 +254,9 @@ export function tool<TArgs, TCtx = unknown>(def: Tool<TArgs, TCtx>): Tool<TArgs,
 // Choosing tools by name
 //
 // Config names tools; it cannot contain them. That seam is fine until a set
-// grows: seven filesystem tools written out under every agent is seven chances
+// grows: eight filesystem tools written out under every agent is eight chances
 // to leave one behind on a rename, and the list says nothing about intent —
-// nobody reads it and thinks "the workspace", they read it and count.
+// nobody reads it and thinks "the files", they read it and count.
 //
 // So a selector may also name a *group*, and subtract:
 //
@@ -264,7 +264,7 @@ export function tool<TArgs, TCtx = unknown>(def: Tool<TArgs, TCtx>): Tool<TArgs,
 //
 // Subtraction is what makes the wildcard usable rather than a trap. Without it
 // the only way to withhold one tool from a family is to stop using the family,
-// and an author who wants six of seven is back to listing names.
+// and an author who wants seven of eight is back to listing names.
 //
 // A single tool may be written either way — `read_file` or
 // `files:read_file` (with `workspace:read_file` supported as an alias) —

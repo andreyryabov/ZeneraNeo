@@ -63,7 +63,7 @@ export interface ExaOptions {
 /**
  * A failure the model should read rather than one the run should die of.
  * Module-private: it never escapes a tool, which turns it into `{error, hint}`
- * the same way the workspace tools turn a bad patch into one.
+ * the same way the file tools turn a bad patch into one.
  */
 class ExaError extends Error {
     readonly hint: string | undefined;

@@ -810,7 +810,7 @@ committed shows up as a skill with no files.
 ### 3.5 Tools
 
 A tool is what an agent can _do_ rather than say. `zen run` provides three
-groups - the workspace tools (§3.6), the sandbox tools (§3.7) and the web tools
+groups - the file tools (§3.6), the sandbox tools (§3.7) and the web tools
 (§3.8) - and `agents.yaml` decides which agent holds which. Nothing else reaches
 the machine, so `tools:` is the whole permission model: an agent that does not
 name a tool cannot use it, whatever its prompt says.
@@ -846,6 +846,7 @@ them cannot see a file at all.
 | `find_files`  | Paths containing a substring, case-insensitive                                           |
 | `write_file`  | Creates or overwrites a whole file, making parent directories                            |
 | `apply_patch` | Edits by surrounding context rather than line numbers; several files atomically          |
+| `copy_file`   | Copies, bytes never touching the context; the source may be a read-only mount            |
 | `move_file`   | Moves or renames; refuses to clobber without `overwrite`                                 |
 | `delete_file` | Deletes; a directory needs `recursive`                                                   |
 
@@ -876,8 +877,8 @@ agents:
       tools: [files:*]
 
     - name: reviewer
-      # Everything except the four that can change something.
-      tools: [files:*, -write_file, -apply_patch, -move_file, -delete_file]
+      # Everything except the five that can change something.
+      tools: [files:*, -write_file, -apply_patch, -copy_file, -move_file, -delete_file]
 ```
 
 Selectors apply in the order written, so a `-` line reads as an exception to the
@@ -2014,7 +2015,8 @@ candidates; these are the judgements to make about each one)**
 - [ ] No agent holds `write_file` without `apply_patch`, or `read_file` without
       `list_dir` and `find_files`
 - [ ] An agent that only reads is not holding `write_file`, `apply_patch`,
-      `move_file` or `delete_file` - subtract them from `files:*` (or `workspace:*`)
+      `copy_file`, `move_file` or `delete_file` - subtract them from `files:*`
+      (or `workspace:*`)
 - [ ] `sandbox:*` is granted only where a shell is actually needed
 - [ ] `sandbox.persist: true`, unless a throwaway rootfs is wanted on purpose
 - [ ] The `sandbox:` image carries what the work needs, rather than the prompt
