@@ -429,7 +429,7 @@
                                     "description": "How many seeds a recall starts from.",
                                     "type": "integer",
                                     "exclusiveMinimum": 0,
-                                    "default": 5
+                                    "default": 10
                                 }
                             }
                         }

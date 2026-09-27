@@ -42,7 +42,7 @@ skill.
 | `--case-sensitive`            | Match case exactly. Off by default             |
 | `--in <text\|metadata\|file>` | Where `grep` looks. Repeatable. All by default |
 | `--ids-only`                  | Print bare ids, for piping into `show`         |
-| `--limit <n>`                 | Rows to list, or seeds to rank. 30, search 5   |
+| `--limit <n>`                 | Rows to list, or seeds to rank. 30, search 10  |
 | `--hops <n>`                  | How far `search` follows links. Default 2      |
 | `--nodes <n>`                 | Cap on the subgraph `search` returns. 25       |
 | `--min-score <n>`             | Drop seeds scoring below this. Default 0.15    |

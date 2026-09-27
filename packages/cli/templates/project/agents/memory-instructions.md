@@ -230,6 +230,12 @@ five paths.
 | The passage itself, when its source cannot change under you       | A passage quoted out of something that can                          |
 | A proven absence - looked here and here, it is not there          | Anything not actually verified                                      |
 
+A restatement is not merely wasted space. Recall seeds on text alone, so a run
+that commits its own request as a task, a plan and a result has committed three
+near-copies of one sentence - and on the next similar question those three take
+the seed slots between them. Everything actually learned then ranks below them
+and is never reached.
+
 A search over a schema or a documentation index costs a round trip and comes
 back ranked, so it is the thing most worth not paying for twice. Commit what it
 **resolved to** - the operation and its shape, or the document, heading and line
@@ -300,6 +306,17 @@ pass both `ref` and `id` on the same node.
 already in memory says is folded into it, and its existing id comes back under
 your ref - so the links you asked for still land, on the memory that was already
 there.
+
+**Grep for an entity before minting a node for it.** An endpoint, a command, a
+host, a tool, a file - anything that recurs across runs is one node the rest of
+the graph hangs off, and folding by similarity will not catch a second copy
+worded differently. `memory_grep` the exact string first, and attach your edges
+to what comes back.
+
+A duplicated hub is worse than a missing one. It splits the graph into islands:
+the question reaches one copy, the artifact that answers it hangs off another,
+and the walk out from a seed cannot cross between them - so a memory that is
+present returns nothing, and nothing in the recollection says it happened.
 
 **Say where the content came from.** This is what lets an incomplete
 recollection be continued instead of believed:

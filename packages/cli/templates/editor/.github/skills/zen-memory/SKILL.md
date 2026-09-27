@@ -79,12 +79,12 @@ agents:
           autoRecall: { limit: 3 }
 ```
 
-| Field        | Type                       | Default         | Meaning                                      |
-| ------------ | -------------------------- | --------------- | -------------------------------------------- |
-| `access`     | `read`/`read-write`/`full` | `read-write`    | Which of the five tools this agent gets      |
-| `sees`       | name[]                     | `[]`            | Private slices it may read, on top of `*`    |
-| `writes`     | name[]                     | `[*]`           | Labels it may commit under                   |
-| `autoRecall` | boolean or `{ limit }`     | `true`, limit 5 | Recall before a turn that follows user input |
+| Field        | Type                       | Default          | Meaning                                      |
+| ------------ | -------------------------- | ---------------- | -------------------------------------------- |
+| `access`     | `read`/`read-write`/`full` | `read-write`     | Which of the five tools this agent gets      |
+| `sees`       | name[]                     | `[]`             | Private slices it may read, on top of `*`    |
+| `writes`     | name[]                     | `[*]`            | Labels it may commit under                   |
+| `autoRecall` | boolean or `{ limit }`     | `true`, limit 10 | Recall before a turn that follows user input |
 
 `memory: true` is shorthand for all four defaults.
 
@@ -204,7 +204,7 @@ that kind to build the system prompt.
    `SUPERSEDES`), then `INFORMED` context. A tight budget therefore degrades by
    dropping background rather than by truncating the answer.
 
-Defaults: 5 seeds, 2 hops, 25 nodes. `memory_search` takes `limit`, `max_hops`,
+Defaults: 10 seeds, 2 hops, 25 nodes. `memory_search` takes `limit`, `max_hops`,
 `max_nodes`, `kinds` and `newer_than` to move them.
 
 What comes back is a `<memory-recollection>` block: an indented outline where

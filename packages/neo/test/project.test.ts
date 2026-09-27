@@ -863,7 +863,7 @@ describe('memory in agents.yaml', () => {
                 access: 'read-write',
                 sees: ['*'],
                 writes: ['*'],
-                autoRecall: { query: 'last_user_input', limit: 5 },
+                autoRecall: { query: 'last_user_input', limit: 10 },
             });
         } finally {
             p.close();

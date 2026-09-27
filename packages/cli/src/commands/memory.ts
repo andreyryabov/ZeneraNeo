@@ -132,7 +132,7 @@ export const memory: Command = {
         '  --case-sensitive       Match case exactly. Off by default.',
         '  --in <text|metadata|file>  Where to look. Repeatable. All three by default.',
         '  --ids-only             Print bare ids, for piping into `zen memory show`.',
-        '  --limit <n>            Rows to list, or seeds to rank. Default 30, search 5.',
+        '  --limit <n>            Rows to list, or seeds to rank. Default 30, search 10.',
         '  --hops <n>             How far `search` follows links from a seed. Default 2.',
         '  --nodes <n>            Cap on the subgraph `search` returns. Default 25.',
         '  --min-score <n>        Drop seeds scoring below this. Default 0.15.',

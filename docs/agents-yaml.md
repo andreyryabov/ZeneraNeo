@@ -750,12 +750,12 @@ agents:
           autoRecall: { limit: 3 }
 ```
 
-| Field        | Type                       | Default         | Meaning                                      |
-| ------------ | -------------------------- | --------------- | -------------------------------------------- |
-| `access`     | `read`/`read-write`/`full` | `read-write`    | Which of the five tools this agent gets      |
-| `sees`       | name[]                     | `[]`            | Private slices this agent may read, plus `*` |
-| `writes`     | name[]                     | `[*]`           | Labels it may write under                    |
-| `autoRecall` | boolean or `{ limit }`     | `true`, limit 5 | Recall before a turn that follows user input |
+| Field        | Type                       | Default          | Meaning                                      |
+| ------------ | -------------------------- | ---------------- | -------------------------------------------- |
+| `access`     | `read`/`read-write`/`full` | `read-write`     | Which of the five tools this agent gets      |
+| `sees`       | name[]                     | `[]`             | Private slices this agent may read, plus `*` |
+| `writes`     | name[]                     | `[*]`            | Labels it may write under                    |
+| `autoRecall` | boolean or `{ limit }`     | `true`, limit 10 | Recall before a turn that follows user input |
 
 `access` decides the tools, and nothing else does:
 

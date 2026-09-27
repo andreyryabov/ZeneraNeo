@@ -30,7 +30,7 @@ import { overlap, recencyDecay, tokenize, type VectorBlock } from './vectors.ts'
 // asking how the correction came about.
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_SEEDS = 5;
+export const DEFAULT_SEEDS = 10;
 export const DEFAULT_MAX_HOPS = 2;
 
 /** Past roughly this many nodes a rendered graph reads as soup, not structure. */

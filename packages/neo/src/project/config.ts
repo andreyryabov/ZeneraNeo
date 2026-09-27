@@ -205,7 +205,7 @@ const memoryBinding = z
          * lets it decide when to look.
          */
         autoRecall: z
-            .union([z.boolean(), z.object({ limit: z.int().positive().default(5) }).strict()])
+            .union([z.boolean(), z.object({ limit: z.int().positive().default(10) }).strict()])
             .optional(),
     })
     .strict();

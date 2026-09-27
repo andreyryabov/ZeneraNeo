@@ -5,6 +5,7 @@ import type { Embedder } from '../embedding.ts';
 import { RunStream } from '../events.ts';
 import { frontmatter, toList } from '../frontmatter.ts';
 import { MemoryIndex } from '../memory/index.ts';
+import { DEFAULT_SEEDS } from '../memory/recall.ts';
 import { MemoryStore } from '../memory/store.ts';
 import type { MemoryBinding } from '../memory/types.ts';
 import type { Model } from '../model.ts';
@@ -683,7 +684,7 @@ function memoryFor(spec: AgentConfig): MemoryBinding | undefined {
         sees: b.sees,
         writes: b.writes,
         autoRecall: auto
-            ? { query: 'last_user_input', limit: auto === true ? 5 : auto.limit }
+            ? { query: 'last_user_input', limit: auto === true ? DEFAULT_SEEDS : auto.limit }
             : undefined,
     };
 }
