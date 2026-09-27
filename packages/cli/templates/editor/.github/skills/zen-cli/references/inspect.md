@@ -26,6 +26,8 @@ Four ways to read one run, for two different readers.
 | `--dir <dir>`           | all           | A run directory, as `zen run --json` reports it      |
 | `--memory <dir>`        | report, graph | Read this memory instead of the one the run recorded |
 | `--model <ref>`         | ask           | Answer with this model instead of the run's own      |
+| `--part <name>`         | node          | Print this part in full. Repeatable, prefix-matched  |
+| `--full`                | node          | Print every part, the recorded `request` included    |
 | `--open`                | report        | Open the report in a browser                         |
 | `--rebuild`             | report        | Rebuild `report.html` from the recorded state        |
 | `--no-timing`           | graph         | Leave the clock off the graph                        |
@@ -103,6 +105,7 @@ zen inspect graph --dir "$(zen run --json 'fix the tests' | jq -r .run.dir)"
 %%           dotted edges are fork/join and calls answered out of order
 %%           nodes are declared in run order; every edge is in one block below
 %% detail    zen inspect node n1 n2 n5..n9 --dir <run dir>
+%% why       zen inspect ask n5 "why did you do that?" --dir <run dir>
 %%
 flowchart TD
     n11["n11 llm claude-opus-5 · 4.2k in 310 out · calls run_command · t+32.7s"]
@@ -131,10 +134,15 @@ Four things are deliberate:
   count by eye, which is the difference between spotting a loop and not. It
   also spells out the three directories a reader needs to go further - the run
   directory, the workspace, and the memory graph the run read - and ends with
-  the command that opens a node, so nothing has to be reconstructed from the
-  run id. Rows that do not apply are left out: no `memory` row for a run that
-  read none, no `agents` row for a run with one, no `compacted` row for a run
-  nothing summarised.
+  the command that opens a node and the one that asks a model why it did what
+  it did, so nothing has to be reconstructed from the run id. Rows that do not
+  apply are left out: no `memory` row for a run that read none, no `agents` row
+  for a run with one, no `compacted` row for a run nothing summarised.
+
+One header row answers a question the node lines cannot. `%% thinking` counts
+how many `llm` calls returned reasoning and how many tokens went into it. It
+follows the same rule as the rest: **a missing row is an answer, not a gap.**
+No `%% thinking` row means nothing thought.
 
 A node marked `hidden by n23` was compacted: it ran, and then a summary
 replaced it in what the model could see. `ERROR` marks a tool call that failed.
@@ -160,6 +168,23 @@ Payloads come back resolved and whole - the request, the arguments, the result,
 the branch instructions - with no truncation and no filtering. That is the
 point of the split: the index is cheap, and you only pay for what you open.
 
+One part is held back by default: `request`, the exact bytes sent to the model.
+It is the call's _input_, largely the same from one call to the next, and
+routinely larger than everything else in the run put together - large enough to
+blow a tool-output limit and return you nothing at all. It is named with its
+size rather than dropped, and `--part` brings it or any other part back:
+
+```
+zen inspect node n11 --part thinking --part text --dir <run dir>
+zen inspect node n13 --part args --dir <run dir>
+zen inspect node n11 --full --dir <run dir>
+```
+
+`--part` matches a prefix, so `--part call` catches a part named
+`call run_command (toolu_01A…)` without your typing the id. Naming a part the
+node does not carry is an error listing the ones it does - nothing is ever
+elided in silence.
+
 Two `#` lines come first - which run, how many of its nodes you asked for, and
 a reminder of what part text is. Then each node is framed, and each payload
 inside it is framed with its own byte count:
@@ -167,6 +192,7 @@ inside it is framed with its own byte count:
 ```
 === n13 · tool_call · researcher · 2026-08-25T14:31:07.220Z
     tool: run_command
+--- part request · 126412 bytes · elided (--part request)
 --- part args · 104 bytes
 {"command":"..."}
 --- end args

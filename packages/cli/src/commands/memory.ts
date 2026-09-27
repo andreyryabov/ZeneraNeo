@@ -169,9 +169,9 @@ export const memory: Command = {
         '',
         '  zen memory grep ‘staging.example.com’ --in metadata --in file',
         '',
-        'It is the only subcommand that does not take the directory lock, so it',
-        'works on a memory a run is writing, and on the read-only /memory mount',
-        'inside a sandbox.',
+        'Nothing that only reads takes the directory lock, so every subcommand',
+        'here but `merge` and `forget` works on a memory a run is writing, and on',
+        'the read-only /memory mount inside a sandbox.',
         '',
         '`merge` is for warming a memory in parallel. The lock is per directory,',
         'so N runs write N memories; this folds them back into one:',
@@ -217,12 +217,12 @@ export const memory: Command = {
         const rest = positionals.slice(1);
         // `merge` is the one subcommand that may write a memory into existence;
         // every other one is an inspector and a missing manifest is a mistake.
-        // And `grep` is the one that declines the lock: the two moments it is
-        // most wanted are while a run is writing, and against the read-only
-        // /memory mount — in both of which claiming it fails.
+        // And only the two that write take the lock: the moments a reader is
+        // most wanted are while a run is writing and against the read-only
+        // /memory mount, in both of which claiming it fails.
         const opened = await open(ctx.cwd, values.project, values.dir, {
             create: what === 'merge',
-            lock: what !== 'grep',
+            lock: what === 'merge' || what === 'forget',
         });
 
         try {

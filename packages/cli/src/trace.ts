@@ -274,6 +274,11 @@ function labelOf(n: TrajectoryNode, opts: TraceOptions): string {
             const parts = [safe(`llm ${n.model}`, 60)];
             if (opts.usage !== false) {
                 parts.push(`${format(n.usage.inputTokens)} in ${format(n.usage.outputTokens)} out`);
+                // Only when there was any: on a model that does not think, or
+                // one whose knobs were left off, the absence is the answer.
+                if (n.usage.reasoningTokens > 0) {
+                    parts.push(`${format(n.usage.reasoningTokens)} thinking`);
+                }
             }
             if (n.toolCalls.length) {
                 parts.push(safe(`calls ${n.toolCalls.map((c) => c.name).join(', ')}`, 60));
@@ -487,6 +492,24 @@ function elapsed(entries: readonly TraceEntry[]): string {
     return stamps.length < 2 ? '' : span(Math.max(...stamps) - Math.min(...stamps));
 }
 
+/**
+ * How much of the run was thinking, or nothing at all when none of it was.
+ *
+ * "Did this run reason?" is the commonest configuration question there is, and
+ * a reasoning knob that never reached the provider looks exactly like a healthy
+ * run. The trajectory has always known: an omitted row is the answer, and does
+ * not cost a token on a model that cannot think in the first place.
+ */
+function thinking(state: AgentState, entries: readonly TraceEntry[]): string {
+    const calls = entries.filter((e) => e.node.type === 'llm_call');
+    const thought = calls.filter((e) => e.node.type === 'llm_call' && e.node.thinking).length;
+    const tokens = totalUsage(state.trajectory).reasoningTokens;
+    if (!thought && !tokens) {
+        return '';
+    }
+    return `${thought} of ${calls.length} llm calls · ${format(tokens)} thinking tokens`;
+}
+
 function branchRoster(entries: readonly TraceEntry[]): string[] {
     const out: string[] = [];
     for (const e of entries) {
@@ -513,6 +536,7 @@ function header(state: AgentState, trace: Trace, opts: TraceOptions): string[] {
     }
     const usage = totalUsage(state.trajectory);
     const agents = [...new Set(entries.map((e) => e.node.agent).filter(Boolean))];
+    const where = opts.dir ? ` --dir ${opts.dir}` : '';
 
     const lines = [
         '%% Zenera Neo run trajectory — every node of one run, in order.',
@@ -534,6 +558,10 @@ function header(state: AgentState, trace: Trace, opts: TraceOptions): string[] {
         ),
         row('tokens', `${format(usage.inputTokens)} in · ${format(usage.outputTokens)} out`),
     ];
+    const thought = thinking(state, entries);
+    if (thought) {
+        lines.push(row('thinking', thought));
+    }
     const took = elapsed(entries);
     if (took) {
         lines.push(row('elapsed', took));
@@ -564,7 +592,10 @@ function header(state: AgentState, trace: Trace, opts: TraceOptions): string[] {
         row('reading', 'nN is a node id · t+ counts from the start of the turn'),
         row('', 'dotted edges are fork/join and calls answered out of order'),
         row('', 'nodes are declared in run order; every edge is in one block below'),
-        row('detail', `zen inspect node n1 n2 n5..n9${opts.dir ? ` --dir ${opts.dir}` : ''}`),
+        row('detail', `zen inspect node n1 n2 n5..n9${where}`),
+        // Named here because this is where the question forms. A reader who has
+        // just found the node they distrust will not go looking for a verb.
+        row('why', `zen inspect ask n5 "why did you do that?"${where}`),
         '%%',
     );
     return lines;
@@ -729,7 +760,9 @@ function factsOf(n: TrajectoryNode): Record<string, string> {
             return {
                 model: n.model,
                 stopReason: n.stopReason,
-                tokens: `${n.usage.inputTokens} in, ${n.usage.outputTokens} out`,
+                tokens:
+                    `${n.usage.inputTokens} in, ${n.usage.outputTokens} out` +
+                    (n.usage.reasoningTokens ? `, ${n.usage.reasoningTokens} thinking` : ''),
                 ...(n.request ? {} : { request: 'not recorded — rerun with request recording on' }),
             };
         case 'tool_call':

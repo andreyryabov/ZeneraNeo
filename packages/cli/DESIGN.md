@@ -901,6 +901,28 @@ back - payloads resolved, nothing truncated, nothing filtered. A missing blob
 costs that one part and falls back to its preview, because an inspector that
 refuses to answer at all when a store has been pruned is no inspector.
 
+**One part is held back, and it is named rather than cut.** CLI runs record
+requests, so every `llm_call` carries the exact bytes sent to the model: the
+largest part of the node, near-identical from one call to the next, and by
+itself enough to exceed the output limit of the tool an agent is reading
+through - which returns nothing at all, the one failure mode worse than a
+partial answer. `request` is therefore printed as
+`--- part request · 126412 bytes · elided (--part request)`, and `--part`
+(repeatable, prefix-matched) or `--full` brings it back. The rule the choice
+follows is that **eliding must be visible and reversible**: a part is either
+printed whole or announced with its size and the flag that retrieves it, never
+truncated, so a reader always knows whether the node in front of them is
+complete. Silent truncation would let a model conclude from half a payload
+believing it had all of it.
+
+**The header answers what the node lines cannot.** A trajectory records
+reasoning tokens and a thinking payload but the diagram used to drop both - so
+"was this run thinking?" was unanswerable from the run itself, which is
+precisely the question asked when a run underperforms. `%% thinking` tallies
+the calls that reasoned and the tokens they spent. It follows the header's
+existing rule: a row that does not apply is left out, and its absence is an
+answer - no `%% thinking` row means nothing thought.
+
 **Every label is built from types and identifiers and then stripped to a narrow
 character set.** Tool arguments and tool results are model output, which is to
 say attacker-influenced input as far as the Mermaid parser is concerned. A
