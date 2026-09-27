@@ -146,6 +146,7 @@ zen check my-project            # validate the project and every file it names
 zen inspect                     # open the last run's report.html
 zen inspect graph               # the same run as a graph a model can read
 zen list --sessions             # every project, its sessions and last run
+zen list --runs                 # the most recent runs, newest first, across every project
 echo "triage this" | zen run my-project --json | jq
 zen run batch --input cases.json   # a file full of questions, 16 at a time
 ```

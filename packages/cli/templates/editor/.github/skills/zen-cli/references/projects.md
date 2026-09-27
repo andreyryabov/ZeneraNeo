@@ -81,16 +81,23 @@ the first segment as a **provider name**, not a vendor, so a bare
 ## `zen list`
 
 ```
-zen list [--sessions] [--prune]
+zen list [--sessions] [--runs] [--limit <n>] [--prune]
 ```
 
 Every known project: its sessions, the last run, and whether one is live right
 now.
 
-| Flag         | Meaning                                      |
-| ------------ | -------------------------------------------- |
-| `--sessions` | Expand each project into its sessions        |
-| `--prune`    | Forget entries whose directory has gone away |
+| Flag          | Meaning                                                  |
+| ------------- | -------------------------------------------------------- |
+| `--sessions`  | Expand each project into its sessions                    |
+| `--runs`      | The most recent runs, newest first, across every project |
+| `--limit <n>` | Runs to list. Default 20                                 |
+| `--prune`     | Forget entries whose directory has gone away             |
+
+`--runs` answers "what ran last", which is not a question about one project, so
+on its own it replaces the table rather than following it; each row names the
+project and session it belongs to, and `--json` gives the run directory too —
+which is what `zen inspect --dir` takes.
 
 The registry is an index, not the truth. An entry pointing at a directory that
 no longer exists is shown dimmed rather than hidden, because a moved project is

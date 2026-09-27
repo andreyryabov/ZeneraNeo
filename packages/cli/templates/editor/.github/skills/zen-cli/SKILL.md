@@ -17,7 +17,7 @@ failed, `2` usage, `3` invalid project, `4` no usable credential, `5` sandbox.
 
 ```
 zen init     [dir] [--name <name>] [--model <ref>] [--force]
-zen list     [--sessions] [--prune]
+zen list     [--sessions] [--runs] [--limit <n>] [--prune]
 zen run      [project] [prompt] [options]
 zen run      batch --input <file> [--batch-dir <dir>] [--concurrency <n>] [--memory-read-only]
 zen open     [project] [--editor <cmd>] [--wait]

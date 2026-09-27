@@ -236,7 +236,9 @@ ready to paste.
     meta.json     when it ran, how long it took
 ```
 
-Ids are timestamps: `20260825-143012-a7f3`. Listing them is `zen list --sessions`.
+Ids are timestamps: `20260825-143012-a7f3`. Listing them is `zen list --sessions`,
+or `zen list --runs` for the most recent runs across every project — with
+`--json` each row carries the run directory `--dir` takes.
 
 `--dir` takes that run directory. It is the handle a _program_ holds, because
 `zen run --json` hands one back, and a caller that already has it should not

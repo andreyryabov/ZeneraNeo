@@ -362,6 +362,13 @@ on the next run, which is the only reason it records a pid at all.
 Stale entries - path missing - are listed dimmed, and `zen list --prune` drops
 them.
 
+`zen list --runs` answers a different question with the same material: what ran
+last, anywhere. Run ids are stamps, so the merged newest-first order is a sort
+of directory names across every project, and only the runs that will be shown
+have their `meta.json` opened - which is what keeps `--limit` the cost control
+it looks like. On its own it replaces the project table rather than following
+it, since a flat list already names the project each run belongs to.
+
 ### 5.3 `zen open [project]`
 
 A project is resolved by name or from the current directory, and the path is
