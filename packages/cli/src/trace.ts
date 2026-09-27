@@ -292,7 +292,11 @@ function labelOf(n: TrajectoryNode, opts: TraceOptions): string {
         case 'handoff':
             return safe(`handoff ${n.from} to ${n.to}`);
         case 'fork':
-            return safe(`fork ${n.branches.map((b) => b.name).join(', ')}`);
+            // The context mode is what the branches started from; without it a
+            // reader cannot tell an informed branch from a cold one.
+            return safe(
+                `fork (${n.contextMode} context) ${n.branches.map((b) => b.name).join(', ')}`,
+            );
         case 'join':
             return safe(`join ${n.branches.map((b) => `${b.name}=${b.status}`).join(', ')}`);
         case 'compaction':

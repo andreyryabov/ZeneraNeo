@@ -85,7 +85,10 @@ function label(n) {
     case 'tool_call': return 'call: ' + n.name;
     case 'tool_result': return 'result: ' + n.name + (n.isError ? ' (error)' : '');
     case 'handoff': return 'handoff: ' + n.from + ' -> ' + n.to;
-    case 'fork': return 'fork: ' + names(n.branches.map(function (b) { return b.name; }));
+    // The context mode is what the branches were given to start from, and it
+    // changes how their work should be read, so it belongs on the node itself.
+    case 'fork': return 'fork (' + n.contextMode + ' context): '
+      + names(n.branches.map(function (b) { return b.name; }));
     case 'join': return 'join: ' + names(n.branches.map(function (b) { return b.name + '=' + b.status; }));
     case 'compaction': return 'compaction: ' + n.reason + ' (' + n.covers.length + ' nodes)';
     case 'final_output': return 'final output';
