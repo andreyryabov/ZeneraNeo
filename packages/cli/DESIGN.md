@@ -915,6 +915,43 @@ so a path from anywhere cannot name a directory this layout would never have
 produced. Blobs live one level up, per session, which is why resolving a path
 returns the session as well as the run.
 
+### Asking the run - `zen inspect ask`
+
+Reading what a model was given answers most questions. The one it does not
+answer is _why_, and the only witness to that is the model itself - so `ask`
+replays one `llm_call` to a model with the operator's question appended, and
+tool calling switched off.
+
+What makes the answer worth anything is that nothing is reconstructed. The
+request blob on the node is `Kernel.serializeRequest` - the system prompt, the
+messages and the tool schemas as the provider received them - so a model handed
+it back cannot invent which skill it saw or which instruction it had. Where the
+request was not recorded the command refuses rather than rebuilding one: a
+reconstruction is a different prompt, and an answer about a different prompt is
+worse than no answer. Every run made by the CLI records, which is what
+`recordRequests: true` in the engine is for.
+
+Three decisions carry it:
+
+- **A prefix on the system prompt grants disclosure.** A model asked about its
+  own instructions refuses to quote them, which is precisely the sentence a
+  person debugging a prompt needs. The prefix says the run is over, nothing it
+  writes takes effect, and quoting its prompt, files and skills is what is being
+  asked for. It grants nothing else: no tool, no file, no network, over data the
+  operator can already read with `zen inspect node`.
+- **The recorded answer goes back without its tool calls.** A tool call with no
+  result after it is rejected outright by Anthropic and OpenAI, and inventing a
+  result would be a lie about the run. The calls are quoted inside the question
+  instead, byte-counted like any other evidence, where they are plainly the
+  operator talking about them rather than the conversation replaying them.
+- **The model is found by wire id.** A node records `claude-opus-5`, not a
+  reference that can be built again - the provider belongs to the project. So
+  the id is matched back against what `agents.yaml` declares, which is also the
+  only way a project's own provider, gateway or base url is honoured. A run made
+  with `zen run --model` used something its agent never declared, and the wire
+  id is the only witness of which it was. `--model` names another and says on
+  stderr that the answer is now a second opinion rather than self-examination.
+
 ## 8. Distribution - the `zen` binary
 
 The command name is a `bin` entry in [package.json](packages/cli/package.json),

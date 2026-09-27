@@ -273,7 +273,13 @@ three nodes that explain it:
 DIR=$(zen run my-project "fix the tests" --json | jq -r .run.dir)
 zen inspect graph --dir "$DIR"        # the shape of the run
 zen inspect node n14..n20 --dir "$DIR"  # the nodes behind the ids, in full
+zen inspect ask n17 "why python -c here?" --dir "$DIR"  # ask the model itself
 ```
+
+`ask` replays that one call - its recorded system prompt, messages and tool
+schemas - to a model with your question on the end and tool calling off, and
+tells it the run is over and its own instructions are quotable. It is how a
+prompt that reads correctly and behaves wrongly explains itself.
 
 Every step is a command, and everything each one reads or writes is a plain
 file: the specification, the findings `zen check` prints with a code, a location

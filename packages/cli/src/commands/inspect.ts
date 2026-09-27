@@ -5,6 +5,7 @@ import {
     memoryDir,
     MemoryStore,
     PayloadResolver,
+    projectRegistry,
     readProjectConfig,
     renderReportHtml,
     type AgentState,
@@ -14,7 +15,10 @@ import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parse } from '../args.ts';
+import { buildDiagnostic, parseRecordedRequest, pickModel } from '../ask.ts';
 import type { Command } from '../command.ts';
+import { loadProjectEnv } from '../env.ts';
+import { KeyStore } from '../keys.ts';
 import { sessionIds } from '../projects.ts';
 import { project as resolveProject } from '../resolve.ts';
 import {
@@ -38,6 +42,7 @@ import {
     traceMermaid,
     traceOf,
     type NodeDetail,
+    type TraceEntry,
 } from '../trace.ts';
 
 import {
@@ -53,11 +58,12 @@ import {
     usageError,
     write,
     writeAll,
+    yellow,
 } from '../term.ts';
 
-const USAGE = 'zen inspect [report|graph|node] [run] [--dir <run dir>] [--open]';
+const USAGE = 'zen inspect [report|graph|node|ask] [run] [--dir <run dir>] [--open]';
 
-const SUBCOMMANDS = ['report', 'graph', 'node'];
+const SUBCOMMANDS = ['report', 'graph', 'node', 'ask'];
 
 interface Flags {
     project?: string;
@@ -65,6 +71,7 @@ interface Flags {
     run?: string;
     dir?: string;
     memory?: string;
+    model?: string;
     open?: boolean;
     rebuild?: boolean;
     'no-timing'?: boolean;
@@ -74,13 +81,14 @@ interface Flags {
 // ---------------------------------------------------------------------------
 // zen inspect
 //
-// Three ways to read one run, for two different readers.
+// Four ways to read one run, for two different readers.
 //
 // `report` is for a person: a page with every message and every payload in it.
 // `graph` is the same trajectory for a model — one Mermaid flowchart, short
 // sequential ids, the whole run in a few hundred lines. `node` is the second
 // half of that: having seen the shape and spotted the loop, you open the three
-// nodes that explain it, in full.
+// nodes that explain it, in full. `ask` is the one that talks back: a recorded
+// call replayed to a model with your question on the end.
 //
 // That split is the whole idea. A trajectory is far too big to hand to a model
 // and far too repetitive to need to; an index plus a way to dereference it is
@@ -95,18 +103,20 @@ export const inspect: Command = {
     summary: 'Read a run: a report to look at, a graph to reason over.',
     usage: USAGE,
     banner: { head: 'Zenera', accent: 'Inspect', subtitle: 'Run Trajectory', hue: 'indigo' },
-    // `graph` and `node` are read by a model, and stdout is all of the answer.
-    quiet: (args) => args[0] === 'graph' || args[0] === 'node',
+    // `graph`, `node` and `ask` are read by a model, and stdout is all of the answer.
+    quiet: (args) => ['graph', 'node', 'ask'].includes(args[0] ?? ''),
     details: [
         '  report                 Build and print the path to report.html. Default.',
         '  graph                  The whole run as one Mermaid flowchart, on stdout.',
         '  node <id...>           Those nodes of the graph in full. Ranges: n5..n9.',
+        '  ask <id> <question>    Put a question to the model that made that call.',
         '',
         '  --project <name|dir>   Which project. Defaults to the one you are in.',
         '  --session <id>         Which session. Defaults to the newest that ran.',
         '  --run <id>             Which run. Also the first argument of report/graph.',
         '  --dir <dir>            A run directory, as `zen run --json` reports it.',
         '  --memory <dir>         Read this memory instead of the project’s.',
+        '  --model <ref>          Answer `ask` with this model instead of the run’s.',
         '  --rebuild              Build report.html again from the run state.',
         '  --open                 Open the report in a browser.',
         '  --no-timing            Leave the clock off the graph.',
@@ -126,6 +136,13 @@ export const inspect: Command = {
         '',
         '`node` takes node ids only: name the run with --run, --session or --dir.',
         '',
+        '`ask` replays one `llm_call` — its system prompt, its messages, its tool',
+        'schemas — to a model, with your question on the end and tool calling off.',
+        'It is told the run is over and that it may quote its own instructions, so',
+        'the answer names the prompt or skill behind the behaviour:',
+        '',
+        '  zen inspect ask n11 "why run python -c when the skill says npm test?"',
+        '',
         'All of it, at length: .github/skills/zen-cli/references/inspect.md',
     ],
     run: async (ctx) => {
@@ -137,6 +154,7 @@ export const inspect: Command = {
                 run: { type: 'string' },
                 dir: { type: 'string' },
                 memory: { type: 'string' },
+                model: { type: 'string' },
                 open: { type: 'boolean' },
                 rebuild: { type: 'boolean' },
                 'no-timing': { type: 'boolean' },
@@ -160,6 +178,10 @@ export const inspect: Command = {
             const at = await locate(ctx.cwd, values, undefined, asking);
             return await nodes(at, rest, ctx.json);
         }
+        if (what === 'ask') {
+            const at = await locate(ctx.cwd, values, undefined, asking);
+            return await ask(at, values, rest, ctx.json);
+        }
         const at = await locate(ctx.cwd, values, rest[0], asking);
         if (what === 'graph') {
             return await graph(at, values, ctx.cwd, ctx.json);
@@ -169,7 +191,7 @@ export const inspect: Command = {
 };
 
 // ---------------------------------------------------------------------------
-// The three of them
+// The four of them
 // ---------------------------------------------------------------------------
 
 async function report(at: Located, values: Flags, cwd: string, asJson: boolean): Promise<void> {
@@ -256,6 +278,110 @@ async function nodes(at: Located, ids: readonly string[], asJson: boolean): Prom
         write(renderNode(node));
     }
     note(dim(`the rest of the run: ${cyan(`zen inspect graph --dir ${run.dir}`)}`));
+}
+
+/**
+ * One recorded call, put back to a model with a question on the end.
+ *
+ * `node` shows what the model was given; this asks the model what it made of
+ * it. Everything it sees is what it saw at the time, so an answer naming the
+ * skill that steered it is checkable against the same node.
+ */
+async function ask(
+    at: Located,
+    values: Flags,
+    rest: readonly string[],
+    asJson: boolean,
+): Promise<void> {
+    const { project, session, run } = at;
+    const [id, ...words] = rest;
+    const query = words.join(' ').trim();
+    if (!id || !query) {
+        throw usageError(
+            'ask takes one node id and a question',
+            'zen inspect ask n11 "why did you run python -c instead of the tests?"',
+        );
+    }
+    const trace = traceOf(await readState(run));
+    let wanted: string[];
+    try {
+        wanted = parseNodeIds([id], trace.byKey);
+    } catch (err) {
+        throw usageError(
+            err instanceof Error ? err.message : String(err),
+            'ids come from `zen inspect graph`',
+        );
+    }
+    if (wanted.length !== 1) {
+        throw usageError('ask takes one node, not a range', 'zen inspect ask n11 "…"');
+    }
+    const entry = trace.byKey.get(wanted[0] as string) as TraceEntry;
+    const node = entry.node;
+    if (node.type !== 'llm_call') {
+        throw invalidError(
+            `${entry.key} is a ${node.type} node, and only an llm_call has a request to replay`,
+            'the graph labels those "llm <model>"',
+        );
+    }
+    if (!node.request) {
+        throw invalidError(
+            `${entry.key} did not record the request that produced it`,
+            'only a run made by this CLI records requests; an SDK run needs ' +
+                '`runner({ recordRequests: true })`',
+        );
+    }
+
+    const payloads = new PayloadResolver(new FilePayloadStore({ dir: session.blobs, id: 'file' }));
+    // Deliberately not the preview fallback `node` uses: a truncated request is
+    // not the call that happened, and an answer about it would be about nothing.
+    const recorded = parseRecordedRequest(await payloads.get(node.request));
+    const answer = await payloads.get(node.text);
+    const toolCalls = await Promise.all(
+        node.toolCalls.map(async (c) => ({
+            name: c.name,
+            callId: c.callId,
+            args: await payloads.get(c.args),
+        })),
+    );
+
+    // The project's `.env` first, then the keyring, exactly as a run does it.
+    loadProjectEnv(project);
+    (await KeyStore.open()).materialize();
+    const { config } = readProjectConfig(project);
+    const picked = pickModel(config, node, values.model);
+    if (picked.id !== node.model) {
+        note(
+            yellow(
+                `${picked.label} is answering for ${node.model} — ` +
+                    'a second opinion, not the model looking at itself',
+            ),
+        );
+    }
+    const model = projectRegistry(config).model(picked.ref);
+    const res = await model.generate(
+        buildDiagnostic({ request: recorded, answer, toolCalls, query }),
+    );
+
+    if (asJson) {
+        json({
+            session: session.id,
+            run: run.id,
+            dir: run.dir,
+            node: { id: entry.key, nodeId: node.id, agent: node.agent, model: node.model },
+            model: picked.label,
+            query,
+            answer: res.text,
+            usage: res.usage,
+        });
+        return;
+    }
+    write(res.text);
+    note(
+        dim(
+            `${bold(entry.key)} ${picked.label}` +
+                (res.usage ? ` · ${res.usage.inputTokens} in, ${res.usage.outputTokens} out` : ''),
+        ),
+    );
 }
 
 /** Two lines, because the reader is a model paying by the token for them. */

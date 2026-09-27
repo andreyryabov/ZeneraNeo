@@ -1,6 +1,6 @@
 ---
 name: zen-inspect
-description: Diagnosing a run you did not watch - the `zen inspect graph` → read → `zen inspect node` loop, how to name the run (`--dir`, `--run`, `--session`, and why `node` takes ids only), how to read every part of the graph format (the `%%` header rows and what each count is evidence of, the anatomy of a node line, the label each node kind produces, shapes and colours, the `flow`/`branches`/`calls` edge blocks, branch subgraphs, and what `hidden by` and `ERROR` mean), how to open individual nodes by id or range and read the `===`/`--- part` framing, which payload parts and facts each kind carries, and recipes for the usual faults - a loop, a failing tool, a prompt that was assembled differently from how it reads, a hand-off that fired early, a skill that never activated, a branch that failed, tokens spent where you did not expect. Load before reading any run trajectory, before answering "why did the agent do that", and whenever a run directory is all you have.
+description: Diagnosing a run you did not watch - the `zen inspect graph` → read → `zen inspect node` loop, how to name the run (`--dir`, `--run`, `--session`, and why `node` takes ids only), how to read every part of the graph format (the `%%` header rows and what each count is evidence of, the anatomy of a node line, the label each node kind produces, shapes and colours, the `flow`/`branches`/`calls` edge blocks, branch subgraphs, and what `hidden by` and `ERROR` mean), how to open individual nodes by id or range and read the `===`/`--- part` framing, which payload parts and facts each kind carries, how `zen inspect ask` replays one `llm_call` to a model with a question when reading the node did not settle why it acted, and recipes for the usual faults - a loop, a failing tool, a prompt that was assembled differently from how it reads, a hand-off that fired early, a skill that never activated, a branch that failed, tokens spent where you did not expect. Load before reading any run trajectory, before answering "why did the agent do that", and whenever a run directory is all you have.
 ---
 
 # Reading a run
@@ -14,12 +14,17 @@ a few hundred nodes is far too big to read and far too repetitive to need to.
 | `zen inspect report`    | a human | `report.html` - every message, payload and cost |
 | `zen inspect graph`     | you     | the whole run as one Mermaid flowchart          |
 | `zen inspect node <id>` | you     | those nodes in full, payloads resolved          |
+| `zen inspect ask <id>`  | you     | that call replayed to a model, with a question  |
 
 **`graph` and `node` are the pair you use.** The graph is an index: one line per
 node, short sequential ids, the whole run in a few hundred lines. `node` is the
 dereference: having seen the shape and spotted the loop, you open the three
 nodes that explain it, whole and untruncated. The index is cheap and you only
 pay for what you open.
+
+`ask` is the last resort, not the first move: it spends a model call to ask the
+run's own model why it did what it did. Open the node first - most questions are
+answered by reading what it was given.
 
 `report` is for a person with a browser. Print its path and hand it over; do not
 try to read the HTML.
@@ -32,6 +37,9 @@ zen inspect graph --dir <run dir>
 
 # 2. open the ids that looked wrong
 zen inspect node n13 n17..n19 --dir <run dir>
+
+# 3. only if reading them did not settle it, ask the model itself
+zen inspect ask n17 "why run python -c when the skill says npm test?" --dir <run dir>
 ```
 
 That is the whole method. Never start by opening nodes - without the header
@@ -50,7 +58,8 @@ at a time is the failure the graph exists to prevent.
 
 **`node` has no room for a run.** Every positional it takes is a node id, so
 name the run with `--dir`, `--run` or `--session`. `zen inspect node <run-id> n13`
-reads the run id as an id and fails.
+reads the run id as an id and fails. `ask` is the same: one node id, then the
+question.
 
 For `graph` the positional is a run id unless it contains a `/`, in which case
 it is a directory - a run id is a stamp and never has a separator.
@@ -269,6 +278,36 @@ An `llm_call` whose facts say `request: not recorded — rerun with request
 recording on` cannot tell you what the model was sent. That is a setting, not a
 bug in the node.
 
+## Asking the model
+
+```sh
+zen inspect ask n17 "which instruction made you avoid the test command?" --dir <run dir>
+```
+
+One `llm_call`, replayed: its recorded system prompt, its messages and its tool
+schemas exactly as the provider received them, the answer it gave put back as
+its own turn, and your question after that. Tool calling is off, so it answers
+rather than acts, and nothing is written back into the run.
+
+The system prompt is prefixed with a permission - the run is over, nothing it
+writes takes effect, and it may quote its instructions and skills verbatim.
+That prefix is the reason the command exists: without it a model asked about its
+own prompt refuses to name it.
+
+Why it is worth a call: the context is the real one. A model handed back its own
+recorded prompt cannot invent which skill it saw, and every claim it makes is
+checkable against the same node with `zen inspect node`. Treat the answer as a
+lead to verify, not as a finding.
+
+- The id must be an `llm_call` - the graph labels those `llm <model>`.
+- The run must have recorded the request. Every run made by the CLI does.
+- It answers with the model that made the call. `--model <ref>` names another,
+  and the command says on stderr that the answer is a second opinion.
+
+The questions it is good at are the ones about intent, where the node shows what
+happened but not why: which of two instructions won, why a skill that was
+loaded was not followed, why a tool was used the way it was.
+
 ## Diagnosing
 
 Match the symptom to the row of the header, then open the two or three nodes
@@ -299,12 +338,13 @@ Two rules worth keeping:
 
 ## `--json`
 
-Both subcommands take `--json`, and both print no banner - stdout is the whole
-answer, ready to pipe.
+All three take `--json`, and none prints a banner - stdout is the whole answer,
+ready to pipe.
 
 ```
 graph --json  { session, run, dir, workspace, memory, mermaid, nodes }
 node  --json  { session, run, dir, nodes }
+ask   --json  { session, run, dir, node, model, query, answer, usage }
 ```
 
 `nodes` from `graph` is the index on its own - `{ id, nodeId, kind, agent,
