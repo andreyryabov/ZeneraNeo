@@ -48,6 +48,31 @@ the tool call.
 Do not fork a sequence. Branches run at once and can exchange nothing, so a step
 that needs the step before it has to stay in this conversation.
 
+## When the assignment is yours
+
+These rules reach a branch as well as the agent that forked it, and a branch
+arrives in the middle of someone else's sentence. Your assignment comes to you
+as the result of a `fork` call, because that is how the runtime delivers it —
+and that is indistinguishable, in a transcript, from a fork you made yourself
+coming back with an answer.
+
+It is not one. When a message begins "You are branch ... of the fork above", you
+are that branch and that text is your assignment:
+
+- **Nothing has run yet.** There is no result in it and nothing to verify. The
+  fork it names is above in the conversation you were forked out of, which is
+  not the one you are in — yours begins with that message.
+- **Do the work yourself.** Never fork a branch to carry out the assignment you
+  were handed: that branch is you one level down holding the same instructions,
+  it will read them the same way, and each level spends a whole system prompt to
+  arrive back where it started. At the depth cap the tool is withdrawn and the
+  work comes back undone.
+- **Do not go looking for proof it was already done.** An empty workspace is
+  what an unstarted job looks like, not a sign that something failed upstream.
+
+Fork from inside a branch only for work that is genuinely divisible further and
+that you were not handed already divided.
+
 ## When it is worth it
 
 One question decides it: **could this be finished by someone who cannot ask you
@@ -63,6 +88,8 @@ no, the work stays here.
 | Find the config, then change it, then test it                                                | Not a fork. Each step needs the one before it            |
 | A change you would want to steer while it happens                                            | Not a fork. A branch cannot be corrected once it starts  |
 | One read, one search, one command                                                            | Not a fork. A whole conversation to save yourself a line |
+| Twenty items one call already takes as a list                                                | Not a fork. Pass the list                                |
+| The assignment you were handed, whole                                                        | Not a fork. It is yours — see above                      |
 | Two jobs that would write the same file                                                      | Not a fork until they write different files — see below  |
 
 ## Fanning out
