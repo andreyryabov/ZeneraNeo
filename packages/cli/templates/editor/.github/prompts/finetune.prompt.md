@@ -12,6 +12,12 @@ before you grade, `zen-instructions` before you write a policy file, and
 the work; the skill is how each step is done, and it holds the rules that are
 easy to get wrong.
 
+This prompt is **reentrant**. Tuning is long and gets interrupted - a batch dies,
+a session ends, I stop you mid-round. Every step leaves its result on disk under
+`.finetune/`, so a second invocation does not start over: it reads that state,
+works out which stage and which step the work stopped at, says so, and carries
+on from there unless I tell you otherwise.
+
 ## The two stages
 
 This is two stages, run in order, never interleaved. Say which stage you are in
@@ -26,13 +32,81 @@ facts, not cached live readings. Stage 1 optimises **correctness**.
 
 **Stage 2 - with memory.** Only once stage 1 is stable and well behaved. The
 prompts, skills and house rules are now frozen; the merged memory from the last
-good cold batch is shared read-only across the same cases, and the only file you
-edit is `agents/memory-policy-instructions.md`. Stage 2 optimises **memory use
-and memory correctness**, and the expected result is a dramatic drop in tokens
-and wall clock through reuse, with no verdict changed.
+good cold batch is copied to every item, which reads it and writes into its own
+copy, and the only file you edit is `agents/memory-policy-instructions.md`.
+Stage 2 optimises **memory use and memory correctness**, and the expected result
+is a dramatic drop in tokens and wall clock through reuse, with no verdict
+changed.
 
 Do not start stage 2 while any sample still fails cold. Memory will hide the
 defect and it will come back the day the graph is rebuilt.
+
+## Where you are - work this out before anything else
+
+Do this every time this prompt runs, including the first - on a project that has
+never been tuned it costs one `ls` and tells you to start at section 0.
+
+```sh
+ls .finetune/dataset.json .finetune/rounds 2>/dev/null
+for r in .finetune/rounds/*/; do
+    printf '%s ' "$r"
+    for f in cases.json batch/batch.json findings.md changes.md; do
+        [ -e "$r$f" ] && printf '%s ' "$f"
+    done
+    echo
+done
+```
+
+The rounds are ordered by name, so the last one is the live one. Read its
+`findings.md` heading for the stage - it says `COLD` or `WARM` - and its
+`changes.md` for what was already applied. Then resume by the artefacts the round
+is missing:
+
+| State of the last round                 | Where the work stopped              | Resume at                                                                  |
+| --------------------------------------- | ----------------------------------- | -------------------------------------------------------------------------- |
+| no `.finetune/` at all                  | nothing has been done               | section 0, then 1                                                          |
+| `dataset.json`, no `rounds/`            | dataset built, never sampled        | section 2 (stage 1)                                                        |
+| `cases.json` only                       | sampled, batch never started        | preflight, then run the batch into this same round                         |
+| `batch/` present, no `batch/batch.json` | the batch was interrupted or killed | the round is **void** - see below, then re-run it                          |
+| `batch/batch.json`, no `findings.md`    | the batch finished, nothing graded  | section 3 - `collect.sh oom` first                                         |
+| `findings.md`, no `changes.md`          | graded, nothing applied yet         | section 4                                                                  |
+| `findings.md` and `changes.md`          | edits applied, never measured       | re-run the same cases into a **new** round: section 5 cold, section 6 warm |
+| the last round's heading says `WARM`    | stage 2 is in progress              | the same rows, read against section 6                                      |
+
+Two things the table does not see, so check them by hand:
+
+- **Uncommitted edits under `agents/` with no `changes.md` to explain them.** An
+  apply was interrupted part-way. Read `git status --short agents/` and the diff,
+  finish writing `changes.md` from what is actually on disk, then re-run - do not
+  layer new edits on top of edits you have not recorded.
+- **`zen check` before you resume anything.** A project left broken mid-edit
+  fails every item identically and looks like a catastrophic regression.
+
+A round whose batch never wrote `batch.json` produced no evidence. Move it aside
+rather than grading it or deleting it - `mv .finetune/rounds/rN/batch
+.finetune/rounds/rN/batch.partial` - and re-run that round from the same
+`cases.json`. The same applies to a round `collect.sh oom` calls void.
+
+Resuming never re-samples and never re-merges. Re-use the first round's
+`cases.json` and, in stage 2, the merged graph already sitting in the stage's
+round directory - an interruption is not a reason to change the thing every
+earlier round was measured against. Re-derive nothing from memory of the last
+session either: `findings.md` and `changes.md` are the record, so read them.
+
+Then tell me, in three lines before you do any work: which stage, which round and
+step you are resuming at, and what you are about to run. Continue without waiting
+for me up to the next natural checkpoint - the end of a round's report - because
+that is where this prompt already stops and asks. If I named a stage or a round,
+do that instead of what the state says.
+
+**If nothing is left to do** - the last round is WARM, it met the stage-2 exit
+criteria, and no prose or policy edit has landed since - do not start another
+tuning round. Run one confirmation round instead: the same `cases.json`, the same
+merged graph, the same flags, the same machine, into
+`.finetune/rounds/rN-verify/`. Grade it, write `findings.md` with the heading
+`VERIFIED` if no verdict regressed and the saving still holds, and change nothing.
+If something did regress, that is a real finding: report it and re-open the stage
+it belongs to.
 
 ## 0. Before the first round
 
@@ -136,8 +210,14 @@ wrote to memory is worth keeping**. Tell me both before proposing stage 2.
 
 Freeze the prompts, the skills and the house rules. Merge the last good cold
 round's memory into one graph, read `zen memory stats`, and run the same cases
-shared and `--memory-read-only`. Compare against the cold round the memory came
-from.
+against it with the same flags the cold round used - `--memory <merged graph>`
+and nothing else. Each item copies that graph, recalls from the copy and writes
+back into the copy, so every item starts from the same memory and the source is
+left untouched. Do not use `--memory-read-only`: it removes the commit tool and
+changes the memory prose, which would make the warm round differ from its cold
+baseline in two ways instead of one.
+
+Compare against the cold round the memory came from.
 
 The target is reuse: recall should replace the discovery the cold runs repeated
 every time, so the warm batch is dramatically cheaper in tokens, calls and wall
@@ -147,14 +227,25 @@ reason for more memory. A warm round that is much cheaper still needs one
 trajectory opened to confirm the saving is recall replacing _discovery_ and not
 recall replacing a _live reading_.
 
+Grade what the warm items committed as well as what they recalled - this is the
+one place it can be seen. A node that duplicates something the same run just
+recalled is waste, and a correction committed without `SUPERSEDES` beside the
+stale node it contradicts is worse than waste.
+
 In stage 2 the only file you edit is `agents/memory-policy-instructions.md`. Keep
-the merged graph fixed for the whole stage; re-merging between rounds changes the
-memory and the prose at once. If a finding cannot be written as a recall rule, it
-is a stage-1 finding that escaped - tell me, and we re-open stage 1.
+the merged graph byte-identical for the whole stage: do not re-merge between
+rounds, and never merge a warm round's own copies back into it - either changes
+the memory and the prose at once. If a finding cannot be written as a recall or
+re-commit rule, it is a stage-1 finding that escaped - tell me, and we re-open
+stage 1.
 
 Stage 2 ends when no verdict regressed, the saving is obvious next to the noise
-floor, and every large saving is explained.
+floor, every large saving is explained, and nothing was committed that memory
+already held.
 
-Commit `dataset.json`, `cases.json`, `findings.md` and `changes.md`. Add
+Commit `dataset.json`, `cases.json`, `findings.md` and `changes.md` - they are
+the eval history, and they are what a resumed session reads to find out where it
+got to. Write each of them as its step ends rather than at the end of the round,
+so an interruption never costs more than the step it lands in. Add
 `.finetune/rounds/*/batch/` and `.finetune/empty/` to `.gitignore` - the batch
 directories are large and may hold live API responses.

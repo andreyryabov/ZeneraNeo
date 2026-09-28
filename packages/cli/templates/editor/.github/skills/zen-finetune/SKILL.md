@@ -1,6 +1,6 @@
 ---
 name: zen-finetune
-description: Fine-tune an agent project against a training set in two stages — first WITHOUT memory, then WITH it. Turn a file of example queries in any format into a cached, classified, complexity-annotated dataset with rubrics; sample a batch uniformly across classes and complexities preferring graded samples. Stage 1 runs the batch cold with `zen run batch` against an empty memory, grades every trajectory with `zen inspect graph`, `zen inspect node` and `zen inspect ask` for rubric compliance, optimality, memory hygiene, fork use and delegation, generalises the findings into prompts, skills and new `agents/<topic>-policy-instructions.md` files, and re-runs cold until every query holds and what the runs write to memory is generalisable. Stage 2 then freezes the prose, merges the last good batch's memory, re-runs the same cases shared and read-only, and tunes the memory policy until recall makes the batch dramatically faster and cheaper without changing a verdict. Load before evaluating an agent project against example queries, before acting on "it gets this wrong", when asked to improve prompts or instructions from evidence rather than taste, when building an eval or regression set out of a specification, when optimising memory use or run cost, or whenever a batch of runs has to be graded rather than merely executed.
+description: Fine-tune an agent project against a training set in two stages — first WITHOUT memory, then WITH it. Turn a file of example queries in any format into a cached, classified, complexity-annotated dataset with rubrics; sample a batch uniformly across classes and complexities preferring graded samples. Stage 1 runs the batch cold with `zen run batch` against an empty memory, grades every trajectory with `zen inspect graph`, `zen inspect node` and `zen inspect ask` for rubric compliance, optimality, memory hygiene, fork use and delegation, generalises the findings into prompts, skills and new `agents/<topic>-policy-instructions.md` files, and re-runs cold until every query holds and what the runs write to memory is generalisable. Stage 2 then freezes the prose, merges the last good batch's memory, re-runs the same cases with every item given its own writable copy of that graph, and tunes the memory policy until recall makes the batch dramatically faster and cheaper without changing a verdict. Load before evaluating an agent project against example queries, before acting on "it gets this wrong", when asked to improve prompts or instructions from evidence rather than taste, when building an eval or regression set out of a specification, when optimising memory use or run cost, or whenever a batch of runs has to be graded rather than merely executed.
 ---
 
 # Fine-tuning an agent project
@@ -38,8 +38,8 @@ flowchart TD
 
     subgraph S2["STAGE 2 — with memory: tune recall"]
         H[merge memory from<br/>the last good cold batch]
-        I[same batch, shared graph<br/>--memory-read-only]
-        J{shorter, and still correct?}
+        I[same batch, each item<br/>its own writable copy]
+        J{shorter, still correct,<br/>and did it re-commit?}
         K[generalise findings<br/>memory-policy-instructions.md]
         H --> I --> J
         J -- no --> K
@@ -59,14 +59,24 @@ Fine-tuning is two stages, run in order and never interleaved. They optimise
 different things, they are graded on different evidence, and running them
 together makes both unreadable.
 
-|                    | **Stage 1 — without memory**                                                      | **Stage 2 — with memory**                                                                |
-| ------------------ | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Phases             | 1 to 7                                                                            | 8                                                                                        |
-| What is tuned      | agent prompts, skills, `agents/instructions.md`, new policy files                 | the memory policy: what is committed, and when it is recalled                            |
-| Memory at run time | `--memory .finetune/empty` — every item starts empty and **writes its own graph** | one merged graph, shared, `--memory-read-only` — every item **reads, nobody writes**     |
-| Graded on          | the eight criteria; the trajectory must be right _from nothing_                   | whether recall shortened the trajectory without making it wrong                          |
-| The win            | correctness — the agent does the right work for the right reason                  | speed and cost — the same verdicts for dramatically fewer tokens and less wall clock     |
-| Done when          | every sample holds cold, and what each run _wrote_ to memory is generalisable     | every sample still holds warm, materially cheaper, and no recall replaced a live reading |
+|                    | **Stage 1 — without memory**                                                      | **Stage 2 — with memory**                                                                       |
+| ------------------ | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Phases             | 1 to 7                                                                            | 8                                                                                               |
+| What is tuned      | agent prompts, skills, `agents/instructions.md`, new policy files                 | the memory policy: what is committed, and when it is recalled                                   |
+| Memory at run time | `--memory .finetune/empty` — every item starts empty and **writes its own graph** | `--memory <merged>` — every item starts from **its own copy** of one graph and writes into that |
+| Graded on          | the eight criteria; the trajectory must be right _from nothing_                   | whether recall shortened the trajectory, and what was committed on top of a graph that knew     |
+| The win            | correctness — the agent does the right work for the right reason                  | speed and cost — the same verdicts for dramatically fewer tokens and less wall clock            |
+| Done when          | every sample holds cold, and what each run _wrote_ to memory is generalisable     | every sample still holds warm, materially cheaper, and no recall replaced a live reading        |
+
+**Both stages run the same tool surface, and that is the point.** A batch given
+a memory directory copies it per item and lets the item write — cold from an
+empty directory, warm from the merged graph — so the agent sees the same tools
+and the same house rules in both. `--memory-read-only` would share one graph
+across the batch instead, but it also clamps every agent's `access` to `read`,
+which removes `memory_commit` from the schema and changes the memory prose the
+model reads. That is two variables moving at once, and a warm round has only one
+number to explain them with. Keep the flag for production-shaped runs where many
+processes genuinely share one graph; do not tune with it.
 
 **Stage 1 writes memory but never reads it.** That is not a side effect to be
 tolerated — it is half of what stage 1 grades. Each cold item commits into its
@@ -503,6 +513,7 @@ exactly one of:
 | `REGRESSION` | a sample that passed now fails, whatever else improved             |
 | `MIXED`      | something fixed and something broken in the same round             |
 | `VOID`       | any exit 137, or the machine spec changed — nothing here is graded |
+| `VERIFIED`   | a confirmation round after both stages ended — nothing was changed |
 
 Five rules keep the block honest, and each is a round that was wasted once:
 
@@ -736,21 +747,33 @@ defect is invisible, and the failure comes back the day the graph is rebuilt.
 
 Note the division of labour, because it is the part most often confused:
 
-- **Stage 1 grades what an agent _writes_.** Each item has its own empty graph
-  and writes freely, so criterion 3 is checked there, cold.
-- **Stage 2 grades what an agent _reads_.** One shared graph, nobody writes, so
-  every item sees the same memory and the comparison is clean.
+- **Stage 1 grades what an agent writes into nothing.** Each item has its own
+  empty graph, so criterion 3 is about whether the commit was worth making at
+  all.
+- **Stage 2 grades what an agent reads, and what it writes on top of a graph
+  that already knew.** Every item starts from an identical copy of the merged
+  graph, so the input is the same for all of them and the comparison is clean —
+  and because the copies are per item, nothing one item commits can reach
+  another.
+
+That second half is a question stage 1 cannot ask. Cold, every graph is empty,
+so there is nothing to duplicate and nothing to supersede. Warm, an item that
+commits a near-copy of a node it just recalled is growing the graph for no
+information, and an item that learns the old fact was wrong and does not
+supersede it leaves the next run reading the wrong thing. Both are recall-policy
+findings and both are visible only here.
 
 The only artefact stage 2 edits is `agents/memory-policy-instructions.md` — rules
-about _when_ to recall, when to trust a recalled fact, and when to go and look
-anyway. If a stage-2 finding cannot be written as a recall rule, it is a stage-1
+about _when_ to recall, when to trust a recalled fact, when to go and look
+anyway, and what to commit when memory already holds a version of it. If a
+stage-2 finding cannot be written as a recall or re-commit rule, it is a stage-1
 finding that escaped: note it, finish the stage, and re-open stage 1 rather than
 quietly editing a prompt here.
 
 ### The round
 
 Merge the last good cold round's memory into one graph, then run the same cases
-against it read-only:
+against a copy of it:
 
 ```sh
 zen memory merge .finetune/rounds/r2/batch/*/memory --dir .finetune/rounds/r3/memory --yes
@@ -759,16 +782,38 @@ zen memory stats --dir .finetune/rounds/r3/memory
 mkdir -p .finetune/rounds/r3
 zen run batch --input .finetune/rounds/r1/cases.json \
     --batch-dir .finetune/rounds/r3/batch \
-    --memory .finetune/rounds/r3/memory --memory-read-only --concurrency 8
+    --memory .finetune/rounds/r3/memory --concurrency 8
 ```
 
-Same cases file, same seed, same machine as the cold round it is compared to.
+Same cases file, same seed, same machine as the cold round it is compared to,
+and — crucially — the same flags. The cold round's `--memory .finetune/empty`
+and this round's `--memory .finetune/rounds/r3/memory` differ in one thing only:
+whether the directory being copied holds a graph. Everything else the agent sees
+is identical, which is what makes the two rounds subtractable.
 
-The glob is safe: an item that committed nothing has its memory directory
-deleted, so `*/memory` only ever matches real graphs. `--memory-read-only` shares
-one graph across every item and clamps all writes — which is the only way to run
-a batch against a single memory at all, since a writable graph is locked per
-directory and would otherwise be copied per item.
+Five things follow from copying rather than sharing:
+
+- **The source is never written.** Each item copies it, writes into the copy,
+  and leaves the copy behind at `<id>/memory/`. The merged graph is the same
+  bytes at the end of the stage as at the start.
+- **`<id>/memory/` existing means nothing warm.** Cold, a directory is there
+  only if the item committed — a memory with no manifest is deleted after the
+  run. Warm, every copy arrives with the merged graph's manifest, so every item
+  has one whether it wrote or not. What an item actually added is in its
+  trajectory, as the `memory_op` nodes; read those, not the directory listing.
+- **Never merge a warm round's copies back into the source.** The glob that was
+  right for a cold round — `r2/batch/*/memory` — matches every item of a warm
+  one and would fold the whole merged graph back in N times. Merge once, at the
+  top of the stage, from the last good _cold_ round, and never again.
+- **Copies cost disk and a pause.** They are made serially, before the first
+  model call, one per item, and they are kept: check `zen memory stats` and
+  multiply by the item count before starting a round on a large graph.
+- **The source must not be locked.** `zen run batch` refuses a memory another
+  process holds, so close any `zen memory` session first.
+
+The merge glob above is safe because it reads the _cold_ round: an item that
+committed nothing has its memory directory deleted, so `*/memory` there only
+ever matches real graphs.
 
 Read `zen memory stats` before the run. A merged graph with forty near-duplicate
 nodes says the commit policy is too loose, and that is a stage-1 fix before it is
@@ -790,6 +835,8 @@ the cold round the memory came from. The heading carries `WARM`:
 | Recall replaces a discovery step: it knows the endpoint without probing | Recall replaces a _reading_: it reports yesterday's inbox as today's |
 | One recall near the top, then straight to work                          | Repeated searches of memory mid-run, finding nothing                 |
 | Recalled facts are checked when they are cheap to check                 | A recalled fact contradicts a fresh reading and the recall wins      |
+| Nothing is committed that memory already held                           | A near-copy of a node it recalled this run, committed again          |
+| A fact found to be wrong is superseded, not merely added to             | The correction sits beside the stale node with no SUPERSEDES         |
 | The answer is at least as good                                          | The answer got worse — a stale fact short-circuited the work         |
 
 The whole point is the second column of row one. Memory should shorten the
@@ -814,12 +861,14 @@ done
 
 ### The stage-2 loop, and leaving it
 
-Any sample that got longer, or got worse, is a finding. Generalise it exactly as
-in phase 5 — a pattern across samples, not one sample — write the rule into
-`agents/memory-policy-instructions.md`, and re-run **the same merged graph** with
-the same cases into a new round. Re-merging between rounds changes the memory and
-the prose at once, so merge once per stage-2 session and keep that graph until
-the stage ends.
+Any sample that got longer, or got worse, is a finding, and so is any item that
+re-committed what it had just recalled. Generalise it exactly as in phase 5 — a
+pattern across samples, not one sample — write the rule into
+`agents/memory-policy-instructions.md`, and re-run from **the same merged graph**
+with the same cases into a new round. Re-merging between rounds, or merging a
+warm round's own copies back into the source, changes the memory and the prose at
+once; merge once per stage-2 session and keep that graph byte-identical until the
+stage ends.
 
 Stage 2 is over when, against the cold baseline:
 
@@ -827,7 +876,10 @@ Stage 2 is over when, against the cold baseline:
 2. the batch is materially cheaper — a saving that is obvious next to the noise
    floor, not inside it;
 3. every large saving has been traced to recall replacing discovery, not recall
-   replacing a live reading.
+   replacing a live reading;
+4. what the warm items committed is either nothing or a genuine addition — no
+   duplicates of what they recalled, and every correction linked with
+   `SUPERSEDES` rather than left beside the node it contradicts.
 
 If the project will ship with a warm memory, the merged graph from the last good
 round is the one to promote into `memory/`. Read **zen-memory-warmup** first —
@@ -847,7 +899,7 @@ the rules about what belongs in a shipped graph.
             changes.md      what was edited and which findings motivated it
         r2/ …               stage 1, cold — until the stage-1 exit criteria hold
         r3/                 stage 2, warm
-            memory/         the merged graph; built once and kept for the whole stage
+            memory/         the merged graph; built once, copied per item, never written to
             batch/ findings.md changes.md
         r4/ …               stage 2, warm — same merged graph, recall policy edited
 ```
@@ -855,7 +907,8 @@ the rules about what belongs in a shipped graph.
 Commit `dataset.json`, `cases.json`, `findings.md` and `changes.md` — they are the
 project's eval history and the reason a later reader can tell why an instruction
 exists. The `batch/` directories are large, contain whole workspaces, and may
-contain live API responses: ignore them. Add to `.gitignore`:
+contain live API responses: ignore them. A warm round's is larger still — it
+holds one copy of the merged graph per item. Add to `.gitignore`:
 
 ```
 .finetune/rounds/*/batch/
@@ -888,25 +941,32 @@ an edit made here is gone at the next one. Change them upstream, in the CLI's
 3. **Never edit a prompt, a skill or a house rule during stage 2.** The prose is
    the fixed baseline recall is measured against; stage 2 edits
    `agents/memory-policy-instructions.md` and nothing else.
-4. **Never change the sample and the instructions in the same round.** Two
+4. **Never tune with `--memory-read-only`.** It clamps `access` to `read`, which
+   takes `memory_commit` out of the schema and changes the memory prose — so a
+   warm round run that way differs from its cold baseline in two ways, not one.
+   Give `--memory` a real graph and let each item copy it.
+5. **Never merge a warm round's copies back into the stage's graph.** The merged
+   graph is built once, from the last good cold round, and stays byte-identical
+   until the stage ends.
+6. **Never change the sample and the instructions in the same round.** Two
    variables, one number, no conclusion.
-5. **Never write a rule from one failing sample** unless the failure was
+7. **Never write a rule from one failing sample** unless the failure was
    catastrophic. Note it and wait for the pattern.
-6. **Never edit `zen`'s four instruction files.** `zen check --fix` overwrites
+8. **Never edit `zen`'s four instruction files.** `zen check --fix` overwrites
    them. Project policy goes in a `-policy-` file beside them.
-7. **Never adjust a rubric after seeing the run.** Fix a wrong rubric before the
+9. **Never adjust a rubric after seeing the run.** Fix a wrong rubric before the
    round and say so, or leave it.
-8. **Never cite a finding without a node id.** If you cannot point at it in the
-   graph, it did not happen.
-9. **Never let a rule name the dataset.** Endpoints and entity names from the
-   training set inside an instruction means the eval passes and the product does
-   not.
-10. **Re-run `zen check` after every edit round.** A load error fails every item
+10. **Never cite a finding without a node id.** If you cannot point at it in the
+    graph, it did not happen.
+11. **Never let a rule name the dataset.** Endpoints and entity names from the
+    training set inside an instruction means the eval passes and the product does
+    not.
+12. **Re-run `zen check` after every edit round.** A load error fails every item
     identically and looks exactly like a catastrophic regression.
-11. **Never grade a round that was OOM-killed.** `collect.sh oom` before
+13. **Never grade a round that was OOM-killed.** `collect.sh oom` before
     anything else. An exit 137 is the machine, not the prose, and the items
     still report `ok`.
-12. **Never compare two rounds measured on different machines**, or a warm round
+14. **Never compare two rounds measured on different machines**, or a warm round
     against anything but the cold round its memory was merged from. Tokens and
     wall clock are only comparable within one spec and one memory mode.
 
