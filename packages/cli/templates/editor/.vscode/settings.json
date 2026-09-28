@@ -1,5 +1,6 @@
 {
     "chat.useNestedAgentsMdFiles": false,
+    "terminal.integrated.tabs.description": "Agent",
     "yaml.schemas": {
         "./.vscode/agents.schema.json": [
             "agents.yaml",
