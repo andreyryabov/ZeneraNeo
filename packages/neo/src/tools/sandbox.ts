@@ -41,6 +41,8 @@ const MAX_TIMEOUT_MS = 3_600_000;
 const DEFAULT_PIDS = 1024;
 /** How long a container gets to stop itself before it is killed. */
 const STOP_GRACE_S = 2;
+/** SIGKILL, which is how the kernel's out-of-memory killer arrives. */
+const KILLED = 137;
 
 // Standard mode's resource ceilings. Even without the strict profile, an
 // unbounded container can exhaust host cores or memory during runaway builds.
@@ -369,13 +371,46 @@ export interface ExecResult {
     truncated?: boolean;
     timed_out?: boolean;
     duration_ms: number;
+    out_of_memory?: OutOfMemory;
 }
+
+/**
+ * Why a command was killed for memory, which is a different question from
+ * whether it was. A container that overran its own `--memory` will do it again
+ * however long anyone waits; one the kernel sacrificed for a neighbour may
+ * simply succeed later. Exit code 137 is all either of them says.
+ */
+export interface OutOfMemory {
+    /** what this container was allowed */
+    limit_mib: number;
+    /** high-water mark for the container's whole life, not for this command */
+    peak_mib?: number;
+    /** false when the limit itself is the problem, so an unchanged rerun ends the same way */
+    retryable: boolean;
+    hint: string;
+}
+
+/**
+ * Asked of the container after a kill. Builtins only: a slim image may have no
+ * `awk`, and strict hardening leaves nowhere writable to install one. `oom_kill`
+ * counts kills in this container's cgroup and no other, which is what separates
+ * the two cases. Unreadable values print empty, and the caller reads that as
+ * "could not tell".
+ */
+const CGROUP = [
+    `peak=; kills=`,
+    `read peak < /sys/fs/cgroup/memory.peak 2>/dev/null`,
+    `while read -r k v; do [ "$k" = oom_kill ] && kills=$v; done < /sys/fs/cgroup/memory.events 2>/dev/null`,
+    `echo "peak=$peak kills=$kills"`,
+].join('\n');
 
 interface Job {
     id: string;
     command: string;
     cwd: string;
     startedAt: number;
+    /** worked out once, because a log is read many times and the evidence is consumed */
+    oom?: OutOfMemory;
 }
 
 /**
@@ -390,6 +425,8 @@ export class Sandbox {
     readonly #jobs = new Map<string, Job>();
     #ready?: Promise<void>;
     #created = false;
+    /** kills counted in this container's cgroup as of the last probe */
+    #kills?: number;
 
     constructor(opts: SandboxOptions) {
         this.spec = resolveSpec(opts);
@@ -530,6 +567,7 @@ export class Sandbox {
             truncated: res.truncated || undefined,
             timed_out: res.timedOut || undefined,
             duration_ms: Date.now() - startedAt,
+            out_of_memory: await this.#oom(res.code, res.timedOut, opts.signal),
         };
     }
 
@@ -632,18 +670,25 @@ export class Sandbox {
         const output = rest.join('\n---\n');
         const lines = Number(meta.lines ?? 0);
         const shown = output ? output.replace(/\n$/, '').split('\n').length : 0;
+        const exit = meta.exit === undefined ? undefined : Number(meta.exit);
+        // Kept on the job: a second read would find the kill counter unchanged
+        // and report this container's own overrun as the machine's doing.
+        if (exit === KILLED && !job.oom) {
+            job.oom = await this.#oom(exit, false);
+        }
 
         return {
             job_id: id,
             command: job.command,
             running: meta.exit === undefined,
-            exit_code: meta.exit === undefined ? undefined : Number(meta.exit),
+            exit_code: exit,
             duration_ms: Date.now() - job.startedAt,
             start_line: first,
             end_line: first + shown - 1,
             lines,
             truncated: first + shown - 1 < lines || undefined,
             output,
+            out_of_memory: job.oom,
         };
     }
 
@@ -711,6 +756,56 @@ export class Sandbox {
     #timeout(seconds?: number): number {
         const wanted = seconds && seconds > 0 ? seconds * 1000 : this.spec.timeout * 1000;
         return Math.min(wanted || DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS);
+    }
+
+    /**
+     * Turns a bare 137 into a reason, by asking the container which cgroup did
+     * the killing. Only a kill counted against *this* container is the caller's
+     * to fix; the rest is the machine being busy, and telling someone to shrink
+     * a command that already fit would send them off after the wrong thing.
+     */
+    async #oom(
+        code: number,
+        timedOut: boolean,
+        signal?: AbortSignal,
+    ): Promise<OutOfMemory | undefined> {
+        // A timeout or a cancel kills podman on this side, not the container,
+        // and an uncapped container has no limit it could have exceeded.
+        if (code !== KILLED || timedOut || signal?.aborted || this.spec.memory <= 0) {
+            return undefined;
+        }
+        const res = await this.#run(
+            this.spec.engine,
+            ['exec', '--interactive', this.name, '/bin/sh', '-s'],
+            { input: CGROUP, timeoutMs: 15_000 },
+        ).catch(() => undefined);
+
+        const out = res?.stdout ?? '';
+        const peak = Number(/peak=(\d+)/.exec(out)?.[1]);
+        const kills = Number(/kills=(\d+)/.exec(out)?.[1]);
+        const counted = Number.isFinite(kills);
+        // Nothing readable is read as our own doing: that costs one wasted
+        // retry, where the other guess costs an agent retrying forever a
+        // command that was never going to fit.
+        const own = !counted || kills > (this.#kills ?? 0);
+        if (counted) {
+            this.#kills = kills;
+        }
+
+        const limit = this.spec.memory;
+        return {
+            limit_mib: limit,
+            peak_mib: Number.isFinite(peak) ? Math.round(peak / (1024 * 1024)) : undefined,
+            retryable: !own,
+            hint: own
+                ? `this container is limited to ${limit} MiB and the command wanted more. ` +
+                  `Running it again unchanged will end the same way: give the sandbox more ` +
+                  `memory in the project configuration, or do the work in smaller pieces.`
+                : `the machine ran out of memory while this container was inside its ` +
+                  `${limit} MiB limit, so it was killed for something another container did. ` +
+                  `The command itself does not need to change, and may work once the machine ` +
+                  `is less busy.`,
+        };
     }
 
     #podman(args: readonly string[]): Promise<ProcResult> {

@@ -10,6 +10,7 @@ import {
     SANDBOX_MOUNT,
     SandboxPool,
     sandboxTools,
+    type OutOfMemory,
 } from '../src/tools/sandbox.ts';
 import type { AnyTool, ToolContext } from '../src/types.ts';
 
@@ -258,6 +259,74 @@ describe.skipIf(!ENABLED)('a real container', () => {
                     expect((await ro.exec('printf x > /tmp/fine')).exit_code).toBe(0);
                 } finally {
                     await ro.dispose();
+                }
+            },
+            3 * MINUTE,
+        );
+    });
+
+    /**
+     * Which cgroup did the killing is not something argv can be asked, so the
+     * unit tests can only check the arithmetic against a counter they invented.
+     * Here the kernel supplies it.
+     */
+    describe('an out-of-memory kill', () => {
+        // 512 MB held in a shell variable, inside a container allowed 256 MiB.
+        // `head` and `tr` only, so it does not assume the image's interpreter.
+        const HOG = String.raw`x=$(head -c 512000000 /dev/zero | tr "\0" a); echo survived`;
+
+        const tight = (key: string): Sandbox =>
+            new Sandbox({ root, key, image: IMAGE, engine: ENGINE, memory: 256 });
+
+        it(
+            'blames the limit rather than the machine, and leaves other failures alone',
+            async () => {
+                const small = tight('live-sandbox-oom');
+                try {
+                    const res = await small.exec(HOG, { timeout: 60 });
+                    expect(res.exit_code).toBe(137);
+                    expect(res.stdout).not.toContain('survived');
+                    expect(res.out_of_memory?.limit_mib).toBe(256);
+                    expect(res.out_of_memory?.retryable).toBe(false);
+                    expect(res.out_of_memory?.peak_mib).toBeGreaterThan(128);
+
+                    const plain = await small.exec('echo no; exit 3');
+                    expect(plain.exit_code).toBe(3);
+                    expect(plain.out_of_memory).toBeUndefined();
+                } finally {
+                    await small.dispose();
+                }
+            },
+            3 * MINUTE,
+        );
+
+        it(
+            'explains a killed job the same way however often its log is read',
+            async () => {
+                const small = tight('live-sandbox-oom-job');
+                try {
+                    const job = await small.startJob(HOG);
+                    // Waits by the clock, not by a count: on a loaded machine a
+                    // poll costs seconds, and counting them shortens the wait
+                    // exactly when the job needs it to be longer.
+                    const until = Date.now() + 60_000;
+                    let last = (await small.readJob(job.id)) as Record<string, unknown>;
+                    while (last.running === true && Date.now() < until) {
+                        await new Promise((r) => setTimeout(r, 1000));
+                        last = (await small.readJob(job.id)) as Record<string, unknown>;
+                    }
+
+                    expect(last.running).toBe(false);
+                    expect(last.exit_code).toBe(137);
+                    const verdict = last.out_of_memory as OutOfMemory | undefined;
+                    expect(verdict?.retryable).toBe(false);
+
+                    // The second read cannot see the counter move, so only the
+                    // cache keeps it from calling this the machine's doing.
+                    const again = (await small.readJob(job.id)) as Record<string, unknown>;
+                    expect(again.out_of_memory).toEqual(verdict);
+                } finally {
+                    await small.dispose();
                 }
             },
             3 * MINUTE,

@@ -411,6 +411,94 @@ describe('background jobs', () => {
     });
 });
 
+describe('an out-of-memory kill', () => {
+    // The command's own exec carries `--workdir`; the cgroup probe does not,
+    // which is the only thing telling the two `exec` calls apart here.
+    const COMMAND = 'exec --interactive --workdir';
+    const probes = (f: Fake) => f.calls.filter((c) => c.opts?.input?.includes('memory.events'));
+
+    it('blames the container when the kill was counted against it', async () => {
+        const f = fresh();
+        f.reply(COMMAND, { code: 137 });
+        f.reply('/bin/sh -s', { stdout: 'peak=536870912 kills=1\n' });
+
+        const res = await box(f, { memory: 512 }).exec('python3 -c "bytearray(2**31)"');
+
+        expect(res.exit_code).toBe(137);
+        expect(res.out_of_memory).toMatchObject({
+            limit_mib: 512,
+            peak_mib: 512,
+            retryable: false,
+        });
+        expect(res.out_of_memory?.hint).toContain('limited to 512 MiB');
+    });
+
+    it('blames the machine when the count did not move', async () => {
+        const f = fresh();
+        const b = box(f, { memory: 512 });
+
+        f.reply(COMMAND, { code: 137 });
+        f.reply('/bin/sh -s', { stdout: 'peak=536870912 kills=1\n' });
+        const own = await b.exec('big');
+
+        // Same counter a second time: nothing was killed in *this* cgroup, so
+        // the kill came from outside it.
+        f.reply(COMMAND, { code: 137 });
+        f.reply('/bin/sh -s', { stdout: 'peak=536870912 kills=1\n' });
+        const outside = await b.exec('big');
+
+        expect(own.out_of_memory?.retryable).toBe(false);
+        expect(outside.out_of_memory?.retryable).toBe(true);
+        expect(outside.out_of_memory?.hint).toContain('machine ran out of memory');
+    });
+
+    it('assumes the container when the cgroup cannot be read', async () => {
+        const f = fresh();
+        f.reply(COMMAND, { code: 137 });
+        f.reply('/bin/sh -s', { stdout: 'peak= kills=\n' });
+
+        const res = await box(f, { memory: 512 }).exec('big');
+
+        expect(res.out_of_memory?.retryable).toBe(false);
+        expect(res.out_of_memory?.peak_mib).toBeUndefined();
+    });
+
+    it('does not probe for a timeout, an ordinary failure, or an uncapped box', async () => {
+        const timed = fresh();
+        timed.reply(COMMAND, { code: 137, timedOut: true });
+        expect((await box(timed, { memory: 512 }).exec('sleep 1')).out_of_memory).toBeUndefined();
+        expect(probes(timed)).toHaveLength(0);
+
+        const failed = fresh();
+        failed.reply(COMMAND, { code: 1 });
+        expect((await box(failed, { memory: 512 }).exec('false')).out_of_memory).toBeUndefined();
+        expect(probes(failed)).toHaveLength(0);
+
+        const uncapped = fresh();
+        uncapped.reply(COMMAND, { code: 137 });
+        expect((await box(uncapped, { memory: 0 }).exec('big')).out_of_memory).toBeUndefined();
+        expect(probes(uncapped)).toHaveLength(0);
+    });
+
+    it('explains a killed job once, however often its log is read', async () => {
+        const f = fresh();
+        const b = box(f, { memory: 512 });
+        const job = await b.startJob('npm run build');
+
+        f.reply('/bin/sh -s', { stdout: 'lines=1\nexit=137\n---\nboom\n' });
+        f.reply('/bin/sh -s', { stdout: 'peak=536870912 kills=1\n' });
+        const first = (await b.readJob(job.id)) as Record<string, unknown>;
+
+        f.reply('/bin/sh -s', { stdout: 'lines=1\nexit=137\n---\nboom\n' });
+        const again = (await b.readJob(job.id)) as Record<string, unknown>;
+
+        expect(first.out_of_memory).toMatchObject({ limit_mib: 512, retryable: false });
+        // Re-probing would find the counter unchanged and change its mind.
+        expect(again.out_of_memory).toBe(first.out_of_memory);
+        expect(probes(f)).toHaveLength(1);
+    });
+});
+
 describe('disposal', () => {
     it('removes an ephemeral container', async () => {
         const f = fresh();
