@@ -6,9 +6,17 @@
 #   collect.sh graphs [id...]     every trajectory graph, concatenated
 #   collect.sh paths [id...]      id <TAB> run directory, for xargs and zen inspect
 #   collect.sh failures           only the items that did not finish, with errors
+#   collect.sh oom                items whose commands were killed; is this round gradeable
 #
 #   -d <dir>    the batch directory; default the newest .finetune/rounds/*/batch
 #   -s <file>   the dataset, for rubrics; default .finetune/dataset.json
+#
+# Run `oom` first, and do not expect `failures` to have caught it: an item whose
+# command was killed usually recovers, answers anyway and is recorded `ok`. A
+# round can read "16 items, 16 ok, 0 failed" with six of them OOM-killed inside.
+# A round that contains an exit 137 ran out of memory, and nothing it did is
+# evidence about the prompt — grading it sends the next round after a defect
+# that does not exist. See the zen-sandbox-capacity skill.
 #
 # `graphs` is the one that saves the most: it is every item's graph.mmd with its
 # id, verdict and rubric written above it, which is one read instead of N
@@ -19,6 +27,9 @@
 # `zen init` and `zen open` fix. See .github/skills/zen-finetune/SKILL.md.
 
 set -eu
+
+# Taken before the cd, or a relative $0 stops naming this file.
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 cd "$(dirname "$0")/../../../.."
 
 MODE=""
@@ -27,7 +38,7 @@ DATASET=.finetune/dataset.json
 WANTED=""
 
 usage() {
-    sed -n '3,15p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,19p' "$SELF" | sed 's/^# \{0,1\}//'
 }
 
 while [ $# -gt 0 ]; do
@@ -35,7 +46,7 @@ while [ $# -gt 0 ]; do
         -d) BATCH="${2:?-d needs a directory}"; shift 2 ;;
         -s) DATASET="${2:?-s needs a file}"; shift 2 ;;
         -h | --help) usage; exit 0 ;;
-        index | graphs | paths | failures)
+        index | graphs | paths | failures | oom)
             if [ -n "$MODE" ]; then
                 echo "collect.sh: one mode at a time" >&2
                 exit 2
@@ -177,5 +188,61 @@ case "$MODE" in
                 fi
             fi
         done
+        ;;
+
+    oom)
+        # The graph is where an exit code survives: every tool call is a node,
+        # and a killed `run_command` reads `= exit code 137`. Do not grep the
+        # batch directory instead — an item's workspace is full of data files
+        # with 137 in them, and every one is a false positive.
+        #
+        # Collected into a variable rather than counted in the loop: a `while`
+        # on the right of a pipe is a subshell, and a count set in one is gone
+        # before the verdict could read it.
+        scan="$(
+            roster | while read -r id ok; do
+                graph="$(field "$id" .run.graph)"
+                if [ -z "$graph" ] || [ ! -f "$graph" ]; then continue; fi
+                killed="$(grep -c 'exit code 137' "$graph" 2> /dev/null || true)"
+                timedout="$(grep -c 'exit code 124' "$graph" 2> /dev/null || true)"
+                if [ "${killed:-0}" -gt 0 ] || [ "${timedout:-0}" -gt 0 ]; then
+                    printf '%s %s %s\n' "$id" "${killed:-0}" "${timedout:-0}"
+                fi
+            done
+        )"
+
+        if [ -z "$scan" ]; then
+            echo "no killed commands in this round — it is gradeable"
+            exit 0
+        fi
+
+        printf '%-32s %8s %8s\n' ITEM 'OOM 137' 'TIME 124'
+        echo "$scan" | while read -r id killed timedout; do
+            printf '%-32s %8s %8s\n' "$id" "$killed" "$timedout"
+        done
+        echo
+
+        items_killed="$(echo "$scan" | awk '$2 > 0' | grep -c . || true)"
+        total_killed="$(echo "$scan" | awk '{ s += $2 } END { print s + 0 }')"
+        total_timedout="$(echo "$scan" | awk '{ s += $3 } END { print s + 0 }')"
+
+        if [ "${items_killed:-0}" -gt 0 ]; then
+            echo "$total_killed command(s) across $items_killed item(s) were OOM-killed."
+            echo
+            echo "THIS ROUND IS VOID, NOT GRADED."
+            echo "  Nothing here is evidence about the prompt. Do not grade it, do not"
+            echo "  change instructions on it, and do not compare its tokens to another"
+            echo "  round. Size the machine, then run it again:"
+            echo
+            echo "    .github/skills/zen-sandbox-capacity/scripts/preflight_sandbox.sh --concurrency 8"
+            exit 1
+        fi
+
+        echo "$total_timedout command(s) hit the timeout; none was OOM-killed."
+        echo "  Under memory pressure 124 is 137 wearing a different number, and raising"
+        echo "  the timeout converts one into the other rather than fixing either. Check"
+        echo "  the machine before concluding the index is slow:"
+        echo
+        echo "    .github/skills/zen-sandbox-capacity/scripts/preflight_sandbox.sh --concurrency 8"
         ;;
 esac

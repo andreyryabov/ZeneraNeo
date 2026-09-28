@@ -188,6 +188,18 @@ possible causes and you cannot tell which.
 
 ## Phase 3 — Run cold
 
+**Check the machine before the first cold batch, and again after any change to
+`--concurrency`, to the indexes, or to the podman VM:**
+
+```sh
+.github/skills/zen-sandbox-capacity/scripts/preflight_sandbox.sh --concurrency 8 \
+    && zen run batch …
+```
+
+It takes seconds, starts nothing you have to clean up, and exits non-zero when
+the batch cannot fit. Skipping it is how five rounds get spent grading prose
+that was never the cause. Load `zen-sandbox-capacity` if it refuses.
+
 ```sh
 cd <project>
 mkdir -p .finetune/rounds/r1
@@ -205,10 +217,14 @@ evidence. Never point a tuning batch at the project's live memory — a warm gra
 means a run can succeed by recall instead of by instruction, which is precisely
 the thing the cold phase exists to rule out.
 
-Keep concurrency below the provider's tolerance; the default is 16 and the cap
-is 32, but rate-limit errors turn a graded run into a retried one. `stdout` is
-the batch directory alone, so `BATCH="$(zen run batch …)"` is safe to script.
-`<batch-dir>/README.md` is a live dashboard — open it while the batch runs.
+Concurrency has two ceilings and the provider is only one of them. The default
+is 16 and the cap is 32, but rate-limit errors turn a graded run into a retried
+one — and the machine's ceiling is usually the lower of the two, because every
+item is a container and the podman VM is not the host. Whichever binds first,
+`--concurrency` is the dial; see `zen-sandbox-capacity` for the other ceiling.
+`stdout` is the batch directory alone, so `BATCH="$(zen run batch …)"` is safe
+to script. `<batch-dir>/README.md` is a live dashboard — open it while the
+batch runs.
 
 What lands:
 
@@ -330,9 +346,14 @@ retry the identical call? The `tools` header row finds this in one line.
 
 ### Write it down
 
-One file per round, `.finetune/rounds/r1/findings.md`, one section per sample:
+One file per round, `.finetune/rounds/r1/findings.md`, opening with the spec the
+round was measured on and then one section per sample:
 
 ```md
+# r1 — cold, --concurrency 8
+
+machine: vm 12.0 GiB / 6 cpus · container 4096 MiB · index docs 3.2 GiB · host 36 GiB
+
 ## planning-organize-day — partial
 
 | #   | Rubric                                  | Verdict | Evidence                      |
@@ -349,6 +370,33 @@ One file per round, `.finetune/rounds/r1/findings.md`, one section per sample:
 ```
 
 Cite the criterion number. The next phase reads down the column.
+
+The `machine:` line is not decoration. Token counts and wall clocks are only
+comparable between rounds **measured on the same spec** — a resized VM
+invalidates a baseline exactly as a prompt edit does, and a round with no spec
+recorded cannot be compared to anything later. `preflight_sandbox.sh --json`
+prints every figure on that line.
+
+### A round with any exit 137 is void, not graded
+
+Before grading anything, check how the round died:
+
+```sh
+.github/skills/zen-finetune/scripts/collect.sh <batch-dir> oom
+```
+
+An item killed at 137 ran out of memory; an item at 124 hit a timeout, which
+under memory pressure is the same fault wearing a different number. Neither
+produced evidence about the prompt. **Do not grade the round, do not change one
+word of instruction on its basis, and do not compare its tokens to anything** —
+fix the machine, then run it again. A round scored on OOM debris will send the
+next round after a defect that does not exist.
+
+`failures` will not catch this and neither will the dashboard. An item whose
+command was killed usually recovers, answers anyway and is recorded `ok`; a
+round can read `16 items, 16 ok, 0 failed` with six of them OOM-killed inside.
+The kill is in the graph, not in the verdict, which is why this is a separate
+mode and why it runs before grading rather than after.
 
 ## Phase 5 — Generalise
 
@@ -557,13 +605,17 @@ contain live API responses: ignore them. Add to `.gitignore`:
 
 ## Scripts this skill ships
 
-| Script               | What it does                                                            |
-| -------------------- | ----------------------------------------------------------------------- |
-| `scripts/sample.sh`  | `dataset.json` → `cases.json`, stratified, rubric-first, deterministic  |
-| `scripts/collect.sh` | A batch directory → an index, the concatenated graphs, or the run paths |
+| Script               | What it does                                                                                                   |
+| -------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `scripts/sample.sh`  | `dataset.json` → `cases.json`, stratified, rubric-first, deterministic                                         |
+| `scripts/collect.sh` | A batch directory → an index, the concatenated graphs, the run paths, or whether the round is gradeable at all |
 
-Both find the project root from their own location and can be run from anywhere.
-Both are copies: `zen init` and `zen open` rewrite the whole `.github/` tree, so
+Before the batch, `zen-sandbox-capacity` ships a third:
+`.github/skills/zen-sandbox-capacity/scripts/preflight_sandbox.sh`, which
+answers whether this machine can run the round you are about to start.
+
+All find the project root from their own location and can be run from anywhere.
+All are copies: `zen init` and `zen open` rewrite the whole `.github/` tree, so
 an edit made here is gone at the next one. Change them upstream, in the CLI's
 `templates/editor/.github/skills/` — that is the only place a change survives.
 
@@ -586,11 +638,19 @@ an edit made here is gone at the next one. Change them upstream, in the CLI's
    not.
 8. **Re-run `zen check` after every edit round.** A load error fails every item
    identically and looks exactly like a catastrophic regression.
+9. **Never grade a round that was OOM-killed.** `collect.sh oom` before
+   anything else. An exit 137 is the machine, not the prose, and the items
+   still report `ok`.
+10. **Never compare two rounds measured on different machines.** Tokens and
+    wall clock are only comparable within one spec; a resized VM invalidates a
+    baseline exactly as a prompt edit does.
 
 ## When not to fine-tune
 
 - **The project does not load.** `zen check` first; a round on a broken project
   measures nothing. Load **zen-review**.
+- **The last round was OOM-killed.** Nothing about the prose is in question yet.
+  Load **zen-sandbox-capacity**, size the machine, re-run the same round.
 - **There is no training set.** Fewer than about eight queries is a debugging
   session, not a tuning loop — run them singly with `zen run` and read the graphs.
 - **One run is behaving strangely.** That is diagnosis. Load **zen-inspect** and
@@ -610,4 +670,6 @@ an edit made here is gone at the next one. Change them upstream, in the CLI's
 - **zen-memory** — the graph model, commit rules, audiences, `merge` and `stats`
 - **zen-memory-warmup** — building a memory deliberately, and shipping one
 - **zen-review** — the mechanical checks to run before and after every round
+- **zen-sandbox-capacity** — whether the machine can run the batch; read it
+  before the first cold round, and whenever one dies at 137 or 124
 - **zen-spec-sync** — reconciling the project with its specification, before tuning

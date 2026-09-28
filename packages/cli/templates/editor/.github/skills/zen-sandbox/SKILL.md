@@ -178,6 +178,25 @@ agents:
 | `env`       | string[]               | `[]`                                          | Host environment variables to pass by name.             |
 | `keys`      | boolean                | `true`                                        | Forward model credentials to the container.             |
 
+### `memory` and `cpus` divide a machine they cannot enlarge
+
+On macOS and Windows these are shares of the podman VM, not of the host. The VM
+is sized **once**, by whichever project first ran `zen sandbox up` on this
+machine, and it defaults to **2048 MiB and 2 CPUs** however large the host is.
+Raising `sandbox.memory` afterwards never resizes it — the init flags are only
+read when no machine exists yet.
+
+So the scaffolded default, `memory: 4096`, promises each container twice the
+whole default VM, and podman will admit as many of them as you ask for without
+complaining. Nothing reports this: `zen check` does not, and `zen sandbox
+status` prints no memory figure at all. It surfaces later as an exit 137, or as
+an exit 124 that looks like a slow index.
+
+One container is rarely the problem. Before running several at once — a
+`zen run batch` with `--concurrency` above 1 — load **zen-sandbox-capacity** and
+run its `preflight_sandbox.sh`, which measures the VM, the container cap and the
+index and says whether the arithmetic fits.
+
 ---
 
 ## 6. Hardening Postures: `standard` vs `strict`
