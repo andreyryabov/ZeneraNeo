@@ -296,6 +296,51 @@ export const runProcess: Runner = (bin, args, opts = {}) =>
     });
 
 // ---------------------------------------------------------------------------
+// Reaching the engine at all
+//
+// On macOS and Windows the client is remote: unless it has been pointed at the
+// machine's forwarded endpoint, every invocation opens its own ssh connection
+// into the virtual machine, and sshd refuses new ones past `MaxStartups` — ten
+// by default, with a random drop above that. A wide batch therefore loses
+// calls for a reason that has nothing to do with the command, on a different
+// task each time.
+//
+// A refused connection is the one failure that can be retried without asking
+// what the command was: it happened before authentication, so nothing ran.
+// ---------------------------------------------------------------------------
+
+const TRANSPORT =
+    /kex_exchange_identification|ssh: handshake failed|ssh: unexpected packet|connection closed by remote host|connection reset by peer|connection refused/i;
+
+const ATTEMPTS = 4;
+
+/**
+ * `run`, retried while the engine could not be reached at all.
+ *
+ * Empty stdout is the guard that keeps this from retrying real work: a command
+ * that produced output ran, whatever its stderr says afterwards. The wait is
+ * jittered because the burst being backed off from is N clients arriving
+ * together, and a fixed delay would only reassemble it.
+ */
+export function resilient(run: Runner, attempts = ATTEMPTS): Runner {
+    return async (bin, args, opts = {}) => {
+        for (let n = 1; ; n++) {
+            const res = await run(bin, args, opts);
+            if (
+                n >= attempts ||
+                res.code === 0 ||
+                res.stdout !== '' ||
+                opts.signal?.aborted ||
+                !TRANSPORT.test(res.stderr)
+            ) {
+                return res;
+            }
+            await new Promise((go) => setTimeout(go, 2 ** n * 50 + Math.random() * 100));
+        }
+    };
+}
+
+// ---------------------------------------------------------------------------
 // One container
 // ---------------------------------------------------------------------------
 
@@ -348,7 +393,7 @@ export class Sandbox {
 
     constructor(opts: SandboxOptions) {
         this.spec = resolveSpec(opts);
-        this.#run = opts.exec ?? runProcess;
+        this.#run = resilient(opts.exec ?? runProcess);
         this.name = containerName(this.spec);
     }
 
@@ -724,6 +769,36 @@ function resolveSpec(opts: SandboxOptions): Resolved {
         readOnly: opts.readOnly ?? false,
         mounts: opts.mounts ?? [],
         engine: opts.engine ?? 'podman',
+    };
+}
+
+export interface SandboxLimits {
+    /** MiB */
+    memory: number;
+    /** fractional cores */
+    cpus: number;
+    hardening: SandboxHardening;
+    /** whether the numbers above were written down, or are this profile's defaults */
+    declared: boolean;
+}
+
+/**
+ * What a spec's ceilings come to, for a report that has no container to ask.
+ *
+ * It exists so `zen sandbox status` cannot disagree with what a run actually
+ * applies: the defaults are stated once, here and in `resolveSpec`, and
+ * nothing outside this module repeats them.
+ */
+export function sandboxLimits(
+    spec: Pick<SandboxSpec, 'cpus' | 'memory' | 'hardening'> = {},
+): SandboxLimits {
+    const hardening = spec.hardening ?? 'standard';
+    const strict = hardening === 'strict';
+    return {
+        memory: spec.memory ?? (strict ? STRICT_MEMORY : DEFAULT_MEMORY),
+        cpus: spec.cpus ?? (strict ? STRICT_CPUS : DEFAULT_CPUS),
+        hardening,
+        declared: spec.memory !== undefined || spec.cpus !== undefined,
     };
 }
 

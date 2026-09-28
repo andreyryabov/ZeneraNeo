@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { parseConfig } from '../src/project/config.ts';
 import {
+    resilient,
     Sandbox,
     SANDBOX_GROUP,
     SANDBOX_MOUNT,
+    sandboxLimits,
     SandboxPool,
     sandboxTools,
     type ProcOptions,
@@ -543,5 +545,127 @@ describe('the sandbox block in agents.yaml', () => {
             'agents.yaml',
         );
         expect(parsed.agents[0].sandbox?.image).toBe('python');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Reaching the engine
+//
+// Off Linux podman is a remote client that opens one ssh connection per
+// invocation, and sshd drops them past `MaxStartups`. That is a connection
+// failing before authentication, so nothing ran and the call can be repeated —
+// but only then, which is what these pin down.
+// ---------------------------------------------------------------------------
+
+describe('a refused connection', () => {
+    const answer = (res: Partial<ProcResult>): ProcResult => ({
+        code: 0,
+        stdout: '',
+        stderr: '',
+        truncated: false,
+        timedOut: false,
+        ...res,
+    });
+
+    /** Fails with `stderr` the first `times` calls, then succeeds. */
+    const flaky = (times: number, stderr: string): { run: Runner; tries: () => number } => {
+        let n = 0;
+        return {
+            tries: () => n,
+            run: () =>
+                Promise.resolve(
+                    ++n <= times ? answer({ code: 125, stderr }) : answer({ stdout: 'ok' }),
+                ),
+        };
+    };
+
+    it('is retried until it lands', async () => {
+        const f = flaky(2, 'Error: failed to connect: ssh: handshake failed: EOF');
+        const res = await resilient(f.run)('podman', ['ps']);
+        expect(res.code).toBe(0);
+        expect(res.stdout).toBe('ok');
+        expect(f.tries()).toBe(3);
+    });
+
+    it('gives up rather than retrying forever, and returns the last answer', async () => {
+        const f = flaky(99, 'kex_exchange_identification: Connection closed by remote host');
+        const res = await resilient(f.run, 3)('podman', ['ps']);
+        expect(res.code).toBe(125);
+        expect(f.tries()).toBe(3);
+    });
+
+    /**
+     * The distinction the whole thing rests on: a command that failed on its
+     * own merits must run exactly once, however its stderr reads.
+     */
+    it('is not confused with a command that ran and failed', async () => {
+        let n = 0;
+        const run: Runner = () => {
+            n++;
+            return Promise.resolve(answer({ code: 1, stderr: 'npm ERR! test failed' }));
+        };
+        expect((await resilient(run)('podman', ['exec'])).code).toBe(1);
+        expect(n).toBe(1);
+    });
+
+    it('does not repeat a command that had already produced output', async () => {
+        let n = 0;
+        const run: Runner = () => {
+            n++;
+            return Promise.resolve(
+                answer({ code: 1, stdout: 'partial', stderr: 'connection reset by peer' }),
+            );
+        };
+        await resilient(run)('podman', ['exec']);
+        expect(n).toBe(1);
+    });
+
+    it('stops when the turn is abandoned', async () => {
+        const f = flaky(99, 'ssh: handshake failed');
+        const res = await resilient(f.run)('podman', ['ps'], {
+            signal: AbortSignal.abort(),
+        });
+        expect(res.code).toBe(125);
+        expect(f.tries()).toBe(1);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// The ceilings, as a report reads them
+// ---------------------------------------------------------------------------
+
+describe('resolved limits', () => {
+    it('are the profile’s own defaults when nothing is written down', () => {
+        expect(sandboxLimits()).toEqual({
+            memory: 4096,
+            cpus: 4,
+            hardening: 'standard',
+            declared: false,
+        });
+        expect(sandboxLimits({ hardening: 'strict' })).toEqual({
+            memory: 2048,
+            cpus: 2,
+            hardening: 'strict',
+            declared: false,
+        });
+    });
+
+    it('take what was declared, and say that it was', () => {
+        expect(sandboxLimits({ memory: 8192, hardening: 'strict' })).toEqual({
+            memory: 8192,
+            cpus: 2,
+            hardening: 'strict',
+            declared: true,
+        });
+    });
+
+    /** Or a status report would contradict the container a run actually starts. */
+    it('agree with what the container is created with', async () => {
+        const f = fresh();
+        await box(f, { hardening: 'strict' }).start();
+        const create = find(f, 'run');
+        const limits = sandboxLimits({ hardening: 'strict' });
+        expect(create?.args).toContain(`${limits.memory}m`);
+        expect(create?.args).toContain(String(limits.cpus));
     });
 });
