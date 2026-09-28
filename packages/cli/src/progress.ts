@@ -1,5 +1,13 @@
 import type { Input, InputPart } from '@zenera/neo';
-import { addUsage, isCheckpoint, zeroUsage, type AgentEvent, type TokenUsage } from '@zenera/neo';
+import {
+    addUsage,
+    isCheckpoint,
+    mergeModelUsage,
+    zeroUsage,
+    type AgentEvent,
+    type ModelUsage,
+    type TokenUsage,
+} from '@zenera/neo';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { duration, format } from './narrate.ts';
@@ -48,6 +56,8 @@ interface ItemProgress {
     thinking?: string;
     text?: string;
     usage: TokenUsage;
+    /** the same tokens, split by the model that spent them */
+    models: readonly ModelUsage[];
     error?: string;
 }
 
@@ -82,6 +92,7 @@ export class BatchProgress {
             turns: 0,
             tools: 0,
             usage: zeroUsage(),
+            models: [],
         }));
     }
 
@@ -105,7 +116,15 @@ export class BatchProgress {
         return (event) => this.#on(item, event);
     }
 
-    finish(id: string, outcome: { ok: boolean; error?: string; usage?: TokenUsage }): void {
+    finish(
+        id: string,
+        outcome: {
+            ok: boolean;
+            error?: string;
+            usage?: TokenUsage;
+            models?: readonly ModelUsage[];
+        },
+    ): void {
         const item = this.#find(id);
         item.status = outcome.ok ? 'ok' : 'failed';
         item.stage = outcome.ok ? 'done' : 'failed';
@@ -115,6 +134,9 @@ export class BatchProgress {
         // only what the events happened to carry.
         if (outcome.usage) {
             item.usage = outcome.usage;
+        }
+        if (outcome.models) {
+            item.models = outcome.models;
         }
     }
 
@@ -179,6 +201,9 @@ export class BatchProgress {
             case 'after_llm_call':
                 item.turns += 1;
                 item.usage = addUsage(item.usage, event.node.usage);
+                item.models = mergeModelUsage(item.models, [
+                    { model: event.node.model, calls: 1, usage: event.node.usage },
+                ]);
                 break;
             case 'before_tool_call':
                 item.tools += 1;
@@ -265,6 +290,14 @@ export class BatchProgress {
         if (slots > 0) {
             out.push('', '## Running now', '');
             out.push(...panel(running, slots, now));
+        }
+        const models = mergeModelUsage(...this.#items.map((i) => i.models));
+        if (models.length > 0) {
+            // Below the panel on purpose: this table gains a row whenever a new
+            // model is first used, and anything above the panel that grows
+            // moves the panel down between ticks.
+            out.push('', '## Tokens by model', '');
+            out.push(...byModel(models));
         }
         if (done.length > 0) {
             out.push('', '## Finished', '');
@@ -361,6 +394,29 @@ function lines(item: ItemProgress, now: number): string[] {
             .join(' · ')}`,
         `  ↳ ${doing}`,
     ].map((line) => clip(line, PANEL_WIDTH));
+}
+
+/**
+ * Which model spent what. A batch can route agents — and forks — to different
+ * models, so one total belongs to none of them; these rows add back up to the
+ * `Tokens` fact above.
+ */
+function byModel(models: readonly ModelUsage[]): string[] {
+    return [
+        '| model | calls | in | cached | out | thinking |',
+        '| :-- | --: | --: | --: | --: | --: |',
+        ...models.map(
+            (m) =>
+                `| ${[
+                    `\`${m.model}\``,
+                    String(m.calls),
+                    format(m.usage.inputTokens),
+                    format(m.usage.cachedInputTokens),
+                    format(m.usage.outputTokens),
+                    format(m.usage.reasoningTokens),
+                ].join(' | ')} |`,
+        ),
+    ];
 }
 
 function table(done: readonly ItemProgress[]): string[] {

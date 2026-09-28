@@ -214,12 +214,16 @@ What lands:
 
 ```
 .finetune/rounds/r1/batch/
-    batch.json                   roster, counts, timings, memory mode
+    batch.json                   roster, counts, timings, memory mode, tokens per model
     README.md                    the dashboard
     <id>/output.json             the envelope: run.dir, run.graph, usage, output
     <id>/workspace/              anything the item wrote
     <id>/memory/                 what the item committed, if it committed anything
 ```
+
+What a round cost is in both: `README.md` draws a `Tokens by model` table, and
+`batch.json` carries the same split under `batch.models`. Read it per model — a
+round that moved work onto a cheaper agent shows up there and nowhere else.
 
 An item that fails is data, not an outage: its `output.json` holds
 `{ "ok": false, "id", "error" }` and the rest of the batch still runs. Grade the

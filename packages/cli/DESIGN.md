@@ -684,7 +684,8 @@ failed and is raised only after `batch.json` is written.
 `batch.json` is an **index**, not a second copy: it points at each item's file
 and carries the question, with inlined media named rather than repeated - the
 bytes are in that item's own input file already, and forty base64 screenshots
-in a combined file is an index of nothing.
+in a combined file is an index of nothing. It also carries the batch's `usage`
+and its `models`, the same split the dashboard draws.
 
 **Progress is a file, not a terminal.** Sixteen agents narrating at once into
 one terminal is not progress, it is interleaved noise, and a batch is usually
@@ -703,6 +704,20 @@ never wraps; every item takes the same four clipped lines whether or not it has
 anything to say; a worker with nothing to run is drawn as an idle slot rather
 than left out, for as long as anything is still queued. The same reasoning puts
 `Average run` in the facts table from the first tick, showing a dash.
+
+**Tokens are reported per model.** A project can put each agent on a different
+model and a fork on another again, so one total belongs to none of them and the
+first question anyone asks of a batch - what did the expensive one cost? - has
+no answer. `Tokens by model` gives one row per model id: its calls, and its
+input, cached, output and thinking tokens. The rows are the total rearranged,
+never a second reckoning of it: `usageByModel` walks the trajectory exactly as
+`totalUsage` does, recursing into every branch, and a summariser's tokens, which
+no node attributes to a model, are kept in a `(compaction)` row rather than
+dropped. Live rows come from the events; the moment an item finishes they are
+replaced by the split computed from its trajectory, for the same reason its
+total is. The table sits _below_ the running panel, because it gains a row the
+first time a model is used and anything above the panel that grows would move
+the panel down.
 
 The dashboard is deliberately **not load-bearing**: every write is swallowed,
 the timer is unref'd, and an item interrupted by a kill is recorded as such on

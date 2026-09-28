@@ -180,11 +180,17 @@ mistake once per item.
 `README.md` is where the progress of a batch lives. Sixteen agents narrating at
 once would be noise, so instead the file is rewritten once a second: a
 fixed-height panel showing every worker - what it is running, the tail of what
-it is thinking or writing, its turns and its tokens - over a table of the
-finished ones and a list of the ones still waiting. The panel keeps its height
-while there is work left to start, so nothing jumps between ticks. Watch it in
-an editor preview, or `watch -n1 cat "$DIR/README.md"`. When the batch ends the
-same file is the report.
+it is thinking or writing, its turns and its tokens - over a `Tokens by model`
+table, a table of the finished ones and a list of the ones still waiting. The
+panel keeps its height while there is work left to start, so nothing jumps
+between ticks. Watch it in an editor preview, or `watch -n1 cat "$DIR/README.md"`.
+When the batch ends the same file is the report.
+
+Tokens are reported **per model**: agents may each use a different one, so one
+total belongs to none of them. Every model id gets a row with its calls and its
+input, cached, output and thinking tokens, and the rows always add up to the
+batch total. Tokens spent summarising, which no node attributes to a model, are
+shown as `(compaction)`.
 
 Each `output.json` is written the moment its item finishes, so a batch stopped
 half way still has every answer it managed to get. `batch.json` is an index, not
@@ -199,6 +205,13 @@ a second copy - it points at the files:
         "failed": 1,
         "concurrency": 16,
         "memory": { "source": "...", "mode": "read-only" },
+        "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 0,
+            "reasoningTokens": 0
+        },
+        "models": [{ "model": "gemini-3-flash", "calls": 12, "usage": {} }],
         "durationMs": 0
     },
     "batch_results": [
