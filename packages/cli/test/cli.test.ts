@@ -50,7 +50,6 @@ import {
     type Provider,
 } from '../src/keys.ts';
 import { classify, probeModels } from '../src/liveness.ts';
-import { duration } from '../src/narrate.ts';
 import {
     absorb,
     answerBox,
@@ -68,6 +67,7 @@ import {
     type Outcome,
     type Sink,
 } from '../src/meta.ts';
+import { duration } from '../src/narrate.ts';
 import { engineDisk, ensurePodmanReady, ownedContainers, sharedEndpoint } from '../src/podman.ts';
 import { dirSize, lastUsedAt, projectMounts } from '../src/projects.ts';
 import { parseRequest, readRequest } from '../src/request.ts';
