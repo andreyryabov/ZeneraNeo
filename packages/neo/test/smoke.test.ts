@@ -7,13 +7,21 @@ import { MemoryIndex } from '../src/memory/index.ts';
 import { MemoryStore } from '../src/memory/store.ts';
 import type { Model, ModelRequest, ModelResponse } from '../src/model.ts';
 import { InMemoryPayloadStore } from '../src/payload-stores/in-memory.ts';
-import { exportRun, importRun } from '../src/payload.ts';
+import { exportRun, importRun, type Payload } from '../src/payload.ts';
 import { promptFile } from '../src/prompt.ts';
 import { AgentRunner } from '../src/runner.ts';
 import { StaticSkillProvider } from '../src/skill-providers/static.ts';
 import { assertState, turns, type AgentState } from '../src/state.ts';
-import { projectMessages, totalUsage, type TrajectoryNode } from '../src/trajectory.ts';
-import { tool, zeroUsage, type ToolCall } from '../src/types.ts';
+import {
+    COMPACTION_MODEL,
+    mergeModelUsage,
+    projectMessages,
+    totalUsage,
+    usageByModel,
+    type LlmCallNode,
+    type TrajectoryNode,
+} from '../src/trajectory.ts';
+import { addUsage, tool, zeroUsage, type ToolCall } from '../src/types.ts';
 
 // ---------------------------------------------------------------------------
 // A scripted model: rules inspect the projected request, so the tests exercise
@@ -244,6 +252,10 @@ describe('smoke', () => {
         expect(turns(res.state), 'branch turns are not the parent\u2019s').toBe(2);
         // Accounting is the one thing that crosses the boundary, by recursion.
         expect(totalUsage(raw).inputTokens).toBe(40);
+        // The split by model crosses it the same way, so it adds back up.
+        const split = usageByModel(raw);
+        expect(split.map((m) => [m.model, m.calls])).toEqual([['scripted', 4]]);
+        expect(split[0].usage).toEqual(totalUsage(raw));
 
         // Export reaches branch payloads through the generic deep walk.
         const bundle = await exportRun(res.state, runner.services.payloads);
@@ -787,5 +799,93 @@ describe('system prompt composition', () => {
 
         const { system } = await projectMessages(res.state.trajectory, runner.services.payloads);
         expect(system).toBe(recorded);
+    });
+});
+
+/**
+ * One total belongs to none of the models a run actually used. The split has to
+ * name each of them and still add back up to what `totalUsage` reports — if it
+ * did not, the report would be inviting an argument nobody can settle.
+ */
+describe('usage split by model', () => {
+    const ref: Payload = { store: 'mem', sha256: 'x', size: 1 };
+    const used = (model: string, inputTokens: number): LlmCallNode => ({
+        id: `n${inputTokens}`,
+        ts: '2026-01-01T00:00:00.000Z',
+        agent: 'a',
+        type: 'llm_call',
+        model,
+        requestDigest: 'x',
+        text: ref,
+        toolCalls: [],
+        usage: { ...zeroUsage(), inputTokens, outputTokens: 1 },
+        stopReason: 'stop',
+    });
+
+    it('names every model, counts its calls, and reaches inside a fork', () => {
+        const nodes: TrajectoryNode[] = [
+            used('fast', 10),
+            used('deep', 100),
+            used('fast', 20),
+            {
+                id: 'j',
+                ts: '2026-01-01T00:00:00.000Z',
+                agent: 'a',
+                type: 'join',
+                callId: 'c1',
+                branches: [
+                    {
+                        name: 'left',
+                        agent: 'a',
+                        status: 'ok',
+                        output: ref,
+                        usage: { ...zeroUsage(), inputTokens: 5, outputTokens: 1 },
+                        nodes: [used('deep', 5)],
+                    },
+                ],
+                usage: { ...zeroUsage(), inputTokens: 5, outputTokens: 1 },
+            },
+        ];
+
+        // Heaviest first: the row being looked for is the expensive one.
+        expect(usageByModel(nodes).map((m) => [m.model, m.calls, m.usage.inputTokens])).toEqual([
+            ['deep', 2, 105],
+            ['fast', 2, 30],
+        ]);
+        expect(
+            usageByModel(nodes).reduce((sum, m) => addUsage(sum, m.usage), zeroUsage()),
+            'the rows are the total, rearranged',
+        ).toEqual(totalUsage(nodes));
+    });
+
+    it('keeps the summarizer accounted for, though no node names its model', () => {
+        const nodes: TrajectoryNode[] = [
+            used('fast', 10),
+            {
+                id: 'c',
+                ts: '2026-01-01T00:00:00.000Z',
+                agent: 'a',
+                type: 'compaction',
+                callId: 'c1',
+                covers: ['n10'],
+                summary: ref,
+                reason: 'handoff_noise',
+                usage: { ...zeroUsage(), inputTokens: 3, outputTokens: 1 },
+            },
+        ];
+
+        expect(usageByModel(nodes).map((m) => m.model)).toEqual(['fast', COMPACTION_MODEL]);
+        expect(usageByModel(nodes).reduce((sum, m) => addUsage(sum, m.usage), zeroUsage())).toEqual(
+            totalUsage(nodes),
+        );
+    });
+
+    it('folds many runs into one split', () => {
+        const a = usageByModel([used('fast', 10)]);
+        const b = usageByModel([used('fast', 20), used('deep', 1)]);
+        expect(mergeModelUsage(a, b).map((m) => [m.model, m.calls, m.usage.inputTokens])).toEqual([
+            ['fast', 2, 30],
+            ['deep', 1, 1],
+        ]);
     });
 });

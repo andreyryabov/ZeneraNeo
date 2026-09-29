@@ -1,9 +1,10 @@
 # Every vendor knob the schema accepts, on the vendor it belongs to.
 #
 # The option interfaces are unioned rather than discriminated: vendor
-# differences live in the *provider*, so there is nothing here to switch on and
-# a knob that does not apply to the chosen vendor is ignored, not rejected.
-# Writing one where it means nothing is therefore silent — hence this file.
+# differences live in the *provider*, so the schema has nothing to switch on and
+# accepts every knob on every model. Writing one where it means nothing is
+# caught when the model is built, not when the file loads — hence this file,
+# which is the set that has to keep building.
 version: 1
 
 models:

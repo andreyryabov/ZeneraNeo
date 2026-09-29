@@ -1,18 +1,19 @@
 # Reports - `zen inspect`
 
 ```
-zen inspect [report|graph|node] [run] [--dir <run dir>] [--open]
+zen inspect [report|graph|node|ask] [run] [--dir <run dir>] [--open]
 ```
 
 Alias: `report`.
 
-Three ways to read one run, for two different readers.
+Four ways to read one run, for two different readers.
 
-| Subcommand     | For     | What it gives                                   |
-| -------------- | ------- | ----------------------------------------------- |
-| `report`       | you     | `report.html` - every message, payload and cost |
-| `graph`        | a model | the whole trajectory as one Mermaid flowchart   |
-| `node <id...>` | a model | those nodes in full, payloads resolved          |
+| Subcommand            | For     | What it gives                                   |
+| --------------------- | ------- | ----------------------------------------------- |
+| `report`              | you     | `report.html` - every message, payload and cost |
+| `graph`               | a model | the whole trajectory as one Mermaid flowchart   |
+| `node <id...>`        | a model | those nodes in full, payloads resolved          |
+| `ask <id> <question>` | you     | that call replayed to a model, with a question  |
 
 `report` is the default, so `zen inspect` on its own is unchanged.
 
@@ -24,6 +25,9 @@ Three ways to read one run, for two different readers.
 | `--run <id>`            | all           | Which run, as a flag rather than an argument         |
 | `--dir <dir>`           | all           | A run directory, as `zen run --json` reports it      |
 | `--memory <dir>`        | report, graph | Read this memory instead of the one the run recorded |
+| `--model <ref>`         | ask           | Answer with this model instead of the run's own      |
+| `--part <name>`         | node          | Print this part in full. Repeatable, prefix-matched  |
+| `--full`                | node          | Print every part, the recorded `request` included    |
 | `--open`                | report        | Open the report in a browser                         |
 | `--rebuild`             | report        | Rebuild `report.html` from the recorded state        |
 | `--no-timing`           | graph         | Leave the clock off the graph                        |
@@ -35,9 +39,10 @@ session that has one. "Newest" means the newest session that actually recorded a
 run, not simply the newest session: a session exists before its first run, so
 the latest one is routinely empty.
 
-**`node` has no room for a run.** Every positional it takes is a node id, so
-name the run with `--run`, `--session` or `--dir` - `zen inspect node <run> n13`
-reads the run id as an id and fails.
+**Neither `node` nor `ask` has room for a run.** Every positional `node` takes is
+a node id, and `ask` takes one id and then your question, so name the run with
+`--run`, `--session` or `--dir` - `zen inspect node <run> n13` reads the run id
+as an id and fails.
 
 For `report` and `graph` the positional is a run id unless it contains a `/`, in
 which case it is read as a run directory. A run id is a stamp and never has a
@@ -100,6 +105,7 @@ zen inspect graph --dir "$(zen run --json 'fix the tests' | jq -r .run.dir)"
 %%           dotted edges are fork/join and calls answered out of order
 %%           nodes are declared in run order; every edge is in one block below
 %% detail    zen inspect node n1 n2 n5..n9 --dir <run dir>
+%% why       zen inspect ask n5 "why did you do that?" --dir <run dir>
 %%
 flowchart TD
     n11["n11 llm claude-opus-5 · 4.2k in 310 out · calls run_command · t+32.7s"]
@@ -128,10 +134,15 @@ Four things are deliberate:
   count by eye, which is the difference between spotting a loop and not. It
   also spells out the three directories a reader needs to go further - the run
   directory, the workspace, and the memory graph the run read - and ends with
-  the command that opens a node, so nothing has to be reconstructed from the
-  run id. Rows that do not apply are left out: no `memory` row for a run that
-  read none, no `agents` row for a run with one, no `compacted` row for a run
-  nothing summarised.
+  the command that opens a node and the one that asks a model why it did what
+  it did, so nothing has to be reconstructed from the run id. Rows that do not
+  apply are left out: no `memory` row for a run that read none, no `agents` row
+  for a run with one, no `compacted` row for a run nothing summarised.
+
+One header row answers a question the node lines cannot. `%% thinking` counts
+how many `llm` calls returned reasoning and how many tokens went into it. It
+follows the same rule as the rest: **a missing row is an answer, not a gap.**
+No `%% thinking` row means nothing thought.
 
 A node marked `hidden by n23` was compacted: it ran, and then a summary
 replaced it in what the model could see. `ERROR` marks a tool call that failed.
@@ -157,6 +168,23 @@ Payloads come back resolved and whole - the request, the arguments, the result,
 the branch instructions - with no truncation and no filtering. That is the
 point of the split: the index is cheap, and you only pay for what you open.
 
+One part is held back by default: `request`, the exact bytes sent to the model.
+It is the call's _input_, largely the same from one call to the next, and
+routinely larger than everything else in the run put together - large enough to
+blow a tool-output limit and return you nothing at all. It is named with its
+size rather than dropped, and `--part` brings it or any other part back:
+
+```
+zen inspect node n11 --part thinking --part text --dir <run dir>
+zen inspect node n13 --part args --dir <run dir>
+zen inspect node n11 --full --dir <run dir>
+```
+
+`--part` matches a prefix, so `--part call` catches a part named
+`call run_command (toolu_01A…)` without your typing the id. Naming a part the
+node does not carry is an error listing the ones it does - nothing is ever
+elided in silence.
+
 Two `#` lines come first - which run, how many of its nodes you asked for, and
 a reminder of what part text is. Then each node is framed, and each payload
 inside it is framed with its own byte count:
@@ -164,6 +192,7 @@ inside it is framed with its own byte count:
 ```
 === n13 · tool_call · researcher · 2026-08-25T14:31:07.220Z
     tool: run_command
+--- part request · 126412 bytes · elided (--part request)
 --- part args · 104 bytes
 {"command":"..."}
 --- end args
@@ -181,6 +210,46 @@ part says so.
 Both `graph` and `node` print no banner. Their stdout is the answer, whole and
 ready to paste.
 
+## `ask` - putting the question to the model itself
+
+`node` shows what a model was given. `ask` asks the model what it made of it.
+
+```sh
+zen inspect ask n11 "why run python -c when the skill says npm test?" --dir <run dir>
+```
+
+The `llm_call` node named by the id is replayed: its recorded system prompt, its
+messages and its tool schemas, exactly as the provider received them, with the
+answer it gave put back as its own turn and your question as one more after
+that. Tool calling is switched off - it answers, it cannot act - and nothing is
+written back into the run.
+
+The system prompt is prefixed with a short permission: the run is over, nothing
+it writes takes effect, and it may quote its instructions, its files and its
+skills verbatim. Without it a model refuses to name its own prompt, which is
+exactly the sentence you need when a prompt reads correctly and behaves wrongly.
+
+It is worth asking because the context is the real one. A model handed its own
+recorded prompt cannot invent which skill it saw or which instruction it had,
+and every claim in its answer is checkable against the same node with
+`zen inspect node`.
+
+Two conditions:
+
+- **The id must be an `llm_call`.** The graph labels those `llm <model>`.
+- **The run must have recorded the request.** Every run made by this CLI does; a
+  run driven by the SDK only does with `runner({ recordRequests: true })`.
+
+By default it answers with the model that made the call, resolved by matching
+the id the node recorded against what `agents.yaml` declares - so a project
+provider, gateway or base url is honoured. `--model <ref>` names another; the
+command says so on stderr, because an answer from a different model is a second
+opinion rather than the model examining itself. Either way the run's full system
+prompt goes to that provider.
+
+`graph`, `node` and `ask` print no banner. Their stdout is the answer, whole and
+ready to paste.
+
 ## Where it comes from
 
 ```
@@ -193,7 +262,9 @@ ready to paste.
     meta.json     when it ran, how long it took
 ```
 
-Ids are timestamps: `20260825-143012-a7f3`. Listing them is `zen list --sessions`.
+Ids are timestamps: `20260825-143012-a7f3`. Listing them is `zen list --sessions`,
+or `zen list --runs` for the most recent runs across every project — with
+`--json` each row carries the run directory `--dir` takes.
 
 `--dir` takes that run directory. It is the handle a _program_ holds, because
 `zen run --json` hands one back, and a caller that already has it should not
@@ -224,5 +295,9 @@ index on its own - `{ id, nodeId, kind, agent, branch, ts, label }` per node.
 
 `node` prints each node as plain text; `--json` gives `{ session, run, dir,
 nodes }` with `facts` and resolved `parts`.
+
+`ask` prints the answer on stdout; `--json` gives `{ session, run, dir, node,
+model, query, answer, usage }`, where `node` is `{ id, nodeId, agent, model }` -
+the model the run used - and `model` is the ref that answered.
 
 To assert on a run in a script, read `state.json` rather than the report.

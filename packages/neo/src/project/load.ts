@@ -396,11 +396,18 @@ const FILE_TOOLS = [
     'find_files',
     'write_file',
     'apply_patch',
+    'copy_file',
     'move_file',
     'delete_file',
 ] as const;
 
-const FILE_WRITE_TOOLS = new Set(['write_file', 'apply_patch', 'move_file', 'delete_file']);
+const FILE_WRITE_TOOLS = new Set([
+    'write_file',
+    'apply_patch',
+    'copy_file',
+    'move_file',
+    'delete_file',
+]);
 
 function activeFileTools(selectors: readonly string[] | undefined): Set<string> {
     const active = new Set<string>();

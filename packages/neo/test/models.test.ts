@@ -23,6 +23,7 @@ import type { StreamDelta } from '../src/events.ts';
 import type { ModelRequest } from '../src/model.ts';
 import { expandEnv, ModelRegistry } from '../src/models/factory.ts';
 import { GeminiModel } from '../src/models/gemini.ts';
+import { OpenAIResponsesModel } from '../src/models/openai-responses.ts';
 import { OpenRouterModel } from '../src/models/openrouter.ts';
 import { text, type Message } from '../src/types.ts';
 
@@ -292,6 +293,64 @@ describe('vertex', () => {
         const models = new ModelRegistry().provider('vx', { kind: 'vertex', project: 'p' });
         expect(models.model('vx:gemini-2.5-pro').id).toBe('gemini-2.5-pro');
         expect(models.model('vx:gemini-3-pro-preview')).toBeInstanceOf(GeminiModel);
+    });
+});
+
+describe('vendor knobs', () => {
+    const vertex = (): ModelRegistry =>
+        new ModelRegistry().provider('vx', { kind: 'vertex', project: 'p' });
+
+    // The bug this pins: `reasoningEffort` is type-legal on every model because
+    // the option interfaces are unioned, and the Gemini adapter never reads it.
+    // Silently dropped, the config claimed a setting that no request carried.
+    it('refuses a knob the resolved adapter would never read', () => {
+        expect(() =>
+            vertex().model({
+                provider: 'vx',
+                model: 'gemini-3.5-flash-lite',
+                reasoningEffort: 'high',
+            }),
+        ).toThrow(/does not read "reasoningEffort" — a gemini model takes: .*thinkingLevel/);
+    });
+
+    it('splits the two OpenAI apis, because only one of them reasons out loud', () => {
+        vi.stubEnv('OPENAI_API_KEY', 'sk-test');
+        const models = new ModelRegistry();
+        expect(() => models.model({ model: 'o3', reasoningSummary: 'auto' })).toThrow(
+            /does not read "reasoningSummary"/,
+        );
+        expect(
+            models.model({ api: 'responses', model: 'o3', reasoningSummary: 'auto' }),
+        ).toBeInstanceOf(OpenAIResponsesModel);
+    });
+
+    it('reports without building, so a model with no credential still answers', () => {
+        vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
+        vi.stubEnv('VERTEX_API_KEY', '');
+        vi.stubEnv('GOOGLE_APPLICATION_CREDENTIALS', '');
+        expect(new ModelRegistry().knobs({ provider: 'vertex', model: 'g', store: true })).toEqual([
+            {
+                knob: 'store',
+                target: 'gemini',
+                supported: expect.arrayContaining(['thinkingLevel']),
+            },
+        ]);
+    });
+
+    it('says nothing about a knob the adapter does read', () => {
+        expect(
+            vertex().knobs({
+                provider: 'vx',
+                model: 'gemini-3-pro-preview',
+                thinkingLevel: 'high',
+            }),
+        ).toEqual([]);
+    });
+
+    it('leaves connection fields alone — they are not tuning', () => {
+        expect(
+            vertex().knobs({ provider: 'vx', model: 'g', apiKey: 'k', baseURL: 'https://x' }),
+        ).toEqual([]);
     });
 });
 

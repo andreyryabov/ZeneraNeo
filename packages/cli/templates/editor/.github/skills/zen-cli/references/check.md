@@ -73,9 +73,9 @@ assets.missing        assets.overbroad       sandbox.dockerfile.missing
 sandbox.build         sandbox.smoke          sandbox.start / .unchecked
 sandbox.pin.stale     sandbox.pin.absent
 provider.invalid      model.none             model.unresolvable
-model.refused         model.unreachable      model.unusable
-embedding.refused     embedding.unreachable  embedding.unusable
-credential.*          service.credential
+model.knob            model.refused          model.unreachable
+model.unusable        embedding.refused      embedding.unreachable
+embedding.unusable    credential.*           service.credential
 ```
 
 The report goes to **stdout** - it is the answer. `--json` gives the same
@@ -87,8 +87,10 @@ required it.
 
 ### What it cannot catch
 
-Combinations that are only rejected by the provider at the first call. The
-known one: **OpenAI reasoning and tools only meet on the responses API.** A
+Combinations that are only rejected by the provider at the first call. A knob
+written for the wrong vendor is no longer one of them - `model.knob` names it,
+and building the model refuses outright. The known one that remains:
+**OpenAI reasoning and tools only meet on the responses API.** A
 model with `reasoningEffort` and tools on the default chat-completions API is a
 valid configuration that fails at runtime with _"Function tools with
 reasoning_effort are not supported … in /v1/chat/completions"_. Set

@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { parseConfig } from '../src/project/config.ts';
 import {
+    resilient,
     Sandbox,
     SANDBOX_GROUP,
     SANDBOX_MOUNT,
+    sandboxLimits,
     SandboxPool,
     sandboxTools,
     type ProcOptions,
@@ -409,6 +411,94 @@ describe('background jobs', () => {
     });
 });
 
+describe('an out-of-memory kill', () => {
+    // The command's own exec carries `--workdir`; the cgroup probe does not,
+    // which is the only thing telling the two `exec` calls apart here.
+    const COMMAND = 'exec --interactive --workdir';
+    const probes = (f: Fake) => f.calls.filter((c) => c.opts?.input?.includes('memory.events'));
+
+    it('blames the container when the kill was counted against it', async () => {
+        const f = fresh();
+        f.reply(COMMAND, { code: 137 });
+        f.reply('/bin/sh -s', { stdout: 'peak=536870912 kills=1\n' });
+
+        const res = await box(f, { memory: 512 }).exec('python3 -c "bytearray(2**31)"');
+
+        expect(res.exit_code).toBe(137);
+        expect(res.out_of_memory).toMatchObject({
+            limit_mib: 512,
+            peak_mib: 512,
+            retryable: false,
+        });
+        expect(res.out_of_memory?.hint).toContain('limited to 512 MiB');
+    });
+
+    it('blames the machine when the count did not move', async () => {
+        const f = fresh();
+        const b = box(f, { memory: 512 });
+
+        f.reply(COMMAND, { code: 137 });
+        f.reply('/bin/sh -s', { stdout: 'peak=536870912 kills=1\n' });
+        const own = await b.exec('big');
+
+        // Same counter a second time: nothing was killed in *this* cgroup, so
+        // the kill came from outside it.
+        f.reply(COMMAND, { code: 137 });
+        f.reply('/bin/sh -s', { stdout: 'peak=536870912 kills=1\n' });
+        const outside = await b.exec('big');
+
+        expect(own.out_of_memory?.retryable).toBe(false);
+        expect(outside.out_of_memory?.retryable).toBe(true);
+        expect(outside.out_of_memory?.hint).toContain('machine ran out of memory');
+    });
+
+    it('assumes the container when the cgroup cannot be read', async () => {
+        const f = fresh();
+        f.reply(COMMAND, { code: 137 });
+        f.reply('/bin/sh -s', { stdout: 'peak= kills=\n' });
+
+        const res = await box(f, { memory: 512 }).exec('big');
+
+        expect(res.out_of_memory?.retryable).toBe(false);
+        expect(res.out_of_memory?.peak_mib).toBeUndefined();
+    });
+
+    it('does not probe for a timeout, an ordinary failure, or an uncapped box', async () => {
+        const timed = fresh();
+        timed.reply(COMMAND, { code: 137, timedOut: true });
+        expect((await box(timed, { memory: 512 }).exec('sleep 1')).out_of_memory).toBeUndefined();
+        expect(probes(timed)).toHaveLength(0);
+
+        const failed = fresh();
+        failed.reply(COMMAND, { code: 1 });
+        expect((await box(failed, { memory: 512 }).exec('false')).out_of_memory).toBeUndefined();
+        expect(probes(failed)).toHaveLength(0);
+
+        const uncapped = fresh();
+        uncapped.reply(COMMAND, { code: 137 });
+        expect((await box(uncapped, { memory: 0 }).exec('big')).out_of_memory).toBeUndefined();
+        expect(probes(uncapped)).toHaveLength(0);
+    });
+
+    it('explains a killed job once, however often its log is read', async () => {
+        const f = fresh();
+        const b = box(f, { memory: 512 });
+        const job = await b.startJob('npm run build');
+
+        f.reply('/bin/sh -s', { stdout: 'lines=1\nexit=137\n---\nboom\n' });
+        f.reply('/bin/sh -s', { stdout: 'peak=536870912 kills=1\n' });
+        const first = (await b.readJob(job.id)) as Record<string, unknown>;
+
+        f.reply('/bin/sh -s', { stdout: 'lines=1\nexit=137\n---\nboom\n' });
+        const again = (await b.readJob(job.id)) as Record<string, unknown>;
+
+        expect(first.out_of_memory).toMatchObject({ limit_mib: 512, retryable: false });
+        // Re-probing would find the counter unchanged and change its mind.
+        expect(again.out_of_memory).toBe(first.out_of_memory);
+        expect(probes(f)).toHaveLength(1);
+    });
+});
+
 describe('disposal', () => {
     it('removes an ephemeral container', async () => {
         const f = fresh();
@@ -543,5 +633,127 @@ describe('the sandbox block in agents.yaml', () => {
             'agents.yaml',
         );
         expect(parsed.agents[0].sandbox?.image).toBe('python');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Reaching the engine
+//
+// Off Linux podman is a remote client that opens one ssh connection per
+// invocation, and sshd drops them past `MaxStartups`. That is a connection
+// failing before authentication, so nothing ran and the call can be repeated —
+// but only then, which is what these pin down.
+// ---------------------------------------------------------------------------
+
+describe('a refused connection', () => {
+    const answer = (res: Partial<ProcResult>): ProcResult => ({
+        code: 0,
+        stdout: '',
+        stderr: '',
+        truncated: false,
+        timedOut: false,
+        ...res,
+    });
+
+    /** Fails with `stderr` the first `times` calls, then succeeds. */
+    const flaky = (times: number, stderr: string): { run: Runner; tries: () => number } => {
+        let n = 0;
+        return {
+            tries: () => n,
+            run: () =>
+                Promise.resolve(
+                    ++n <= times ? answer({ code: 125, stderr }) : answer({ stdout: 'ok' }),
+                ),
+        };
+    };
+
+    it('is retried until it lands', async () => {
+        const f = flaky(2, 'Error: failed to connect: ssh: handshake failed: EOF');
+        const res = await resilient(f.run)('podman', ['ps']);
+        expect(res.code).toBe(0);
+        expect(res.stdout).toBe('ok');
+        expect(f.tries()).toBe(3);
+    });
+
+    it('gives up rather than retrying forever, and returns the last answer', async () => {
+        const f = flaky(99, 'kex_exchange_identification: Connection closed by remote host');
+        const res = await resilient(f.run, 3)('podman', ['ps']);
+        expect(res.code).toBe(125);
+        expect(f.tries()).toBe(3);
+    });
+
+    /**
+     * The distinction the whole thing rests on: a command that failed on its
+     * own merits must run exactly once, however its stderr reads.
+     */
+    it('is not confused with a command that ran and failed', async () => {
+        let n = 0;
+        const run: Runner = () => {
+            n++;
+            return Promise.resolve(answer({ code: 1, stderr: 'npm ERR! test failed' }));
+        };
+        expect((await resilient(run)('podman', ['exec'])).code).toBe(1);
+        expect(n).toBe(1);
+    });
+
+    it('does not repeat a command that had already produced output', async () => {
+        let n = 0;
+        const run: Runner = () => {
+            n++;
+            return Promise.resolve(
+                answer({ code: 1, stdout: 'partial', stderr: 'connection reset by peer' }),
+            );
+        };
+        await resilient(run)('podman', ['exec']);
+        expect(n).toBe(1);
+    });
+
+    it('stops when the turn is abandoned', async () => {
+        const f = flaky(99, 'ssh: handshake failed');
+        const res = await resilient(f.run)('podman', ['ps'], {
+            signal: AbortSignal.abort(),
+        });
+        expect(res.code).toBe(125);
+        expect(f.tries()).toBe(1);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// The ceilings, as a report reads them
+// ---------------------------------------------------------------------------
+
+describe('resolved limits', () => {
+    it('are the profile’s own defaults when nothing is written down', () => {
+        expect(sandboxLimits()).toEqual({
+            memory: 4096,
+            cpus: 4,
+            hardening: 'standard',
+            declared: false,
+        });
+        expect(sandboxLimits({ hardening: 'strict' })).toEqual({
+            memory: 2048,
+            cpus: 2,
+            hardening: 'strict',
+            declared: false,
+        });
+    });
+
+    it('take what was declared, and say that it was', () => {
+        expect(sandboxLimits({ memory: 8192, hardening: 'strict' })).toEqual({
+            memory: 8192,
+            cpus: 2,
+            hardening: 'strict',
+            declared: true,
+        });
+    });
+
+    /** Or a status report would contradict the container a run actually starts. */
+    it('agree with what the container is created with', async () => {
+        const f = fresh();
+        await box(f, { hardening: 'strict' }).start();
+        const create = find(f, 'run');
+        const limits = sandboxLimits({ hardening: 'strict' });
+        expect(create?.args).toContain(`${limits.memory}m`);
+        expect(create?.args).toContain(String(limits.cpus));
     });
 });

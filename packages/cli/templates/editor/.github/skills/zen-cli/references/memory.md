@@ -102,9 +102,9 @@ with no match.
 Superseded nodes are left out unless you ask: `--all` includes them marked, and
 `--stale` narrows to them alone.
 
-It is also the one subcommand that does not take the directory lock, so it works
-while a run is writing the memory, and against the read-only `/memory` mount
-inside a sandbox.
+Nothing that only reads takes the directory lock, so this and every other
+subcommand but `merge` and `forget` works while a run is writing the memory, and
+against the read-only `/memory` mount inside a sandbox.
 
 ## A graph that is not the project's
 

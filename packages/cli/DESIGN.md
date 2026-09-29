@@ -362,6 +362,13 @@ on the next run, which is the only reason it records a pid at all.
 Stale entries - path missing - are listed dimmed, and `zen list --prune` drops
 them.
 
+`zen list --runs` answers a different question with the same material: what ran
+last, anywhere. Run ids are stamps, so the merged newest-first order is a sort
+of directory names across every project, and only the runs that will be shown
+have their `meta.json` opened - which is what keeps `--limit` the cost control
+it looks like. On its own it replaces the project table rather than following
+it, since a flat list already names the project each run belongs to.
+
 ### 5.3 `zen open [project]`
 
 A project is resolved by name or from the current directory, and the path is
@@ -677,7 +684,8 @@ failed and is raised only after `batch.json` is written.
 `batch.json` is an **index**, not a second copy: it points at each item's file
 and carries the question, with inlined media named rather than repeated - the
 bytes are in that item's own input file already, and forty base64 screenshots
-in a combined file is an index of nothing.
+in a combined file is an index of nothing. It also carries the batch's `usage`
+and its `models`, the same split the dashboard draws.
 
 **Progress is a file, not a terminal.** Sixteen agents narrating at once into
 one terminal is not progress, it is interleaved noise, and a batch is usually
@@ -696,6 +704,20 @@ never wraps; every item takes the same four clipped lines whether or not it has
 anything to say; a worker with nothing to run is drawn as an idle slot rather
 than left out, for as long as anything is still queued. The same reasoning puts
 `Average run` in the facts table from the first tick, showing a dash.
+
+**Tokens are reported per model.** A project can put each agent on a different
+model and a fork on another again, so one total belongs to none of them and the
+first question anyone asks of a batch - what did the expensive one cost? - has
+no answer. `Tokens by model` gives one row per model id: its calls, and its
+input, cached, output and thinking tokens. The rows are the total rearranged,
+never a second reckoning of it: `usageByModel` walks the trajectory exactly as
+`totalUsage` does, recursing into every branch, and a summariser's tokens, which
+no node attributes to a model, are kept in a `(compaction)` row rather than
+dropped. Live rows come from the events; the moment an item finishes they are
+replaced by the split computed from its trajectory, for the same reason its
+total is. The table sits _below_ the running panel, because it gains a row the
+first time a model is used and anything above the panel that grows would move
+the panel down.
 
 The dashboard is deliberately **not load-bearing**: every write is swallowed,
 the timer is unref'd, and an item interrupted by a kill is recorded as such on
@@ -894,6 +916,28 @@ back - payloads resolved, nothing truncated, nothing filtered. A missing blob
 costs that one part and falls back to its preview, because an inspector that
 refuses to answer at all when a store has been pruned is no inspector.
 
+**One part is held back, and it is named rather than cut.** CLI runs record
+requests, so every `llm_call` carries the exact bytes sent to the model: the
+largest part of the node, near-identical from one call to the next, and by
+itself enough to exceed the output limit of the tool an agent is reading
+through - which returns nothing at all, the one failure mode worse than a
+partial answer. `request` is therefore printed as
+`--- part request · 126412 bytes · elided (--part request)`, and `--part`
+(repeatable, prefix-matched) or `--full` brings it back. The rule the choice
+follows is that **eliding must be visible and reversible**: a part is either
+printed whole or announced with its size and the flag that retrieves it, never
+truncated, so a reader always knows whether the node in front of them is
+complete. Silent truncation would let a model conclude from half a payload
+believing it had all of it.
+
+**The header answers what the node lines cannot.** A trajectory records
+reasoning tokens and a thinking payload but the diagram used to drop both - so
+"was this run thinking?" was unanswerable from the run itself, which is
+precisely the question asked when a run underperforms. `%% thinking` tallies
+the calls that reasoned and the tokens they spent. It follows the header's
+existing rule: a row that does not apply is left out, and its absence is an
+answer - no `%% thinking` row means nothing thought.
+
 **Every label is built from types and identifiers and then stripped to a narrow
 character set.** Tool arguments and tool results are model output, which is to
 say attacker-influenced input as far as the Mermaid parser is concerned. A
@@ -914,6 +958,43 @@ a run first. The ids are read out of the path and still go through `isStamp`,
 so a path from anywhere cannot name a directory this layout would never have
 produced. Blobs live one level up, per session, which is why resolving a path
 returns the session as well as the run.
+
+### Asking the run - `zen inspect ask`
+
+Reading what a model was given answers most questions. The one it does not
+answer is _why_, and the only witness to that is the model itself - so `ask`
+replays one `llm_call` to a model with the operator's question appended, and
+tool calling switched off.
+
+What makes the answer worth anything is that nothing is reconstructed. The
+request blob on the node is `Kernel.serializeRequest` - the system prompt, the
+messages and the tool schemas as the provider received them - so a model handed
+it back cannot invent which skill it saw or which instruction it had. Where the
+request was not recorded the command refuses rather than rebuilding one: a
+reconstruction is a different prompt, and an answer about a different prompt is
+worse than no answer. Every run made by the CLI records, which is what
+`recordRequests: true` in the engine is for.
+
+Three decisions carry it:
+
+- **A prefix on the system prompt grants disclosure.** A model asked about its
+  own instructions refuses to quote them, which is precisely the sentence a
+  person debugging a prompt needs. The prefix says the run is over, nothing it
+  writes takes effect, and quoting its prompt, files and skills is what is being
+  asked for. It grants nothing else: no tool, no file, no network, over data the
+  operator can already read with `zen inspect node`.
+- **The recorded answer goes back without its tool calls.** A tool call with no
+  result after it is rejected outright by Anthropic and OpenAI, and inventing a
+  result would be a lie about the run. The calls are quoted inside the question
+  instead, byte-counted like any other evidence, where they are plainly the
+  operator talking about them rather than the conversation replaying them.
+- **The model is found by wire id.** A node records `claude-opus-5`, not a
+  reference that can be built again - the provider belongs to the project. So
+  the id is matched back against what `agents.yaml` declares, which is also the
+  only way a project's own provider, gateway or base url is honoured. A run made
+  with `zen run --model` used something its agent never declared, and the wire
+  id is the only witness of which it was. `--model` names another and says on
+  stderr that the answer is now a second opinion rather than self-examination.
 
 ## 8. Distribution - the `zen` binary
 

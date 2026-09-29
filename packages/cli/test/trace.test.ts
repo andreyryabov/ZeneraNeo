@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { renderNode } from '../src/commands/inspect.ts';
+import { renderNode, wholeParts } from '../src/commands/inspect.ts';
 import { runPathsAt } from '../src/session.ts';
 import { CliError, choose, deferBanner } from '../src/term.ts';
 import { parseNodeIds, safe, traceIndex, traceMermaid, traceOf } from '../src/trace.ts';
@@ -271,6 +271,35 @@ describe('the diagram', () => {
 
         expect(head({ workspace: '/p/ws' })).not.toContain('%% memory');
     });
+
+    // A run that thought and a run that did not are otherwise identical here:
+    // the trajectory records reasoning tokens and the diagram used to drop
+    // them, leaving "is thinking on?" unanswerable from the run itself.
+    it('counts thinking, and says nothing when there was none', () => {
+        const head = (nodes: TrajectoryNode[]): string =>
+            traceMermaid(state(nodes)).split('flowchart TD')[0] as string;
+
+        expect(head(trunk())).not.toContain('%% thinking');
+
+        const thought = trunk();
+        thought[1] = node({
+            type: 'llm_call',
+            ...llm(['run_command']),
+            thinking: payload('first, list the files'),
+            usage: { ...usage, reasoningTokens: 900 },
+        });
+        expect(head(thought)).toContain('%% thinking  1 of 1 llm calls · 900 thinking tokens');
+    });
+
+    // The question a reader has after finding a node they distrust is "why",
+    // and `ask` is the verb for it. Nothing else in the output names it.
+    it('points at both the command that opens a node and the one that asks about it', () => {
+        const head = traceMermaid(state(trunk()), { dir: '/p/runs/r' }).split(
+            'flowchart TD',
+        )[0] as string;
+        expect(head).toContain('zen inspect node n1 n2 n5..n9 --dir /p/runs/r');
+        expect(head).toContain('zen inspect ask n5 "why did you do that?" --dir /p/runs/r');
+    });
 });
 
 describe('untrusted text', () => {
@@ -375,6 +404,69 @@ describe('asking for nodes', () => {
         expect(() => parseNodeIds(['n9'], known)).toThrow(/not in this run/);
         expect(() => parseNodeIds(['7'], known)).toThrow(/not a node id/);
         expect(() => parseNodeIds(['n5..n1'], known)).toThrow(/backwards/);
+    });
+
+    // A part left out has to leave a hole the reader can see and reverse. The
+    // failure this prevents is silent truncation: a node that looks complete,
+    // is not, and is reasoned about as though it were.
+    it('names an elided part with its size instead of dropping it', () => {
+        const detail = {
+            id: 'n1',
+            nodeId: 'id0',
+            kind: 'llm_call',
+            agent: 'lead',
+            branch: null,
+            ts: '2026-01-01T12:00:00.000Z',
+            label: 'call',
+            facts: {},
+            parts: [
+                { name: 'request', text: 'x'.repeat(5000) },
+                { name: 'text', text: 'the answer' },
+            ],
+        };
+        const out = renderNode(detail, (name) => name !== 'request');
+        expect(out).toContain('--- part request · 5000 bytes · elided (--part request)');
+        expect(out).not.toContain('--- end request');
+        expect(out).toContain('--- part text · 10 bytes');
+        expect(out).toContain('the answer');
+
+        // And asked for, it comes back whole.
+        expect(renderNode(detail)).toContain(`--- part request · 5000 bytes\n${'x'.repeat(5000)}`);
+    });
+
+    it('chooses parts by prefix, and says which exist when none matches', () => {
+        const found = [
+            {
+                id: 'n7',
+                parts: [{ name: 'request' }, { name: 'call run_command (toolu_1)' }],
+            },
+        ] as unknown as Parameters<typeof wholeParts>[0];
+
+        // The default is the one part that is both huge and near-identical
+        // between calls; everything else the node carries is printed.
+        const byDefault = wholeParts(found, {});
+        expect(byDefault('request')).toBe(false);
+        expect(byDefault('call run_command (toolu_1)')).toBe(true);
+
+        // A prefix, because the tool-call parts carry an id nobody can type.
+        const asked = wholeParts(found, { part: ['call'] });
+        expect(asked('call run_command (toolu_1)')).toBe(true);
+        expect(asked('request')).toBe(false);
+
+        expect(wholeParts(found, { full: true })('request')).toBe(true);
+
+        // A name that matches nothing is a mistake, not an empty result: the
+        // alternative is a node printed with every part elided and no reason.
+        let thrown: unknown;
+        try {
+            wholeParts(found, { part: ['nope'] });
+        } catch (err) {
+            thrown = err;
+        }
+        expect(thrown).toBeInstanceOf(CliError);
+        expect((thrown as CliError).message).toContain('no part starts with "nope" in n7');
+        // And it says what it could have been asked for.
+        expect((thrown as CliError).hint).toContain('call run_command (toolu_1)');
     });
 });
 

@@ -4,13 +4,13 @@ import {
     SANDBOX_MOUNT,
     Sandbox,
     exaTools,
+    fileTools,
     frontmatter,
     projectRegistry,
     readProjectConfig,
     sandboxTools,
     selectTools,
     toList,
-    workspaceTools,
     type AgentConfig,
     type AnyTool,
     type EmbeddingRef,
@@ -267,11 +267,18 @@ const FILE_TOOLS = [
     'find_files',
     'write_file',
     'apply_patch',
+    'copy_file',
     'move_file',
     'delete_file',
 ] as const;
 
-const FILE_WRITE_TOOLS = new Set(['write_file', 'apply_patch', 'move_file', 'delete_file']);
+const FILE_WRITE_TOOLS = new Set([
+    'write_file',
+    'apply_patch',
+    'copy_file',
+    'move_file',
+    'delete_file',
+]);
 
 function activeFileTools(selectors: readonly string[] | undefined): Set<string> {
     const active = new Set<string>();
@@ -940,7 +947,7 @@ export function availableTools(root: string, config: ProjectConfig): AnyTool<unk
     // Constructed, not started: a pool creates its container on the first
     // command, so naming one here costs nothing and needs no container engine.
     return [
-        ...workspaceTools<unknown>({
+        ...fileTools<unknown>({
             root,
             mount: config.sandbox?.workdir ?? SANDBOX_MOUNT,
         }),
@@ -2018,6 +2025,22 @@ function checkModels(
             const resolved = `${need.provider}${api}:${spec.model}`;
             if (resolved !== name) {
                 report.ref = resolved;
+            }
+            // Reported here rather than left to the probe below: a knob for the
+            // wrong vendor is a config mistake that wants naming whether or not
+            // there is a credential to build the model with.
+            if (role === 'model') {
+                for (const stray of registry.knobs(ref as ModelRef)) {
+                    add({
+                        severity: 'error',
+                        code: 'model.knob',
+                        where: whereFor(config, role, name, usedBy),
+                        message:
+                            `\`${stray.knob}\` means nothing to a ${stray.target} model — ` +
+                            'it would never reach the request',
+                        fix: `this model takes: ${stray.supported.join(', ')}`,
+                    });
+                }
             }
         } catch (err) {
             add({

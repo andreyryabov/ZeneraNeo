@@ -10,7 +10,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { Workspace, workspaceTools } from '../src/tools/workspace.ts';
+import { Workspace, fileTools } from '../src/tools/files.ts';
 import { selectTools } from '../src/types.ts';
 
 describe('workspace containment', () => {
@@ -93,7 +93,7 @@ describe('workspace containment', () => {
         it('is what the tools report', async () => {
             mkdirSync(join(root, 'src'), { recursive: true });
             writeFileSync(join(root, 'src', 'a.ts'), 'export const a = 1;\n');
-            const tools = workspaceTools({ root, mount: '/workspace' });
+            const tools = fileTools({ root, mount: '/workspace' });
             const run = async (name: string, args: unknown): Promise<any> => {
                 const found = tools.find((t) => t.name === name);
                 return await found!.execute(args, {} as never);
@@ -122,7 +122,7 @@ describe('workspace containment', () => {
 
         it('tells the model both spellings', () => {
             const say = (w: Workspace): string =>
-                JSON.stringify(workspaceTools({ root: w.root, mount: w.mount }));
+                JSON.stringify(fileTools({ root: w.root, mount: w.mount }));
             expect(say(mounted)).toContain('/workspace');
             expect(say(ws)).not.toContain('/workspace');
         });
@@ -149,7 +149,7 @@ describe('a mounted tree', () => {
 
     const opts = { root, mount: '/workspace', mounts: [{ host: assets, at: '/assets' }] };
     const ws = new Workspace(opts);
-    const tools = workspaceTools(opts);
+    const tools = fileTools(opts);
     const call = async (name: string, args: unknown): Promise<any> => {
         const found = tools.find((t) => t.name === name);
         if (!found) {
@@ -220,7 +220,24 @@ describe('a mounted tree', () => {
         await expect(call('move_file', { from: 'a.txt', to: '/assets/a.txt' })).rejects.toThrow(
             /read-only/,
         );
+        await expect(
+            call('copy_file', { from: 'handbook.md', to: '/assets/handbook.md' }),
+        ).rejects.toThrow(/read-only/);
         expect(existsSync(join(assets, 'handbook.md'))).toBe(true);
+    });
+
+    /**
+     * The asymmetry `copy_file` exists for: a read-only tree refuses every other
+     * mutating tool from either side, but reading out of one is what it is for,
+     * and only the destination has to be writable.
+     */
+    it('can be copied out of, even though it cannot be written to', async () => {
+        const out = await call('copy_file', { from: '/assets/handbook.md', to: 'notes.md' });
+        expect(out).toMatchObject({ from: '/assets/handbook.md', to: '/workspace/notes.md' });
+        expect(readFileSync(join(root, 'notes.md'), 'utf8')).toBe('# handbook\n');
+
+        await call('copy_file', { from: '/assets/specs', to: 'specs', recursive: true });
+        expect(readFileSync(join(root, 'specs', 'api.md'), 'utf8')).toBe('GET /things\n');
     });
 
     /** A patch that touches one file it may not write writes none of them. */
@@ -268,12 +285,12 @@ describe('a mounted tree', () => {
     });
 });
 
-describe('the workspace tools', () => {
+describe('the file tools', () => {
     const root = mkdtempSync(join(tmpdir(), 'zen-ws-tools-'));
     afterAll(() => rmSync(root, { recursive: true, force: true }));
 
     // The tools only ever touch `args`; the ToolContext is inert here.
-    const tools = workspaceTools({ root });
+    const tools = fileTools({ root });
     const call = async (name: string, args: unknown): Promise<any> => {
         const found = tools.find((t) => t.name === name);
         if (!found) {
@@ -284,7 +301,7 @@ describe('the workspace tools', () => {
 
     it('withholds the mutating tools when read-only', () => {
         const names = (readOnly: boolean): string[] =>
-            workspaceTools({ root, readOnly }).map((t) => t.name);
+            fileTools({ root, readOnly }).map((t) => t.name);
         expect(names(true)).toEqual(['read_file', 'list_dir', 'find_files']);
         expect(names(false)).toEqual([
             'read_file',
@@ -292,13 +309,14 @@ describe('the workspace tools', () => {
             'find_files',
             'write_file',
             'apply_patch',
+            'copy_file',
             'move_file',
             'delete_file',
         ]);
     });
 
     it('tags every tool with the files group', () => {
-        const groups = workspaceTools({ root }).map((t) => t.group);
+        const groups = fileTools({ root }).map((t) => t.group);
         expect(new Set(groups)).toEqual(new Set(['files']));
     });
 
@@ -535,6 +553,46 @@ describe('the workspace tools', () => {
         );
     });
 
+    it('copies, without clobbering by accident', async () => {
+        await call('write_file', { path: 'sub/original.txt', content: 'first' });
+        const copied = await call('copy_file', {
+            from: 'sub/original.txt',
+            to: 'sub/duplicate.txt',
+        });
+        expect(copied).toMatchObject({ copied: true, bytes: 5 });
+        // The point of the tool: the source is still there afterwards.
+        expect(readFileSync(join(root, 'sub', 'original.txt'), 'utf8')).toBe('first');
+        expect(readFileSync(join(root, 'sub', 'duplicate.txt'), 'utf8')).toBe('first');
+
+        await call('write_file', { path: 'sub/other.txt', content: 'second' });
+        const clash = await call('copy_file', { from: 'sub/other.txt', to: 'sub/duplicate.txt' });
+        expect(clash.error).toContain('already exists');
+        expect(readFileSync(join(root, 'sub', 'duplicate.txt'), 'utf8')).toBe('first');
+
+        await call('copy_file', {
+            from: 'sub/other.txt',
+            to: 'sub/duplicate.txt',
+            overwrite: true,
+        });
+        expect(readFileSync(join(root, 'sub', 'duplicate.txt'), 'utf8')).toBe('second');
+    });
+
+    it('copies a directory only when told to be recursive, and never into itself', async () => {
+        expect((await call('copy_file', { from: 'sub', to: 'twin' })).error).toContain(
+            'is a directory',
+        );
+        expect(existsSync(join(root, 'twin'))).toBe(false);
+
+        const copied = await call('copy_file', { from: 'sub', to: 'twin', recursive: true });
+        expect(copied).toMatchObject({ copied: true, directory: true });
+        expect(readFileSync(join(root, 'twin', 'original.txt'), 'utf8')).toBe('first');
+
+        expect(
+            (await call('copy_file', { from: 'sub', to: 'sub/deeper', recursive: true })).error,
+        ).toContain('into itself');
+        await call('delete_file', { path: 'twin', recursive: true });
+    });
+
     it('deletes a directory only when told to be recursive', async () => {
         expect((await call('delete_file', { path: 'sub' })).error).toContain('is a directory');
         expect(existsSync(join(root, 'sub'))).toBe(true);
@@ -559,7 +617,7 @@ describe('apply_patch', () => {
     const root = mkdtempSync(join(tmpdir(), 'zen-ws-patch-'));
     afterAll(() => rmSync(root, { recursive: true, force: true }));
 
-    const apply = workspaceTools({ root }).find((t) => t.name === 'apply_patch')!;
+    const apply = fileTools({ root }).find((t) => t.name === 'apply_patch')!;
     const patch = async (...lines: string[]): Promise<any> =>
         await apply.execute(
             { patch: ['*** Begin Patch', ...lines, '*** End Patch'].join('\n') },

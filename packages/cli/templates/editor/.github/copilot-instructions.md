@@ -47,7 +47,8 @@ visible in `agents.yaml` and that `zen check` does not report.** Before
 reviewing or changing a project, list the capabilities it has turned on and load
 the editor skill for each one - `zen-memory` for a `memory:` block,
 `zen-sandbox` for sandbox configuration or shell tools, `zen-rag-schema` or
-`zen-rag-docs` for an index, `zen-cli` always. A capability that is already
+`zen-rag-docs` for an index, `zen-sandbox-capacity` before any `zen run batch`,
+`zen-cli` always. A capability that is already
 configured and already passing `zen check` is exactly the case that looks
 finished and is not: the obligation lives in the skill, so a review that never
 opens the skill cannot find what is missing. This applies whatever prompted the
@@ -810,7 +811,7 @@ committed shows up as a skill with no files.
 ### 3.5 Tools
 
 A tool is what an agent can _do_ rather than say. `zen run` provides three
-groups - the workspace tools (§3.6), the sandbox tools (§3.7) and the web tools
+groups - the file tools (§3.6), the sandbox tools (§3.7) and the web tools
 (§3.8) - and `agents.yaml` decides which agent holds which. Nothing else reaches
 the machine, so `tools:` is the whole permission model: an agent that does not
 name a tool cannot use it, whatever its prompt says.
@@ -846,6 +847,7 @@ them cannot see a file at all.
 | `find_files`  | Paths containing a substring, case-insensitive                                           |
 | `write_file`  | Creates or overwrites a whole file, making parent directories                            |
 | `apply_patch` | Edits by surrounding context rather than line numbers; several files atomically          |
+| `copy_file`   | Copies, bytes never touching the context; the source may be a read-only mount            |
 | `move_file`   | Moves or renames; refuses to clobber without `overwrite`                                 |
 | `delete_file` | Deletes; a directory needs `recursive`                                                   |
 
@@ -876,8 +878,8 @@ agents:
       tools: [files:*]
 
     - name: reviewer
-      # Everything except the four that can change something.
-      tools: [files:*, -write_file, -apply_patch, -move_file, -delete_file]
+      # Everything except the five that can change something.
+      tools: [files:*, -write_file, -apply_patch, -copy_file, -move_file, -delete_file]
 ```
 
 Selectors apply in the order written, so a `-` line reads as an exception to the
@@ -1638,7 +1640,9 @@ over one connection.
 | `includeThoughts`       | gemini                        | Thought summaries; default `true`                                                                          |
 | `routing` / `fallbacks` | openrouter                    | Upstream provider preferences, and models to fall back to - §7.5                                           |
 
-Knobs that do not apply to the chosen vendor are ignored, not rejected.
+Knobs that do not apply to the chosen vendor are rejected, not dropped: the
+schema accepts every one on every model, and building it fails with `does not
+read "<knob>"`. `zen check` reports the same thing as `model.knob`.
 `api:` exists only for the OpenAI protocol - naming it on a Gemini or Anthropic
 model is an error.
 
@@ -2012,7 +2016,8 @@ candidates; these are the judgements to make about each one)**
 - [ ] No agent holds `write_file` without `apply_patch`, or `read_file` without
       `list_dir` and `find_files`
 - [ ] An agent that only reads is not holding `write_file`, `apply_patch`,
-      `move_file` or `delete_file` - subtract them from `files:*` (or `workspace:*`)
+      `copy_file`, `move_file` or `delete_file` - subtract them from `files:*`
+      (or `workspace:*`)
 - [ ] `sandbox:*` is granted only where a shell is actually needed
 - [ ] `sandbox.persist: true`, unless a throwaway rootfs is wanted on purpose
 - [ ] The `sandbox:` image carries what the work needs, rather than the prompt

@@ -1,4 +1,9 @@
-import { readProjectConfig } from '@zenera/neo';
+import {
+    readProjectConfig,
+    sandboxLimits,
+    type ProjectConfig,
+    type SandboxLimits,
+} from '@zenera/neo';
 import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { resolveBuild, type ResolvedBuild } from '../image.ts';
@@ -10,6 +15,7 @@ import {
     removeContainers,
     type EngineDisk,
     type OwnedContainer,
+    type PodmanStatus,
 } from '../podman.ts';
 import {
     current as currentProject,
@@ -41,6 +47,8 @@ const USAGE = 'zen sandbox [status|up|pull|clean|disk] [options]';
 const LISTED = 6;
 /** Under the labels, which is where the eye already is. */
 const INDENT = ' '.repeat(11);
+/** `agents.yaml` states memory in MiB; `bytes` prints bytes. */
+const MIB = 1024 * 1024;
 
 interface Flags {
     project?: string;
@@ -129,6 +137,8 @@ interface ProjectSandbox {
     name: string;
     image?: string;
     build?: ResolvedBuild;
+    /** the ceilings one container gets, agent overrides included */
+    limits?: SandboxLimits;
 }
 
 /**
@@ -154,6 +164,7 @@ async function projectSandbox(cwd: string, values: Flags): Promise<ProjectSandbo
             name: found.name,
             image: build?.tag ?? config.sandbox?.image,
             build,
+            limits: widest(config),
         };
     } catch {
         // A project whose configuration does not read is `zen check`'s to
@@ -180,6 +191,8 @@ async function status(
             ...found,
             project: project?.name ?? null,
             dockerfile: build?.dockerfile ?? null,
+            limits: project?.limits ?? null,
+            fits: fits(found.capacity?.memory, project?.limits?.memory) ?? null,
             containers,
         });
         return;
@@ -193,7 +206,17 @@ async function status(
         const state = found.machine.starting ? yellow('starting') : mark(found.machine.running);
         write(`${bold('machine')}    ${found.machine.name} ${state}`);
     }
+    if (found.connection) {
+        // A concurrency limit wearing a connection string: `ssh://` opens one
+        // connection per call and sshd refuses them past ten, which stays
+        // invisible until a batch is wide enough to lose tasks at random.
+        const how = found.connection.shared
+            ? dim('· one shared connection, no limit on parallel calls')
+            : yellow('· a new ssh connection per call — about 10 at a time');
+        write(`${bold('connection')} ${dim(found.connection.uri)} ${how}`);
+    }
     write(`${bold('responds')}   ${mark(found.ready)}`);
+    writeAll(limitLines(found, project?.limits));
     if (project) {
         write(`${bold('project')}    ${project.name} ${dim(project.dir)}`);
     }
@@ -209,6 +232,74 @@ async function status(
         note('');
         note(dim('run `zen sandbox up` to fix what can be fixed.'));
     }
+}
+
+/**
+ * The hungriest container this project can start. An agent may override the
+ * project's `sandbox:` block, and it is the largest of them that decides
+ * whether a batch fits — reporting the project's own figure would understate
+ * the machine by however much an agent asked for on top.
+ *
+ * The overrides are merged onto the project's block rather than read alone,
+ * because that is what `SandboxPool.for` does when it builds the container: an
+ * agent that names only `memory:` still runs with the project's `cpus:`.
+ */
+function widest(config: ProjectConfig): SandboxLimits {
+    const base = config.sandbox ?? {};
+    return config.agents
+        .map((a) => sandboxLimits(a.sandbox ? { ...base, ...a.sandbox } : base))
+        .reduce((most, one) => (one.memory > most.memory ? one : most), sandboxLimits(base));
+}
+
+/**
+ * How many containers of this size the engine could hold at once.
+ *
+ * Nothing enforces it — `--memory` caps one container and the kernel kills
+ * whatever overruns the sum, so this is what the machine can honour, not a
+ * gate anything checks. It is worth printing because neither figure gives it
+ * alone: off Linux the memory is the *machine's*, which has nothing to do with
+ * the host, so a few containers at the 4096 MiB default can be past it while
+ * the laptop sits nearly empty.
+ */
+function fits(capacity?: number, container?: number): number | undefined {
+    if (!capacity || !container) {
+        return undefined;
+    }
+    return Math.max(0, Math.floor(capacity / container));
+}
+
+/**
+ * Two ceilings, in the order they bite: what the engine has, and what one
+ * container is permitted to take of it.
+ */
+function limitLines(found: PodmanStatus, limits?: SandboxLimits): string[] {
+    const lines: string[] = [];
+    const where = found.machine ? 'machine' : 'host';
+    if (found.capacity) {
+        const { memory, swap, cpus } = found.capacity;
+        const swapped = swap > 0 ? `${bytes(swap * MIB)} swap` : 'no swap';
+        lines.push(
+            `${bold('capacity')}   ${bytes(memory * MIB)} ${dim(
+                `· ${swapped} · ${cpus} cpus · the ${where}'s, not the host's`,
+            )}`,
+        );
+    }
+    if (limits) {
+        const room = fits(found.capacity?.memory, limits.memory);
+        const how = limits.declared ? limits.hardening : `${limits.hardening} defaults`;
+        const tail =
+            room === undefined
+                ? how
+                : room > 0
+                  ? `· ${how} · the ${where} has room for ${room}`
+                  : `· ${how} · more than the ${where} has`;
+        lines.push(
+            `${bold('container')}  ${bytes(limits.memory * MIB)} ${dim(
+                `· ${limits.cpus} cpus ${tail}`,
+            )}`,
+        );
+    }
+    return lines;
 }
 
 /**

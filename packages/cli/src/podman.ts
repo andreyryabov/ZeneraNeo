@@ -59,8 +59,12 @@ export interface PodmanStatus {
     version?: string;
     /** absent on Linux, where there is no machine to have */
     machine?: { name: string; running: boolean; starting: boolean };
+    /** how this client reaches the engine, and whether one connection carries every call */
+    connection?: { uri: string; shared: boolean };
     /** whether `podman info` answered */
     ready: boolean;
+    /** what the engine has to hand out: the machine's on macOS and Windows, the host's on Linux */
+    capacity?: { memory: number; swap: number; cpus: number };
     image?: string;
     imagePresent?: boolean;
 }
@@ -115,12 +119,20 @@ async function preflight(opts: PodmanOptions): Promise<void> {
     //    containers natively and has no machine to list, so asking would fail
     //    with a message about an unknown command rather than about anything
     //    true.
+    let shared: string | undefined;
     if (platform() !== 'linux') {
         await machine(engine, call, opts, run);
+        shared = await shareConnection(engine, run);
     }
 
     // 3. The socket. Everything above can be true while the engine is wedged.
-    const info = await call(['info'], 60_000);
+    let info = await call(['info'], 60_000);
+    if (info.code !== 0 && shared && process.env.CONTAINER_HOST === shared) {
+        // The shared endpoint is an optimisation, so it never gets to be the
+        // reason a run fails: put the default connection back and ask again.
+        delete process.env.CONTAINER_HOST;
+        info = await call(['info'], 60_000);
+    }
     if (info.code !== 0) {
         throw sandboxError(
             `${engine} is installed but not responding`,
@@ -317,6 +329,135 @@ function parseMachines(stdout: string): Machine[] {
 }
 
 // ---------------------------------------------------------------------------
+// How the client reaches the engine
+//
+// Off Linux the client is remote, and the connection it is given by default is
+// `ssh://` into the machine — one fresh ssh connection per `podman` process.
+// sshd refuses new ones past `MaxStartups`, ten by default and randomly above
+// that, so a batch wider than about ten loses calls on a different task each
+// time it runs, for a reason that looks nothing like a connection limit.
+//
+// The machine already forwards a second endpoint for Docker API clients — a
+// unix socket on macOS, a named pipe on Windows — and it is served by one
+// long-lived connection that every call shares. Pointing this process at it
+// takes the ceiling away rather than raising it, and needs nothing inside the
+// machine changed. On Linux there is no machine, no ssh and no ceiling.
+// ---------------------------------------------------------------------------
+
+interface Inspected {
+    ConnectionInfo?: {
+        PodmanSocket?: { Path?: string } | null;
+        PodmanPipe?: { Path?: string } | null;
+    };
+}
+
+interface Connection {
+    Name?: string;
+    URI?: string;
+    Default?: boolean;
+}
+
+/**
+ * The machine's forwarded endpoint as a URI this client accepts, or nothing
+ * when there is no machine to ask.
+ */
+export async function sharedEndpoint(
+    engine = 'podman',
+    exec = runProcess,
+): Promise<string | undefined> {
+    if (platform() === 'linux') {
+        return undefined;
+    }
+    const res = await exec(engine, ['machine', 'inspect'], { timeoutMs: 30_000 }).catch(
+        () => undefined,
+    );
+    if (!res || res.code !== 0) {
+        return undefined;
+    }
+    let raw: unknown;
+    try {
+        raw = JSON.parse(res.stdout.trim() || '[]');
+    } catch {
+        return undefined;
+    }
+    const one = (Array.isArray(raw) ? (raw as Inspected[]) : [])[0];
+    // Windows first: a named pipe is the only endpoint there, and `\\.\pipe\x`
+    // is spelled `//./pipe/x` in a URI.
+    const pipe = one?.ConnectionInfo?.PodmanPipe?.Path;
+    if (pipe) {
+        return `npipe://${pipe.replaceAll('\\', '/')}`;
+    }
+    const socket = one?.ConnectionInfo?.PodmanSocket?.Path;
+    return socket ? `unix://${socket}` : undefined;
+}
+
+/**
+ * Points this process at the shared endpoint, and returns what it set so the
+ * caller can take it back if the engine then fails to answer.
+ *
+ * An explicit `CONTAINER_HOST` or `CONTAINER_CONNECTION` is the user's choice
+ * about which engine to talk to, which is not ours to overrule for a
+ * throughput win.
+ */
+async function shareConnection(
+    engine: string,
+    exec: typeof runProcess,
+): Promise<string | undefined> {
+    if (process.env.CONTAINER_HOST || process.env.CONTAINER_CONNECTION) {
+        return undefined;
+    }
+    const uri = await sharedEndpoint(engine, exec);
+    if (uri) {
+        process.env.CONTAINER_HOST = uri;
+    }
+    return uri;
+}
+
+/**
+ * The connection a run will use, which is what a report about concurrency has
+ * to name — not the one that is configured today.
+ *
+ * `status` deliberately changes nothing, so it does not set `CONTAINER_HOST`
+ * the way `ensurePodmanReady` does; it asks the same question in the same
+ * order instead, and so answers for the run that has not happened yet. The
+ * `ssh://` fallback is therefore the machine where the shared endpoint could
+ * not be found, which is exactly the one worth saying so about.
+ */
+async function connectionOf(
+    engine: string,
+    exec: typeof runProcess,
+): Promise<PodmanStatus['connection']> {
+    const held = process.env.CONTAINER_HOST;
+    if (held) {
+        return { uri: held, shared: !held.startsWith('ssh://') };
+    }
+    const shared = process.env.CONTAINER_CONNECTION
+        ? undefined
+        : await sharedEndpoint(engine, exec);
+    if (shared) {
+        return { uri: shared, shared: true };
+    }
+    const res = await exec(engine, ['system', 'connection', 'list', '--format', 'json'], {
+        timeoutMs: 30_000,
+    }).catch(() => undefined);
+    if (!res || res.code !== 0) {
+        return undefined;
+    }
+    let raw: unknown;
+    try {
+        raw = JSON.parse(res.stdout.trim() || '[]');
+    } catch {
+        return undefined;
+    }
+    const all = Array.isArray(raw) ? (raw as Connection[]) : [];
+    const named = process.env.CONTAINER_CONNECTION;
+    const uri =
+        (named ? all.find((c) => c.Name === named) : undefined)?.URI ??
+        (all.find((c) => c.Default) ?? all[0])?.URI;
+    return uri ? { uri, shared: !uri.startsWith('ssh://') } : undefined;
+}
+
+// ---------------------------------------------------------------------------
 // The image
 // ---------------------------------------------------------------------------
 
@@ -407,10 +548,28 @@ export async function podmanStatus(opts: PodmanOptions = {}): Promise<PodmanStat
                 starting: Boolean(chosen.Starting),
             };
         }
+        status.connection = await connectionOf(engine, run);
     }
 
-    const info = await call(['info']);
+    // The same `info` answers both questions, and the memory is the one worth
+    // printing: off Linux it is the machine's, which is neither the host's nor
+    // anything the container limits in agents.yaml were written against.
+    const info = await call([
+        'info',
+        '--format',
+        '{{.Host.MemTotal}} {{.Host.SwapTotal}} {{.Host.CPUs}}',
+    ]);
     status.ready = info?.code === 0;
+    if (info?.code === 0) {
+        const [memory, swap, cpus] = info.stdout.trim().split(/\s+/).map(Number);
+        if (Number.isFinite(memory) && memory > 0) {
+            status.capacity = {
+                memory: Math.round(memory / 1048576),
+                swap: Number.isFinite(swap) ? Math.round(swap / 1048576) : 0,
+                cpus: Number.isFinite(cpus) ? cpus : 0,
+            };
+        }
+    }
 
     if (opts.image) {
         status.image = opts.image;

@@ -146,6 +146,7 @@ zen check my-project            # validate the project and every file it names
 zen inspect                     # open the last run's report.html
 zen inspect graph               # the same run as a graph a model can read
 zen list --sessions             # every project, its sessions and last run
+zen list --runs                 # the most recent runs, newest first, across every project
 echo "triage this" | zen run my-project --json | jq
 zen run batch --input cases.json   # a file full of questions, 16 at a time
 ```
@@ -166,7 +167,8 @@ recall from the same graph, because nothing is written and so nothing needs the
 lock. Without it each item gets a copy, and `zen memory merge <batch-dir>/*/memory`
 folds what they learned back in. While it runs, `<batch-dir>/README.md` is a
 dashboard rewritten every second: what each item is doing right now, what the
-finished ones cost, and what is still queued.
+finished ones cost - per model, since agents may each use a different one - and
+what is still queued.
 
 To change what the system does, update `SPECIFICATION.md` and send
 `/spec-sync-project` again. The next section explains that workflow in detail.
@@ -273,7 +275,13 @@ three nodes that explain it:
 DIR=$(zen run my-project "fix the tests" --json | jq -r .run.dir)
 zen inspect graph --dir "$DIR"        # the shape of the run
 zen inspect node n14..n20 --dir "$DIR"  # the nodes behind the ids, in full
+zen inspect ask n17 "why python -c here?" --dir "$DIR"  # ask the model itself
 ```
+
+`ask` replays that one call - its recorded system prompt, messages and tool
+schemas - to a model with your question on the end and tool calling off, and
+tells it the run is over and its own instructions are quotable. It is how a
+prompt that reads correctly and behaves wrongly explains itself.
 
 Every step is a command, and everything each one reads or writes is a plain
 file: the specification, the findings `zen check` prints with a code, a location

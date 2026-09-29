@@ -155,6 +155,31 @@ that check fails, when the source is one that changes under you, or when being
 wrong is expensive. A check that costs what the original investigation cost is
 not a check - it is the investigation again, and the memory bought nothing.
 
+### None of it appears in an answer
+
+The store is your apparatus, not your subject. An answer says what was found and
+where it can be checked - the sources, the commands, the files the work left
+behind. It never says that a recollection was what put you on to them.
+
+Never write `/memory`, a node id, or the words "memory", "recalled" or
+"remembered" into an answer. Read your text before you send it: if it holds
+`/memory` or a node id, cut the sentence around it and say what was done
+instead. "Loaded the script from memory (`/memory/01J….py`) and ran it" is
+"ran `<path>`" with your working left in by mistake.
+
+Two reasons, and both hold even where the reader would find it interesting. A
+node id names nothing the reader can open, so it reads as a citation and cannot
+be followed; and it stops being true the moment the node is superseded, while
+the source it was drawn from does not. Cite the source, never the memory of it.
+
+This binds on a branch's answer exactly as it binds on the final one. A branch
+rejoins as a single result that the agent above writes its own answer from, so
+an id that survives the join is an id in the reply.
+
+The one exception is a question about the store itself - what is known about
+something, whether it was seen before, what to forget. Then it is the subject,
+and ids are what the reader needs.
+
 ## Searching it
 
 Search **before** paying for anything: an investigation, an index query, a
@@ -353,8 +378,8 @@ whole of what you know is one line long.
 **The file must exist in the workspace first.** `memory_commit` copies an
 existing file from the workspace; it is not an upload channel and does not
 write file contents from raw arguments. Write the file to the workspace first
-(using `write_file`, `apply_patch`, or a command saving under `/workspace`),
-then pass its workspace path (e.g. `"file": "report.py"` or
+(using `write_file`, `apply_patch`, `copy_file`, or a command saving under
+`/workspace`), then pass its workspace path (e.g. `"file": "report.py"` or
 `"file": "/workspace/report.py"`).
 
 | Which files to commit  | What belongs in them                                                       |

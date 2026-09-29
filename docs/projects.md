@@ -272,16 +272,17 @@ is what keeps a loaded project from being able to touch anything the host did
 not hand it.
 
 ```ts
-import { loadProject, workspaceTools, sandboxTools, SANDBOX_MOUNT } from '@zenera/neo';
+import { loadProject, fileTools, sandboxTools, SANDBOX_MOUNT } from '@zenera/neo';
 
 const project = await loadProject('./my-project', {
-    tools: [...workspaceTools({ root: workspace, mount: SANDBOX_MOUNT }), ...sandboxTools(pool)],
+    tools: [...fileTools({ root: workspace, mount: SANDBOX_MOUNT }), ...sandboxTools(pool)],
 });
 ```
 
-- `workspaceTools({ root, readOnly, mount, mounts })` - `read_file`, `list_dir`,
-  `find_files`, and `write_file`, `apply_patch`, `move_file`, `delete_file` when
-  it is writable. Everything is contained to `root`, resolving symlinks first.
+- `fileTools({ root, readOnly, mount, mounts })` - `read_file`, `list_dir`,
+  `find_files`, and `write_file`, `apply_patch`, `copy_file`, `move_file`,
+  `delete_file` when it is writable. Everything is contained to `root`,
+  resolving symlinks first.
 - `sandboxTools(pool)` - `run_command`, `run_command_background`,
   `read_command_output`, `stop_command`, all in group `sandbox`.
 

@@ -67,7 +67,7 @@ import {
     type Outcome,
     type Sink,
 } from '../src/meta.ts';
-import { engineDisk, ensurePodmanReady, ownedContainers } from '../src/podman.ts';
+import { engineDisk, ensurePodmanReady, ownedContainers, sharedEndpoint } from '../src/podman.ts';
 import { dirSize, lastUsedAt, projectMounts } from '../src/projects.ts';
 import { parseRequest, readRequest } from '../src/request.ts';
 import { chooseWorkspace } from '../src/resolve.ts';
@@ -2252,6 +2252,110 @@ describe('the podman pre-flight', () => {
         await expect(
             ensurePodmanReady({ image: 'img-garbage', yes: true, exec: f.run }),
         ).rejects.toThrow(/machine list/);
+    });
+
+    // -----------------------------------------------------------------------
+    // The connection, which is a concurrency limit in disguise
+    //
+    // The default `ssh://` connection is made fresh by every podman process,
+    // and sshd refuses new ones past `MaxStartups` — ten — so a batch wider
+    // than that loses calls at random. The machine forwards a second endpoint
+    // that one long-lived connection carries for everybody; these pin down
+    // that it is found, used, and never allowed to become a failure of its own.
+    // -----------------------------------------------------------------------
+
+    const inspected = (info: unknown): string => JSON.stringify([{ ConnectionInfo: info }]);
+    const SOCK = '/var/folders/T/podman/podman-machine-default-api.sock';
+
+    let held: string | undefined;
+    beforeEach(() => {
+        held = process.env['CONTAINER_HOST'];
+        delete process.env['CONTAINER_HOST'];
+    });
+    afterEach(() => {
+        if (held === undefined) {
+            delete process.env['CONTAINER_HOST'];
+        } else {
+            process.env['CONTAINER_HOST'] = held;
+        }
+    });
+
+    it('reads the forwarded socket as a uri', async () => {
+        if (onLinux) {
+            return;
+        }
+        const f = fake();
+        f.reply('machine inspect', {
+            stdout: inspected({ PodmanSocket: { Path: SOCK }, PodmanPipe: null }),
+        });
+        expect(await sharedEndpoint('podman', f.run)).toBe(`unix://${SOCK}`);
+    });
+
+    /** The same endpoint, spelled the way Windows spells it. */
+    it('reads a named pipe as a uri', async () => {
+        if (onLinux) {
+            return;
+        }
+        const f = fake();
+        f.reply('machine inspect', {
+            stdout: inspected({
+                PodmanSocket: null,
+                PodmanPipe: { Path: '\\\\.\\pipe\\podman-machine-default' },
+            }),
+        });
+        expect(await sharedEndpoint('podman', f.run)).toBe(
+            'npipe:////./pipe/podman-machine-default',
+        );
+    });
+
+    it('reports nothing rather than throwing when there is no endpoint to have', async () => {
+        const f = fake();
+        f.reply('machine inspect', { stdout: inspected({}) });
+        expect(await sharedEndpoint('podman', f.run)).toBeUndefined();
+        f.reply('machine inspect', { stdout: 'not json' });
+        expect(await sharedEndpoint('podman', f.run)).toBeUndefined();
+        f.reply('machine inspect', { code: 125, stderr: 'no such machine' });
+        expect(await sharedEndpoint('podman', f.run)).toBeUndefined();
+    });
+
+    it('points this process at it, so parallel calls stop competing', async () => {
+        if (onLinux) {
+            return;
+        }
+        const f = running(fake());
+        f.reply('machine inspect', { stdout: inspected({ PodmanSocket: { Path: SOCK } }) });
+        await ensurePodmanReady({ image: 'img-shared', yes: true, exec: f.run });
+        expect(process.env['CONTAINER_HOST']).toBe(`unix://${SOCK}`);
+    });
+
+    /** An optimisation never gets to be the reason a run fails. */
+    it('puts the default connection back when the endpoint does not answer', async () => {
+        if (onLinux) {
+            return;
+        }
+        const f = running(fake());
+        f.reply('machine inspect', { stdout: inspected({ PodmanSocket: { Path: SOCK } }) });
+        f.reply('info', { code: 125, stderr: 'cannot connect' });
+        await ensurePodmanReady({ image: 'img-fallback', yes: true, exec: f.run });
+
+        expect(process.env['CONTAINER_HOST']).toBeUndefined();
+        // Asked twice: once over the endpoint, once over the connection it
+        // fell back to, which is the one that answered.
+        expect(f.seen.filter((l) => l.endsWith(' info')).length).toBe(2);
+    });
+
+    /** Which engine to talk to is the user's decision, not a throughput one. */
+    it('leaves a CONTAINER_HOST that was already set alone', async () => {
+        if (onLinux) {
+            return;
+        }
+        process.env['CONTAINER_HOST'] = 'tcp://elsewhere:2375';
+        const f = running(fake());
+        f.reply('machine inspect', { stdout: inspected({ PodmanSocket: { Path: SOCK } }) });
+        await ensurePodmanReady({ image: 'img-theirs', yes: true, exec: f.run });
+
+        expect(process.env['CONTAINER_HOST']).toBe('tcp://elsewhere:2375');
+        expect(f.seen.some((l) => l.includes('machine inspect'))).toBe(false);
     });
 });
 

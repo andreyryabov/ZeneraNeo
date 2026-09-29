@@ -10,7 +10,7 @@ import {
     parseConfig,
     projectPath,
 } from '../src/project/index.ts';
-import { workspaceTools } from '../src/tools/workspace.ts';
+import { fileTools } from '../src/tools/files.ts';
 import { tool, zeroUsage } from '../src/types.ts';
 
 // ---------------------------------------------------------------------------
@@ -261,13 +261,13 @@ describe('conditional house rules', () => {
             parameters: { type: 'object', properties: {}, additionalProperties: false },
             execute: () => 'ok',
         });
-        const tools = [...workspaceTools({ root: tmpdir() }), dummySandbox];
+        const tools = [...fileTools({ root: tmpdir() }), dummySandbox];
         const p = await loadProject(
             project({
                 'agents.yaml':
                     'agents:\n' +
                     '  - name: full\n    tools: [files:*]\n' +
-                    '  - name: readonly\n    tools: [files:*, -write_file, -apply_patch, -move_file, -delete_file]\n' +
+                    '  - name: readonly\n    tools: [files:*, -write_file, -apply_patch, -copy_file, -move_file, -delete_file]\n' +
                     '  - name: legacy\n    tools: [workspace:*]\n' +
                     '  - name: none\n    tools: [sandbox:*]\n',
                 'agents/files-instructions.md': '---\nrequires: [files]\n---\nRead carefully.',

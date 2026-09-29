@@ -389,6 +389,78 @@ describe('the dashboard a batch writes', () => {
         expect(text).toContain('12k in · 1.2k out (400 thinking)');
     });
 
+    /**
+     * A project can put each agent on a different model, and a fork on another
+     * again. One total then belongs to none of them, which is the question
+     * anyone reading a batch asks first: what did the expensive one cost?
+     */
+    it('says which model spent what, live', () => {
+        const board = progress();
+        const watch = board.watch('vat');
+        const spent = (model: string, inputTokens: number) =>
+            watch(
+                event({
+                    type: 'after_llm_call',
+                    state: {},
+                    node: {
+                        model,
+                        usage: {
+                            inputTokens,
+                            outputTokens: 100,
+                            cachedInputTokens: 0,
+                            reasoningTokens: 0,
+                        },
+                    },
+                }),
+            );
+        spent('gemini-3-flash', 1000);
+        spent('gpt-5.4', 9000);
+        spent('gemini-3-flash', 2000);
+
+        const rows = board.render().split('## Tokens by model')[1].split('\n## ')[0];
+        // Heaviest first, however the calls happened to interleave.
+        expect(rows).toMatch(/`gpt-5.4` \| 1 \| 9.0k \|[\s\S]*`gemini-3-flash` \| 2 \| 3.0k \|/);
+    });
+
+    it('takes the finished split from the result, not from the stream', () => {
+        const board = progress();
+        const watch = board.watch('vat');
+        watch(
+            event({
+                type: 'after_llm_call',
+                state: {},
+                node: {
+                    model: 'gemini-3-flash',
+                    usage: {
+                        inputTokens: 10,
+                        outputTokens: 2,
+                        cachedInputTokens: 0,
+                        reasoningTokens: 0,
+                    },
+                },
+            }),
+        );
+        board.finish('vat', {
+            ok: true,
+            usage: { inputTokens: 500, outputTokens: 40, cachedInputTokens: 0, reasoningTokens: 0 },
+            models: [
+                {
+                    model: 'gemini-3-flash',
+                    calls: 4,
+                    usage: {
+                        inputTokens: 500,
+                        outputTokens: 40,
+                        cachedInputTokens: 0,
+                        reasoningTokens: 0,
+                    },
+                },
+            ],
+        });
+
+        const rows = board.render().split('## Tokens by model')[1].split('\n## ')[0];
+        expect(rows).toContain('`gemini-3-flash` | 4 | 500 |');
+    });
+
     it('leaves the file as the record, with an interrupted item accounted for', async () => {
         const board = progress();
         board.watch('vat');

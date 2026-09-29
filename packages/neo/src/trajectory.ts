@@ -251,6 +251,73 @@ export function totalUsage(trajectory: TrajectoryNode[]): TokenUsage {
     }, zeroUsage());
 }
 
+export interface ModelUsage {
+    /** the exact model id the call was served by, as recorded on the node */
+    model: string;
+    calls: number;
+    usage: TokenUsage;
+}
+
+/** A summarizer's tokens are real spend, but no node records which model burned them. */
+export const COMPACTION_MODEL = '(compaction)';
+
+/**
+ * `totalUsage`, split by the model that spent it. The same walk and the same
+ * recursion into branches, so the rows always add back up to the total — which
+ * is the point: a run that used three models must not report one number that
+ * belongs to none of them. Heaviest first, since that is the one being asked
+ * about.
+ */
+export function usageByModel(trajectory: TrajectoryNode[]): ModelUsage[] {
+    const into = new Map<string, ModelUsage>();
+    collect(trajectory, into);
+    return sorted(into);
+}
+
+/** Folds splits together: many turns of one run, or many items of a batch. */
+export function mergeModelUsage(...lists: readonly (readonly ModelUsage[])[]): ModelUsage[] {
+    const into = new Map<string, ModelUsage>();
+    for (const list of lists) {
+        for (const one of list) {
+            fold(into, one);
+        }
+    }
+    return sorted(into);
+}
+
+function collect(trajectory: TrajectoryNode[], into: Map<string, ModelUsage>): void {
+    for (const n of trajectory) {
+        if (n.type === 'llm_call') {
+            fold(into, { model: n.model, calls: 1, usage: n.usage });
+        } else if (n.type === 'compaction') {
+            fold(into, { model: COMPACTION_MODEL, calls: 1, usage: n.usage });
+        } else if (n.type === 'join') {
+            for (const branch of n.branches) {
+                collect(branch.nodes, into);
+            }
+        }
+    }
+}
+
+function fold(into: Map<string, ModelUsage>, one: ModelUsage): void {
+    const had = into.get(one.model);
+    into.set(
+        one.model,
+        had
+            ? {
+                  model: had.model,
+                  calls: had.calls + one.calls,
+                  usage: addUsage(had.usage, one.usage),
+              }
+            : { model: one.model, calls: one.calls, usage: one.usage },
+    );
+}
+
+function sorted(into: Map<string, ModelUsage>): ModelUsage[] {
+    const spent = (m: ModelUsage) => m.usage.inputTokens + m.usage.outputTokens;
+    return [...into.values()].sort((a, b) => spent(b) - spent(a) || a.model.localeCompare(b.model));
+}
+
 export function lastOfType<T extends TrajectoryNode['type']>(
     trajectory: TrajectoryNode[],
     type: T,

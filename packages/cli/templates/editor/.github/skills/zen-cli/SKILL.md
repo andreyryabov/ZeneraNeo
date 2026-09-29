@@ -17,14 +17,14 @@ failed, `2` usage, `3` invalid project, `4` no usable credential, `5` sandbox.
 
 ```
 zen init     [dir] [--name <name>] [--model <ref>] [--force]
-zen list     [--sessions] [--prune]
+zen list     [--sessions] [--runs] [--limit <n>] [--prune]
 zen run      [project] [prompt] [options]
 zen run      batch --input <file> [--batch-dir <dir>] [--concurrency <n>] [--memory-read-only]
 zen open     [project] [--editor <cmd>] [--wait]
 zen key      <ls|add|use|check|rm|show|env> [ref] [options]
 zen models   <providers|ls|search|show|test|pick> [ref] [options]
 zen check    [name|dir] [--project <name|dir>] [--no-sandbox] [--no-models] [--strict] [--quiet]
-zen inspect  [report|graph|node] [run] [--dir <run dir>] [--open]
+zen inspect  [report|graph|node|ask] [run] [--dir <run dir>] [--part <name>] [--full] [--open]
 zen memory   [stats|ls|search|grep|show|export|merge|forget] [args] [options]
 zen export   [project] [--out <file>] [--no-vectors] [--no-memory] [--force]
 zen import   <file.zip> [dir] [--name <name>] [--force] [--no-register]

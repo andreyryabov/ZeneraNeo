@@ -1,10 +1,14 @@
-import type { ContentPart, Input } from '@zenera/neo';
+import type { ContentPart, Input, ModelUsage } from '@zenera/neo';
 import {
+    addUsage,
     lockHolder,
     MANIFEST_FILE as MEMORY_MANIFEST,
     memoryDir,
     MemoryStore,
+    mergeModelUsage,
     readProjectConfig,
+    usageByModel,
+    zeroUsage,
 } from '@zenera/neo';
 import { existsSync } from 'node:fs';
 import { cp, mkdir, rm, writeFile } from 'node:fs/promises';
@@ -172,6 +176,9 @@ export async function runBatch(opts: BatchOptions): Promise<void> {
 
     const startedAt = new Date();
     let done = 0;
+    // What each item spent, per model. Collected here rather than read back
+    // out of the dashboard, which is deliberately not load-bearing.
+    const spent: ModelUsage[][] = [];
     const results = await pool(items, opts.concurrency, async (item) => {
         const result = await runItem(item, {
             opts,
@@ -181,6 +188,7 @@ export async function runBatch(opts: BatchOptions): Promise<void> {
             memoryReadOnly: mode === 'read-only',
             signal: stopping.signal,
             progress,
+            spent,
         });
         done += 1;
         if (!opts.json) {
@@ -202,6 +210,7 @@ export async function runBatch(opts: BatchOptions): Promise<void> {
 
     const finishedAt = new Date();
     const failed = results.filter((r) => !r.ok).length;
+    const models = mergeModelUsage(...spent);
     const body = {
         batch: {
             dir,
@@ -213,6 +222,8 @@ export async function runBatch(opts: BatchOptions): Promise<void> {
             failed,
             concurrency: opts.concurrency,
             memory: { source: source ?? null, mode },
+            usage: models.reduce((sum, m) => addUsage(sum, m.usage), zeroUsage()),
+            models,
             startedAt: startedAt.toISOString(),
             finishedAt: finishedAt.toISOString(),
             durationMs: finishedAt.getTime() - startedAt.getTime(),
@@ -264,6 +275,8 @@ interface ItemContext {
     memoryReadOnly: boolean;
     signal: AbortSignal;
     progress: BatchProgress;
+    /** every finished item appends its own per-model split here */
+    spent: ModelUsage[][];
 }
 
 /**
@@ -309,7 +322,9 @@ async function runItem(item: BatchItem, ctx: ItemContext): Promise<ItemResult> {
             // Written the moment it is known, not at the end — a batch killed
             // halfway still has every answer it managed to get.
             await writeFile(output, jsonText(Engine.envelope(engine, outcome)), 'utf8');
-            ctx.progress.finish(item.id, { ok: true, usage: outcome.result.usage });
+            const models = usageByModel(outcome.result.state.trajectory);
+            ctx.spent.push(models);
+            ctx.progress.finish(item.id, { ok: true, usage: outcome.result.usage, models });
             return { index: item.index, id: item.id, ok: true, input: index(item.input), output };
         } finally {
             await engine.close();
