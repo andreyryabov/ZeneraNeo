@@ -50,6 +50,7 @@ import {
     type Provider,
 } from '../src/keys.ts';
 import { classify, probeModels } from '../src/liveness.ts';
+import { duration } from '../src/narrate.ts';
 import {
     absorb,
     answerBox,
@@ -106,6 +107,13 @@ import { validateProject, type Report } from '../src/validate.ts';
 // The parts of the CLI that are pure functions of their input. Everything else
 // is a directory and a network call, and is covered by using the tool.
 // ---------------------------------------------------------------------------
+
+describe('formatting elapsed time', () => {
+    it('uses hours, minutes and seconds for long runs', () => {
+        expect(duration(10_226_000)).toBe('2h 50m 26s');
+        expect(duration(3_599_600)).toBe('1h 0m 0s');
+    });
+});
 
 describe('splitting the command line', () => {
     it('takes the first bare word as the command', () => {

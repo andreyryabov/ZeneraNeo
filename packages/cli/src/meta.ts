@@ -5,6 +5,7 @@ import { createInterface } from 'node:readline';
 import { invokedAs } from './args.ts';
 import { paths, readJson, writeJson } from './home.ts';
 import { envOf, type KeyEntry, type KeyStore, type Provider } from './keys.ts';
+import { duration } from './narrate.ts';
 import {
     credentialError,
     cut,
@@ -866,8 +867,7 @@ export async function launch(opts: Launch): Promise<Outcome> {
     // after the model line is indistinguishable from a hang.
     const began = Date.now();
     const beat = setInterval(() => {
-        const seconds = Math.round((Date.now() - began) / 1000);
-        sink.status?.(`working: ${seconds}s`);
+        sink.status?.(`working: ${duration(Date.now() - began)}`);
     }, FRAME_MS);
     beat.unref();
 
