@@ -588,7 +588,9 @@ function header(state: AgentState, trace: Trace, opts: TraceOptions): string[] {
         );
     }
     lines.push(
-        '%%',
+        // Never a bare `%%`: Mermaid only strips a comment line with something
+        // after the marker, and leaves the rest to the parser, which rejects it.
+        '%% ---',
         row('reading', 'nN is a node id · t+ counts from the start of the turn'),
         row('', 'dotted edges are fork/join and calls answered out of order'),
         row('', 'nodes are declared in run order; every edge is in one block below'),
@@ -596,7 +598,7 @@ function header(state: AgentState, trace: Trace, opts: TraceOptions): string[] {
         // Named here because this is where the question forms. A reader who has
         // just found the node they distrust will not go looking for a verb.
         row('why', `zen inspect ask n5 "why did you do that?"${where}`),
-        '%%',
+        '%% ---',
     );
     return lines;
 }

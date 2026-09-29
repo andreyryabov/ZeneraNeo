@@ -100,13 +100,13 @@ zen inspect graph --dir "$(zen run --json 'fix the tests' | jq -r .run.dir)"
 %%   n24 joins docs (researcher, ok), tests (researcher, ok)
 %% compacted 3 nodes are marked "hidden by" a later summary
 %%           they still ran; the model simply stopped seeing them
-%%
+%% ---
 %% reading   nN is a node id · t+ counts from the start of the turn
 %%           dotted edges are fork/join and calls answered out of order
 %%           nodes are declared in run order; every edge is in one block below
 %% detail    zen inspect node n1 n2 n5..n9 --dir <run dir>
 %% why       zen inspect ask n5 "why did you do that?" --dir <run dir>
-%%
+%% ---
 flowchart TD
     n11["n11 llm claude-opus-5 · 4.2k in 310 out · calls run_command · t+32.7s"]
     n12["n12 run_command npm test -- --run · t+34.7s · took 3.0s"]

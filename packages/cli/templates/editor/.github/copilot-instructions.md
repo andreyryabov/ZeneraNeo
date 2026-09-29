@@ -47,7 +47,8 @@ visible in `agents.yaml` and that `zen check` does not report.** Before
 reviewing or changing a project, list the capabilities it has turned on and load
 the editor skill for each one - `zen-memory` for a `memory:` block,
 `zen-sandbox` for sandbox configuration or shell tools, `zen-rag-schema` or
-`zen-rag-docs` for an index, `zen-sandbox-capacity` before any `zen run batch`,
+`zen-rag-docs` for an index, `zen-sandbox-capacity` before any `zen run batch`
+(except under `zen-finetune`, which sets its own concurrency),
 `zen-cli` always. A capability that is already
 configured and already passing `zen check` is exactly the case that looks
 finished and is not: the obligation lives in the skill, so a review that never

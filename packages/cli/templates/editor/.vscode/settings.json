@@ -1,5 +1,6 @@
 {
     "chat.useNestedAgentsMdFiles": false,
+    "chat.agent.maxRequests": 250,
     "terminal.integrated.tabs.description": "Agent",
     "yaml.schemas": {
         "./.vscode/agents.schema.json": [

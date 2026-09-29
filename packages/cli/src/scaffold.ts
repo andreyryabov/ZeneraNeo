@@ -208,7 +208,7 @@ function copyTree(from: string, dir: string, rel: string, opts: CopyOptions): st
             : readFileSync(source);
         writeFileSync(join(dir, child), body);
         // The bytes are copied, not the file, so a script arrives unrunnable.
-        if (child.endsWith('.sh')) {
+        if (child.endsWith('.sh') || child.endsWith('.mjs')) {
             chmodSync(join(dir, child), 0o755);
         }
         written.push(child);

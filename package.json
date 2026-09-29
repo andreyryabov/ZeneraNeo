@@ -26,6 +26,7 @@
         "clean": "tsc -b tsconfig.build.json --clean && rm -rf packages/*/dist coverage .dev .out",
         "format": "prettier . --write",
         "format:check": "prettier . --check",
+        "mermcheck": "node scripts/mermcheck.mjs",
         "test": "node --env-file=.env ./node_modules/vitest/vitest.mjs run",
         "test:watch": "node --env-file=.env ./node_modules/vitest/vitest.mjs",
         "test:coverage": "node --env-file=.env ./node_modules/vitest/vitest.mjs run --coverage",
@@ -44,7 +45,9 @@
         "@types/node": "^24.0.0",
         "@types/react": "^19.2.18",
         "@vitest/coverage-v8": "^4.1.11",
+        "jsdom": "^30.1.1",
         "markdown-dataset": "0.1.0",
+        "mermaid": "^12.0.0",
         "prettier": "^3.9.6",
         "typescript": "^5.9.3",
         "vitest": "^4.1.11"

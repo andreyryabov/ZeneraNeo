@@ -255,6 +255,9 @@ describe('the diagram', () => {
         for (const line of head.split('\n').filter(Boolean)) {
             expect(line.startsWith('%%')).toBe(true);
             expect(line.startsWith('%%{')).toBe(false);
+            // Mermaid only strips a comment line that has something after the
+            // marker; a bare `%%` reaches the parser and fails the whole graph.
+            expect(line.trimEnd()).not.toBe('%%');
         }
     });
 
