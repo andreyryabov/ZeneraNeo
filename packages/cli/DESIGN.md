@@ -796,6 +796,7 @@ zen meta run [project] "<question>"      ask it something
 zen meta run [project] /<name> [words]   run .github/prompts/<name>.prompt.md
 zen meta run [project]                   pick one of those prompts
 zen meta prompts [project]               list those prompts
+zen meta inspect [project] [run]         pick a run, then run /inspect on it
 zen meta model [ref]                     show or set the model it uses
 ```
 
@@ -806,6 +807,12 @@ different things on different days: `zen meta acme run` read as the question
 always there cannot be mistaken for the thing it introduces. The project may sit
 on either side of it - `zen meta acme run` and `zen meta run acme` are the same
 command - because that is the one reordering people actually type.
+
+`inspect` is the one verb that is not a form of `run`, and it is only a
+picker: it finds a run directory - from a list at a terminal, from `--run` or
+`--dir` off one - and hands it to `/inspect` as the prompt's last line. The
+prompt is the whole behaviour, so `zen meta inspect` and `zen meta run /inspect
+<run dir>` send the same bytes.
 
 Three things make it more than `copilot -C`.
 

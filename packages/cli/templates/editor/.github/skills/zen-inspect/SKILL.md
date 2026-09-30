@@ -1,20 +1,28 @@
 ---
 name: zen-inspect
-description: Diagnosing a run you did not watch - the `zen inspect graph` → read → `zen inspect node` loop, how to name the run (`--dir`, `--run`, `--session`, and why `node` takes ids only), how to read every part of the graph format (the `%%` header rows and what each count is evidence of, the anatomy of a node line, the label each node kind produces, shapes and colours, the `flow`/`branches`/`calls` edge blocks, branch subgraphs, and what `hidden by` and `ERROR` mean), how to open individual nodes by id or range and read the `===`/`--- part` framing, which payload parts and facts each kind carries, how `zen inspect ask` replays one `llm_call` to a model with a question when reading the node did not settle why it acted, and recipes for the usual faults - a loop, a failing tool, a prompt that was assembled differently from how it reads, a hand-off that fired early, a skill that never activated, a branch that failed, tokens spent where you did not expect. Load before reading any run trajectory, before answering "why did the agent do that", and whenever a run directory is all you have.
+description: 'Use when an LLM agent must diagnose a recorded Zenera run non-interactively: read `zen inspect graph`, open selected nodes, replay an `llm_call` with `zen inspect ask`, identify loops, failed tools, wrong prompts, missed skills, early hand-offs, failed branches, compaction, latency, or token waste. Requires explicit run, node, and question arguments so commands remain deterministic and never prompt.'
 ---
 
-# Reading a run
+# Diagnose a run non-interactively
 
 A run leaves behind everything it did, and that is the problem: a trajectory of
 a few hundred nodes is far too big to read and far too repetitive to need to.
 `zen inspect` answers it in two halves.
 
-| Command                 | For     | Gives                                           |
-| ----------------------- | ------- | ----------------------------------------------- |
-| `zen inspect report`    | a human | `report.html` - every message, payload and cost |
-| `zen inspect graph`     | you     | the whole run as one Mermaid flowchart          |
-| `zen inspect node <id>` | you     | those nodes in full, payloads resolved          |
-| `zen inspect ask <id>`  | you     | that call replayed to a model, with a question  |
+This skill is for an agent process without a TTY. Every invocation must be
+fully specified. Never run bare `zen inspect`, `zen inspect node` or
+`zen inspect ask`: those forms do not deterministically name the output, node
+or question and may wait for terminal input.
+
+For a whole-run audit - health, memory, delegation, forking, tool use, and
+what to change in the instructions - load **zen-analyze-run**, which drives
+this skill end to end.
+
+| Command                                             | Gives                                         |
+| --------------------------------------------------- | --------------------------------------------- |
+| `zen inspect graph --dir <run-dir>`                 | the whole run as one model-readable flowchart |
+| `zen inspect node <id...> --dir <run-dir>`          | selected nodes, payloads resolved             |
+| `zen inspect ask <id> "<question>" --dir <run-dir>` | one replay answer on stdout, then exit        |
 
 **`graph` and `node` are the pair you use.** The graph is an index: one line per
 node, short sequential ids, the whole run in a few hundred lines. `node` is the
@@ -26,8 +34,22 @@ pay for what you open.
 run's own model why it did what it did. Open the node first - most questions are
 answered by reading what it was given.
 
-`report` is for a person with a browser. Print its path and hand it over; do not
-try to read the HTML.
+To get one answer without prompts, pass all three inputs:
+
+```sh
+zen inspect ask <llm-node-id> "<question>" --dir <run-dir>
+```
+
+- `<llm-node-id>` is an `nN` id from `zen inspect graph` whose label starts
+  with `llm`.
+- `"<question>"` is the complete question as one quoted positional argument.
+- `--dir <run-dir>` identifies the run. Instead, a caller may use `--run
+<run-id>` with `--session <session-id>` and, when outside the project,
+  `--project <name-or-dir>`.
+
+Exactly one raw Markdown answer is written to stdout, then the command exits.
+Omit `--model` to use the model that made the recorded call; pass `--model
+<ref>` only for a second opinion.
 
 ## The loop
 
@@ -48,25 +70,25 @@ at a time is the failure the graph exists to prevent.
 
 ### Naming the run
 
-| You have                | Use                                                    |
-| ----------------------- | ------------------------------------------------------ |
-| a run directory         | `--dir <dir>` - the handle a program holds             |
-| `zen run --json` output | `--dir "$(… \| jq -r .run.dir)"`                       |
-| a run id                | `zen inspect graph <run-id>` or `--run <id>`           |
-| nothing                 | omit everything: the newest run that actually recorded |
-| a session               | `--session <id>`, listed by `zen list --sessions`      |
+| You have                | Use                                               |
+| ----------------------- | ------------------------------------------------- |
+| a run directory         | `--dir <dir>` - the handle a program holds        |
+| `zen run --json` output | `--dir "$(… \| jq -r .run.dir)"`                  |
+| a run id                | `zen inspect graph <run-id>` or `--run <id>`      |
+| a session               | `--session <id>`, listed by `zen list --sessions` |
+
+Always identify the run. Prefer `--dir`, because `zen run --json` returns it
+without requiring the caller to reconstruct project, session and run ids. If
+the task supplies no run handle, obtain one before inspecting; do not rely on
+the newest run implicitly.
 
 **`node` has no room for a run.** Every positional it takes is a node id, so
 name the run with `--dir`, `--run` or `--session`. `zen inspect node <run-id> n13`
-reads the run id as an id and fails. `ask` is the same: one node id, then the
-question.
+reads the run id as an id and fails. Explicit `ask` arguments are the same: one
+node id, then the question.
 
 For `graph` the positional is a run id unless it contains a `/`, in which case
 it is a directory - a run id is a stamp and never has a separator.
-
-With nothing to ask on - a script, `--json`, an agent - `zen inspect` takes the
-newest run of the newest session **that recorded one**. A session exists before
-its first run, so the literally newest session is routinely empty.
 
 ### Reading it cheaply
 
@@ -330,6 +352,10 @@ lead to verify, not as a finding.
 The questions it is good at are the ones about intent, where the node shows what
 happened but not why: which of two instructions won, why a skill that was
 loaded was not followed, why a tool was used the way it was.
+
+Before writing the question, load skill **zen-inspect-ask**: which node to ask, what
+to rule out first, and how to word a "why did you not..." question so the answer
+quotes the instruction that blocked the better behaviour.
 
 ## Diagnosing
 

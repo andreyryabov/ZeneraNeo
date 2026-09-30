@@ -729,16 +729,20 @@ case. `compare` is the per-case cost table the findings open with, and it is the
 last thing this phase does — read the trajectories before the numbers, or the
 numbers decide what you look at.
 
-Then work case by case. Load **zen-inspect** for the mechanics; this is what to
-look for.
+Then work case by case. Load **zen-inspect** for the mechanics and
+**zen-analyze-run** for how to read one trajectory's decisions: its audit
+checklist (memory used and saved, delegation, forking, tool use, cost) is what
+to look for under criteria 2-8 below, and its section on `zen inspect ask` is
+how to question the model at a critical point. Do not write its full report per
+case - `findings.md` is the report here.
 
 ### The three depths
 
-| Depth                                                           | Answers                                           | Cost           |
-| --------------------------------------------------------------- | ------------------------------------------------- | -------------- |
-| The graph (`graph.mmd`, or `zen inspect graph --dir <run.dir>`) | What happened, in what order, and where it looped | Free           |
-| `zen inspect node n13 --dir <run.dir>`                          | What a step actually said, sent or got back       | Free           |
-| `zen inspect ask <llm_call-id> "…"`                             | Why the model chose this over that                | One model call |
+| Depth                                                           | Answers                                                  | Cost           |
+| --------------------------------------------------------------- | -------------------------------------------------------- | -------------- |
+| The graph (`graph.mmd`, or `zen inspect graph --dir <run.dir>`) | What happened, in what order, and where it looped        | Free           |
+| `zen inspect node n13 --dir <run.dir>`                          | What a step actually said, sent or got back              | Free           |
+| `zen inspect ask <llm_call-id> "…"`                             | Why the model chose this over that - the sentence to fix | One model call |
 
 Stay at the top for as long as it works. The `%%` header rows on the graph carry
 `nodes`, `tokens`, `thinking`, `tools`, `branches`, `compacted` and `why` — and
@@ -748,21 +752,34 @@ times is a finding without opening a single node.
 Descend to `node` for evidence. A finding that does not cite node ids is an
 impression, and impressions are how a run produces a rule nobody needed.
 
-`ask` is last, and it is worth the call in exactly one situation: the graph shows
-a choice you cannot explain and the node contents do not explain it either. It
-replays one `llm_call` with the same context, no tools, and writes nothing back.
+`ask` is for the **critical points** - the `llm_call` where the trajectory
+went wrong: research started without searching memory, recalled memory ignored,
+independent lookups run in series instead of forked, a handoff too early, a
+tool misused or a failing call repeated, a loaded skill not followed. The graph
+and the nodes show **what** it did there; only the replay says **which
+sentence** made it do it, and that sentence is what phase 5 will change.
+
+Follow **zen-analyze-run** §5 for every ask: rule out the cheap causes first
+(tool not offered, instruction file absent, skill not loaded, context
+compacted), pick the `llm_call` that made the choice, and word the question for
+a model that sees only its own context - no node ids, "why didn't you ...", the
+fixed answer shape. Never ask every call. Across a batch, ask **once per
+pattern, not once per case**: the clearest case of the pattern, at the call
+that made the choice. A replay carries the whole conversation up to that call,
+so one ask at the right node covers the steps before it.
 
 ```sh
 DIR="$(.github/skills/zen-finetune/scripts/report.mjs \
     -d .finetune/runs/stage1-batch01-run1/batch paths planning-organize-day | cut -f2)"
 zen inspect graph --dir "$DIR"
 zen inspect node n12 n13 --dir "$DIR" --part request --full
-zen inspect ask n13 "why did you call /mail/list twice instead of paging the first result?" --dir "$DIR"
+zen inspect ask n13 "why did you call /mail/list a second time instead of paging the first result?" --dir "$DIR"
 ```
 
 Treat the answer as testimony, not ground truth. It is useful because it names
 which instruction the model was reading, and that is the instruction you are
-about to change.
+about to change. Grep every quote it gives in the node's `request` before using
+it; an answer whose quote is not there is discarded.
 
 ### The criteria
 
@@ -931,9 +948,14 @@ llm calls per case: median 33; above 1.5x: `code-can-vms-talk` 124 — loop, see
 - memory: committed the body of the 09:00 stand-up invite as a fact (3) — n18
 - fork: n9 and n7 are independent and ran in sequence (4)
 - delegation: none needed
+- why (ask n6, fork): steered-by [system prompt: planner.md › Method]
+  "Work through the request one step at a time" — verified in the request
 ```
 
-Cite the criterion number. The next phase reads down the column.
+Cite the criterion number. The next phase reads down the column. A `why` line
+is the answer of an `ask` at a critical point: the node asked, the finding it
+explains, and the `steered-by` / `should-have-applied` / `missing` citation,
+marked verified or not.
 
 The `##` heading carries the verdict in one word, so a folder of runs shows the
 shape of the work without anything being opened. The `#` title carries the run
@@ -1057,7 +1079,12 @@ a pattern on its own, which is why the notes matter: one case here plus two in
 earlier batches is still three. Grep the earlier runs' `findings.md` before
 deciding something is an anecdote.
 
-Then, for each pattern, find the _generalisable_ form. "Call `/calendar/list`
+Then, for each pattern, find the _generalisable_ form. Start from the pattern's
+`why` line: a verified `steered-by` quote is the sentence to narrow or delete,
+a `should-have-applied` quote is a rule that exists but was not reached in time,
+and `no instruction — my own default` or `missing` is a rule to add. A pattern
+with no `why` line yet gets one before it gets a rule - ask at its clearest
+case's critical point, as in phase 4. "Call `/calendar/list`
 before answering a scheduling question" is not it — that is the dataset written
 into the prompt, and it will not transfer. The generalisable form is one level
 up: "when a request depends on the current state of an external system, read
@@ -1081,7 +1108,11 @@ appropriately" are followed about half the time and are not worth their tokens.
 
 ## Phase 6 — Stage 1: apply
 
-Route each rule by what kind of thing it is.
+Route each rule by what kind of thing it is. When the pattern's `why` line
+cites a source - a prompt heading, a skill, a tool description, a house rule -
+that file is where the change goes, whatever the table below would have
+guessed; find it the way **zen-analyze-run** finds its sources of trouble, by
+grepping the quote in the request and then in `agents.yaml` and `agents/`.
 
 | The finding is…                               | It goes in                                                                   |
 | --------------------------------------------- | ---------------------------------------------------------------------------- |
@@ -1324,6 +1355,12 @@ used; the fix is an instruction about _when_ to recall, not more memory. It is
 least one cheap case's trajectory and confirm the calls that must hit the live
 system still did.
 
+The bad column is where to ask. A trajectory that never consulted memory, or
+recalled and then redid the work, has a critical point at the first research
+call or the call right after the recall: ask it why, following the memory rows
+of **zen-analyze-run** §5, before writing a word of
+`agents/memory-policy-instructions.md`.
+
 ### The stage-2 loop, and leaving it
 
 Any case that got longer or worse is a finding, and so is any case that
@@ -1504,8 +1541,8 @@ next one. Change them upstream, in the CLI's `templates/editor/.github/skills/`.
   and tell the user.
 - **There is no training set.** Fewer than about eight queries is a debugging
   session, not a tuning loop — run them singly with `zen run` and read the graphs.
-- **One run is behaving strangely.** That is diagnosis. Load **zen-inspect** and
-  read that run.
+- **One run is behaving strangely.** That is diagnosis. Load **zen-analyze-run**
+  and analyze that run.
 - **The specification changed.** Reconciling prose with intent is
   **zen-spec-sync**'s job; tune after it, against what the project is meant to be.
 - **The failure is the model's.** If three runs of clear, mechanical instructions
@@ -1517,6 +1554,7 @@ next one. Change them upstream, in the CLI's `templates/editor/.github/skills/`.
 
 - **zen-cli** — command surface, flags, exit codes, and what `--json` emits
 - **zen-inspect** — the graph/node/ask loop, node kinds, and the symptom table
+- **zen-analyze-run** — auditing one trajectory, and asking the model why at its critical points
 - **zen-instructions** — house rules, `requires:`, filename order, `zen check`
 - **zen-memory** — the graph model, commit rules, audiences, `merge` and `stats`
 - **zen-memory-warmup** — building a memory deliberately, and shipping one

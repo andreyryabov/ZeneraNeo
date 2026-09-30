@@ -638,6 +638,15 @@ export class AgentRunner<TCtx = unknown> {
         } catch (e) {
             return fail(`error: arguments are not valid JSON: ${String(e)}`);
         }
+        if (typeof args !== 'object' || args === null || Array.isArray(args)) {
+            return fail(`error: arguments to ${def.name} must be a JSON object`);
+        }
+        const missing = (def.parameters.required ?? []).filter(
+            (k) => (args as Record<string, unknown>)[k] == null,
+        );
+        if (missing.length) {
+            return fail(`error: ${def.name} is missing required arguments: ${missing.join(', ')}`);
+        }
         try {
             const out = await def.execute(args, {
                 ctx: state.context as TCtx,

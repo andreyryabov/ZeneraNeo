@@ -1,4 +1,5 @@
 import { createModel, readProjectConfig } from '@zenera/neo';
+import { existsSync } from 'node:fs';
 import { parse } from '../args.ts';
 import type { Command, Context } from '../command.ts';
 import { loadProjectEnv } from '../env.ts';
@@ -40,6 +41,7 @@ import {
     dim,
     EXIT,
     green,
+    invalidError,
     isInteractive,
     json,
     note,
@@ -51,13 +53,17 @@ import {
     write,
     writeAll,
 } from '../term.ts';
+import { locate as locateRun } from './inspect.ts';
 
 const USAGE = 'zen meta run [project] [prompt] [options]';
 
-const VERBS = new Set(['model', 'run', 'prompts']);
+const VERBS = new Set(['model', 'run', 'prompts', 'inspect']);
 
 interface Flags {
     project?: string;
+    session?: string;
+    run?: string;
+    dir?: string;
     provider?: string;
     model?: string;
     prompt?: string;
@@ -87,6 +93,7 @@ export const meta: Command = {
         '  zen meta run [project] /<name> [words]   run a stored prompt',
         '  zen meta run [project]                   pick one of its stored prompts',
         '  zen meta prompts [project]               list the stored prompts',
+        '  zen meta inspect [project] [run]         audit one run with /inspect',
         '  zen meta model [ref]                     show or set the model it uses',
         '',
         'The project may come before the verb instead: `zen meta acme run`.',
@@ -96,6 +103,7 @@ export const meta: Command = {
         '  [prompt]    Your question, in quotes. Also --prompt, or piped in.',
         '  /<name>     A prompt file in .github/prompts/<name>.prompt.md.',
         '  [words]     Appended to that prompt as a final line.',
+        '  [run]       A run id or a run directory. At a terminal, omit it to pick one.',
         '',
         'Options:',
         '  --project <name|dir>   Which project to work in. The agent is rooted there.',
@@ -109,6 +117,9 @@ export const meta: Command = {
         '  --resume <id>          Continue a copilot session. --continue takes the last.',
         '  --share <file>         Write the transcript to a markdown file.',
         '  --dry-run              Print what would run, secrets masked, and stop.',
+        '  --session <id>         inspect: the session to pick the run from.',
+        '  --run <id|dir>         inspect: the run. Same as the [run] argument.',
+        '  --dir <run dir>        inspect: the run, by directory.',
         '',
         'It always uses your own keys — `zen key add` — and never a coding-agent',
         'subscription. The answer goes to stdout and the progress to stderr, so',
@@ -118,6 +129,9 @@ export const meta: Command = {
         'editor expects to read, write and run things, and a terminal has nobody',
         'watching to answer. Narrow it with --allow-tool, or restore the asking',
         'with --ask.',
+        '',
+        '`zen meta inspect` is `zen meta run /inspect <run dir>` with the run',
+        'picked from a list - project, session, then run. Off a terminal, name it.',
         '',
         'Nothing it needs is put on a command line: every credential reaches it',
         'through the environment, where other processes cannot read it.',
@@ -141,6 +155,8 @@ export const meta: Command = {
         '  zen meta prompts',
         '  zen meta run /project-review',
         '  zen meta run acme /spec-sync-project agents/triage.md',
+        '  zen meta inspect',
+        '  zen meta inspect acme 20260825-143012-a7f3',
         '  git diff | zen meta run "what broke?" --allow-tool read',
         '  zen meta model vertex/gemini-3.8-flash',
         '  zen meta model --pick',
@@ -151,6 +167,9 @@ export const meta: Command = {
             ctx.args,
             {
                 project: { type: 'string' },
+                session: { type: 'string' },
+                run: { type: 'string' },
+                dir: { type: 'string' },
                 provider: { type: 'string' },
                 model: { type: 'string' },
                 prompt: { type: 'string', short: 'p' },
@@ -198,6 +217,9 @@ export const meta: Command = {
         }
         if (verb === 'prompts') {
             return await prompts(ctx, values, args);
+        }
+        if (verb === 'inspect') {
+            return await inspectRun(ctx, values, args);
         }
         throw usageError(
             first === undefined ? 'nothing to run' : 'a prompt goes through `run`',
@@ -342,6 +364,48 @@ async function prompts(ctx: Context, values: Flags, args: string[]): Promise<voi
     writeAll(table(found.map((p) => [`/${p.name}`, p.description ? dim(p.description) : ''])));
     note();
     note(dim(`run one: zen meta run /${found[0].name}`));
+}
+
+// ---------------------------------------------------------------------------
+// zen meta inspect [project] [run id | run dir]
+//
+// `zen meta run /inspect <run dir>` with the run chosen for you. The prompt is
+// the whole behaviour; this only finds the one word it needs, so the two forms
+// send the same bytes.
+// ---------------------------------------------------------------------------
+
+async function inspectRun(ctx: Context, values: Flags, args: string[]): Promise<void> {
+    const [head, ...tail] = args;
+    const named = !values.project && head ? await Projects.find(head) : undefined;
+    const rest = named ? tail : args;
+    if (rest.length > 1) {
+        throw usageError('inspect takes one run', 'zen meta inspect [project] [run id | run dir]');
+    }
+    const handle = rest[0] ?? values.run;
+    const asking = isInteractive() && !ctx.json;
+    // Off a terminal "the newest" would be a guess nobody confirmed.
+    if (!handle && !values.dir && !asking) {
+        throw usageError(
+            'which run?',
+            'name one: zen meta inspect --run <id|dir>, or run it at a terminal to pick',
+        );
+    }
+    const at = await locateRun(
+        ctx.cwd,
+        { project: named?.dir ?? values.project, session: values.session, dir: values.dir },
+        handle,
+        asking,
+    );
+    if (!existsSync(at.run.state)) {
+        throw invalidError(
+            `run ${at.run.id} has no state.json`,
+            'only a run that got far enough to save state can be inspected',
+        );
+    }
+    const project = await Projects.openDir(at.project);
+    note(`${bold(at.run.id)} ${dim(at.run.dir)}`);
+    refresh(project);
+    await runPrompt(ctx, values, project, 'inspect', [at.run.dir]);
 }
 
 // ---------------------------------------------------------------------------

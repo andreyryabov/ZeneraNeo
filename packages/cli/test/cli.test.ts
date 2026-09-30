@@ -1725,6 +1725,7 @@ describe('the scaffold', () => {
         const written = scaffold({ dir, model: 'gpt-4o' });
 
         for (const name of [
+            'inspect.prompt.md',
             'project-review.prompt.md',
             'spec-apply-feedback.prompt.md',
             'spec-sync-project.prompt.md',

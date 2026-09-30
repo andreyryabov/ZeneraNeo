@@ -8,6 +8,7 @@ import {
     projectRegistry,
     readProjectConfig,
     renderReportHtml,
+    text,
     type AgentState,
 } from '@zenera/neo';
 import { spawn } from 'node:child_process';
@@ -42,8 +43,11 @@ import {
     traceMermaid,
     traceOf,
     type NodeDetail,
+    type Trace,
     type TraceEntry,
 } from '../trace.ts';
+import { formatMarkdown } from '../tui/markdown.ts';
+import { boxWidth } from '../tui/wrap.ts';
 
 import {
     ago,
@@ -56,6 +60,8 @@ import {
     isInteractive,
     json,
     note,
+    pad,
+    ask as prompt,
     usageError,
     write,
     writeAll,
@@ -112,7 +118,7 @@ export const inspect: Command = {
         '  report                 Build and print the path to report.html. Default.',
         '  graph                  The whole run as one Mermaid flowchart, on stdout.',
         '  node <id...>           Those nodes of the graph in full. Ranges: n5..n9.',
-        '  ask <id> <question>    Put a question to the model that made that call.',
+        '  ask [<id> [<question>]] Put a question to the model that made that call.',
         '',
         '  --project <name|dir>   Which project. Defaults to the one you are in.',
         '  --session <id>         Which session. Defaults to the newest that ran.',
@@ -154,6 +160,10 @@ export const inspect: Command = {
         '',
         '  zen inspect ask n11 "why run python -c when the skill says npm test?"',
         '',
+        'At a terminal, omit the arguments to choose the session, run and recorded',
+        'LLM call interactively. Questions and answers stay in one session; submit',
+        'an empty question to finish. Outside a terminal, one answer is printed.',
+        '',
         'All of it, at length: .github/skills/zen-cli/references/inspect.md',
     ],
     run: async (ctx) => {
@@ -193,7 +203,7 @@ export const inspect: Command = {
         }
         if (what === 'ask') {
             const at = await locate(ctx.cwd, values, undefined, asking);
-            return await ask(at, values, rest, ctx.json);
+            return await ask(at, values, rest, ctx.json, asking);
         }
         const at = await locate(ctx.cwd, values, rest[0], asking);
         if (what === 'graph') {
@@ -345,22 +355,97 @@ export function wholeParts(
  * it. Everything it sees is what it saw at the time, so an answer naming the
  * skill that steered it is checkable against the same node.
  */
+export function replayableCalls(trace: Trace) {
+    return trace.entries.flatMap((entry) =>
+        entry.node.type === 'llm_call' && entry.node.request ? [{ entry, node: entry.node }] : [],
+    );
+}
+
+const ASK_BOX = { tl: '╭', tr: '╮', bl: '╰', br: '╯', h: '─', v: '│' };
+
+function askPanel(
+    title: string,
+    text: string,
+    outer: number,
+    border: (line: string) => string,
+): string[] {
+    const inner = outer - 4;
+    const rule = ASK_BOX.h.repeat(Math.max(1, outer - title.length - 5));
+    return [
+        border(`${ASK_BOX.tl}${ASK_BOX.h} ${title} ${rule}${ASK_BOX.tr}`),
+        ...formatMarkdown(text, inner).map(
+            (line) => `${border(ASK_BOX.v)} ${pad(line, inner)} ${border(ASK_BOX.v)}`,
+        ),
+        border(`${ASK_BOX.bl}${ASK_BOX.h.repeat(outer - 2)}${ASK_BOX.br}`),
+    ];
+}
+
+export function renderAskExchange(question: string, answer: string, columns = 80): string[] {
+    const outer = boxWidth(`${question}\n\n${answer}`, columns);
+    return [
+        '',
+        ...askPanel('Question', question, outer, cyan),
+        '',
+        ...askPanel('Answer', answer, outer, dim),
+        '',
+    ];
+}
+
+export async function repeatQuestions(
+    initial: string,
+    next: () => Promise<string>,
+    answer: (question: string) => Promise<void>,
+): Promise<void> {
+    let question = initial;
+    while (question) {
+        await answer(question);
+        question = (await next()).trim();
+    }
+}
+
 async function ask(
     at: Located,
     values: Flags,
     rest: readonly string[],
     asJson: boolean,
+    asking: boolean,
 ): Promise<void> {
     const { project, session, run } = at;
-    const [id, ...words] = rest;
-    const query = words.join(' ').trim();
-    if (!id || !query) {
+    const interactive = asking && Boolean(process.stdout.isTTY);
+    const trace = traceOf(await readState(run));
+    let [id, ...words] = rest;
+    if (!id && asking) {
+        const calls = replayableCalls(trace);
+        if (calls.length === 0) {
+            throw invalidError(
+                `run ${run.id} has no recorded LLM call to replay`,
+                'only runs that record requests can be asked about',
+            );
+        }
+        const entry = await choose(
+            'Which LLM call?',
+            calls.map((candidate) => ({
+                label: `${candidate.entry.key} ${candidate.node.model}`,
+                detail: [
+                    candidate.node.agent,
+                    candidate.node.toolCalls.length
+                        ? `calls ${candidate.node.toolCalls.map((call) => call.name).join(', ')}`
+                        : '',
+                    candidate.entry.branch ? `branch ${candidate.entry.branch}` : '',
+                ]
+                    .filter(Boolean)
+                    .join('  '),
+                value: candidate.entry,
+            })),
+        );
+        id = entry.key;
+    }
+    if (!id) {
         throw usageError(
             'ask takes one node id and a question',
             'zen inspect ask n11 "why did you run python -c instead of the tests?"',
         );
     }
-    const trace = traceOf(await readState(run));
     let wanted: string[];
     try {
         wanted = parseNodeIds([id], trace.byKey);
@@ -386,6 +471,19 @@ async function ask(
             `${entry.key} did not record the request that produced it`,
             'only a run made by this CLI records requests; an SDK run needs ' +
                 '`runner({ recordRequests: true })`',
+        );
+    }
+    let query = words.join(' ').trim();
+    if (!query && asking) {
+        query = await prompt(interactive ? 'Question (empty to finish)?' : 'Question?');
+    }
+    if (!query && interactive) {
+        return;
+    }
+    if (!query) {
+        throw usageError(
+            'ask takes one node id and a question',
+            'zen inspect ask n11 "why did you run python -c instead of the tests?"',
         );
     }
 
@@ -416,11 +514,21 @@ async function ask(
         );
     }
     const model = projectRegistry(config).model(picked.ref);
-    const res = await model.generate(
-        buildDiagnostic({ request: recorded, answer, toolCalls, query }),
-    );
+    const generate = (question: string) =>
+        model.generate(buildDiagnostic({ request: recorded, answer, toolCalls, query: question }));
+    const usage = (res: Awaited<ReturnType<typeof generate>>): void => {
+        note(
+            dim(
+                `${bold(entry.key)} ${picked.label}` +
+                    (res.usage
+                        ? ` · ${res.usage.inputTokens} in, ${res.usage.outputTokens} out`
+                        : ''),
+            ),
+        );
+    };
 
     if (asJson) {
+        const res = await generate(query);
         json({
             session: session.id,
             run: run.id,
@@ -433,12 +541,32 @@ async function ask(
         });
         return;
     }
-    write(res.text);
-    note(
-        dim(
-            `${bold(entry.key)} ${picked.label}` +
-                (res.usage ? ` · ${res.usage.inputTokens} in, ${res.usage.outputTokens} out` : ''),
-        ),
+    if (!interactive) {
+        const res = await generate(query);
+        write(res.text);
+        usage(res);
+        return;
+    }
+    let conversation: ReturnType<typeof buildDiagnostic> | undefined;
+    await repeatQuestions(
+        query,
+        () => prompt('Question (empty to finish)?'),
+        async (question) => {
+            if (!conversation) {
+                conversation = buildDiagnostic({
+                    request: recorded,
+                    answer,
+                    toolCalls,
+                    query: question,
+                });
+            } else {
+                conversation.messages.push({ role: 'user', content: [text(question)] });
+            }
+            const res = await model.generate(conversation);
+            conversation.messages.push({ role: 'assistant', content: res.text });
+            writeAll(renderAskExchange(question, res.text, process.stdout.columns ?? 80));
+            usage(res);
+        },
     );
 }
 
@@ -511,7 +639,7 @@ export function renderNode(
 // Choosing what to show
 // ---------------------------------------------------------------------------
 
-interface Located {
+export interface Located {
     project: string;
     session: SessionPaths;
     run: RunPaths;
@@ -525,9 +653,9 @@ interface Located {
  * it can be used again would be work for nothing. A person holds an id, or
  * nothing at all and gets asked.
  */
-async function locate(
+export async function locate(
     cwd: string,
-    values: Flags,
+    values: Pick<Flags, 'project' | 'session' | 'run' | 'dir'>,
     positional: string | undefined,
     asking: boolean,
 ): Promise<Located> {

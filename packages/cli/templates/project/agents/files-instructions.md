@@ -16,23 +16,35 @@ Check which tools you actually have:
 - If `write_file` and `apply_patch` are available, you may create and edit files
   under `/workspace`.
 
-## Discovery before assumption
+## Finding files
 
-Never guess a file's name, location, or contents.
+Never guess a file's name, location, or contents. Pick the tool by what you know:
 
-- Use `list_dir` to see directory contents and formats before opening files.
-- Use `find_files` to locate files by substring when the layout is unfamiliar.
-- Check whether a target file already exists before writing to it.
+- **The directory** → `list_dir { path }`. One level, not recursive. Each file shows
+  `format`, `bytes` and, for text, `lines`, so you can decide what to read and how much
+  without opening it. Omit `path` (or give `/`) to list the mounted trees.
+- **Part of the path** → `find_files { pattern, path? }`. `pattern` is **required**: a
+  plain, case-insensitive substring, never a glob or regex (`*.ts` matches nothing; write
+  `.ts`). It is matched against the path with its mount name (`/workspace`, `/assets`, …)
+  removed: `/workspace/src/a.ts` is matched as `src/a.ts`, so `src/` matches and
+  `/workspace/src` does not. To limit the search to one tree, pass it as `path`. Matches
+  come back as absolute paths.
+- **Neither** → `list_dir` the root, then descend.
+
+`find_files` matches paths, not contents. Both tools stop at 500 results and set
+`truncated`: narrow the `pattern` or `path` rather than repeating the call.
 
 ## Reading files
 
-- Use `read_file` to read text files.
-- For files longer than a few dozen lines, pass `start_line` and `end_line` (1-based, inclusive)
-  to read only the relevant section.
-- When `read_file` returns `truncated: true`, the read hit the size limit or range boundary.
-  Resume reading from `end_line + 1` if you need the remainder.
-- Non-text files (images, binaries, archives) cannot be read as text; `list_dir` reports
-  their format.
+- `read_file { path, start_line?, end_line? }`; lines are 1-based and inclusive. Read a
+  short file whole; for a long one (see `lines` from `list_dir`), read the range you need.
+- The result gives the file's total `lines` and the `start_line`/`end_line` returned.
+  `truncated: true` means more follows `end_line` (your range or the 256 KB cap); continue
+  from `end_line + 1` only if you need it.
+- A non-text file fails with its `format`. Do not retry; `copy_file` can still copy it.
+- Check whether a target exists before writing to it.
+
+When a tool returns `error` with a `hint`, act on the hint instead of repeating the call.
 
 ## Modifying files
 
@@ -71,14 +83,11 @@ Never use `write_file` to update an existing file when only a few lines need to 
 
 ### Copying: `copy_file`
 
-Use `copy_file` to duplicate a file rather than reading it and writing it back out.
-The bytes go straight from one path to the other without passing through the
-conversation, so the size cap on `read_file` does not apply and a binary arrives
-intact.
+Use `copy_file` to duplicate a file, never `read_file` + `write_file`. The bytes skip the
+conversation, so there is no size cap and binaries arrive intact.
 
-- The source may be in a read-only mount; only the destination has to be writable.
-  This is how something under `/assets`, `/skills` or `/memory` is brought into
-  `/workspace`.
+- The source may be in a read-only mount; only the destination must be writable.
+  This is how something under `/assets`, `/skills` or `/memory` reaches `/workspace`.
 - Set `overwrite: true` only when intentionally replacing an existing destination.
 - Copying a directory and its contents requires `recursive: true`.
 
@@ -96,4 +105,4 @@ All file operations are confined to mounted trees:
   (such as `/workspace/src/main.ts`) are where project files reside.
 - `/assets`, `/skills`, `/memory`: Read-only mounts. You may read, list, and search them,
   but you cannot write, move, or delete files inside them.
-- Any attempt to reach outside these mounts fails with an containment error.
+- Any attempt to reach outside these mounts fails with a containment error.
