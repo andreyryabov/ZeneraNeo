@@ -17,10 +17,10 @@ asked for it. That sentence is what you are about to edit. An answer that does
 not name one is a wasted call.
 
 Non-interactive rule, as in zen-inspect: always pass the node, the question and
-the run.
+the run. The question is always a file (section 3):
 
 ```sh
-zen inspect ask <llm-node-id> "<question>" --dir <run-dir>
+zen inspect ask <llm-node-id> --question-file <question file> --dir <run-dir>
 ```
 
 Each non-interactive call is a **fresh replay**. It does not remember your
@@ -123,11 +123,11 @@ the answer drifts to a generic apology.
    runs, and so an answer without a citation is visibly empty. The shape uses
    the preamble's citation form.
 
-Write the question in a heredoc so quotes and backticks survive the shell, and
-end it with this shape, verbatim:
+Write the question to a file with your file-editing tool, then hand `zen` the
+file. The shell never parses the question, so quotes, apostrophes, backticks and
+`$` arrive as written. End the file with this shape, verbatim:
 
-```sh
-Q="$(cat <<'EOF'
+```text
 <the question>
 
 Answer in this shape:
@@ -137,10 +137,18 @@ should-have-applied: [<kind>: <name> › <heading or parameter>] "<quote>"   (or
 exception: [<kind>: <name> › <heading or parameter>] "<quote>"   (or: none)
 conflict: <the two citations that pulled in different directions, or: none>
 missing: <the sentence that, added where, would have made you do it>
-EOF
-)"
-zen inspect ask n9 "$Q" --dir <run-dir>
 ```
+
+```sh
+zen inspect ask n9 --question-file .tmp/ask/<run-id>/n9-memory.md --dir <run-dir>
+```
+
+- One file per question, at `.tmp/ask/<run-id>/<node>-<topic>.md`. `.tmp/` is
+  the project's git-ignored scratch.
+- `--question-file` is the only way the question reaches `zen`. Never a quoted
+  argument, a heredoc, `$(cat ...)`, or a Python or Node script around `zen`.
+- A retry (section 5, step 1) or a second opinion (step 4) reuses the same
+  file: add `--model <ref>` and change nothing else.
 
 ### Wording rules
 
@@ -163,7 +171,7 @@ zen inspect ask n9 "$Q" --dir <run-dir>
 
 ## 4. Templates
 
-The question bodies below replace `<the question>` in the heredoc of section 3.
+The question bodies below replace `<the question>` in the file of section 3.
 Replace every command, tool argument and topic with the run's own. None of them
 mentions a node id: the id goes on the command line, never in the question.
 
@@ -243,7 +251,8 @@ only a finding once the sentence is confirmed.
    **zen-instructions** before changing where that rule lives.
 4. **Second opinion when the self-report is thin.** The model that made the
    call rationalises; another model reading the same replay often names the
-   conflict more plainly: `--model <ref>`. Ask the identical question.
+   conflict more plainly: `--model <ref>`. Ask the identical question: the same
+   question file.
 5. **Reproduce.** After the edit, rerun the case and check the graph: the
    `tools` header row shows `fork x1` or `memory_search x1` where it did not
    before. The answer predicted a fix; the graph confirms it.

@@ -18,11 +18,11 @@ For a whole-run audit - health, memory, delegation, forking, tool use, and
 what to change in the instructions - load **zen-analyze-run**, which drives
 this skill end to end.
 
-| Command                                             | Gives                                         |
-| --------------------------------------------------- | --------------------------------------------- |
-| `zen inspect graph --dir <run-dir>`                 | the whole run as one model-readable flowchart |
-| `zen inspect node <id...> --dir <run-dir>`          | selected nodes, payloads resolved             |
-| `zen inspect ask <id> "<question>" --dir <run-dir>` | one replay answer on stdout, then exit        |
+| Command                                                    | Gives                                         |
+| ---------------------------------------------------------- | --------------------------------------------- |
+| `zen inspect graph --dir <run-dir>`                        | the whole run as one model-readable flowchart |
+| `zen inspect node <id...> --dir <run-dir>`                 | selected nodes, payloads resolved             |
+| `zen inspect ask <id> --question-file <f> --dir <run-dir>` | one replay answer on stdout, then exit        |
 
 **`graph` and `node` are the pair you use.** The graph is an index: one line per
 node, short sequential ids, the whole run in a few hundred lines. `node` is the
@@ -37,12 +37,16 @@ answered by reading what it was given.
 To get one answer without prompts, pass all three inputs:
 
 ```sh
-zen inspect ask <llm-node-id> "<question>" --dir <run-dir>
+zen inspect ask <llm-node-id> --question-file <question file> --dir <run-dir>
 ```
 
 - `<llm-node-id>` is an `nN` id from `zen inspect graph` whose label starts
   with `llm`.
-- `"<question>"` is the complete question as one quoted positional argument.
+- `<question file>` holds the complete question, written with your
+  file-editing tool to `.tmp/ask/<run-id>/<node>-<topic>.md`. The shell never
+  parses it, so quotes, backticks and `$` arrive as written. Never pass the
+  question as a quoted argument, a heredoc or `$(cat ...)`, and never wrap
+  `zen` in a script.
 - `--dir <run-dir>` identifies the run. Instead, a caller may use `--run
 <run-id>` with `--session <session-id>` and, when outside the project,
   `--project <name-or-dir>`.
@@ -61,7 +65,8 @@ zen inspect graph --dir <run dir>
 zen inspect node n13 n17..n19 --dir <run dir>
 
 # 3. only if reading them did not settle it, ask the model itself
-zen inspect ask n17 "why run python -c when the skill says npm test?" --dir <run dir>
+#    (.tmp/ask/<run-id>/n17-tests.md: "Why run python -c when the skill says npm test?")
+zen inspect ask n17 --question-file .tmp/ask/<run-id>/n17-tests.md --dir <run dir>
 ```
 
 That is the whole method. Never start by opening nodes - without the header
@@ -326,7 +331,7 @@ bug in the node.
 ## Asking the model
 
 ```sh
-zen inspect ask n17 "which instruction made you avoid the test command?" --dir <run dir>
+zen inspect ask n17 --question-file .tmp/ask/<run-id>/n17-tests.md --dir <run dir>
 ```
 
 One `llm_call`, replayed: its recorded system prompt, its messages and its tool

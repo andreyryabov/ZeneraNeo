@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+    readQuestion,
     renderAskExchange,
     renderNode,
     repeatQuestions,
@@ -198,6 +199,21 @@ describe('interactive ask choices', () => {
         );
 
         expect(answered).toEqual(['first', 'second']);
+    });
+
+    it('reads the question from a file verbatim', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'zen-ask-'));
+        try {
+            const body = "Why didn't you run `npm test`? (it's in $SKILL)\n";
+            writeFileSync(join(dir, 'q.md'), body);
+
+            expect(await readQuestion([], 'q.md', dir)).toBe(body.trim());
+            expect(await readQuestion(['why', 'not?'], undefined, dir)).toBe('why not?');
+            await expect(readQuestion(['why'], 'q.md', dir)).rejects.toThrow(/not both/);
+            await expect(readQuestion([], 'missing.md', dir)).rejects.toThrow(/ENOENT/);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });
 

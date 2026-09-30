@@ -26,6 +26,7 @@ Four ways to read one run, for two different readers.
 | `--dir <dir>`           | all           | A run directory, as `zen run --json` reports it      |
 | `--memory <dir>`        | report, graph | Read this memory instead of the one the run recorded |
 | `--model <ref>`         | ask           | Answer with this model instead of the run's own      |
+| `--question-file <f>`   | ask           | Read the question from a file; `-` is stdin          |
 | `--part <name>`         | node          | Print this part in full. Repeatable, prefix-matched  |
 | `--full`                | node          | Print every part, the recorded `request` included    |
 | `--open`                | report        | Open the report in a browser                         |
@@ -230,6 +231,17 @@ submitted.
 
 Outside an interactive terminal, the explicit command above makes one model
 call, writes one raw Markdown answer to stdout, and exits.
+
+A question with quotes, apostrophes, backticks, `$` or more than one line goes
+in a file, so no shell parses it. The file is the whole question; `-` reads it
+from stdin. Words on the line as well are an error.
+
+```sh
+zen inspect ask n11 --question-file .tmp/ask/<run-id>/n11-tests.md --dir <run dir>
+```
+
+Do not build the question with `"$(cat <<'EOF' ... )"`: macOS `/bin/bash` 3.2
+misparses a heredoc inside `$( )` when its body holds an apostrophe.
 
 The `llm_call` node named by the id is replayed: its recorded system prompt, its
 messages and its tool schemas, exactly as the provider received them, with the

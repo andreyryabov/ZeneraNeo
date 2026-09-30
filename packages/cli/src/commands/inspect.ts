@@ -62,6 +62,7 @@ import {
     note,
     pad,
     ask as prompt,
+    readStdin,
     usageError,
     write,
     writeAll,
@@ -80,6 +81,7 @@ interface Flags {
     memory?: string;
     model?: string;
     part?: string[];
+    'question-file'?: string;
     full?: boolean;
     open?: boolean;
     rebuild?: boolean;
@@ -126,6 +128,7 @@ export const inspect: Command = {
         '  --dir <dir>            A run directory, as `zen run --json` reports it.',
         '  --memory <dir>         Read this memory instead of the project’s.',
         '  --model <ref>          Answer `ask` with this model instead of the run’s.',
+        '  --question-file <path> Read the `ask` question from a file; `-` is stdin.',
         '  --part <name>          Print this part of a node in full. Repeatable.',
         '  --full                 Print every part, the recorded `request` included.',
         '  --rebuild              Build report.html again from the run state.',
@@ -160,6 +163,11 @@ export const inspect: Command = {
         '',
         '  zen inspect ask n11 "why run python -c when the skill says npm test?"',
         '',
+        'A question with quotes, backticks or several lines goes in a file, so no',
+        'shell ever parses it:',
+        '',
+        '  zen inspect ask n11 --question-file q.md',
+        '',
         'At a terminal, omit the arguments to choose the session, run and recorded',
         'LLM call interactively. Questions and answers stay in one session; submit',
         'an empty question to finish. Outside a terminal, one answer is printed.',
@@ -177,6 +185,7 @@ export const inspect: Command = {
                 memory: { type: 'string' },
                 model: { type: 'string' },
                 part: { type: 'string', multiple: true },
+                'question-file': { type: 'string' },
                 full: { type: 'boolean' },
                 open: { type: 'boolean' },
                 rebuild: { type: 'boolean' },
@@ -203,7 +212,7 @@ export const inspect: Command = {
         }
         if (what === 'ask') {
             const at = await locate(ctx.cwd, values, undefined, asking);
-            return await ask(at, values, rest, ctx.json, asking);
+            return await ask(at, values, rest, ctx.cwd, ctx.json, asking);
         }
         const at = await locate(ctx.cwd, values, rest[0], asking);
         if (what === 'graph') {
@@ -403,10 +412,40 @@ export async function repeatQuestions(
     }
 }
 
+/** The question: the words on the line, or the whole of `--question-file` (`-` is stdin). */
+export async function readQuestion(
+    words: readonly string[],
+    file: string | undefined,
+    cwd: string,
+): Promise<string> {
+    const typed = words.join(' ').trim();
+    if (file === undefined) {
+        return typed;
+    }
+    if (typed) {
+        throw usageError(
+            'give the question either as words or as --question-file, not both',
+            'zen inspect ask n11 --question-file q.md',
+        );
+    }
+    if (file === '-') {
+        return (await readStdin()) ?? '';
+    }
+    try {
+        return (await readFile(resolve(cwd, file), 'utf8')).trim();
+    } catch (err) {
+        throw invalidError(
+            `cannot read question file ${file}: ${(err as NodeJS.ErrnoException).code ?? err}`,
+            'write the question to that path first',
+        );
+    }
+}
+
 async function ask(
     at: Located,
     values: Flags,
     rest: readonly string[],
+    cwd: string,
     asJson: boolean,
     asking: boolean,
 ): Promise<void> {
@@ -473,7 +512,7 @@ async function ask(
                 '`runner({ recordRequests: true })`',
         );
     }
-    let query = words.join(' ').trim();
+    let query = await readQuestion(words, values['question-file'], cwd);
     if (!query && asking) {
         query = await prompt(interactive ? 'Question (empty to finish)?' : 'Question?');
     }

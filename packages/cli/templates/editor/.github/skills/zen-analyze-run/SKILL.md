@@ -145,7 +145,7 @@ sentence you will propose to change.
 For each costly choice found in section 4, run:
 
 ```sh
-zen inspect ask <llm-node-id> "<question>" --dir <run dir>
+zen inspect ask <llm-node-id> --question-file <question file> --dir <run dir>
 ```
 
 **Do not ask every `llm_call`.** Each ask spends a model call, and most calls
@@ -164,7 +164,8 @@ ask at the right node already sees the several calls before it:
   `llm <model> · … · calls <tool>`. Never a tool call or a tool result: only
   an `llm_call` has a request to replay. And never a call **before** the
   choice: the replay ends at that node, so it cannot see what came after.
-- `"<question>"` is one quoted argument, written for a model that sees **only
+- `<question file>` holds the question, written with your file-editing tool
+  to `.tmp/ask/<run-id>/<node>-<topic>.md`, for a model that sees **only
   its own raw context** at that call: the system prompt, the messages, the tool
   descriptions, and the answer it gave. It has never seen the graph, so node
   ids (`n7`), node kinds and anything that happened after the call mean nothing
@@ -173,8 +174,9 @@ ask at the right node already sees the several calls before it:
   directly why it did not take the better path, naming it concretely by the
   tool as it appears in its tool list: "why didn't you use `memory_search` for
   the invoice export?". Never ask "did you consider..." - its own answer
-  already shows it did not. End with the fixed answer shape from
-  **zen-inspect-ask**. Write it in a heredoc so quotes survive the shell.
+  already shows it did not. End the file with the fixed answer shape from
+  **zen-inspect-ask**. Never pass the question as a quoted
+  argument, a heredoc or `$(cat ...)`, and never wrap `zen` in a script.
 - One behaviour per call. Each call is a fresh replay and remembers nothing
   of the last one.
 
@@ -195,19 +197,20 @@ Ask whenever it applies:
 | misused a tool, or repeated a failing call             | issued the call or its first retry | which words of the tool's description led it there, or were missing |
 
 For example, a run whose first action was a workspace grep, with memory never
-searched - the ids are for you, the question never mentions them:
+searched - the ids are for you, the question never mentions them. Write
+`.tmp/ask/<run-id>/n6-memory.md`:
 
-```sh
-Q="$(cat <<'EOF'
+```text
 You ran `grep -rn invoice /workspace/src` as your first step for this task.
 Why didn't you use memory_search or memory_grep to look up the invoice export
 first? Both are in your tool list. What in your instructions, or missing from
 them, made the workspace the first place to look?
 
 <the answer shape from zen-inspect-ask>
-EOF
-)"
-zen inspect ask n6 "$Q" --dir <run dir>
+```
+
+```sh
+zen inspect ask n6 --question-file .tmp/ask/<run-id>/n6-memory.md --dir <run dir>
 ```
 
 Ask at most six questions, the costliest findings first. Verify every quote in

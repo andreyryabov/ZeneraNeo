@@ -742,7 +742,7 @@ case - `findings.md` is the report here.
 | --------------------------------------------------------------- | -------------------------------------------------------- | -------------- |
 | The graph (`graph.mmd`, or `zen inspect graph --dir <run.dir>`) | What happened, in what order, and where it looped        | Free           |
 | `zen inspect node n13 --dir <run.dir>`                          | What a step actually said, sent or got back              | Free           |
-| `zen inspect ask <llm_call-id> "…"`                             | Why the model chose this over that - the sentence to fix | One model call |
+| `zen inspect ask <llm_call-id> --question-file <f>`             | Why the model chose this over that - the sentence to fix | One model call |
 
 Stay at the top for as long as it works. The `%%` header rows on the graph carry
 `nodes`, `tokens`, `thinking`, `tools`, `branches`, `compacted` and `why` — and
@@ -773,7 +773,10 @@ DIR="$(.github/skills/zen-finetune/scripts/report.mjs \
     -d .finetune/runs/stage1-batch01-run1/batch paths planning-organize-day | cut -f2)"
 zen inspect graph --dir "$DIR"
 zen inspect node n12 n13 --dir "$DIR" --part request --full
-zen inspect ask n13 "why did you call /mail/list a second time instead of paging the first result?" --dir "$DIR"
+# .tmp/ask/planning-organize-day/n13-paging.md, written with your file tool:
+#   Why did you call /mail/list a second time instead of paging the first result?
+#   (then the answer shape from zen-inspect-ask)
+zen inspect ask n13 --question-file .tmp/ask/planning-organize-day/n13-paging.md --dir "$DIR"
 ```
 
 Treat the answer as testimony, not ground truth. It is useful because it names
