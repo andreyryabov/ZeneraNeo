@@ -262,10 +262,13 @@ const BASE_URLS: Partial<Record<Provider, string>> = {
  * Copilot offers its tools as OpenAI *custom* tools, which the completions API
  * rejects outright — `400 Invalid value: 'custom'`. Only the responses API
  * takes them, and only the reasoning models serve it, so the wire API follows
- * the model rather than being a flag nobody would know to set.
+ * the model rather than being a flag nobody would know to set. Older models are
+ * listed rather than newer ones, so each new generation works without a release.
  */
 export function wireApi(provider: Provider, id: string): string | undefined {
-    return provider === 'openai' && /^(gpt-5|o[34])/.test(id) ? 'responses' : undefined;
+    return provider === 'openai' && !/^(gpt-4|gpt-3\.5|chatgpt-)/.test(id)
+        ? 'responses'
+        : undefined;
 }
 
 export interface Wiring {

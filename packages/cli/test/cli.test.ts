@@ -3223,6 +3223,7 @@ describe('wiring a zen key into copilot', () => {
     it('picks the wire api the model can actually serve', () => {
         expect(wireApi('openai', 'gpt-5-mini')).toBe('responses');
         expect(wireApi('openai', 'o4-mini')).toBe('responses');
+        expect(wireApi('openai', 'gpt-6-sol')).toBe('responses');
         expect(wireApi('openai', 'gpt-4o')).toBeUndefined();
         expect(wireApi('anthropic', 'claude-sonnet-4.5')).toBeUndefined();
     });
