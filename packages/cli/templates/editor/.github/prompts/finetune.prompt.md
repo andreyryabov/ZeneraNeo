@@ -7,12 +7,10 @@ changes is the prose the project is made of - the agent prompts, the skills and
 the house rules under `agents/` - and the evidence is the trajectories the
 queries produce.
 
-**Load the `zen-finetune` skill before anything else**, and load `zen-inspect`
-and `zen-analyze-run` before you grade, and `zen-instructions` before you write
-a policy file. This
-prompt is the order of
-the work; the skill is how each step is done, and it holds the rules that are
-easy to get wrong.
+**Load the `zen-finetune` skill before anything else**, and load `zen-inspect`,
+`zen-analyze-run` and `zen-inspect-ask` before you grade, and `zen-instructions`
+before you write a policy file. This prompt is the order of the work; the skill
+is how each step is done, and it holds the rules that are easy to get wrong.
 
 This prompt is **reentrant**. Tuning is long and gets interrupted - a run dies, a
 session ends, I stop you mid-batch. Every step leaves its result on disk under
@@ -359,6 +357,13 @@ optimality, memory hygiene, fork, delegation, tools and skills, grounding,
 failure handling. **Cite a node id for every finding.** A finding you cannot
 point at in the graph did not happen.
 
+Where a node shows **what** went wrong but not **why** - memory not searched,
+lookups not forked, a skill not followed, a tool misused - ask the model at the
+call that made the choice, once per pattern: `zen inspect ask`, worded as
+**zen-inspect-ask** says. Load that skill before the first ask of the run, even
+if you loaded it in an earlier run. A rule written in section 5 without the
+sentence an ask named is a guess.
+
 Grade in this order, because they are not equally urgent:
 
 1. **The recheck cases.** A recheck that passed before and fails now means a
@@ -436,7 +441,9 @@ four independent lookups in sequence" becomes a fan-out rule in the prompt. The
 unit of change is a pattern across findings, not a finding: three cases missing
 the same beat is a rule, one case is a note in `findings.md`. The three do not
 have to be in this batch - grep the earlier runs' findings before calling
-something an anecdote. For a difficult case, read its notes (`difficult.mjs`)
+something an anecdote. Each cost or behaviour pattern carries the sentence its
+`zen inspect ask` named - verified by grep in the recorded request - or
+`no instruction`: that sentence is what the rule edits. For a difficult case, read its notes (`difficult.mjs`)
 and every earlier `findings.md` that names it first: the rules already tried and
 failed are the most useful thing you know about it. Write the rule one level up
 from the case that produced it; a rule that names the dataset's own endpoints

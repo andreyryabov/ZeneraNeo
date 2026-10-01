@@ -729,12 +729,14 @@ case. `compare` is the per-case cost table the findings open with, and it is the
 last thing this phase does — read the trajectories before the numbers, or the
 numbers decide what you look at.
 
-Then work case by case. Load **zen-inspect** for the mechanics and
-**zen-analyze-run** for how to read one trajectory's decisions: its audit
-checklist (memory used and saved, delegation, forking, tool use, cost) is what
-to look for under criteria 2-8 below, and its section on `zen inspect ask` is
-how to question the model at a critical point. Do not write its full report per
-case - `findings.md` is the report here.
+Then work case by case. Load **zen-inspect** for the mechanics,
+**zen-analyze-run** for how to read one trajectory's decisions, and
+**zen-inspect-ask** before the first `zen inspect ask` - which node, what to
+rule out first, how to word the question. The audit checklist of
+zen-analyze-run (memory used and saved, delegation, forking, tool use, cost) is
+what to look for under criteria 2-8 below, and its section on `zen inspect ask`
+says when to question the model at a critical point. Do not write its full
+report per case - `findings.md` is the report here.
 
 ### The three depths
 
@@ -759,7 +761,8 @@ tool misused or a failing call repeated, a loaded skill not followed. The graph
 and the nodes show **what** it did there; only the replay says **which
 sentence** made it do it, and that sentence is what phase 5 will change.
 
-Follow **zen-analyze-run** §5 for every ask: rule out the cheap causes first
+Load **zen-inspect-ask** before the first ask, then follow it for every ask:
+rule out the cheap causes first
 (tool not offered, instruction file absent, skill not loaded, context
 compacted), pick the `llm_call` that made the choice, and word the question for
 a model that sees only its own context - no node ids, "why didn't you ...", the
