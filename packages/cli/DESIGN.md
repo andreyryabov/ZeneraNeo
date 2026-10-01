@@ -1015,6 +1015,14 @@ Three decisions carry it:
   id is the only witness of which it was. `--model` names another and says on
   stderr that the answer is now a second opinion rather than self-examination.
 
+It has two modes, and the only switch between them is whether the question was
+given. A question - on the line, in `--question-file`, or implied by `--json` -
+means a program is asking: one call, the answer alone on stdout, no banner, no
+picker, no follow-up prompt, even at a terminal. No question means a person:
+pickers for whatever is not named, then a conversation. Keying it on the TTY
+instead was wrong - an agent's shell is often a pty, and the follow-up prompt
+that drew the banner landed in its tool output.
+
 ## 8. Distribution - the `zen` binary
 
 The command name is a `bin` entry in [package.json](packages/cli/package.json),

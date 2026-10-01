@@ -120,7 +120,8 @@ export const inspect: Command = {
         '  report                 Build and print the path to report.html. Default.',
         '  graph                  The whole run as one Mermaid flowchart, on stdout.',
         '  node <id...>           Those nodes of the graph in full. Ranges: n5..n9.',
-        '  ask [<id> [<question>]] Put a question to the model that made that call.',
+        '  ask <id> <question>    One answer on stdout, then exit. Never prompts.',
+        '  ask [<id>]             A conversation at a terminal. Prompts for the rest.',
         '',
         '  --project <name|dir>   Which project. Defaults to the one you are in.',
         '  --session <id>         Which session. Defaults to the newest that ran.',
@@ -136,8 +137,8 @@ export const inspect: Command = {
         '  --no-timing            Leave the clock off the graph.',
         '  --no-style             Leave the colours off the graph. Shorter to read.',
         '',
-        'With no arguments: asks which session and run, or takes the newest of',
-        'each when there is nothing to ask on.',
+        'With no run named, report, graph and node ask which session and run at',
+        'a terminal, and take the newest of each when there is nothing to ask on.',
         '',
         '`graph` is written to be read by a model. Nodes are declared in the',
         'order they happened, with ids `n1`, `n2`, …; every edge is collected in',
@@ -159,18 +160,27 @@ export const inspect: Command = {
         '`ask` replays one `llm_call` — its system prompt, its messages, its tool',
         'schemas — to a model, with your question on the end and tool calling off.',
         'It is told the run is over and that it may quote its own instructions, so',
-        'the answer names the prompt or skill behind the behaviour:',
+        'the answer names the prompt or skill behind the behaviour. It has two',
+        'modes, and which one is decided by whether the question is given:',
+        '',
+        'One-shot — a question on the line, in --question-file, or --json. For a',
+        'script or a model: no banner, no prompt, no picker; stdout is the answer',
+        'and nothing else. Name the run with --dir, --run or --session, or the',
+        'newest is taken.',
         '',
         '  zen inspect ask n11 "why run python -c when the skill says npm test?"',
+        '  zen inspect ask n11 --question-file q.md --dir <run dir>',
         '',
         'A question with quotes, backticks or several lines goes in a file, so no',
-        'shell ever parses it:',
+        'shell ever parses it.',
         '',
-        '  zen inspect ask n11 --question-file q.md',
+        'Interactive — no question. For a person at a terminal: asks for whatever',
+        'is not named (session, run, LLM call), then the question, and keeps the',
+        'conversation going until an empty question. Without a terminal it is an',
+        'error, never a wait.',
         '',
-        'At a terminal, omit the arguments to choose the session, run and recorded',
-        'LLM call interactively. Questions and answers stay in one session; submit',
-        'an empty question to finish. Outside a terminal, one answer is printed.',
+        '  zen inspect ask',
+        '  zen inspect ask n11 --dir <run dir>',
         '',
         'All of it, at length: .github/skills/zen-cli/references/inspect.md',
     ],
@@ -211,8 +221,16 @@ export const inspect: Command = {
             return await nodes(at, values, rest, ctx.json);
         }
         if (what === 'ask') {
-            const at = await locate(ctx.cwd, values, undefined, asking);
-            return await ask(at, values, rest, ctx.cwd, ctx.json, asking);
+            // Given a question it is one-shot; only a bare `ask` converses.
+            const oneShot = ctx.json || values['question-file'] !== undefined || rest.length > 1;
+            if (!oneShot && !(asking && process.stdout.isTTY)) {
+                throw usageError(
+                    'interactive `ask` needs a terminal; give the node id and a question',
+                    'zen inspect ask n11 --question-file q.md --dir <run dir>',
+                );
+            }
+            const at = await locate(ctx.cwd, values, undefined, !oneShot);
+            return await ask(at, values, rest, ctx.cwd, ctx.json, !oneShot);
         }
         const at = await locate(ctx.cwd, values, rest[0], asking);
         if (what === 'graph') {
@@ -447,13 +465,12 @@ async function ask(
     rest: readonly string[],
     cwd: string,
     asJson: boolean,
-    asking: boolean,
+    interactive: boolean,
 ): Promise<void> {
     const { project, session, run } = at;
-    const interactive = asking && Boolean(process.stdout.isTTY);
     const trace = traceOf(await readState(run));
     let [id, ...words] = rest;
-    if (!id && asking) {
+    if (!id && interactive) {
         const calls = replayableCalls(trace);
         if (calls.length === 0) {
             throw invalidError(
@@ -512,10 +529,9 @@ async function ask(
                 '`runner({ recordRequests: true })`',
         );
     }
-    let query = await readQuestion(words, values['question-file'], cwd);
-    if (!query && asking) {
-        query = await prompt(interactive ? 'Question (empty to finish)?' : 'Question?');
-    }
+    const query = interactive
+        ? await prompt('Question (empty to finish)?')
+        : await readQuestion(words, values['question-file'], cwd);
     if (!query && interactive) {
         return;
     }
@@ -581,9 +597,7 @@ async function ask(
         return;
     }
     if (!interactive) {
-        const res = await generate(query);
-        write(res.text);
-        usage(res);
+        write((await generate(query)).text);
         return;
     }
     let conversation: ReturnType<typeof buildDiagnostic> | undefined;

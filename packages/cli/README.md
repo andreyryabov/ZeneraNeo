@@ -284,10 +284,16 @@ schemas - to a model with your question on the end and tool calling off, and
 tells it the run is over and its own instructions are quotable. It is how a
 prompt that reads correctly and behaves wrongly explains itself.
 
-At a terminal, `zen inspect ask` with no arguments walks through the session,
-run and recorded LLM call. It frames each question and Markdown answer
-separately and keeps accepting follow-ups until you submit an empty question.
-Outside a terminal, the explicit form prints one raw answer and exits.
+`ask` has two modes, decided by whether the question is given:
+
+- **One-shot** - a question on the line, in `--question-file`, or `--json`.
+  For a script or the agent in your editor: no banner, no prompt, no picker.
+  stdout is the answer and nothing else, and the command exits.
+- **Interactive** - no question. For you, at a terminal: `zen inspect ask`
+  walks through the session, run and recorded LLM call (whichever are not
+  named), frames each question and Markdown answer separately, and keeps
+  accepting follow-ups until you submit an empty question. Without a terminal
+  it is an error, never a wait.
 
 Every step is a command, and everything each one reads or writes is a plain
 file: the specification, the findings `zen check` prints with a code, a location

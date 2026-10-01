@@ -10,9 +10,11 @@ a few hundred nodes is far too big to read and far too repetitive to need to.
 `zen inspect` answers it in two halves.
 
 This skill is for an agent process without a TTY. Every invocation must be
-fully specified. Never run bare `zen inspect`, `zen inspect node` or
-`zen inspect ask`: those forms do not deterministically name the output, node
-or question and may wait for terminal input.
+fully specified. Never run bare `zen inspect` or `zen inspect node`: without a
+run named they read whichever run is newest. Never run `zen inspect ask`
+without a question: that is the interactive mode, for a person, and it fails
+without a terminal. With a question it is one-shot - no banner, no prompt,
+only the answer on stdout.
 
 For a whole-run audit - health, memory, delegation, forking, tool use, and
 what to change in the instructions - load **zen-analyze-run**, which drives
