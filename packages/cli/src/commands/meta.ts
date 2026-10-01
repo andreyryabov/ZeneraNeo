@@ -1,11 +1,11 @@
-import { createModel, readProjectConfig } from '@zenera/neo';
+import { readProjectConfig } from '@zenera/neo';
 import { existsSync } from 'node:fs';
 import { parse } from '../args.ts';
 import type { Command, Context } from '../command.ts';
 import { loadProjectEnv } from '../env.ts';
 import { ensureHome } from '../home.ts';
 import { assertOwner, KeyStore, PROVIDERS, type Provider } from '../keys.ts';
-import { probeModel } from '../liveness.ts';
+import { probeChat, probeModel } from '../liveness.ts';
 import {
     answerBox,
     chooseModel,
@@ -738,7 +738,7 @@ async function vet(ctx: Context, ref: string): Promise<void> {
         // The colon form, so a refusal suggests `zen models ls <provider>`.
         ref: `${owner}:${id}`,
         kind: 'model',
-        model: createModel({ provider: owner, model: id, maxTokens: 16 }),
+        model: probeChat(owner, id),
     });
     bar?.done();
 

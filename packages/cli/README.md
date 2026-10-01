@@ -769,6 +769,7 @@ zen models search haiku --tools --free      # narrow it
 zen models show openrouter:anthropic/claude-haiku-4.5
 zen models test vertex:gemini-embedding-001 # one real call, one verdict
 zen models pick --embedding                 # the first ref that answers, on stdout
+zen models browse                           # walk providers and models with the arrow keys
 ```
 
 Listings are cached for a day in `~/.zenera/neo/cache`. If a provider cannot be
@@ -801,6 +802,11 @@ the above is a single substitution, whether a person or an agent is doing it:
 ```sh
 zen rag schema index --embedding "$(zen models pick --embedding)" ./specs/*.yaml
 ```
+
+`zen models browse [provider]` is the interactive way in: arrow keys through
+the providers and their models, `/` to filter, `tab` to cycle roles, `enter`
+for one model in full, `t` to ask it one question, `p` to pick it. The picked
+ref is printed on stdout, so `ref="$(zen models browse)"` works too.
 
 ### Setting up each provider
 

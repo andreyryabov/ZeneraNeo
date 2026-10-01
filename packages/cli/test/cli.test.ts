@@ -49,7 +49,7 @@ import {
     type KeyStore,
     type Provider,
 } from '../src/keys.ts';
-import { classify, probeModels } from '../src/liveness.ts';
+import { classify, probeChat, probeModels } from '../src/liveness.ts';
 import {
     absorb,
     answerBox,
@@ -93,6 +93,7 @@ import {
     gistOf,
     inlineOf,
     readable,
+    scrollTop,
     summarise,
     textOf,
     THINKING_ROWS,
@@ -783,6 +784,22 @@ describe('clipping to one row', () => {
     });
 });
 
+describe('scrolling a list', () => {
+    it('stays put while the selection is in view', () => {
+        expect(scrollTop(5, 3, 10, 100)).toBe(3);
+    });
+
+    it('moves only as far as the selection needs', () => {
+        expect(scrollTop(20, 3, 10, 100)).toBe(11);
+        expect(scrollTop(2, 3, 10, 100)).toBe(2);
+    });
+
+    it('never scrolls past the last full window, nor above the first row', () => {
+        expect(scrollTop(99, 95, 10, 100)).toBe(90);
+        expect(scrollTop(0, 0, 10, 4)).toBe(0);
+    });
+});
+
 describe('the blocks of an answer', () => {
     const kinds = (text: string): string[] => blocksOf(text).map((b) => b.kind);
 
@@ -1103,6 +1120,25 @@ describe('the model probe', () => {
         expect(probe).toMatchObject({ id: 'embed-stub', kind: 'embedding' });
         expect(probe!.check.state).toBe('live');
         expect(asked?.input).toHaveLength(1);
+    });
+
+    // The registry refuses a knob the adapter never sends, and the OpenAI
+    // adapters have no output cap — so a probe that capped every vendor was
+    // refused before it asked anything (`zen models pick --chat`).
+    describe('building the chat model it asks', () => {
+        beforeEach(() => {
+            vi.stubEnv('OPENAI_API_KEY', 'sk-test');
+            vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-test');
+        });
+        afterEach(() => vi.unstubAllEnvs());
+
+        it('leaves the cap off where the adapter would not read it', () => {
+            expect(probeChat('openai', 'gpt-stub').id).toBe('gpt-stub');
+        });
+
+        it('keeps it where the vendor requires one', () => {
+            expect(probeChat('anthropic', 'claude-stub').id).toBe('claude-stub');
+        });
     });
 });
 

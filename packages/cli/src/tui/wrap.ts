@@ -76,6 +76,19 @@ export function wrap(text: string, width: number): string[] {
     return out;
 }
 
+/**
+ * The first row of a scrolled list, moved as little as possible so that row
+ * `selected` is inside a window of `height` rows over `count` of them.
+ */
+export function scrollTop(selected: number, top: number, height: number, count: number): number {
+    const h = Math.max(1, height);
+    let first = Math.min(top, selected);
+    if (selected >= first + h) {
+        first = selected - h + 1;
+    }
+    return Math.max(0, Math.min(first, count - h));
+}
+
 // ---------------------------------------------------------------------------
 // Dividing the frame
 //

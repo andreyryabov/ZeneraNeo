@@ -1,4 +1,5 @@
 import {
+    createModel,
     EXA_BASE_URL,
     isUnfunded,
     ModelRegistry,
@@ -467,6 +468,18 @@ export interface ModelProbe {
 
 const targetId = (target: ModelTarget): string =>
     target.kind === 'model' ? target.model.id : target.embedder.id;
+
+/**
+ * A chat model sized for a probe: 16 output tokens is enough for "ok", and
+ * Anthropic requires a cap at all. Only the adapters that read `maxTokens` are
+ * given one — the registry refuses a knob its adapter would never send, and the
+ * OpenAI adapters have no such knob.
+ */
+export function probeChat(provider: string, id: string): Model {
+    const capped = { provider, model: id, maxTokens: 16 };
+    const unread = new ModelRegistry().knobs(capped).some((k) => k.knob === 'maxTokens');
+    return createModel(unread ? { provider, model: id } : capped);
+}
 
 /**
  * Refused by the provider, unreachable, or served.

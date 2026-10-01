@@ -524,6 +524,7 @@ use_, needs no project, and is the other half of the same question.
 | `zen models show <ref>`    | One model, every field the vendor gave.                      |
 | `zen models test <ref> …`  | One real minimal call, per ref.                              |
 | `zen models pick`          | `--chat` or `--embedding`: the first ref that answers.       |
+| `zen models browse`        | The same catalog, walked with the arrow keys (TUI).          |
 
 `zen models <provider>` is short for `ls <provider>`, because it is what people
 type. Safe only because no provider is named after a subcommand - a collision
@@ -564,6 +565,17 @@ working ref, and firing eight billable calls to find it is the wrong trade -
 particularly for the caller most likely to be running it, which is an agent that
 has just been refused. The ref goes to stdout alone and unstyled, so
 `$(zen models pick --embedding)` is the ref and nothing else.
+
+**`browse` is the same catalog for a person** (`src/tui/models.tsx`, alias
+`ui`): providers, then one provider's listing with a `/` filter and a role
+cycle, then one model in full. `t` asks the highlighted model one question,
+`p` takes it. It keeps `pick`'s contract by drawing on **stderr**, so the
+picked ref is the only thing on stdout and `$(zen models browse)` works;
+leaving without a pick is exit 1 when stdout is not a terminal, because a
+substitution waiting for a ref has not been answered. The overview is offline
+like `zen models`; a provider is fetched when it is opened. Listing and
+probing arrive as callbacks from `commands/models.ts`, so the TUI holds layout
+and keys only.
 
 The loop this closes:
 
