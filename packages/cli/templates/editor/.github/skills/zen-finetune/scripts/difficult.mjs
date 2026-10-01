@@ -5,10 +5,11 @@
 //
 // A case goes on the list when grading shows it is hard for the project - it
 // stayed wrong after a fix, it broke as a recheck case, it flipped between right
-// and wrong on the same prose, or it costs far more than its batch. batch.mjs
+// and wrong on the same prose, memory made it wrong or no cheaper, or it costs
+// far more than its batch. batch.mjs
 // puts open cases first in every later batch's rechecks, and fills whole batches
 // with them once the selection is used up, until they are fixed; fixed ones stay
-// ahead of the random rechecks, because what was hard once breaks again first.
+// ahead of the other rechecks, because what was hard once breaks again first.
 //
 // A case is `stuck` once `maxRetries` batches (config.json, default 3) have held
 // it since it was added, without it being fixed: that is the model's ceiling or a
@@ -23,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 
 const NAME = 'difficult.mjs';
 
-const REASONS = ['wrong', 'regressed', 'flaky', 'costly'];
+const REASONS = ['wrong', 'regressed', 'flaky', 'memory', 'costly'];
 
 const USAGE = `Keep the list of difficult cases: the ones that caused the most trouble.
 
@@ -34,11 +35,15 @@ const USAGE = `Keep the list of difficult cases: the ones that caused the most t
   reasons   wrong       still wrong after a run that tried to fix it
             regressed   a recheck case that failed
             flaky       right in one run, wrong in a later run of the same cases
+            memory      with memory: wrong, no cheaper, or re-committing what it
+                        recalled - still, after a run that tried to fix it
             costly      over 2x the batch's median llm calls in its passing run
 
   status    open        comes first in every later batch until fixed
             fixed       right in a PASSED run; still preferred as a recheck case
-            stuck       open after maxRetries batches; reported, not retried`;
+            stuck       open after maxRetries batches; reported, not retried
+
+  <run> is a run directory name, e.g. batch03-nomem-run2 or batch03-mem-run1`;
 
 process.stdout.on('error', (err) => {
     if (/** @type {NodeJS.ErrnoException} */ (err).code === 'EPIPE') {
@@ -51,7 +56,7 @@ process.chdir(resolve(dirname(fileURLToPath(import.meta.url)), '../../../..'));
 const FILE = '.finetune/difficult.json';
 const CONFIG = '.finetune/config.json';
 const RUNS = '.finetune/runs';
-const RUN_NAME = /^stage([12])-batch(\d{2})-run(\d+)$/;
+const RUN_NAME = /^batch(\d{2})-(nomem|mem)-run(\d+)$/;
 
 /** @param {string} msg @param {number} [code] @returns {never} */
 function die(msg, code = 2) {
@@ -69,8 +74,8 @@ function json(path) {
 }
 
 /**
- * @typedef {{ id: string, stage: number, reasons: string[], added: string,
- *             notes: string[], fixed?: string }} Entry
+ * @typedef {{ id: string, reasons: string[], added: string, notes: string[],
+ *             fixed?: string }} Entry
  */
 
 /** @type {{ cases: Entry[] }} */
@@ -78,14 +83,14 @@ const doc = json(FILE) ?? { cases: [] };
 const maxRetries = Number(json(CONFIG)?.maxRetries) || 3;
 
 /**
- * How many batches of the entry's stage have held it since it was added, read
- * off the run 1 of every batch.
+ * How many batches have held it since it was added, read off the first
+ * no-memory run of every batch.
  *
  * @param {Entry} e
  * @returns {number}
  */
 function retries(e) {
-    const since = Number(RUN_NAME.exec(e.added)?.[2] ?? 0);
+    const since = Number(RUN_NAME.exec(e.added)?.[1] ?? 0);
     /** @type {string[]} */
     let names = [];
     try {
@@ -96,7 +101,7 @@ function retries(e) {
     let count = 0;
     for (const name of names) {
         const m = RUN_NAME.exec(name);
-        if (!m || +m[1] !== e.stage || +m[3] !== 1 || +m[2] <= since) {
+        if (!m || m[2] !== 'nomem' || +m[3] !== 1 || +m[1] <= since) {
             continue;
         }
         const ids = (json(join(RUNS, name, 'cases.json'))?.batch ?? []).map(
@@ -156,21 +161,19 @@ if (command === 'add' || command === 'fix') {
     if (ids.length === 0) {
         die(`${command} needs at least one case id`);
     }
-    const m = RUN_NAME.exec(run);
-    if (!m) {
-        die('--run must name a run, e.g. stage1-batch03-run2');
+    if (!RUN_NAME.test(run)) {
+        die('--run must name a run, e.g. batch03-nomem-run2');
     }
     if (!existsSync(join(RUNS, run))) {
         die(`no ${RUNS}/${run}`);
     }
-    const stage = +m[1];
 
     if (command === 'add') {
         if (!REASONS.includes(why)) {
             die(`--why must be one of: ${REASONS.join(', ')}`);
         }
         for (const id of ids) {
-            const held = doc.cases.find((e) => e.id === id && e.stage === stage);
+            const held = doc.cases.find((e) => e.id === id);
             if (held) {
                 held.reasons = [...new Set([...held.reasons, why])];
                 // Back on the list after a fix: it was not fixed, and its retries start again.
@@ -184,7 +187,6 @@ if (command === 'add' || command === 'fix') {
             } else {
                 doc.cases.push({
                     id,
-                    stage,
                     reasons: [why],
                     added: run,
                     notes: note ? [`${run}: ${note}`] : [],
@@ -193,9 +195,9 @@ if (command === 'add' || command === 'fix') {
         }
     } else {
         for (const id of ids) {
-            const held = doc.cases.find((e) => e.id === id && e.stage === stage);
+            const held = doc.cases.find((e) => e.id === id);
             if (!held) {
-                die(`${id} is not on the stage-${stage} list`);
+                die(`${id} is not on the list`);
             }
             held.fixed = run;
         }
@@ -218,14 +220,13 @@ if (doc.cases.length === 0) {
 
 const rows = doc.cases.map((e) => [
     e.id,
-    String(e.stage),
     status(e),
     e.reasons.join(','),
     String(retries(e)),
     e.added,
     e.fixed ?? '-',
 ]);
-const header = ['CASE', 'STAGE', 'STATUS', 'WHY', 'RETRIES', 'ADDED', 'FIXED'];
+const header = ['CASE', 'STATUS', 'WHY', 'RETRIES', 'ADDED', 'FIXED'];
 const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i].length)));
 for (const row of [header, ...rows]) {
     console.log(

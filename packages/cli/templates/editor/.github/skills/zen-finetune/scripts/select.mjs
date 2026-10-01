@@ -6,10 +6,11 @@
 // The dataset is every case the training set holds and is never cut down. This
 // is where the limit is applied, and it is applied evenly by class: one case
 // from each class in turn, so a limit of 12 over 4 classes is 3 of each, not
-// the first 12 in the file. Inside a class the picks rotate across complexity
-// levels, and cases with a rubric come first, because a graded case says why it
-// failed and an ungraded one only says what it did. A class that runs out stops
-// taking turns and the others carry on.
+// the first 12 in the file. Inside a class, cases with a rubric come first,
+// because a graded case says why it failed and an ungraded one only says what it
+// did; then the most complex first, because the first batches are the small ones
+// and a hard case shows more of what is wrong per trajectory read. A class that
+// runs out stops taking turns and the others carry on.
 //
 // Deterministic: the same --seed over the same dataset chooses the same cases,
 // so an interrupted session rebuilds the same selection.
@@ -41,7 +42,7 @@ const USAGE = `Choose the cases this tuning will use: up to the limit, out of th
   --seed <n>          default config.json "seed", else 1`;
 
 const CONFIG = '.finetune/config.json';
-const LEVELS = ['simple', 'medium', 'complex'];
+const LEVELS = ['complex', 'medium', 'simple'];
 
 process.stdout.on('error', (err) => {
     if (/** @type {NodeJS.ErrnoException} */ (err).code === 'EPIPE') {
@@ -281,28 +282,21 @@ function roundRobin(lists) {
     return out;
 }
 
-/** @param {string} a @param {string} b */
-const byLevel = (a, b) => {
-    const rank = (/** @type {string} */ l) => (LEVELS.includes(l) ? LEVELS.indexOf(l) : 99);
-    return rank(a) - rank(b) || a.localeCompare(b);
-};
+/** @param {Case} c */
+const rank = (c) => (LEVELS.includes(levelOf(c)) ? LEVELS.indexOf(levelOf(c)) : LEVELS.length);
 
 const byClass = groupBy(matching, classOf);
 const ordered = roundRobin(
-    [...byClass.keys()].sort().map((name) => {
-        const byLevelGroups = groupBy(/** @type {Case[]} */ (byClass.get(name)), levelOf);
-        return roundRobin(
-            [...byLevelGroups.keys()]
-                .sort(byLevel)
-                .map((level) =>
-                    /** @type {Case[]} */ (byLevelGroups.get(level)).sort(
-                        (a, b) =>
-                            Number(graded(b)) - Number(graded(a)) ||
-                            /** @type {number} */ (key.get(a)) - /** @type {number} */ (key.get(b)),
-                    ),
-                ),
-        );
-    }),
+    [...byClass.keys()]
+        .sort()
+        .map((name) =>
+            /** @type {Case[]} */ (byClass.get(name)).sort(
+                (a, b) =>
+                    Number(graded(b)) - Number(graded(a)) ||
+                    rank(a) - rank(b) ||
+                    /** @type {number} */ (key.get(a)) - /** @type {number} */ (key.get(b)),
+            ),
+        ),
 );
 
 const chosen = LIMIT > 0 ? ordered.slice(0, LIMIT) : ordered;
@@ -343,6 +337,9 @@ for (const name of [...inDataset.keys()].sort()) {
 }
 console.error('');
 console.error(`  ${chosen.filter(graded).length} of ${chosen.length} have a rubric`);
+console.error(
+    `  ${chosen.filter((c) => levelOf(c) === 'complex').length} of ${chosen.length} are complex`,
+);
 
 /**
  * Counts per distinct line, sorted: `sort | uniq -c`.

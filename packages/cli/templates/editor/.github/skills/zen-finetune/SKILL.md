@@ -1,6 +1,6 @@
 ---
 name: zen-finetune
-description: Fine-tune an agent project against a training set in two stages — first with NO memory, then WITH memory. Read the whole training set, in any format, into a classified, complexity-rated dataset with rubrics; choose up to a limit of cases from it evenly by class; then work a batch at a time — each batch built when it is needed from new cases plus rechecks of earlier ones, difficult ones first — run it, grade every trajectory, fix the prompts and skills, run the same cases again to confirm. Cases that cause the most trouble go on a difficult list and keep coming back until they are fixed or declared stuck, so the number of batches grows as needed; every passed stage-1 batch's memory is checkpointed at once into a last good graph that survives an abrupt stop. Stage 1 runs each batch with an empty memory via `zen run batch`, grades trajectories with `zen inspect graph`, `node` and `ask` for rubric compliance, llm-call count, fork use, assumptions, memory hygiene and delegation, and turns patterns into prompts, skills and `agents/<topic>-policy-instructions.md` files. Stage 2 freezes the prose, runs the same batches with every case given its own copy of the last good memory, and tunes the memory policy until recall makes the work dramatically cheaper without changing a verdict. The agent writes `.finetune/README.md` — the plan, a mermaid map of every step, and the progress — before the first run and patches it after every step; `scripts/next.mjs` reads the state off disk so an interrupted session can resume. Load before evaluating an agent project against example queries, before acting on "it gets this wrong", when asked to improve prompts or instructions from evidence rather than taste, when building an eval or regression set out of a specification, when optimising memory use or run cost, or whenever a batch of runs has to be graded rather than merely executed.
+description: Fine-tune an agent project against a training set, a batch at a time, and every batch twice over — first with NO memory, then WITH the memory it just built. Read the whole training set, in any format, into a classified, complexity-rated dataset with rubrics; choose up to a limit of cases from it evenly by class, rubric and complex cases first. Batch 1 is a smoke test of 3 cases; each batch that goes smoothly doubles the next, up to a maximum, and each is built when it is needed from new cases plus rechecks of earlier ones — difficult ones first, then complex ones. Each batch runs with an empty memory via `zen run batch`; every trajectory is graded with `zen inspect graph`, `node` and `ask` for rubric compliance, llm-call count, fork use, assumptions, what it committed to memory and delegation; the proposals of every case are merged into edits of prompts, skills, house rules and `agents/<topic>-policy-instructions.md` files, and the same cases run again until they pass. Then what the passing run's cases committed is merged with the last good memory into a candidate, every case runs again from its own copy of it, recall and re-commits are graded the same way, the memory policy is tuned until recall makes the work dramatically cheaper without changing a verdict or re-committing what memory already held — and only then does the candidate become the last good memory and the next batch start. Cases that cause the most trouble go on a difficult list and keep coming back until they are fixed or declared stuck. The agent writes `.finetune/README.md` — the plan, a mermaid map of every step, and the progress — before the first run and patches it after every step; `scripts/next.mjs` reads the state off disk so an interrupted session can resume. Load before evaluating an agent project against example queries, before acting on "it gets this wrong", when asked to improve prompts or instructions from evidence rather than taste, when building an eval or regression set out of a specification, when optimising memory use or run cost, or whenever a batch of runs has to be graded rather than merely executed.
 ---
 
 # Fine-tuning an agent project
@@ -21,66 +21,71 @@ again — which is what everything below is about.
 One word per idea, used everywhere — in findings, in the README, in reports.
 When two words mean one thing, readers assume they mean two.
 
-| Word                      | Means                                                                                                |
-| ------------------------- | ---------------------------------------------------------------------------------------------------- |
-| **case**                  | one query from the training set, with its rubric if it has one. `zen run batch` calls it an _item_   |
-| **dataset**               | every case in the training set — `.finetune/dataset.json`. Never cut down. Its size is written **T** |
-| **limit** (N)             | how many cases this tuning uses — equal to T unless the user named a smaller number                  |
-| **selection**             | those N cases, chosen evenly by class — `.finetune/selection.json`                                   |
-| **batch**                 | the cases worked on together until they all pass. See [What a batch is](#what-a-batch-is)            |
-| **batch size** (M)        | how many new cases each batch takes from the selection                                               |
-| **recheck cases** (R)     | cases from earlier batches, run again in a later one — difficult ones first                          |
-| **run**                   | one execution of a batch: `run1`, then the same cases again after fixes as `run2`, …                 |
-| **passed**                | a batch whose latest run got every case right AND whose cost review found nothing left to cut        |
-| **concurrency** (C)       | cases executing at the same time inside one run — `min(batchSize, 16)`, halved on OOM, never below 4 |
-| **stage 1 — no memory**   | every case starts from an empty memory; the instructions are tuned                                   |
-| **stage 2 — with memory** | every case starts from a copy of what stage 1 learned; the memory policy is tuned                    |
-| **trajectory**            | what one case did in one run — its graph                                                             |
-| **difficult case**        | a case that caused real trouble — on `.finetune/difficult.json`, retested until `fixed` or `stuck`   |
-| **last good memory**      | what every passed stage-1 run committed, merged — `memory.mjs path`, always whole on disk            |
+| Word                  | Means                                                                                                                 |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| **case**              | one query from the training set, with its rubric if it has one. `zen run batch` calls it an _item_                    |
+| **dataset**           | every case in the training set — `.finetune/dataset.json`. Never cut down. Its size is written **T**                  |
+| **limit** (N)         | how many cases this tuning uses — equal to T unless the user named a smaller number                                   |
+| **selection**         | those N cases, chosen evenly by class, rubric and complex cases first — `.finetune/selection.json`                    |
+| **batch**             | the cases worked on together until they pass without memory and then with it. See [What a batch is](#what-a-batch-is) |
+| **batch size**        | how many new cases a batch takes: `minBatch` for batch 1, doubling after each smooth batch, up to `maxBatch`          |
+| **recheck cases** (R) | cases from earlier batches, run again in a later one — difficult ones first, then complex ones                        |
+| **run**               | one execution of a batch's cases — a no-memory run or a with-memory run                                               |
+| **no-memory run**     | every case starts from an empty memory, and writes its own; tunes the instructions                                    |
+| **with-memory run**   | every case starts from its own copy of the candidate memory; tunes the memory policy                                  |
+| **proposal**          | one improvement a case's grading suggests — merged with the others before anything is edited                          |
+| **passed**            | a run where every case is right AND its review found nothing left to cut                                              |
+| **concurrency** (C)   | cases executing at the same time inside one run — 16 at most, halved on OOM, never below 4                            |
+| **trajectory**        | what one case did in one run — its graph                                                                              |
+| **difficult case**    | a case that caused real trouble — on `.finetune/difficult.json`, retested until `fixed` or `stuck`                    |
+| **candidate memory**  | the last good memory plus what the batch's passing no-memory run committed — `memory.mjs path --candidate`            |
+| **last good memory**  | every passed batch's candidate, in turn — `memory.mjs path`, always whole on disk                                     |
 
-A run lives in `.finetune/runs/stage<1|2>-batch<NN>-run<N>/` —
-`stage1-batch03-run2` is stage 1, batch 3, second run. Inside it, `batch/` is
-`zen run batch`'s own output for that run: the command's name, not this method's.
+A run lives in `.finetune/runs/batch<NN>-<nomem|mem>-run<N>/` —
+`batch03-nomem-run2` is batch 3's second run without memory, `batch03-mem-run1`
+its first run with memory. Inside it, `batch/` is `zen run batch`'s own output
+for that run: the command's name, not this method's.
 
 ```mermaid
 flowchart TD
     A[training set, any format] --> B["dataset.json<br/>every case · classified · rated · rubrics"]
-    B --> C["selection.json<br/>N cases, evenly by class"]
+    B --> C["selection.json<br/>N cases, evenly by class<br/>rubric and complex first"]
     C --> P["README.md<br/>the plan and the map"]
-
-    subgraph S1["STAGE 1 — no memory: fix the instructions"]
-        E["batch.mjs next — build batch n<br/>M new, in selection order<br/>+ R recheck from earlier batches"]
-        F["zen run batch --memory .finetune/empty<br/>every case starts from an EMPTY graph<br/>and writes its own"]
-        G["grade every trajectory<br/>1. is it right?  2. what did it cost?"]
-        H{"all right, and nothing<br/>left to cut?"}
-        I["fix prompts · skills · rules<br/>then re-run the SAME cases.json"]
-        D[("difficult.json<br/>wrong · regressed · flaky · costly")]
-        K(["batch n PASSED"])
-        CP["memory.mjs checkpoint<br/>merge this run's graphs into the last good one"]
-        E --> F --> G --> H
-        H -->|"no — at most 4 runs"| I --> F
-        G -.->|"add · fix · stuck"| D
-        D -.->|"open ones are the FIRST<br/>rechecks of every later batch"| E
-        H -->|yes| K --> CP
-        CP -->|"cases unused, or difficult open"| E
-    end
-
-    subgraph S2["STAGE 2 — with memory: make it cheaper"]
-        L[("the last good memory<br/>one merged graph, frozen for the stage")]
-        M2["replay batch n<br/>cases.json copied from its stage-1 run 1"]
-        Y["zen run batch --memory (that graph)<br/>one COPY per case: it recalls from the copy<br/>and commits into the copy"]
-        N{"cheaper, still right,<br/>nothing re-committed?"}
-        O[fix memory-policy-instructions.md]
-        L --> Y
-        M2 --> Y --> N
-        N -->|no| O --> Y
-        N -->|"yes — next batch"| M2
-    end
-
     P --> E
-    CP -->|"every case used, none open"| L
-    N -->|"every stage-1 batch replayed"| V["final check<br/>the whole selection at once, nothing changed"]
+
+    E["batch.mjs next — build batch n<br/>3 new for batch 1, doubling while smooth<br/>+ R recheck from earlier batches"]
+    D[("difficult.json<br/>wrong · regressed · flaky · memory · costly")]
+
+    subgraph NM["1. WITHOUT memory: fix the instructions"]
+        F["zen run batch --memory .finetune/empty<br/>every case starts from an EMPTY graph<br/>and writes its own"]
+        G["grade every case: right? what did it cost?<br/>what did it commit? ask where it went wrong"]
+        H{"all right, and nothing<br/>left to cut?"}
+        I["merge every case's proposals<br/>edit prompts · skills · rules<br/>then the SAME cases.json again"]
+        F --> G --> H
+        H -->|"no — at most 4 runs"| I --> F
+    end
+
+    CAND["memory.mjs candidate<br/>last good + what this run's cases committed"]
+
+    subgraph WM["2. WITH memory: make it cheaper"]
+        Y["zen run batch --memory (the candidate)<br/>one COPY per case: it recalls from the copy<br/>and commits into the copy"]
+        N["grade memory use: recalled? cheaper?<br/>re-committed what it knew? ask why"]
+        Q{"still right, much cheaper,<br/>nothing re-committed?"}
+        O["merge the proposals<br/>edit the memory policy<br/>then the SAME cases.json again"]
+        Y --> N --> Q
+        Q -->|"no — at most 4 runs"| O --> Y
+    end
+
+    K["memory.mjs checkpoint<br/>the candidate becomes the last good memory"]
+
+    E --> F
+    H -->|yes| CAND --> Y
+    Q -->|yes| K
+    G -.->|"add · fix · stuck"| D
+    N -.-> D
+    D -.->|"open ones are the FIRST<br/>rechecks of every later batch"| E
+    K -->|"cases unused, or difficult open"| E
+    K -->|"every case used, none open"| V["final check<br/>the whole selection at once, last good memory"]
 ```
 
 The dataset is built once and cached. Everything after it runs many times.
@@ -93,6 +98,24 @@ say which edit helped and which hurt. A batch keeps both small enough to
 handle: a few cases, read in full, fixed, and **confirmed** before anything else
 starts.
 
+### How big a batch is
+
+Not fixed. The first batch is **3 cases** (`minBatch`): a smoke test of the
+project, the sandbox, the scripts and the grading, on cases cheap enough to read
+twice. A broken project, a missing key or a wrong rubric costs three trajectories
+to find, not forty.
+
+After that, `batch.mjs next` sizes each batch from how the one before went:
+
+| The previous batch                                                                                      | This batch                           |
+| ------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| went smoothly — at most 2 no-memory runs, at most 2 with-memory runs, no case put on the difficult list | **twice** its size, up to `maxBatch` |
+| needed more runs, or left a difficult case open                                                         | the **same** size                    |
+
+So a project the prose already fits climbs 3 → 6 → 10 in three batches, and one
+that fights every rule stays small, where each run is cheap and each edit
+attributable. `-m <n>` overrides it for one batch; say why in the README.
+
 ### What is in a batch
 
 There is no plan of batches drawn up in advance. `batch.mjs next` decides each
@@ -100,90 +123,136 @@ one when it is needed, from what has happened so far:
 
 ```mermaid
 flowchart LR
-    SEL[("selection.json<br/>N cases, class by class")]
+    SEL[("selection.json<br/>class by class<br/>rubric and complex first")]
     DIF[("difficult.json<br/>open · fixed · stuck")]
     USED[("cases used by<br/>earlier batches")]
-    NEW["up to M new cases<br/>not used by any batch yet"]
+    NEW["new cases, as many as the size<br/>not used by any batch yet"]
     RC["up to R recheck cases<br/>taken in this order until R is full"]
-    CJ["cases.json — batch n<br/>M + R cases"]
-    RUN1["run 1"]
-    MORE["runs 2 … 4<br/>a COPY of run 1's cases.json"]
+    CJ["cases.json + plan.json<br/>batch n"]
+    RUNS["every run of the batch<br/>no memory and with memory<br/>a COPY of that cases.json"]
 
-    SEL -->|"the next M unused, in selection order"| NEW
+    SEL -->|"the next unused, in selection order"| NEW
     DIF -->|"1. open — worst reason first"| RC
     DIF -->|"2. fixed — what broke once breaks first"| RC
-    USED -->|"3. a seeded random draw"| RC
-    DIF -.->|"selection used up: the M new<br/>are open difficult cases too"| NEW
+    USED -->|"3. complex cases, seeded order"| RC
+    USED -->|"4. the rest, seeded order"| RC
+    DIF -.->|"selection used up: the new<br/>are open difficult cases too"| NEW
     NEW --> CJ
     RC --> CJ
-    CJ --> RUN1 --> MORE
+    CJ --> RUNS
 ```
 
 A `stuck` case is on none of those paths: it is out of the draw for good.
 
-The selection is already ordered with classes taking turns, so M new cases in
-selection order are a mix of classes. With 40 cases, a batch size of 8, a
-recheck of 3, and one case turning difficult in batch 2:
+The selection is already ordered with classes taking turns, and inside a class
+cases with a rubric first and the most complex first, so the first, smallest
+batches are the hard, graded cases of every class — the ones that show the most
+per trajectory read — and the large late batches are the simple ones. With 40
+cases, a recheck of 3, and one case turning difficult in batch 3:
 
 ```
-batch 1   8 new                            nothing to recheck yet
-batch 2   8 new  + 3 recheck               random, from batch 1
-batch 3   8 new  + 3 recheck               the difficult case first, then random
-batch 4   8 new  + 3 recheck               ...still first until it is fixed
-batch 5   8 new  + 3 recheck               selection used up after this one
-batch 6   open difficult cases only        + 3 recheck, if any are still open
+batch 1    3 new                     smoke test; nothing to recheck yet
+batch 2    6 new  + 3 recheck        batch 1 was smooth: doubled; complex first
+batch 3   10 new  + 3 recheck        doubled again, to maxBatch
+batch 4   10 new  + 3 recheck        the difficult case first; size held at 10
+batch 5   10 new  + 3 recheck        ...still first until it is fixed
+batch 6    1 new  + 3 recheck        selection used up after this one
+batch 7   open difficult cases only  + 3 recheck, if any are still open
 ```
 
 `batch.mjs` with no arguments says where that stands: cases used, cases left,
-difficult cases open, and the least number of batches still ahead.
+the next size and why, difficult cases open, and the least number of batches
+still ahead. `batch.mjs next -o <run>/cases.json` also writes `plan.json`
+beside it — the size, why, which cases are new and which are rechecks — because
+`cases.json` itself may hold nothing but cases.
 
 The recheck cases are there to **fail**. A rule written for batch 3 is read by
 every agent on every query, and the case it breaks is almost never in batch 3.
 Without rechecks that breakage is found at the final check, five batches and a
 dozen rules later, when nobody can say which rule did it. With them it is found
-in the next batch, when the suspect is the handful of edits since.
+in the next batch, when the suspect is the handful of edits since. Complex
+cases come before the rest because they touch the most rules.
 
-A batch is built **once**, for its run 1. Every later run gets a **copy** of
-run 1's `cases.json`, never a rebuild — the rechecks depend on the difficult
-list, which moves, and the copy is what makes run 2 comparable to run 1.
+A batch is built **once**, for its first no-memory run. Every later run — no
+memory or with memory — gets a **copy** of that `cases.json`, never a rebuild:
+the rechecks depend on the difficult list, which moves, and the copy is what
+makes one run comparable to the next.
 
 ### What happens in a batch
 
+Every case of the batch goes through the same fifteen steps, in two halves. The
+first half fixes the instructions with memory out of the picture; the second
+gives back the memory the first half wrote and makes the same work cheaper.
+
+**Without memory** — runs `batch<NN>-nomem-run<N>`:
+
+1. **Run** the batch with no memory: every case starts from an empty graph.
+2. **Analyze** every trajectory: is it right, what did it cost, where is it
+   suboptimal. At each critical point, `zen inspect ask` the model why.
+3. **Read what it committed** to memory: durable facts and pointers, or live
+   readings dressed up as facts?
+4. **Propose** improvements, per case, each citing nodes and its `why` line.
+5. **Merge** the proposals of every case into patterns — one rule per pattern,
+   never one per case.
+6. **Update** the prompts, skills, house rules and policy files — create the
+   ones that do not exist yet.
+7. **Run again**, no memory, the same cases.
+8. **See** whether the edits worked: everything fixed, nothing broken, cheaper.
+   If not, back to 2. At most 4 no-memory runs.
+
+**With memory** — runs `batch<NN>-mem-run<N>`:
+
+9. **Build the candidate memory** from the run that passed step 8: the last good
+   memory, plus what each of its cases committed, merged — `zen memory merge`
+   folds what the graph already held, so the same fact from two cases is one node.
+10. **Run** the batch from the candidate. Every case gets **its own copy** of it,
+    recalls from the copy and commits into the copy — nothing one case writes
+    reaches another, or the candidate.
+11. **Analyze the memory use**, against the no-memory run that passed: did it
+    recall, did recall replace discovery, did it go cheaper, did it re-commit
+    what it had just recalled? `zen inspect ask` where it did not.
+12. **Merge** the proposals into patterns.
+13. **Update** the memory policy — `agents/memory-policy-instructions.md`, and
+    the memory paragraphs of a prompt or skill where a `why` line names one.
+14. **Run again** from the same candidate, the same cases. Back to 11 until it
+    passes. At most 4 with-memory runs.
+15. **Keep it and move on**: the candidate becomes the last good memory, the
+    difficult and complex cases are tracked for rechecks, and the next batch is
+    built.
+
 ```mermaid
 flowchart LR
-    R1["run 1<br/>M new + R recheck"] --> G1{"grade: is every<br/>case right?"}
-    G1 -->|"a NEW case is wrong"| FIX["fix correctness"]
-    G1 -->|"a RECHECK case is wrong<br/>= an earlier edit broke it"| FIX
-    G1 -->|"all right"| C1["cost review:<br/>llm calls · forks · discovery"]
-    C1 -->|"something to cut"| OPT["fix cost"]
-    FIX --> R2["next run<br/>the SAME cases.json, copied"]
-    OPT --> R2
-    R2 --> G1
-    C1 -->|"nothing to cut"| PASS(["batch passed"])
-    R2 -.->|"still wrong on run 4:<br/>revert the unconfirmed edits,<br/>list the case as difficult"| PASS
-    PASS --> CPT["checkpoint the memory<br/>of this run"] --> NEXT["next batch"]
+    N1["nomem run 1"] --> G1{"right? cheap?<br/>commits sound?"}
+    G1 -->|"no"| FIX["merge proposals<br/>edit prose"] --> N2["nomem run 2…4<br/>the SAME cases.json"] --> G1
+    G1 -->|"yes — PASSED"| CAND["candidate =<br/>last good + its commits"]
+    CAND --> M1["mem run 1<br/>a copy per case"] --> G2{"same verdicts?<br/>much cheaper?<br/>nothing re-committed?"}
+    G2 -->|"no"| MFIX["merge proposals<br/>edit memory policy"] --> M2["mem run 2…4<br/>the SAME candidate"] --> G2
+    G2 -->|"yes — PASSED"| CPT["candidate becomes<br/>last good memory"] --> NEXT["next batch"]
 ```
 
-- **Run 1** — the batch's cases, in one `zen run batch`, graded case by case.
-- **Grade, correctness** — is every case right? If not, that is the only work
-  this run: fix it, and grade the cost after the next run.
-- **Grade, cost** — once every case is right, in the same run: llm calls per
-  case, missed forks, discovery it did not need. This is where most of the
-  tuning happens. A batch that is right on run 1 has **not** passed — it has
-  reached the cost work.
-- **Fix** — the findings are generalised into prose (phases 5 and 6).
-- **Next run** — the identical `cases.json` again. The cases did not change, the
-  machine did not change, the memory mode did not change; only the prose did. So
-  the difference between the two runs _is_ the edit — the one controlled
-  experiment the whole method has.
-- **Passed** — on the first run where every case is right, new and recheck,
-  **and** the cost review finds nothing more worth changing. That run applies no
-  edits, so nothing unconfirmed is carried into the next batch.
+What each review looks at, and what a run must show to pass:
 
-A batch gets **at most 4 runs**. By then either the rules are wrong rather than
-under-worded, or the batch is as cheap as prose will make it. Stop, revert what
-the last run did not confirm, put every case still wrong on the difficult list,
-and pass it.
+- **Correctness first, without memory.** A case that is wrong is the only work
+  that run has: fix it, and grade the cost after the next run.
+- **Cost next, in the same run** once every case is right: llm calls per case,
+  missed forks, discovery it did not need. This is where most of the tuning
+  happens. A batch right on run 1 has **not** passed — it has reached the cost
+  work.
+- **Memory last, with memory.** The same verdicts, a large saving, recall
+  replacing discovery and never a live reading, and no commit of what memory
+  already held.
+- **Each next run is the identical `cases.json`.** The cases did not change, the
+  machine did not change, the memory did not change; only the prose did. So the
+  difference between two runs of one kind _is_ the edit — the one controlled
+  experiment the whole method has.
+- **Passed** is the first run of a kind where every case is right, new and
+  recheck, **and** its review finds nothing more worth changing. That run applies
+  no edits, so nothing unconfirmed is carried forward.
+
+Each kind gets **at most 4 runs** per batch. By then either the rules are wrong
+rather than under-worded, or the batch is as cheap as prose will make it. Stop,
+revert what the last run did not confirm, put every case still wrong on the
+difficult list, and pass it.
 
 ### Difficult cases, and why the number of batches is not fixed
 
@@ -193,75 +262,88 @@ them easy. So they go on a list, and the list shapes every later batch.
 **What makes a case difficult** — decided mechanically, after grading every run,
 and recorded with `difficult.mjs add <id> --why <reason> --run <run>`:
 
-| Reason      | When                                                                          |
-| ----------- | ----------------------------------------------------------------------------- |
-| `wrong`     | still wrong after a run that tried to fix it — not merely wrong on run 1      |
-| `regressed` | a recheck case that failed                                                    |
-| `flaky`     | right in one run, wrong in a later run of the same cases, no rule aimed at it |
-| `costly`    | over 2x the batch's median llm calls in its passing run                       |
+| Reason      | When                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------ |
+| `wrong`     | still wrong after a run that tried to fix it — not merely wrong on run 1                   |
+| `regressed` | a recheck case that failed                                                                 |
+| `flaky`     | right in one run, wrong in a later run of the same cases, no rule aimed at it              |
+| `memory`    | with memory: wrong, no cheaper, or re-committing what it recalled — after a run that tried |
+| `costly`    | over 2x the batch's median llm calls in its passing run                                    |
 
 **How they come back.** An open difficult case is the first recheck in every
 later batch until it is fixed; with more open than R, the worst reason goes
-first (`wrong`, `regressed`, `flaky`, `costly`), then the fewest retries. Once
-the selection is used up, a batch is made of open difficult cases alone, up to M,
-plus rechecks. A difficult case right in a `PASSED` run is marked
-`difficult.mjs fix <id> --run <run>`, and stays ahead of the random draw after
-that — what was hard once breaks again first.
+first (`wrong`, `regressed`, `flaky`, `memory`, `costly`), then the fewest
+retries. Once the selection is used up, a batch is made of open difficult cases
+alone, up to the batch size, plus rechecks. A difficult case right in a
+`PASSED` run is marked `difficult.mjs fix <id> --run <run>`, and stays ahead of
+the other rechecks after that — what was hard once breaks again first. A case
+added in a batch also keeps the next batch from growing.
 
 **Stuck.** A case still open after `maxRetries` batches have held it since it was
 added (default 3) is `stuck` — the model's ceiling, a wrong rubric, or a missing
-tool. It is no longer picked, and it is reported at the end of the stage with
-what was tried.
+tool. It is no longer picked, and it is reported at the end with what was tried.
 
-**When a stage ends.** When every case in the selection has been used and no
-difficult case is open. So a stage takes at least limit ÷ M batches, plus as many
-as its difficult cases need — and every difficult case ends `fixed` or `stuck`,
-so it always ends.
+**When the tuning ends.** When every case in the selection has been used and no
+difficult case is open. So it takes at least limit ÷ `maxBatch` batches, plus
+the small ones it starts with, plus as many as its difficult cases need — and
+every difficult case ends `fixed` or `stuck`, so it always ends.
 
 Before grading a batch that holds a difficult case, read its notes
 (`difficult.mjs`) and every earlier `findings.md` that names it: the rules that
 were already tried and did not work are the most useful thing known about it.
 
-## The last good memory
+## The memory: candidate and last good
 
-Stage 1 cases write memory, and the memory of a passed batch is worth keeping
-the moment the batch passes — not at the end of the stage, which a killed
-session may never reach. So every passed stage-1 run is checkpointed straight
-away:
+No-memory runs still write memory — each case into its own empty graph — and
+what the passing no-memory run of a batch wrote is exactly what its with-memory
+runs should be able to reuse. So when a no-memory run passes, it becomes a
+**candidate**:
 
 ```sh
-.github/skills/zen-finetune/scripts/memory.mjs checkpoint stage1-batch03-run2
+.github/skills/zen-finetune/scripts/memory.mjs candidate batch03-nomem-run2
 ```
 
-It copies the current last good graph into a new directory, folds in what each
-of that run's cases committed with `zen memory merge`, and only when that has
-succeeded repoints `.finetune/memory/last-good.json` at the new directory. A
-merge writes its files one after another, so a merge killed half-way can leave a
-graph whose files disagree — but never the one the pointer names. The last three
-graphs are kept to roll back to.
+That copies the last good memory into a new directory,
+`.finetune/memory/candidate-batch03/`, and folds in what each of that run's
+cases committed with `zen memory merge`. Merge drops what the graph already
+holds, so the same endpoint learned by four cases is one node, and a fact an
+earlier batch already knew is not added twice. The candidate is what every
+with-memory run of the batch starts from: `zen run batch --memory` gives **every
+case its own copy**, so a case recalls from its copy, commits into its copy, and
+nothing it writes reaches another case or the candidate. Every with-memory run
+of the batch starts from the same bytes.
+
+When a with-memory run passes, the candidate is kept:
+
+```sh
+.github/skills/zen-finetune/scripts/memory.mjs checkpoint batch03-mem-run1
+```
+
+It renames the candidate to `.finetune/memory/after-batch03/` and only then
+repoints `.finetune/memory/last-good.json` at it. A merge writes its files one
+after another, so a merge killed half-way can leave a graph whose files
+disagree — but only ever a candidate, never the graph the pointer names. The
+last three graphs are kept to roll back to.
 
 ```mermaid
 flowchart TD
-    subgraph P1["a PASSED stage-1 run — each case wrote its own graph"]
+    subgraph P1["the PASSED no-memory run — each case wrote its own graph"]
         MA["case a<br/>batch/a/memory"]
         MB["case b<br/>batch/b/memory"]
         MC["case c — committed nothing,<br/>so there is no directory"]
     end
 
-    BAD["runs that did not pass"] -->|"committed under prose<br/>that was then changed"| NIL(["dropped, never merged"])
+    BAD["no-memory runs that did not pass"] -->|"committed under prose<br/>that was then changed"| NIL(["dropped, never merged"])
 
-    LG0[("last good, revision n-1")]
-    MRG["memory.mjs checkpoint — copy revision n-1,<br/>then zen memory merge each case's graph into it"]
-    LG1[("last good, revision n")]
-    PTR["last-good.json repointed<br/>ONLY after the merge succeeded"]
-    OLD["the previous 3 revisions kept,<br/>to roll back to"]
+    LG0[("last good memory<br/>after batch n-1")]
+    MRG["memory.mjs candidate — copy it,<br/>then zen memory merge each case's graph in<br/>what it already held is folded, not added"]
+    CAND[("candidate<br/>batch n")]
 
     MA --> MRG
     MB --> MRG
-    LG0 --> MRG --> LG1 --> PTR
-    LG0 -.-> OLD
+    LG0 --> MRG --> CAND
 
-    subgraph P2["stage 2 reads it, and never writes to it"]
+    subgraph P2["the with-memory runs read it, and never write to it"]
         CA["case a: its own copy"]
         CB["case b: its own copy"]
         WR["what a case commits stays in ITS copy:<br/>evidence for grading, never merged back"]
@@ -269,104 +351,119 @@ flowchart TD
         CB --> WR
     end
 
-    PTR -->|"zen run batch --memory (that directory)"| CA
-    PTR --> CB
-    PTR -->|"tuning stops for good"| PROM["promote into the project's memory/"]
+    CAND -->|"zen run batch --memory (the candidate)"| CA
+    CAND --> CB
+    PASS{"a with-memory<br/>run PASSED"}
+    CAND --> PASS
+    PASS -->|"memory.mjs checkpoint"| LG1[("last good memory<br/>after batch n")]
+    LG1 -->|"tuning stops for good"| PROM["promote into the project's memory/"]
 ```
 
-`next.mjs` will not let the next batch be built until the passed run is
-checkpointed. So at any moment:
+`next.mjs` will not let a with-memory run start without a candidate built from
+the run that passed, nor the next batch be built until the candidate is kept.
+So at any moment:
 
 ```sh
-.github/skills/zen-finetune/scripts/memory.mjs         # which runs it holds, how many nodes
-.github/skills/zen-finetune/scripts/memory.mjs path    # the directory
+.github/skills/zen-finetune/scripts/memory.mjs                    # both, and what built them
+.github/skills/zen-finetune/scripts/memory.mjs path               # the last good memory
+.github/skills/zen-finetune/scripts/memory.mjs path --candidate   # the batch's candidate
 ```
 
-names a whole graph holding everything the passed batches learned. Stage 2 runs
-from it, and if the tuning stops for good it is the graph to promote into
-`memory/`. Only passing runs go in: an earlier run of the same batch committed
-under prose that was then changed, often while getting the answer wrong.
+names a whole graph holding everything the passed batches learned. If the
+tuning stops for good it is the graph to promote into `memory/`. Only passing
+runs go in: an earlier run of the same batch committed under prose that was then
+changed, often while getting the answer wrong. And a with-memory run's copies
+are never merged back — each holds the whole graph again, and what a case
+committed there is graded, not kept.
+
+A candidate with **0 nodes** means nothing was ever committed: the with-memory
+run would measure nothing. That is a commit-policy finding for the no-memory
+runs, and `memory.mjs candidate` says so.
 
 ### What may be compared to what
 
 `report.mjs compare` will diff any two runs, so this is the rule most easily
 broken:
 
-| Comparison                              | Valid   | Why                                                 |
-| --------------------------------------- | ------- | --------------------------------------------------- |
-| batch 3 run 2 against batch 3 run 1     | **yes** | same cases, prose moved — the measurement           |
-| batch 3 run 1 against batch 2 run 2     | **no**  | different cases _and_ different prose               |
-| stage-2 batch 3 against stage-1 batch 3 | **yes** | same cases, memory added — stage 2's whole question |
+| Comparison                                               | Valid   | Why                                                  |
+| -------------------------------------------------------- | ------- | ---------------------------------------------------- |
+| `batch03-nomem-run2` against `batch03-nomem-run1`        | **yes** | same cases, no memory, prose moved — the measurement |
+| `batch03-mem-run2` against `batch03-mem-run1`            | **yes** | same cases, same candidate, memory policy moved      |
+| `batch03-mem-run1` against the no-memory run that passed | **yes** | same cases, same prose, memory added — what it saves |
+| `batch03-nomem-run1` against `batch02-nomem-run2`        | **no**  | different cases _and_ different prose                |
 
 Never compare two different batches. If a number has to cover the whole tuning,
 it is the per-batch table in the README, read as a trend, not an experiment.
 
-## The two stages
+## Why no memory first, then memory — in every batch
 
-Run in order and never interleaved. They optimise different things, they are
-graded on different evidence, and running them together makes both unreadable.
+The two halves optimise different things and are graded on different evidence,
+so they are never run together. But they are run **batch by batch**, not as two
+long stages: the memory a batch builds is tested while the cases that built it,
+and the rules that shaped it, are still in front of you.
 
-|                    | **Stage 1 — no memory**                                                                       | **Stage 2 — with memory**                                                                          |
-| ------------------ | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Phases             | 1 to 7                                                                                        | 8                                                                                                  |
-| What is tuned      | agent prompts, skills, `agents/instructions.md`, new policy files                             | the memory policy: what is committed, and when it is recalled                                      |
-| Memory at run time | `--memory .finetune/empty` — every case starts empty and **writes its own graph**             | `--memory "$(memory.mjs path)"` — every case starts from **its own copy** of the last good memory  |
-| Graded on          | the eight criteria; the trajectory must be right _from nothing_                               | whether recall shortened the trajectory, and what was committed on top of a graph that knew        |
-| The win            | correctness — the right work for the right reason                                             | speed and cost — the same verdicts for dramatically fewer tokens and less wall clock               |
-| Done when          | every case used, no difficult case open, and what each run _wrote_ to memory is generalisable | every stage-1 batch replayed and passed, materially cheaper, and no recall replaced a live reading |
+|                    | **No-memory runs**                                                                 | **With-memory runs**                                                                        |
+| ------------------ | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| What is tuned      | agent prompts, skills, `agents/instructions.md`, policy files — and what to commit | the memory policy: when to recall, when to trust it, what not to commit again               |
+| Memory at run time | `--memory .finetune/empty` — every case starts empty and **writes its own**        | `--memory "$(memory.mjs path --candidate)"` — every case starts from **its own copy**       |
+| Graded on          | the eight criteria; the trajectory must be right _from nothing_                    | whether recall shortened the trajectory, and what was committed on top of a graph that knew |
+| The win            | correctness — the right work for the right reason — then cost                      | speed and cost — the same verdicts for dramatically fewer tokens and less wall clock        |
 
-**Both stages run the same tool surface, and that is the point.** A run given
-a memory directory copies it per case and lets the case write — from an empty
-directory in stage 1, from the last good memory in stage 2 — so the agent sees the
-same tools and the same house rules in both. `--memory-read-only` would share one
-graph across the run instead, but it also clamps every agent's `access` to
-`read`, which removes `memory_commit` from the schema and changes the memory
-prose. That is two variables moving at once. Keep the flag for production-shaped
-runs; do not tune with it.
+**Both run the same tool surface, and that is the point.** A run given a memory
+directory copies it per case and lets the case write — from an empty directory
+without memory, from the candidate with it — so the agent sees the same tools
+and the same house rules in both. `--memory-read-only` would share one graph
+across the run instead, but it also clamps every agent's `access` to `read`,
+which removes `memory_commit` from the schema and changes the memory prose. That
+is two variables moving at once. Keep the flag for production-shaped runs; do
+not tune with it.
 
-**Stage 1 writes memory but never reads it.** That is half of what stage 1
-grades. Each case commits into its own empty graph, so the commits are a clean
+**No-memory runs write memory but never read it.** That is half of what they
+grade. Each case commits into its own empty graph, so the commits are a clean
 record of what that run _thought was worth keeping_. Criterion 3 grades exactly
 that: a run that cached today's inbox as a fact has poisoned every future run,
 and a run that learned a new API's shape and committed nothing has wasted the
-lesson. Fixing those is stage 1 work, because stage 2's memory is built out of
+lesson. Fix those in the no-memory runs, because the candidate is built out of
 these commits.
 
-**Stage 2 never treats a stage-1 problem as a memory problem.** If a case still
-fails with no memory, memory can hide it — the stage-2 run passes, the graph is
-rebuilt one day, and the failure returns with no trace of why. So stage 2 does
-not begin until stage 1 is done, and then the prompts, skills and
-house rules are frozen: the only file stage 2 edits is
-`agents/memory-policy-instructions.md`.
+**With-memory runs never fix a no-memory problem.** A case that is wrong with no
+memory is fixed before the batch reaches memory at all — memory would hide it,
+and it would come back the day the graph is rebuilt. So a with-memory run edits
+only the memory policy. A with-memory finding that needs any other prose is
+noted, its cases go on the difficult list, and the next batch's no-memory runs
+fix it, with those cases as rechecks.
 
-A successful stage 2 is a large drop, not a small one. With no memory, every run
-rediscovers the same endpoints, the same schema, the same layout, every time.
-With memory it should recall them and go straight to work. A stage-2 run that is
-only a few percent cheaper has not used memory; it has merely carried it.
+A successful with-memory run is a large drop, not a small one. With no memory,
+every run rediscovers the same endpoints, the same schema, the same layout,
+every time. With memory it should recall them and go straight to work. A
+with-memory run that is only a few percent cheaper has not used memory; it has
+merely carried it.
 
 ## The settings
 
-| Setting             | Is                                           | Chosen for                                                     |
-| ------------------- | -------------------------------------------- | -------------------------------------------------------------- |
-| dataset size (T)    | every case in the training set               | nothing — it is whatever the training set holds                |
-| **limit** (N)       | cases this tuning uses, `N = T`              | nothing — the whole dataset, unless the user gives a number    |
-| **batchSize** (M)   | new cases per batch                          | how many trajectories one grading pass can actually read; 6–10 |
-| **recheck** (R)     | earlier cases re-run in each batch           | the regression guard and the difficult-case retest; 2–4        |
-| **concurrency** (C) | cases running at once inside a run           | `min(batchSize, 16)`; halved on an out-of-memory run, min 4    |
-| **seed**            | makes the recheck draw repeatable            | anything; just never change it mid-way                         |
-| **maxRetries**      | batches a difficult case gets before `stuck` | 3                                                              |
+| Setting             | Is                                           | Chosen for                                                           |
+| ------------------- | -------------------------------------------- | -------------------------------------------------------------------- |
+| dataset size (T)    | every case in the training set               | nothing — it is whatever the training set holds                      |
+| **limit** (N)       | cases this tuning uses, `N = T`              | nothing — the whole dataset, unless the user gives a number          |
+| **minBatch**        | new cases in batch 1                         | a smoke test: 3                                                      |
+| **maxBatch**        | the most new cases a batch grows to          | how many trajectories one grading pass can actually read; 8–12       |
+| **recheck** (R)     | earlier cases re-run in each batch           | the regression guard and the difficult-case retest; 2–4              |
+| **concurrency** (C) | the most cases running at once inside a run  | `min(maxBatch + recheck, 16)`; halved on an out-of-memory run, min 4 |
+| **seed**            | makes the recheck order repeatable           | anything; just never change it mid-way                               |
+| **maxRetries**      | batches a difficult case gets before `stuck` | 3                                                                    |
 
 **Batch size is not concurrency**, and they are confused constantly because
 both answer "how many at once". Batch size is how much evidence is collected
 before prose may be edited; concurrency is how many of those cases run at one
-time. A batch of 12 run 4 at a time is perfectly ordinary.
+time. A batch of 12 run 4 at a time is perfectly ordinary, and a batch of 3 at a
+concurrency of 13 simply runs all three at once.
 
-**Concurrency is not sized, it is backed off.** Start at `min(batchSize, 16)`.
-When a run is out of memory — `report.mjs oom` finds an exit 137 — halve it,
-`C = max(4, floor(C / 2))`, write it to `config.json` and run the same cases
-again. Nothing else changes it: no preflight, no measuring, no raising it back.
-Out of memory at 4 means the machine cannot run the batch — stop and tell the
-user.
+**Concurrency is not sized, it is backed off.** Start at
+`min(maxBatch + recheck, 16)`. When a run is out of memory — `report.mjs oom`
+finds an exit 137 — halve it, `C = max(4, floor(C / 2))`, write it to
+`config.json` and run the same cases again. Nothing else changes it: no
+preflight, no measuring, no raising it back. Out of memory at 4 means the
+machine cannot run the batch — stop and tell the user.
 
 Write them down once, in `.finetune/config.json`, so every script and every
 resumed session agrees:
@@ -375,18 +472,19 @@ resumed session agrees:
 {
     "datasetSize": 64,
     "limit": 64,
-    "batchSize": 8,
+    "minBatch": 3,
+    "maxBatch": 10,
     "recheck": 3,
-    "concurrency": 8,
+    "concurrency": 13,
     "seed": 1,
     "maxRetries": 3
 }
 ```
 
-`limit`, `batchSize`, `recheck` and `seed` decide which cases go into which
-batch. Changing any of them after batch 1 has run changes every batch built
-after it — so fix them first and leave them alone. `concurrency` only ever goes
-down, by halving, after an out-of-memory run; it is the machine, not the
+`limit`, `minBatch`, `maxBatch`, `recheck` and `seed` decide which cases go into
+which batch. Changing any of them after batch 1 has run changes every batch
+built after it — so fix them first and leave them alone. `concurrency` only ever
+goes down, by halving, after an out-of-memory run; it is the machine, not the
 experiment.
 
 ## The README
@@ -405,43 +503,46 @@ patched.
 Once the settings are fixed and the cases selected, write the README whole:
 
 - **What this is** — one paragraph: what is being tuned, against what, why.
-- **Where we are** — one bold line: stage, batch, run, and what is happening.
+- **Where we are** — one bold line: batch, run (no memory or with memory), and
+  what is happening.
 - **The plan** — the dataset by class (in the dataset / chosen / with a rubric,
-  from `select.mjs`'s output); what a batch is, in two short paragraphs and the
-  small loop diagram; how difficult cases come back; the two stages; the
-  settings, each with a one-line meaning.
-- **Map** — a mermaid flowchart from the dataset to the final check: the
-  **minimum** number of stage-1 batches (limit ÷ batch size), the last good
-  memory, the same number for stage 2, the final check. Four classes: `done`,
-  `now`, `ahead`, `failed`. Before the first run, the dataset and selection are
-  `done`, stage-1 batch 1 is `now`, everything else `ahead`. Batches beyond the
-  minimum — the ones difficult cases add — are drawn when they are built, and a
-  line under the map says what is left: unused cases, open difficult cases.
+  from `select.mjs`'s output); what a batch is, how it grows, and its two
+  halves, in short paragraphs and the small loop diagram; how difficult cases
+  come back; the memory; the settings, each with a one-line meaning.
+- **Map** — a mermaid flowchart from the dataset to the final check: one node
+  per batch, each with its two halves — `no memory` and `with memory` — and the
+  last good memory it feeds; draw the batches the growth rule gives if every
+  batch is smooth (3, 6, 10, 10, …). Four classes: `done`, `now`, `ahead`,
+  `failed`. Before the first run, the dataset and selection are `done`, batch 1's
+  no-memory half is `now`, everything else `ahead`. Batches the plan did not
+  foresee — a batch that stayed small, the ones difficult cases add — are
+  drawn when they are built, and a line under the map says what is left: unused
+  cases, open difficult cases.
 - **Batches**, **Difficult cases**, **Log**, **Results so far** — empty tables
   and headings.
 - **Next** — the first run, in words, then the command.
 
 ### After every step: patch it
 
-A step is: a run finishing, a run graded, edits applied, a batch passing, a
-stage ending. After each, patch — do not rewrite — these parts:
+A step is: a run finishing, a run graded, edits applied, a candidate built, a
+batch passing. After each, patch — do not rewrite — these parts:
 
-| Part                | Patch                                                                                                                                                                                 |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Where we are**    | always                                                                                                                                                                                |
-| **Map**             | always — move node ids between the `class` lines; update labels (`▶ run 2`, `✔ passed · 2 runs`, `✘ 1 unfixed`); add a node for each batch beyond the minimum; update the "left" line |
-| **Batches**         | the current batch's row: new and recheck ids, runs so far, status, cases right (`7/8 + 3/3`), llm calls and tokens run to run                                                         |
-| **Difficult cases** | whenever `difficult.mjs` changes: the list as it prints, with each case's reason and what has been tried                                                                              |
-| **Log**             | a new entry, newest first: what ran, what was found, what changed, links to `findings.md` and `changes.md`                                                                            |
-| **Results so far**  | when a batch passes: cases used and passing out of N, instruction files changed, open problems                                                                                        |
-| **Next**            | always — what `next.mjs` says, in words, then the command                                                                                                                             |
+| Part                | Patch                                                                                                                                                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Where we are**    | always                                                                                                                                                                                                                    |
+| **Map**             | always — move node ids between the `class` lines; update labels (`▶ run 2`, `✔ passed · 2 runs`, `✘ 1 unfixed`); add a node for each batch the plan did not foresee and fix the sizes drawn ahead; update the "left" line |
+| **Batches**         | the current batch's row: size, new and recheck ids, runs so far of each kind, status, cases right (`7/8 + 3/3`), llm calls and tokens run to run, and with memory against without                                         |
+| **Difficult cases** | whenever `difficult.mjs` changes: the list as it prints, with each case's reason and what has been tried                                                                                                                  |
+| **Log**             | a new entry, newest first: what ran, what was found, what changed, links to `findings.md` and `changes.md`                                                                                                                |
+| **Results so far**  | when a batch passes: cases used and passing out of N, instruction files changed, memory size and saving, open problems                                                                                                    |
+| **Next**            | always — what `next.mjs` says, in words, then the command                                                                                                                                                                 |
 
 The map must always have **exactly one** `now` node, everything before it
 `done` or `failed`, everything after it `ahead`. A batch that passed with a case
 the prose could not fix is `failed`, not `done`, and its label says how many.
 
 `next.mjs` checks the README's age: if a run's `batch.json`, `findings.md` or
-`changes.md` is newer than the README, its first line says
+`changes.md`, or a memory pointer, is newer than the README, its first line says
 `first: patch .finetune/README.md`. Do that before anything else. A README that is
 only right at the end is one nobody trusts in the middle, which is the only time
 it is useful.
@@ -451,16 +552,17 @@ and why.
 
 ## What fine-tuning may change
 
-| File                                                | Stage  | Changed by this loop                                                  |
-| --------------------------------------------------- | ------ | --------------------------------------------------------------------- |
-| `agents/prompts/<name>.md`                          | 1      | Yes — the usual place a per-agent finding lands                       |
-| `agents/skills/<name>/SKILL.md`                     | 1      | Yes — when the fix is knowledge, not standing policy                  |
-| `agents/instructions.md`                            | 1      | Yes — when the fix binds every agent in the project                   |
-| `agents/<topic>-policy-instructions.md`             | 1      | Yes — new files are created here, one topic per file                  |
-| `agents/memory-policy-instructions.md`              | 1 or 2 | Yes — commit policy in stage 1, recall policy in stage 2              |
-| `agents.yaml`                                       | 1      | Rarely — only when the finding is structural (wrong tools, wrong fan) |
-| `agents/memory-instructions.md` and the other three | —      | **Never.** They are `zen`'s copies; `zen check --fix` overwrites them |
-| The dataset                                         | —      | Only to add cases or fix a wrong rubric — never to make a run pass    |
+| File                                                | Run kind    | Changed by this loop                                                  |
+| --------------------------------------------------- | ----------- | --------------------------------------------------------------------- |
+| `agents/prompts/<name>.md`                          | no memory   | Yes — the usual place a per-agent finding lands                       |
+| `agents/skills/<name>/SKILL.md`                     | no memory   | Yes — when the fix is knowledge, not standing policy                  |
+| `agents/instructions.md`                            | no memory   | Yes — when the fix binds every agent in the project                   |
+| `agents/<topic>-policy-instructions.md`             | no memory   | Yes — new files are created here, one topic per file                  |
+| `agents/memory-policy-instructions.md`              | both        | Yes — what to commit without memory; recall and re-commit with it     |
+| the memory paragraph of a prompt or skill           | with memory | Only where an ask's `why` line names it                               |
+| `agents.yaml`                                       | —           | No — a structural finding is an open problem in the README            |
+| `agents/memory-instructions.md` and the other three | —           | **Never.** They are `zen`'s copies; `zen check --fix` overwrites them |
+| The dataset                                         | —           | Only to add cases or fix a wrong rubric — never to make a run pass    |
 
 Moving a failing case's rubric to match what the agent did is not tuning. It is
 deleting the test. If a rubric was wrong, say so in the run's findings and fix it
@@ -564,8 +666,9 @@ Three levels, and rate the _trajectory_ the query demands, not the sentence:
 | `medium`  | Several calls that depend on each other, or one delegation, or one artefact |
 | `complex` | Fan-out, multi-agent, ambiguity to resolve, or a plan that can go wrong     |
 
-"organize my day" is three words and complex. Inside each class the selection
-rotates through the levels, so the easy majority does not set the score.
+"organize my day" is three words and complex. The selection puts the complex
+cases of each class first, so a rating that is too low hides a case in the late
+batches; when unsure, rate up.
 
 ### It is a cache
 
@@ -596,8 +699,9 @@ confirm it matches the source.
 It chooses from **the whole dataset**, evenly by class:
 
 1. Cases are grouped by class.
-2. Inside a class, they rotate through complexity levels — simple, medium,
-   complex, simple, … — and within each level, cases with a rubric come first.
+2. Inside a class, cases with a rubric come first, and among those the most
+   complex first — complex, medium, simple — then the cases with no rubric in
+   the same order.
 3. Classes take turns: one case from each class, then a second from each, and so
    on until the limit is spent.
 
@@ -615,35 +719,38 @@ lost the most. A limit below the dataset silently drops cases the project is
 meant to handle, and nothing downstream will notice.
 
 The order `select.mjs` writes is also the order batches take new cases in, so
-every batch of M new cases is already a mix of classes.
+every batch is already a mix of classes — and the first, small batches hold the
+graded, complex case of each class. A graded case says _why_ it failed; a
+complex one exercises the most rules per trajectory read. That is where the
+first edits should come from. The simple cases arrive last, in the large
+batches, when the prose has settled and they mostly confirm it.
 
 ### Write the README
 
 Now, before anything runs — see [The README](#the-readme).
 
-## Phase 3 — Stage 1: build and run a batch
+## Phase 3 — Build a batch, run it without memory (step 1)
 
 ```sh
-.github/skills/zen-finetune/scripts/batch.mjs            # progress: used, left, difficult open
-.github/skills/zen-finetune/scripts/batch.mjs next -o .finetune/runs/stage1-batch01-run1/cases.json
+.github/skills/zen-finetune/scripts/batch.mjs            # progress: used, left, next size, difficult open
+.github/skills/zen-finetune/scripts/batch.mjs next -o .finetune/runs/batch01-nomem-run1/cases.json
 ```
 
-| Flag          | Effect                                                    |
-| ------------- | --------------------------------------------------------- |
-| _(none)_      | Progress: cases used, left, difficult open, batches ahead |
-| `next`        | Build the next batch of the stage                         |
-| `--stage <s>` | 1 or 2; default 1                                         |
-| `-m <size>`   | New cases per batch; default `config.json` `batchSize`    |
-| `-r <count>`  | Recheck cases; default `config.json` `recheck`            |
-| `-o <file>`   | Where to write; default stdout                            |
-| `--seed <n>`  | Default `config.json` `seed`                              |
+| Flag         | Effect                                                        |
+| ------------ | ------------------------------------------------------------- |
+| _(none)_     | Progress: cases used, left, next size and why, difficult open |
+| `next`       | Build the next batch; with `-o`, also `plan.json` beside it   |
+| `-m <size>`  | New cases in this batch, overriding the growth rule — say why |
+| `-r <count>` | Recheck cases; default `config.json` `recheck`                |
+| `-o <file>`  | Where to write; default stdout                                |
+| `--seed <n>` | Default `config.json` `seed`                                  |
 
-`next` prints which cases are new, which are rechecks and what is left after it
-— put that in the README's batch row. It is built **once**, for run 1; later
-runs of the batch copy that file.
+`next` prints the size and why, which cases are new, which are rechecks and what
+is left after it — put that in the README's batch row. It is built **once**, for
+the first no-memory run; every later run of the batch copies that file.
 
 ```sh
-RUN=.finetune/runs/stage1-batch01-run1
+RUN=.finetune/runs/batch01-nomem-run1
 C=$(node -p 'require("./.finetune/config.json").concurrency')
 .github/skills/zen-finetune/scripts/batch.mjs next -o "$RUN/cases.json"
 zen run batch \
@@ -660,7 +767,7 @@ each case gets its own empty graph, the project's real `memory/` is not read and
 not touched, and every case still writes, so what it _chose_ to remember is
 evidence. Never point a tuning run at the project's live memory — a graph with
 content means a run can succeed by recall instead of by instruction, which is
-exactly what stage 1 exists to rule out.
+exactly what a no-memory run exists to rule out.
 
 Concurrency always comes from `config.json` — read it fresh for every run.
 `zen run batch`'s own default is 16 and its cap 32; the tuning never goes above 16. `stdout` is the batch directory
@@ -670,8 +777,9 @@ is a live dashboard of the run — open it while it runs.
 What lands:
 
 ```
-.finetune/runs/stage1-batch01-run1/
-    cases.json                   M new + R recheck; built once for run 1, copied for later runs
+.finetune/runs/batch01-nomem-run1/
+    cases.json                   new + recheck; built once here, copied for every later run
+    plan.json                    size, why, which are new, which are rechecks
     batch/
         batch.json               roster, counts, timings, memory mode, tokens per model
         README.md                the batch's own live dashboard
@@ -685,9 +793,11 @@ run that moved work onto a cheaper agent shows up there and nowhere else.
 
 A case that fails is data, not an outage: its `output.json` holds
 `{ "ok": false, "id", "error" }` and the rest of the run still goes on. Grade the
-failures too — a crash is a finding.
+failures too — a crash is a finding. In batch 1 a crash is most likely the
+project, the sandbox or a key, not the prose: that is what the smoke test is
+for. Fix it and run the three cases again before anything is graded.
 
-## Phase 4 — Stage 1: grade the trajectories
+## Phase 4 — Grade without memory (steps 2–4)
 
 ### A run with any exit 137 is void, not graded
 
@@ -773,7 +883,7 @@ so one ask at the right node covers the steps before it.
 
 ```sh
 DIR="$(.github/skills/zen-finetune/scripts/report.mjs \
-    -d .finetune/runs/stage1-batch01-run1/batch paths planning-organize-day | cut -f2)"
+    -d .finetune/runs/batch01-nomem-run1/batch paths planning-organize-day | cut -f2)"
 zen inspect graph --dir "$DIR"
 zen inspect node n12 n13 --dir "$DIR" --part request --full
 # .tmp/ask/planning-organize-day/n13-paging.md, written with your file tool:
@@ -826,7 +936,10 @@ separable faults, all visible in the graph:
 Record `nodes`, `llm` and `tokens` from the header. The llm-call count is the
 run-to-run number; tokens are the one that swings.
 
-**3. Memory hygiene.** Read `<id>/memory/` and the commit nodes. The rule is
+**3. Memory hygiene — what it committed (step 3).** Start from
+`report.mjs -d "$RUN/batch" memory` — commits per case — then read
+`<id>/memory/` and the commit nodes. Every commit becomes part of the candidate
+the with-memory runs start from, so this is graded as hard as the answer. The rule is
 commit what _produces_ the answer, not the material it was made from: a file
 becomes a pointer, a call becomes the operation. A run that stored the
 _contents_ of `/mail/list` — today's inbox, a price, a status, a queue depth —
@@ -835,7 +948,8 @@ What it should have stored is that the mail list is at that endpoint, what shape
 it returns and what the useful filter was. The carve-outs are narrow: an answer
 the agent assembled itself, and a source that genuinely cannot change. Also
 check the other direction — a run that committed nothing when it learned the
-shape of a new API has wasted the lesson.
+shape of a new API has wasted the lesson, and its with-memory run will have
+nothing to recall.
 
 **4. Fork.** Independent work should fan out; dependent work must not. Look for:
 serial calls with no data dependency between them (missed fork); branches that
@@ -864,7 +978,7 @@ retry the identical call? The `tools` header row finds this in one line.
 
 ### Write it down: findings.md
 
-One file per run, `.finetune/runs/stage1-batch01-run1/findings.md`. It opens
+One file per run, `.finetune/runs/batch01-nomem-run1/findings.md`. It opens
 with a **verdict block** — a plain answer to "are we making progress", what was
 changed to get there, and the per-case table that supports it or does not — and
 only then the per-case grading.
@@ -878,24 +992,26 @@ prints markdown ready to paste:
 
 ```sh
 .github/skills/zen-finetune/scripts/report.mjs \
-    -d .finetune/runs/stage1-batch03-run2/batch \
-    -p .finetune/runs/stage1-batch03-run1/batch compare
+    -d .finetune/runs/batch03-nomem-run2/batch \
+    -p .finetune/runs/batch03-nomem-run1/batch compare
 ```
 
 Every column comes from the run itself — tokens from `output.json`, llm calls,
-tool calls and forks from the graph's own `%% nodes` header row, time from
-`durationMs`. The one column it leaves as `?` is **verdict**: whether a case is
-right is the judgement grading made, and no script can read it off a trajectory.
+tool calls and forks from the graph's own `%% nodes` header row, memory reads
+and commits from its `%% tools` row, the `known` count from what the commit
+results said, time from `durationMs`. The one column it leaves as `?` is
+**verdict**: whether a case is right is the judgement grading made, and no
+script can read it off a trajectory.
 
 Above the table it prints a `memory:` line for this run and, when comparing, a
 `prev memory:` line for the other. Paste both. The same numbers mean opposite
 things with and without memory, and `batch.json` records
-`--memory .finetune/empty` as mode `copied` exactly like a stage-2 run — so do not
-read the mode out of the JSON by eye; `report.mjs` decides it by whether the
-source is a real graph.
+`--memory .finetune/empty` as mode `copied` exactly like a with-memory run — so
+do not read the mode out of the JSON by eye; `report.mjs` decides it by whether
+the source is a real graph.
 
 ```md
-# stage1-batch03-run2 — NO MEMORY, --concurrency 7
+# batch03-nomem-run2 — NO MEMORY, --concurrency 7
 
 ## PROGRESS — one case fixed, none broken
 
@@ -906,13 +1022,13 @@ prev memory: NO MEMORY — every case started from an empty graph and wrote its 
 (+11 lines) — a question naming two products is two lookups, and the worst
 verdict decides.
 
-| case                             | verdict | tokens                   | llm calls | tool calls | forks   | time               |
-| -------------------------------- | ------- | ------------------------ | --------- | ---------- | ------- | ------------------ |
-| info-upgrade-pair-4100-4110      | ✘ → ✔   | 923k → 2.04M (+121%)     | 23 → 49   | 24 → 47    | 1 (=)   | 74s → 128s (+73%)  |
-| info-intel-4120-compat-420 _(r)_ | ✔ → ✔   | 676k → 1.09M (+61%)      | 24 → 33   | 21 → 30    | 1 (=)   | 70s → 79s (+13%)   |
-| info-malware-profiles-medium-412 | ✘ → ✘   | 3.40M → 1.00M (−70%)     | 65 → 41   | 61 → 36    | 2 (=)   | 222s → 107s (−52%) |
-| code-can-vms-talk _(r)_          | ✔ → ✔   | 1.20M → 4.80M (+302%)    | 35 → 124  | 32 → 113   | 1 → 5   | 93s → 463s (+398%) |
-| **total**                        | 14 → 15 | **19.7M → 24.3M (+23%)** | 585 → 717 | 517 → 637  | 27 → 31 | 1602s → 1922s      |
+| case                             | verdict | tokens                   | llm calls | tool calls | forks   | memory reads | commits (known) | time               |
+| -------------------------------- | ------- | ------------------------ | --------- | ---------- | ------- | ------------ | --------------- | ------------------ |
+| info-upgrade-pair-4100-4110      | ✘ → ✔   | 923k → 2.04M (+121%)     | 23 → 49   | 24 → 47    | 1 (=)   | 1 (=)        | 1 → 2           | 74s → 128s (+73%)  |
+| info-intel-4120-compat-420 _(r)_ | ✔ → ✔   | 676k → 1.09M (+61%)      | 24 → 33   | 21 → 30    | 1 (=)   | 1 (=)        | 1 → 1           | 70s → 79s (+13%)   |
+| info-malware-profiles-medium-412 | ✘ → ✘   | 3.40M → 1.00M (−70%)     | 65 → 41   | 61 → 36    | 2 (=)   | 2 → 1 (−1)   | 3 → 1           | 222s → 107s (−52%) |
+| code-can-vms-talk _(r)_          | ✔ → ✔   | 1.20M → 4.80M (+302%)    | 35 → 124  | 32 → 113   | 1 → 5   | 1 (=)        | 0 → 0           | 93s → 463s (+398%) |
+| **total**                        | 14 → 15 | **19.7M → 24.3M (+23%)** | 585 → 717 | 517 → 637  | 27 → 31 | 18 → 17      | 21 → 19         | 1602s → 1922s      |
 
 _(r)_ marks a recheck case. Both still pass, so the rule broke nothing earlier —
 which is the first thing this table has to answer.
@@ -956,6 +1072,11 @@ llm calls per case: median 33; above 1.5x: `code-can-vms-talk` 124 — loop, see
 - delegation: none needed
 - why (ask n6, fork): steered-by [system prompt: planner.md › Method]
   "Work through the request one step at a time" — verified in the request
+- proposals:
+    - P1 (4) planner.md › Method: narrow "one step at a time" to dependent steps;
+      independent reads go out together
+    - P2 (3) memory-policy: commit where a listing lives and how it is filtered,
+      never what it listed
 ```
 
 Cite the criterion number. The next phase reads down the column. A `why` line
@@ -963,28 +1084,34 @@ is the answer of an `ask` at a critical point: the node asked, the finding it
 explains, and the `steered-by` / `should-have-applied` / `missing` citation,
 marked verified or not.
 
+Each case ends with its **proposals** (step 4): what that case alone says
+should change, each with the criterion, the file and the sentence its `why` line
+named. They are not edits. Phase 5 merges them across every case of the run —
+and the earlier runs' — into patterns, and only a pattern becomes an edit.
+
 The `##` heading carries the verdict in one word, so a folder of runs shows the
 shape of the work without anything being opened. The `#` title carries the run
 name and `NO MEMORY` or `WITH MEMORY`. Use exactly one of:
 
-| Heading      | Means                                                               |
-| ------------ | ------------------------------------------------------------------- |
-| `PROGRESS`   | at least one case fixed, none broken                                |
-| `NO CHANGE`  | the run was clean and moved nothing — the change did not work       |
-| `REGRESSION` | a case that passed now fails, whatever else improved                |
-| `MIXED`      | something fixed and something broken in the same run                |
-| `CORRECT`    | every case right, but the cost review found something to cut        |
-| `PASSED`     | **the batch has passed** — every case right, nothing left to cut    |
-| `VOID`       | any exit 137 — halve concurrency, re-run the same cases; not graded |
-| `VERIFIED`   | the final check: nothing regressed and nothing was changed          |
+| Heading      | Means                                                                         |
+| ------------ | ----------------------------------------------------------------------------- |
+| `PROGRESS`   | at least one case fixed, none broken                                          |
+| `NO CHANGE`  | the run was clean and moved nothing — the change did not work                 |
+| `REGRESSION` | a case that passed now fails, whatever else improved                          |
+| `MIXED`      | something fixed and something broken in the same run                          |
+| `CORRECT`    | every case right, but the review found something to cut                       |
+| `PASSED`     | **this half of the batch has passed** — every case right, nothing left to cut |
+| `VOID`       | any exit 137 — halve concurrency, re-run the same cases; not graded           |
+| `VERIFIED`   | the final check: nothing regressed and nothing was changed                    |
 
-`PASSED` is the one the tooling reads: `next.mjs` treats a batch as passed when
-one of its runs says `PASSED`, and moves on. Write it only when every case in the
-batch is right, recheck cases included, **and** the cost review found nothing
-worth changing — so the run that says `PASSED` applies no edits. `next.mjs`
-refuses a `PASSED` from a run that has a `changes.md` (its edits are unconfirmed)
-or no `## Cost review` section. A run that is all correct with cost to cut is
-`CORRECT`, not `PASSED`.
+`PASSED` is the one the tooling reads: a no-memory run that says `PASSED` sends
+the batch to its candidate memory, and a with-memory run that says it sends the
+batch on. Write it only when every case in the batch is right, recheck cases
+included, **and** the run's review found nothing worth changing — the
+`## Cost review` without memory, the `## Memory review` with it — so the run
+that says `PASSED` applies no edits. `next.mjs` refuses a `PASSED` from a run
+that has a `changes.md` (its edits are unconfirmed) or no review section. A run
+that is all correct with something to cut is `CORRECT`, not `PASSED`.
 
 ### The cost review
 
@@ -1012,8 +1139,8 @@ Five rules keep the block honest; each is a run that was wasted once:
 - **Say which memory the run had, in the title and in the `memory:` line.** A
   with-memory run graded as a no-memory one reads as an agent that knew things it
   was never told. If `compare` warns that the two runs had different memory,
-  either that _is_ the measurement (stage 2) and the title says so, or the wrong
-  `-p` was given.
+  either that _is_ the measurement (a with-memory run against the no-memory run
+  that passed) and the title says so, or the wrong `-p` was given.
 - **The verdict column decides, not the token column.** Tokens swing ±2× between
   identical runs of this kind of project. Say what noise floor you measured and
   treat anything under it as unchanged — an aggregate move of 20% is usually
@@ -1046,10 +1173,12 @@ case in it — mechanically, not by feel:
 
 ```sh
 D=.github/skills/zen-finetune/scripts/difficult.mjs
-$D add planning-organize-day --why wrong --run stage1-batch03-run2 \
+$D add planning-organize-day --why wrong --run batch03-nomem-run2 \
     --note "lists mail and calendar, never proposes a schedule; rule in planner.md did not move it"
-$D add code-can-vms-talk --why costly --run stage1-batch03-run2 --note "124 llm calls, rag_search loop"
-$D fix info-upgrade-pair-4100-4110 --run stage1-batch05-run2
+$D add code-can-vms-talk --why costly --run batch03-nomem-run2 --note "124 llm calls, rag_search loop"
+$D add info-intel-4120-compat-420 --why memory --run batch03-mem-run2 \
+    --note "recalls the endpoint, then lists the directory anyway; recall rule did not move it"
+$D fix info-upgrade-pair-4100-4110 --run batch05-nomem-run2
 $D
 ```
 
@@ -1059,7 +1188,7 @@ back on the list — it was not fixed.
 
 Then patch the README.
 
-## Phase 5 — Stage 1: generalise
+## Phase 5 — Merge the proposals (step 5)
 
 **First, the recheck cases.** If one failed, this phase does not happen yet. A
 case that passed in an earlier batch and fails now was broken by a rule written
@@ -1067,13 +1196,17 @@ since, and the fix is to revert or narrow that rule — not to add another on to
 Find it in the earlier batches' `changes.md`, undo or qualify it, note the
 over-reach in this run's findings, and go straight to the next run.
 
-Otherwise, collect every finding from every case into one table before writing a
+Otherwise, collect every case's proposals into one table before writing a
 single word of instruction — the correctness findings and the cost review's
-patterns alike — because the unit of change is not a finding — it is a _pattern
-across findings_. A cost pattern becomes a rule the same way a correctness one
-does: three cases listing a directory to find a file the skill could name is a
-line in that skill; three cases running independent lookups in sequence is a
-fan-out rule in the prompt.
+patterns alike — because the unit of change is not a proposal — it is a _pattern
+across proposals_. Two cases proposing the same sentence in different words are
+one pattern; two cases proposing opposite edits to one sentence are a conflict,
+and the conflict is the finding. Write the merged table into `findings.md`,
+under `## Proposals, merged`: one row per pattern, the cases and nodes behind
+it, the file, and the edit. A cost pattern becomes a rule the same way a
+correctness one does: three cases listing a directory to find a file the skill
+could name is a line in that skill; three cases running independent lookups in
+sequence is a fan-out rule in the prompt.
 
 **One case is an anecdote.** A rule written from a single failure fixes that
 case and adds a line every other run has to read. Three cases missing the same
@@ -1112,7 +1245,7 @@ Prefer mechanical wording. "Put X before Y", "if the path does not end in `.py`,
 stop", "copy this literal verbatim" are followed. "Be thorough", "generalise
 appropriately" are followed about half the time and are not worth their tokens.
 
-## Phase 6 — Stage 1: apply
+## Phase 6 — Apply (step 6)
 
 Route each rule by what kind of thing it is. When the pattern's `why` line
 cites a source - a prompt heading, a skill, a tool description, a house rule -
@@ -1144,10 +1277,11 @@ genuinely belongs in one — true of every Zenera project, not just this one —
 change the master upstream in the CLI templates, and note it in the run.
 
 Record what changed and why in the run's own `changes.md` —
-`.finetune/runs/stage1-batch01-run1/changes.md` — one entry per edit, each
-naming the finding numbers behind it. It is what makes the next run's difference
-interpretable, and it is what you read when a number goes _down_. `next.mjs`
-looks for it to tell whether a graded batch is waiting to be confirmed.
+`.finetune/runs/batch01-nomem-run1/changes.md` — one entry per edit, each
+naming the merged pattern and the proposals behind it. It is what makes the next
+run's difference interpretable, and it is what you read when a number goes
+_down_. `next.mjs` looks for it to tell whether a graded run is waiting to be
+confirmed.
 
 Then:
 
@@ -1158,19 +1292,19 @@ zen check
 
 and patch the README. A broken project fails every case for one reason.
 
-## Phase 7 — Stage 1: confirm, pass the batch, build the next
+## Phase 7 — Confirm without memory, build the candidate (steps 7–9)
 
-Run the **same batch** again as the next run — a copy of run 1's cases file,
+Run the **same batch** again as the next run — a copy of its cases file,
 never a rebuild — still with no memory:
 
 ```sh
-RUN=.finetune/runs/stage1-batch01-run2
-mkdir -p "$RUN" && cp .finetune/runs/stage1-batch01-run1/cases.json "$RUN/"
+RUN=.finetune/runs/batch01-nomem-run2
+mkdir -p "$RUN" && cp .finetune/runs/batch01-nomem-run1/cases.json "$RUN/"
 C=$(node -p 'require("./.finetune/config.json").concurrency')
 zen run batch --input "$RUN/cases.json" \
     --batch-dir "$RUN/batch" --memory .finetune/empty --concurrency "$C"
 .github/skills/zen-finetune/scripts/report.mjs \
-    -d "$RUN/batch" -p .finetune/runs/stage1-batch01-run1/batch compare
+    -d "$RUN/batch" -p .finetune/runs/batch01-nomem-run1/batch compare
 ```
 
 Same cases, same machine, same memory, one thing changed. Read it in this order:
@@ -1186,6 +1320,8 @@ Same cases, same machine, same memory, one thing changed. Read it in this order:
    llm calls or tokens in the cases it was aimed at by more than the noise floor
    is reverted — prose that does not pay is a cost on every future run. A cost
    edit that made any case wrong is reverted whatever it saved.
+5. **The commits.** A commit-policy edit should show in what the cases wrote:
+   fewer live readings, the durable shape committed where it was missing.
 
 Three things to watch across the whole tuning:
 
@@ -1194,202 +1330,224 @@ Three things to watch across the whole tuning:
   generalises. Try a query the dataset does not contain, by hand.
 - **Prose growth.** If the instruction files grew by a third and one case moved,
   the batch was net negative. Delete something.
-- **A batch that will not pass.** A batch gets at most 4 runs. After run 4,
-  stop: revert what run 4 did not confirm, put every case still wrong on the
-  difficult list, and write `PASSED` on run 4. If a case is still wrong its map
-  node is `failed`, not `done` — the case comes back first in the next batches.
+- **A batch that will not pass.** Each kind of run gets at most 4 per batch.
+  After the 4th no-memory run, stop: revert what it did not confirm, put every
+  case still wrong on the difficult list, and write `PASSED` on it. If a case is
+  still wrong its map node is `failed`, not `done` — the case comes back first in
+  the next batches.
 
-Then grade the run exactly as in phase 4, cost review included. When every case —
-new and recheck — is right and the cost review finds nothing more worth changing,
-write `PASSED` at the top of that run's `findings.md`, and keep what it learned
-before anything else:
+Then grade the run exactly as in phase 4, cost review and commits included. When
+every case — new and recheck — is right and the cost review finds nothing more
+worth changing, write `PASSED` at the top of that run's `findings.md` and build
+the candidate from it, before anything else:
 
 ```sh
-.github/skills/zen-finetune/scripts/memory.mjs checkpoint stage1-batch01-run2
+.github/skills/zen-finetune/scripts/memory.mjs candidate batch01-nomem-run2
+zen memory stats --dir "$(.github/skills/zen-finetune/scripts/memory.mjs path --candidate)"
 ```
 
-Then patch the README (batch `done`, next batch `now`) and build the next batch
-as `next.mjs` says, straight away — it goes on while the selection has unused
-cases or the difficult list has open ones. Do not stop to ask between batches or
-between stages: when stage 1 is done, note the exit criteria and go straight into
-stage 2, and after stage 2 straight into the final check. The only stops are a
-run out of memory at concurrency 4, or the user asking for a pause.
+Read the stats before the first with-memory run. A graph with near-duplicate
+nodes or live readings in it says the commit policy is too loose — and the
+candidate is built from the run that just passed, so that is a commit-policy
+finding the no-memory grading missed. Note it; it is the first thing the
+with-memory grading will confirm or rule out.
 
-### Leaving stage 1
+Then patch the README (the batch's no-memory half `done`, its with-memory half
+`now`) and go straight on. Do not stop to ask between halves or between
+batches. The only stops are a run out of memory at concurrency 4, or the user
+asking for a pause.
 
-Stage 1 is over when **all three** hold:
+## Phase 8 — With memory (steps 10–15)
 
-1. **Every case in the selection has been used and no difficult case is open**:
-   each is `fixed` or `stuck`. `next.mjs` says `stage 1 is done` exactly then.
-2. **The last batches' recheck cases still pass.** By the end the rechecks have
-   drawn from most of the selection, and a clean last batch is the closest
-   thing to a whole-selection regression test this loop produces cheaply.
-3. **What the runs wrote to memory is worth keeping.** Read `<id>/memory/` across
-   every passed run, not per case. Every commit should be an operation, a
-   pointer, a shape or a rule that will still be true next week — none a live
-   reading dressed up as a fact. A run that learned something durable and
-   committed nothing fails this as squarely as one that cached the inbox.
-
-The third is the one that gets skipped, and skipping it makes stage 2 unreadable:
-stage 2's memory is built from exactly these commits, so a loose commit policy
-shows up as forty near-duplicates or as a stale fact that makes a case _worse_.
-Fix commit policy here, in `agents/memory-policy-instructions.md`, while the
-cause is still attributable.
-
-When all three hold, freeze the prompts, the skills and the house rules, report
-every `stuck` case with what was tried, and patch the README: stage 1 `done`, the
-last good memory `now`.
-
-## Phase 8 — Stage 2: with memory
-
-What stage 2 optimises is not correctness — stage 1 settled that — but **cost
-and speed through reuse**. A run with no memory rediscovers, every single time,
-things that do not change: where an endpoint is, what shape it returns, which
-filter was useful, how a repository is laid out, which agent owns what. Learned
-once and recalled thereafter, that work disappears from the trajectory. A
-stage-2 run should therefore be _dramatically_ cheaper than the stage-1 run of
-the same batch — fewer llm calls, fewer tool calls, less wall clock — with every
-verdict where it was.
-
-Starting early is the classic mistake. Memory that compensates for a missing
-instruction is a bug that looks like a feature.
+What the with-memory runs optimise is not correctness — the no-memory runs
+settled that — but **cost and speed through reuse**. A run with no memory
+rediscovers, every single time, things that do not change: where an endpoint
+is, what shape it returns, which filter was useful, how a repository is laid
+out, which agent owns what. Learned once and recalled thereafter, that work
+disappears from the trajectory. A with-memory run should therefore be
+_dramatically_ cheaper than the no-memory run that passed the same batch —
+fewer llm calls, fewer tool calls, less wall clock — with every verdict where it
+was.
 
 The division of labour, because it is the part most often confused:
 
-- **Stage 1 grades what an agent writes into nothing.** Each case has its own
-  empty graph, so criterion 3 asks whether the commit was worth making at all.
-- **Stage 2 grades what an agent reads, and what it writes on top of a graph
-  that already knew.** Every case starts from an identical copy of the last good
-  memory, so the comparison is clean — and because the copies are per case,
+- **No-memory runs grade what an agent writes into nothing.** Each case has its
+  own empty graph, so criterion 3 asks whether the commit was worth making at all.
+- **With-memory runs grade what an agent reads, and what it writes on top of a
+  graph that already knew.** Every case starts from an identical copy of the
+  candidate, so the comparison is clean — and because the copies are per case,
   nothing one case commits can reach another.
 
-That second half cannot be seen in stage 1. There every graph is empty, so there
-is nothing to duplicate and nothing to supersede. Here, a case that commits a
-near-copy of a node it just recalled is growing the graph for no information,
-and a case that learns an old fact was wrong and does not supersede it leaves the
-next run reading the wrong thing.
+That second half cannot be seen without memory. There every graph is empty, so
+there is nothing to duplicate and nothing to supersede. Here, a case that
+commits a near-copy of a node it just recalled is spending a call to grow the
+graph by nothing, and a case that learns an old fact was wrong and does not
+supersede it leaves the next run reading the wrong thing.
 
-The only file stage 2 edits is `agents/memory-policy-instructions.md` — rules
-about _when_ to recall, when to trust a recalled fact, when to go and look
-anyway, and what to commit when memory already holds a version of it. A finding
-that cannot be written as one of those is a stage-1 finding that escaped: record
-it under "Open problems" in the README, leave the prose alone, and finish the
-stage — it goes into the final report, not into a prompt edit here.
-
-### Run from the last good memory
-
-There is nothing to merge: every passed stage-1 run was checkpointed into the
-last good memory as it passed, and only those. Read it, then run:
+### Run from the candidate (step 10)
 
 ```sh
-M=.github/skills/zen-finetune/scripts/memory.mjs
-$M                                   # which runs it holds
-zen memory stats --dir "$($M path)"
-
-RUN=.finetune/runs/stage2-batch01-run1
-.github/skills/zen-finetune/scripts/batch.mjs next --stage 2 -o "$RUN/cases.json"
+RUN=.finetune/runs/batch01-mem-run1
+mkdir -p "$RUN" && cp .finetune/runs/batch01-nomem-run1/cases.json "$RUN/"
 C=$(node -p 'require("./.finetune/config.json").concurrency')
 zen run batch --input "$RUN/cases.json" \
     --batch-dir "$RUN/batch" \
-    --memory "$($M path)" --concurrency "$C"
+    --memory "$(.github/skills/zen-finetune/scripts/memory.mjs path --candidate)" \
+    --concurrency "$C"
 ```
 
-`batch.mjs next --stage 2` replays the stage-1 batches in order — stage-2 batch
-N is a copy of stage-1 batch N's cases — so each is compared against exactly the
-cases it ran on without memory. Same seed, same machine, same flags as stage 1.
-The stage-1 run's `--memory .finetune/empty` and this run's
-`--memory "$($M path)"` differ in one thing only: whether the directory being
-copied holds a graph.
+The no-memory run's `--memory .finetune/empty` and this run's
+`--memory "$(memory.mjs path --candidate)"` differ in one thing only: whether
+the directory being copied holds a graph. Same cases, same seed, same machine,
+same flags.
 
-Read `zen memory stats` before the first run. A graph with forty near-duplicate
-nodes says the commit policy is too loose — a stage-1 fix before it is a stage-2
-measurement.
-
-The recheck cases keep doing their job here, for a different reason: they ran in
-an earlier batch and were committed from, so they are the most likely to be in
-memory already, and where recall replacing a live reading shows up first.
-Difficult cases work in stage 2 exactly as in stage 1: a case that memory makes
-wrong or dearer goes on the list with `--run` naming the stage-2 run. Once every
-stage-1 batch has been replayed, `batch.mjs next --stage 2` builds batches of
-stage 2's own open difficult cases until none is open.
+The new cases of the batch are recalling what they themselves committed in the
+run that passed — the easiest recall there is, and so the first test. The
+recheck cases recall what an earlier batch committed, and are where a stale
+fact, or recall replacing a live reading, shows up first.
 
 Five things follow from copying rather than sharing:
 
-- **The source is never written.** Each case copies it, writes into the copy, and
-  leaves the copy at `<id>/memory/`. The last good memory is the same bytes at
-  the end of the stage as at the start.
-- **`<id>/memory/` existing means nothing here.** In stage 1 a directory is there
-  only if the case committed. In stage 2 every copy arrives with the last good
-  memory's manifest, so every case has one. What a case actually added is in its
-  trajectory, as the `memory_op` nodes; read those.
-- **Never fold a stage-2 run's copies back into the last good memory.** Each
-  copy holds the whole graph again; `memory.mjs checkpoint` refuses a stage-2
-  run for exactly that reason.
+- **The candidate is never written.** Each case copies it, writes into the copy,
+  and leaves the copy at `<id>/memory/`. It is the same bytes after every
+  with-memory run as before the first, so run 2 starts where run 1 did.
+- **`<id>/memory/` existing means nothing here.** Without memory a directory is
+  there only if the case committed. With it every copy arrives with the
+  candidate's manifest, so every case has one. What a case actually added is in
+  its trajectory, as the `memory_op` nodes, and in `report.mjs memory`.
+- **Never fold a with-memory run's copies back in.** Each copy holds the whole
+  graph again; `memory.mjs candidate` refuses a with-memory run for exactly that
+  reason.
 - **Copies cost disk and a pause.** They are made serially, before the first
   model call, one per case, and kept: check `zen memory stats` and multiply by
   the case count before running on a large graph.
 - **The source must not be locked.** `zen run batch` refuses a memory another
   process holds, so close any `zen memory` session first.
 
-### Grade
+### Analyze the memory use (step 11)
 
-With the same tools, and write `findings.md` the same way — the title says
-`WITH MEMORY` — comparing against **the stage-1 run that passed the same batch**:
+With the same tools as phase 4, and write `findings.md` the same way — the title
+says `WITH MEMORY` — comparing against **the no-memory run that passed the same
+batch**, and from run 2 on also against the previous with-memory run:
 
 ```sh
+R=.finetune/runs
+.github/skills/zen-finetune/scripts/report.mjs -d $R/batch01-mem-run1/batch oom
+.github/skills/zen-finetune/scripts/report.mjs -d $R/batch01-mem-run1/batch memory
 .github/skills/zen-finetune/scripts/report.mjs \
-    -d .finetune/runs/stage2-batch01-run1/batch \
-    -p .finetune/runs/stage1-batch01-run2/batch compare
+    -d $R/batch01-mem-run1/batch -p $R/batch01-nomem-run2/batch compare
 ```
 
-This is the one comparison where the two runs are _meant_ to differ in memory,
-and `compare` says so in the note under it.
+That is the one comparison where the two runs are _meant_ to differ in memory,
+and `compare` says so in the note under it. Grade correctness first, exactly as
+in phase 4: a case that was right without memory and is wrong with it is the
+worst finding a with-memory run can have.
 
 | Good                                                                    | Bad                                                                  |
 | ----------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| Far fewer nodes and tokens than stage 1, same verdict                   | Same trajectory — memory was never consulted                         |
+| Far fewer nodes and tokens than without memory, same verdict            | Same trajectory — memory was never consulted                         |
 | Recall replaces a discovery step: it knows the endpoint without probing | Recall replaces a _reading_: it reports yesterday's inbox as today's |
 | One recall near the top, then straight to work                          | Repeated searches of memory mid-run, finding nothing                 |
 | Recalled facts are checked when they are cheap to check                 | A recalled fact contradicts a fresh reading and the recall wins      |
-| Nothing is committed that memory already held                           | A near-copy of a node it recalled this run, committed again          |
+| Nothing is committed that memory already held — `known` is 0            | A near-copy of a node it recalled this run, committed again          |
 | A fact found to be wrong is superseded, not merely added to             | The correction sits beside the stale node with no SUPERSEDES         |
 | The answer is at least as good                                          | The answer got worse — a stale fact short-circuited the work         |
 
-If a stage-2 run costs more than its stage-1 run, memory is being loaded and not
-used; the fix is an instruction about _when_ to recall, not more memory. It is
-`NO CHANGE` at best. And a large saving is only good news once explained: open at
-least one cheap case's trajectory and confirm the calls that must hit the live
-system still did.
+**Re-committing is a cost finding, not a hygiene nicety.** Every
+`memory_commit` of something the graph held is an llm turn and a tool call that
+bought nothing — `zen memory merge` would have folded it anyway. The `commits
+(known)` column and `report.mjs memory` count them per case; the target with
+memory is **zero known**, and commits only of what the run genuinely learned
+that the graph did not have. A case that recalled a node and then committed the
+same fact in its own words is the pattern to ask about.
 
-The bad column is where to ask. A trajectory that never consulted memory, or
-recalled and then redid the work, has a critical point at the first research
-call or the call right after the recall: ask it why, following the memory rows
-of **zen-analyze-run** §5, before writing a word of
-`agents/memory-policy-instructions.md`.
+If a with-memory run costs more than the no-memory run, memory is being loaded
+and not used; the fix is an instruction about _when_ to recall, not more memory.
+It is `NO CHANGE` at best. And a large saving is only good news once explained:
+open at least one cheap case's trajectory and confirm the calls that must hit
+the live system still did.
 
-### The stage-2 loop, and leaving it
+The bad column is where to ask. A trajectory that never consulted memory,
+recalled and then redid the work, or committed what it had recalled, has a
+critical point at the first research call, the call right after the recall, or
+the call that chose to commit: ask it why, following the memory rows of
+**zen-analyze-run** §5 and the wording rules of **zen-inspect-ask**, before
+writing a word of policy.
 
-Any case that got longer or worse is a finding, and so is any case that
-re-committed what it had just recalled. Generalise exactly as in phase 5, write
-the rule into `agents/memory-policy-instructions.md`, and run **the same batch**
-again from **the same last good memory**: `stage2-batch01-run2`, a copy of run
-1's cases. A stage-2 batch passes on `PASSED` exactly as a stage-1 one does.
+Every with-memory `findings.md` has a `## Memory review` straight after the
+verdict block — `next.mjs` refuses a `PASSED` without one — with a fixed shape:
 
-Stage 2 is over when, against the stage-1 runs:
+- **saving**: llm calls, tool calls, tokens and wall clock against the no-memory
+  run that passed, per case and in total, and the noise floor it is read against.
+- **recall**: per case, whether recall replaced discovery, citing the recall node
+  and the discovery it saved — or `none`, with the trajectory checked.
+- **live readings**: any recalled fact used in place of a reading that must be
+  live — the pattern, or `none`.
+- **re-commits**: commits of what the graph held (`known`), and near-copies of
+  recalled nodes — the pattern, or `none`.
+- **corrections**: facts found wrong and whether they were superseded — or `none`.
+
+Then the per-case grading, each case ending in its proposals, as in phase 4.
+
+### Merge, update the memory policy, run again (steps 12–14)
+
+Merge the proposals into patterns exactly as in phase 5, and write the merged
+table under `## Proposals, merged`. Then apply them — to
+`agents/memory-policy-instructions.md`, or to the memory paragraph of a prompt
+or skill where an ask's `why` line names one: rules about _when_ to recall, when
+to trust a recalled fact, when to go and look anyway, and when **not** to
+commit because memory already holds it. Record them in this run's `changes.md`
+and run `zen check`.
+
+A pattern that cannot be written as one of those is a no-memory finding that
+escaped: the with-memory runs do not fix it. Write it under "Open problems" in
+the README, put its cases on the difficult list, and leave the prose alone — the
+next batch's no-memory runs, with those cases as rechecks, are where it is
+fixed. A pattern about what is _in_ the candidate — a live reading committed as
+a fact — is a commit-policy rule in `agents/memory-policy-instructions.md`, and
+the offending nodes may be removed from the candidate with
+`zen memory forget --dir "$(memory.mjs path --candidate)" <id>…`, recorded in
+`changes.md`; nothing else edits the candidate by hand.
+
+Then run **the same batch** again from **the same candidate**:
+`batch01-mem-run2`, a copy of the batch's cases. Read it against the previous
+with-memory run (the effect of the policy edit) and against the no-memory run
+that passed (the saving). A with-memory run passes on `PASSED` exactly as a
+no-memory one does, with at most 4 runs, and the difficult list is updated after
+every graded run — a case memory makes wrong or no cheaper, still, after a run
+that tried to fix it, is `--why memory`.
+
+### Keep it, and move on (step 15)
+
+A with-memory run passes when, against the no-memory run that passed:
 
 1. no verdict regressed;
-2. the runs are materially cheaper — a saving obvious next to the noise floor;
-3. every large saving has been traced to recall replacing discovery, not a live
+2. the run is materially cheaper — a saving obvious next to the noise floor;
+3. every large saving is traced to recall replacing discovery, not a live
    reading;
-4. what the cases committed is either nothing or a genuine addition — no
-   duplicates of what they recalled, every correction linked with `SUPERSEDES`.
+4. what the cases committed is either nothing or a genuine addition — `known`
+   is 0, no near-copies of what they recalled, every correction linked with
+   `SUPERSEDES`.
+
+Write `PASSED`, then keep the candidate before anything else:
+
+```sh
+.github/skills/zen-finetune/scripts/memory.mjs checkpoint batch01-mem-run1
+```
+
+Then patch the README (the batch `done`, the next one `now`), mark any difficult
+case right in both passing runs `fixed`, and build the next batch as `next.mjs`
+says — straight away. It goes on while the selection has unused cases or the
+difficult list has open ones; then comes the final check.
 
 ## The final check
 
-When every stage-2 batch has passed, run **the whole selection** as one batch —
-the last good memory, the same flags, the same machine — into
-`.finetune/runs/final-check/`. It is the only run that measures every case under
-the final prose and memory at once.
+When every case in the selection has been used and no difficult case is open,
+run **the whole selection** as one batch — the last good memory, the same flags,
+the same machine — into `.finetune/runs/final-check/`. It is the only run that
+measures every case under the final prose and the final memory at once: the
+first batches were tuned against prose that later batches changed, and only
+their rechecks have seen it since.
 
 ```sh
 RUN=.finetune/runs/final-check
@@ -1402,7 +1560,8 @@ zen run batch --input "$RUN/cases.json" --batch-dir "$RUN/batch" \
 
 Grade it, and head `findings.md` with `VERIFIED` if no verdict regressed and the
 saving holds. Change nothing. If something regressed, that is a real finding:
-report it and re-open the stage it belongs to. Then patch the README into its
+write it under "Open problems" with the batch whose rules are the suspect, and
+report it. Then patch the README into its
 final form: every map node `done` or `failed`, "Results so far" as the summary of
 the whole tuning, and every `stuck` case with what was tried.
 
@@ -1416,34 +1575,39 @@ shipped graph.
 ```
 .finetune/
     dataset.json            every case in the training set; built once, cached, committed
-    config.json             limit, batchSize, recheck, concurrency, seed, maxRetries
-    selection.json          the cases up to the limit, chosen evenly by class
+    config.json             limit, minBatch, maxBatch, recheck, concurrency, seed, maxRetries
+    selection.json          the cases up to the limit, evenly by class, rubric and complex first
     difficult.json          the difficult cases: why, when, notes, fixed — written by difficult.mjs
     README.md               the plan, the map and the progress — written by you, patched every step
     empty/                  never created; naming it is what gives a run no memory
     memory/
-        last-good.json      which graph is last good, and which passed runs built it
-        after-<run>/        one graph per checkpoint; the last three are kept
+        candidate.json      the batch being tuned: its candidate, and the run it was built from
+        candidate-batch<NN>/    last good + that run's commits; what the with-memory runs copy
+        last-good.json      which graph is last good, and which batches built it
+        after-batch<NN>/    a kept candidate, one per passed batch; the last three are kept
     runs/
-        stage1-batch01-run1/
-            cases.json      M new + R recheck; built once, copied for later runs
+        batch01-nomem-run1/
+            cases.json      new + recheck; built once, copied for every later run of the batch
+            plan.json       the size and why, which cases are new, which are rechecks
             batch/          zen run batch output
-            findings.md     the verdict block, the cost review, then per-case grading
-            changes.md      what was edited and which findings motivated it
-        stage1-batch01-run2/    same cases, new prose. PASSED here passes the batch
-        stage1-batch02-run1/    the next batch: new cases + rechecks, difficult first
-        stage1-batch06-run1/    past the selection: open difficult cases only
-        stage2-batch01-run1/    stage 2 replays stage-1 batch 1, with the last good memory
-        final-check/            the whole selection at once, nothing changed
+            findings.md     the verdict block, the cost review, per-case grading, proposals merged
+            changes.md      what was edited and which merged proposals motivated it
+        batch01-nomem-run2/     same cases, new prose. PASSED here builds the candidate
+        batch01-mem-run1/       same cases, from the candidate; findings.md has a memory review
+        batch01-mem-run2/       same candidate, new memory policy. PASSED here keeps it
+        batch02-nomem-run1/     the next batch: twice as many new cases + rechecks
+        batch07-nomem-run1/     past the selection: open difficult cases only
+        final-check/            the whole selection at once, with the last good memory
 ```
 
-The `stage<1|2>-batch<NN>-run<N>` naming is not cosmetic: `next.mjs` parses it
-to find which batch a run belongs to and whether that batch has passed, and
-`batch.mjs` and `difficult.mjs` read which cases each batch held from it. Any
-other directory under `runs/` is ignored.
+The `batch<NN>-<nomem|mem>-run<N>` naming is not cosmetic: `next.mjs` parses it
+to find which batch a run belongs to, which half it is in and whether it has
+passed, and `batch.mjs` and `difficult.mjs` read which cases each batch held
+from its first no-memory run. Any other directory under `runs/` is ignored.
 
 Commit `dataset.json`, `config.json`, `selection.json`, `difficult.json`,
-`README.md`, every `cases.json`, `findings.md` and `changes.md` — they are the
+`README.md`, every `cases.json`, `plan.json`, `findings.md` and `changes.md` —
+they are the
 project's eval history. The `batch/` directories are large, contain whole
 workspaces, and may contain live API responses: ignore them, and the memory
 graphs built from them. Add to `.gitignore`:
@@ -1456,14 +1620,14 @@ graphs built from them. Add to `.gitignore`:
 
 ## Scripts this skill ships
 
-| Script                  | What it does                                                                                                                                                                                           |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `scripts/select.mjs`    | `dataset.json` → `selection.json`: up to the limit, evenly by class, rotating through complexity, rubric first — the order batches take new cases in                                                   |
-| `scripts/batch.mjs`     | builds the next batch's `cases.json`: new cases from the selection + rechecks, difficult ones first; only difficult ones once the selection is used; replays stage 1 for stage 2. No command: progress |
-| `scripts/report.mjs`    | one run's `batch/` → an index, the concatenated graphs, the trajectory paths, the failures, the OOM check, or the comparison against another run                                                       |
-| `scripts/difficult.mjs` | the difficult list: `add` / `fix` a case with its reason and run; with no command, the list with `open` / `fixed` / `stuck` and retry counts                                                           |
-| `scripts/memory.mjs`    | the last good memory: `checkpoint <run>` folds a passed stage-1 run in, safely; `path` names the graph; no command says what built it                                                                  |
-| `scripts/next.mjs`      | reads `.finetune/` and prints the next step — including when a checkpoint is missing and when a stage is done — and whether the README has fallen behind                                               |
+| Script                  | What it does                                                                                                                                                                                                                   |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `scripts/select.mjs`    | `dataset.json` → `selection.json`: up to the limit, evenly by class, rubric then complex first — the order batches take new cases in                                                                                           |
+| `scripts/batch.mjs`     | builds the next batch's `cases.json` and `plan.json`: its size by the growth rule, new cases from the selection + rechecks, difficult then complex first; only difficult ones once the selection is used. No command: progress |
+| `scripts/report.mjs`    | one run's `batch/` → an index, the concatenated graphs, the trajectory paths, the failures, the OOM check, memory use per case, or the comparison against another run                                                          |
+| `scripts/difficult.mjs` | the difficult list: `add` / `fix` a case with its reason and run; with no command, the list with `open` / `fixed` / `stuck` and retry counts                                                                                   |
+| `scripts/memory.mjs`    | `candidate <run>` builds a batch's candidate from a passed no-memory run; `checkpoint <run>` keeps it after a passed with-memory run; `path [--candidate]` names a graph; no command says what built them                      |
+| `scripts/next.mjs`      | reads `.finetune/` and prints the next step — including when a candidate or checkpoint is missing and when the final check is due — and whether the README has fallen behind                                                   |
 
 The README template is `references/readme-template.md`.
 
@@ -1475,43 +1639,50 @@ next one. Change them upstream, in the CLI's `templates/editor/.github/skills/`.
 
 ## Rules that are easy to get wrong
 
-1. **Never give a stage-1 run memory.** A run with no memory is the only one
+1. **Never give a no-memory run memory.** A run with no memory is the only one
    whose result is attributable to the prose.
-2. **Never start stage 2 before stage 1 is done** — every case used, no
-   difficult case open. Memory will paper over the defect, and it returns the
-   day the graph is rebuilt.
-3. **Never edit a prompt, a skill or a house rule during stage 2.** Stage 2 edits
-   `agents/memory-policy-instructions.md` and nothing else.
+2. **Never run a batch with memory before it has passed without it.** Memory
+   will paper over the defect, and it returns the day the graph is rebuilt.
+3. **Never edit anything but the memory policy in a with-memory run.**
+   `agents/memory-policy-instructions.md`, or the memory paragraph a `why` line
+   names. Anything else goes to "Open problems" and the next batch's no-memory
+   runs.
 4. **Never tune with `--memory-read-only`.** It clamps `access` to `read`, which
    takes `memory_commit` out of the schema and changes the memory prose — two
-   differences from the stage-1 baseline, not one.
-5. **Never fold a stage-2 run's copies into the last good memory.** It is built
-   only from passed stage-1 runs, and stays as it was for the whole of stage 2.
+   differences from the no-memory baseline, not one.
+5. **Never build a candidate from anything but a PASSED no-memory run, and never
+   fold a with-memory run's copies into it.** Each copy holds the whole graph
+   again. Every case of a with-memory run gets its own copy of the candidate;
+   the candidate itself is never written by a run.
 6. **Never change the cases and the instructions in the same run.** Two
-   variables, one number, no conclusion. That is what run 2 is for: edits go in
-   after run 1 is graded, and run 2 re-runs a **copy** of run 1's `cases.json`.
-7. **Never compare two different batches.** Only run to run within a batch, and
-   a stage-2 batch against the same batch's passing stage-1 run.
+   variables, one number, no conclusion. Edits go in after a run is graded, and
+   the next run re-runs a **copy** of the batch's `cases.json`.
+7. **Never compare two different batches.** Only run to run within a batch and
+   kind, and a with-memory run against the no-memory run that passed the same
+   batch.
 8. **Never treat batch size as concurrency.** Batch size is chosen so every
-   trajectory in the batch gets read; concurrency is `min(batchSize, 16)`,
-   halved on each out-of-memory run, never below 4.
+   trajectory in the batch gets read; concurrency is
+   `min(maxBatch + recheck, 16)`, halved on each out-of-memory run, never below 4.
 9. **Never let a recheck case's failure be outranked.** A new case failing is
    work to do; a recheck case failing means a recent rule broke something that
    worked. Revert or narrow it before writing anything new.
-10. **Never change `limit`, `batchSize`, `recheck` or `seed` once batch 1 has
-    run, and never rebuild a batch for a later run — copy run 1's `cases.json`.**
-    What goes into a batch depends on all four and on the difficult list at the
-    time it was built. `concurrency` only goes down, by halving after an OOM.
+10. **Never change `limit`, `minBatch`, `maxBatch`, `recheck` or `seed` once
+    batch 1 has run, and never rebuild a batch for a later run — copy its
+    `cases.json`.** What goes into a batch depends on all five and on the
+    difficult list at the time it was built. `concurrency` only goes down, by
+    halving after an OOM. A batch's size comes from `batch.mjs`, not from you —
+    `-m` only with a reason in the README.
 11. **Never write `PASSED` on a run that is only correct.** It means every case is
-    right, recheck cases included, **and** the cost review found nothing to cut —
-    so the run applies no edits. All right with cost to cut is `CORRECT`.
+    right, recheck cases included, **and** the run's review — cost without
+    memory, memory with it — found nothing to cut, so the run applies no edits.
+    All right with something to cut is `CORRECT`.
 12. **Never cut the dataset, and never set `limit` below `datasetSize` on your
     own.** Every case in the training set goes into `dataset.json`, and every
     case is tuned against unless the user named a smaller limit.
 13. **Patch the README after every step, by hand.** Exactly one `now` node on the
     map. When `next.mjs` says `first: patch .finetune/README.md`, do that first.
-14. **Never write a rule from one failing case** unless the failure was
-    catastrophic. Note it and wait for the pattern.
+14. **Never edit from one case's proposal.** Merge every case's proposals first;
+    a rule needs a pattern, unless the failure was catastrophic.
 15. **Never edit `zen`'s four instruction files.** `zen check --fix` overwrites
     them. Project policy goes in a `-policy-` file beside them.
 16. **Never adjust a rubric after seeing the run.** Fix a wrong rubric before the
@@ -1529,14 +1700,17 @@ next one. Change them upstream, in the CLI's `templates/editor/.github/skills/`.
 21. **Never compare two runs measured on different machines.** Tokens and wall
     clock are only comparable within one spec.
 22. **Never build the next batch before `memory.mjs checkpoint`.** A passed
-    stage-1 run's memory goes into the last good memory before anything else, or a
+    batch's candidate becomes the last good memory before anything else, or a
     stop at the wrong moment loses it. `next.mjs` insists.
 23. **Never let a difficult case go unrecorded.** Wrong after a fix, a failed
-    recheck, flaky, or over 2x the median: `difficult.mjs add`, with a note saying
-    what was tried. A case forgotten when its batch passes is the one that fails
-    in production.
+    recheck, flaky, made worse or no cheaper by memory, or over 2x the median:
+    `difficult.mjs add`, with a note saying what was tried. A case forgotten when
+    its batch passes is the one that fails in production.
 24. **Never retry a `stuck` case again.** It had `maxRetries` batches. Report it
     with what was tried; more prose will not move the model's ceiling.
+25. **Never pass a with-memory run that re-commits what it recalled.** `known`
+    above 0 is a call spent on nothing, in every future run. It is a finding for
+    the memory policy, not noise.
 
 ## When not to fine-tune
 

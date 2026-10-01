@@ -200,52 +200,55 @@ what ran in parallel, and what was assumed instead of checked.
 
 The meta agent runs a controlled experiment:
 
-1. **Batch inference.** A window of cases runs concurrently, each in its own sandbox, with its
-   own workspace and memory.
+1. **Batch inference.** A batch of cases runs concurrently, each in its own sandbox, with its
+   own workspace and memory. The first batch is a 3-case smoke test; each batch that goes
+   smoothly doubles the next, up to a maximum. Graded and complex cases come first.
 2. **Collect trajectories.** Every run records a full graph: each LLM call, tool call, fork,
    memory read and write, token count and duration.
 3. **Grade on two axes.**
     - _Correctness_: does the output and the path match the rubric?
     - _Cost_: LLM calls per case, repeated work, forks that should have happened and didn't,
       discovery the agent should already have known, tokens, wall-clock time.
-4. **Diagnose and edit.** Find the sentence, skill or missing memory that caused each defect,
-   then change the prompt, instruction, skill, tool description or memory policy. Generalize
-   the fix instead of patching one case.
+4. **Diagnose and edit.** Ask the model why at each critical point, collect what every case
+   suggests, merge it into patterns, then change the prompt, instruction, skill, tool
+   description or memory policy. Generalize the fix instead of patching one case.
 5. **Re-run the same cases.** This is the controlled half of the experiment: same inputs,
-   changed harness. A window **passes** only when every case is correct _and_ the cost review
+   changed harness. A run **passes** only when every case is correct _and_ the cost review
    finds nothing left to cut.
-6. **Recheck.** Each new window also runs cases from earlier windows that already passed, so a
-   fix for one class of request can't quietly break another. Cases that keep failing are
-   tracked and retried in dedicated windows.
+6. **Recheck.** Each new batch also runs cases from earlier batches that already passed —
+   difficult ones first, then complex ones — so a fix for one class of request can't quietly
+   break another. Cases that keep failing are tracked and retried until fixed or stuck.
 
-This happens in **two stages**:
+Every batch goes through this **twice**:
 
-- **Stage 1, no memory.** Each case starts from an empty memory. This grades what the
-  agent _writes_: does it remember the right things, with provenance, at the right
-  granularity?
-- **Stage 2, with memory.** Cases start from the memory merged from runs that passed in
-  stage 1. This grades what the agent _reads_: does it recall and reuse, or rediscover?
+- **Without memory.** Each case starts from an empty memory. This grades what the agent
+  _writes_: does it remember the right things, with provenance, at the right granularity?
+- **With memory.** Once it passes, what its cases committed is merged into the memory of
+  earlier batches, and every case runs again from its own copy of it. This grades what the
+  agent _reads_: does it recall and reuse, or rediscover — and does it skip committing what
+  memory already holds? When it passes, that memory becomes the last good one.
 
 A **final check** over held-out cases (cross-validation) confirms the gains carry over to cases
 the loop never saw.
 
 ```mermaid
 flowchart TB
-    DS[("Dataset<br/>input + rubric per case<br/>text / images / docs / audio")] --> SEL["Select a window<br/>new cases + recheck cases"]
-    SEL --> RUN["Batch inference<br/>concurrent, sandboxed,<br/>one workspace + memory per case"]
+    DS[("Dataset<br/>input + rubric per case<br/>text / images / docs / audio")] --> SEL["Build a batch<br/>3 cases, doubling while smooth<br/>new cases + recheck cases"]
+    SEL --> RUN["Batch inference, NO memory<br/>concurrent, sandboxed,<br/>one workspace + memory per case"]
     RUN --> TR[("Trajectories<br/>LLM calls, tools, forks,<br/>memory ops, tokens, time")]
     TR --> GR{"Grade"}
     GR -->|"correctness vs rubric"| DIAG
     GR -->|"cost: calls, tokens, time,<br/>repeated work, missed parallelism"| DIAG
     DIAG["Diagnose<br/>which sentence / skill / memory<br/>caused this?"] --> EDIT["Edit the harness<br/>prompts · instructions · skills ·<br/>tool descriptions · memory policy"]
     EDIT -->|"re-run the SAME cases"| RUN
-    GR -->|"all correct AND<br/>nothing left to cut"| PASS(["Window PASSED"])
-    PASS --> CK["Checkpoint memory<br/>(last good)"]
-    CK --> MORE{"More windows?"}
+    GR -->|"all correct AND<br/>nothing left to cut"| CAND["Merge what the cases committed<br/>into the last good memory"]
+    CAND --> WM["Same cases WITH memory<br/>one copy per case"]
+    WM --> MG{"Same answers, much cheaper,<br/>nothing committed twice?"}
+    MG -->|"no: edit the memory policy"| WM
+    MG -->|"yes"| CK["Keep it<br/>(last good memory)"]
+    CK --> MORE{"More cases?"}
     MORE -->|"yes"| SEL
-    MORE -->|"stage 1 done"| S2["Stage 2: start from merged memory"]
-    S2 --> SEL
-    MORE -->|"stage 2 done"| FC["Final check<br/>held-out cases"]
+    MORE -->|"no"| FC["Final check<br/>held-out cases"]
     FC --> OUT[["Tuned agentic system"]]
 ```
 
