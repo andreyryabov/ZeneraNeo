@@ -433,7 +433,14 @@ one. It contains:
 - **missed forks** - independent calls or sub-tasks run one after another: the
   pattern, or `none`;
 - **unneeded discovery** - listing, probing or reading to learn something a
-  prompt or skill could simply have stated: the pattern, or `none`.
+  prompt or skill could simply have stated: the pattern, or `none`;
+- **excess prose** - every paragraph, example, table row, skill and skill
+  binding the agents carried this run that no trajectory needed: a rule nothing
+  in the run tested, a second wording of a rule stated elsewhere, a rationale
+  the model does not act on, a preloaded skill no case used, a skill bound to an
+  agent that never needs it. Grep the assembled prefix - prompt, house rules,
+  every preloaded and loaded skill - and list each with its file and lines, or
+  `none`. Every token of it is paid on every call of every case.
 
 `none` needs the evidence for it - the trajectory you checked, not the absence
 of a look. A case averaging 40+ llm calls almost never has `none` on all three.
@@ -507,6 +514,16 @@ failed are the most useful thing you know about it. Write the rule one level up
 from the case that produced it; a rule that names the dataset's own endpoints
 makes the eval pass and the product fail. Prefer mechanical wording, and
 remember that a prohibition with a self-judged exemption is a permission.
+
+**Cut as well as add.** Every apply also removes what the excess-prose review
+found: delete duplicated rules (keep one copy, in the place the routing below
+names), collapse paragraphs to the sentence the model acts on, drop examples
+and rationale no trajectory used, and delete skill sections no case needed. A
+skill binding or preload no case needed lives in `agents.yaml` - record it as
+an open problem, do not edit it. A rule written in an earlier run that no case has tested since is a
+candidate too. An apply that only adds is suspect: say in `changes.md` what was
+cut and how many lines each file lost or gained. Cuts are confirmed like any
+edit - a cut that makes a case wrong is restored, nothing else.
 
 Route each rule by what kind of thing it is: one agent's behaviour to its prompt,
 a fact or a procedure to a skill - update an existing one or create a new one, a
