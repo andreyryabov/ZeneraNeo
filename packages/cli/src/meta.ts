@@ -1,5 +1,5 @@
 import { spawn as nodeSpawn } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { invokedAs } from './args.ts';
@@ -747,6 +747,24 @@ export function openLog(dir: string, now = new Date()): Log {
     };
 }
 
+/** The project's last meta session, so `zen meta resume` needs no id. */
+function sessionFile(dir: string): string {
+    return `${dir}/.tmp/logs/meta.session`;
+}
+
+export function recordSession(dir: string, id: string): void {
+    mkdirSync(`${dir}/.tmp/logs`, { recursive: true });
+    writeFileSync(sessionFile(dir), `${id}\n`);
+}
+
+export function lastSession(dir: string): string | undefined {
+    try {
+        return readFileSync(sessionFile(dir), 'utf8').trim() || undefined;
+    } catch {
+        return undefined;
+    }
+}
+
 /** Everything the sink is told, kept by the log too — and the detail only there. */
 function tee(sink: Sink, log: Log): Sink {
     return {
@@ -898,7 +916,7 @@ export async function launch(opts: Launch): Promise<Outcome> {
             absorb(event, out, sink, width);
         }
         const code = await new Promise<number>((resolve) => {
-            child.on('close', (value) => resolve(value ?? 0));
+            child.on('close', (value, signal) => resolve(value ?? (signal ? 1 : 0)));
         });
         if (out.exitCode === 0 && code !== 0) {
             out.exitCode = code;
@@ -930,7 +948,7 @@ const RESUME_MAX_MS = 300_000;
 
 /** What the resumed session is told, since `-p` has to say something. */
 export const RESUME_PROMPT =
-    'The previous model call failed after several retries. Continue the task from where you stopped.';
+    'The previous model call failed. Continue the task from where you stopped.';
 
 export function resumeDelayMs(attempt: number): number {
     return Math.min(RESUME_INITIAL_MS * 2 ** attempt, RESUME_MAX_MS);
@@ -941,14 +959,14 @@ export function resumeDelayMs(attempt: number): number {
  *
  * Only a refusal that time can cure counts: a rate limit, the provider's own
  * failure, a connection that timed out. A 400 or a bad key fails the same way
- * however often it is sent.
+ * however often it is sent - except the one below.
  */
 export function transient(out: Outcome): string | undefined {
     if (out.exitCode === 0 || !out.sessionId) {
         return undefined;
     }
-    const error = out.events.findLast((e) => e.type === 'session.error');
-    const data = error?.data;
+    const at = out.events.findLastIndex((e) => e.type === 'session.error');
+    const data = out.events[at]?.data;
     if (!data) {
         return undefined;
     }
@@ -962,7 +980,39 @@ export function transient(out: Outcome): string | undefined {
     if (/timed out|ECONNRESET|socket hang up/i.test(String(data.message ?? ''))) {
         return 'the connection failed';
     }
+    if (status === 400 && injected(out.events.slice(0, at))) {
+        return 'refused a tool call copilot made itself (400)';
+    }
     return undefined;
+}
+
+/**
+ * Whether the turn that failed began with a tool call copilot wrote, not the
+ * model. When a background command finishes, copilot adds a `read_bash` of its
+ * own; Gemini 3 rejects any tool call in the current turn that lacks its thought
+ * signature, so that request is a 400 every time. A new user message - the
+ * resume - starts a turn that no longer holds it.
+ */
+function injected(before: Event[]): boolean {
+    for (let i = before.length - 1; i >= 0; i--) {
+        const event = before[i];
+        if (event.type === 'system.notification') {
+            return true;
+        }
+        if (event.type === 'user.message') {
+            return false;
+        }
+        if (event.type === 'assistant.message') {
+            if (event.data?.model) {
+                return false;
+            }
+            const requests = event.data?.toolRequests;
+            if (Array.isArray(requests) && requests.length > 0) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 /** Non-fatal, said once, because a competing file is a silent override. */

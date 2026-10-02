@@ -278,6 +278,11 @@ Once started, run the whole tuning - every batch, both halves, the final check -
 **without stopping to ask**. Between runs, between halves and between batches,
 report and carry on. `next.mjs` printing `done - ...` is the only normal end.
 
+**Never end your turn to wait for a command.** A `zen run batch` outlasts the
+wait of the tool that started it. When a tool says the command is still running,
+read its output again in your next call (`read_bash` with a delay, or your
+terminal's equivalent), and repeat until it has completed.
+
 Stop and wait for me only when:
 
 - **The machine cannot run the batch** - it ran out of memory at concurrency 4.

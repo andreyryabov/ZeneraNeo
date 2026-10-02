@@ -3420,6 +3420,37 @@ describe('re-rendering copilot output', () => {
             expect(failed({ errorType: 'authentication', statusCode: 403 })).toBeUndefined();
         });
 
+        // The sequence recorded when a background `zen run batch` finished under
+        // Gemini 3: copilot's own read_bash carries no thought signature.
+        it('resumes a 400 on a tool call copilot injected, not one the model made', () => {
+            const error = {
+                type: 'session.error',
+                data: { errorType: 'query', message: '400 Bad Request', statusCode: 400 },
+            };
+            const tail = [
+                { type: 'assistant.turn_end', data: {} },
+                error,
+                { type: 'result', exitCode: 1, sessionId: 's1' },
+            ];
+            const modelCall = {
+                type: 'assistant.message',
+                data: { model: 'google/gemini-3.8-flash', toolRequests: [{ name: 'bash' }] },
+            };
+            const injectedCall = {
+                type: 'assistant.message',
+                data: { content: '', toolRequests: [{ name: 'read_bash' }] },
+            };
+            const notified = { type: 'system.notification', data: { content: 'done' } };
+
+            expect(transient(run([modelCall, notified, injectedCall, ...tail]).out)).toContain(
+                '400',
+            );
+            expect(transient(run([modelCall, ...tail]).out)).toBeUndefined();
+            // A resume that fails again sees only its own turn, so it is not retried twice.
+            const user = { type: 'user.message', data: { content: 'Continue' } };
+            expect(transient(run([notified, user, ...tail]).out)).toBeUndefined();
+        });
+
         it('cannot resume without a session, nor a run that succeeded', () => {
             expect(failed({ errorType: 'rate_limit', statusCode: 429 }, null)).toBeUndefined();
             const ok = run([{ type: 'result', exitCode: 0, sessionId: 's1' }]).out;

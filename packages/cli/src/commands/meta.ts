@@ -1,4 +1,5 @@
 import { readProjectConfig } from '@zenera/neo';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parse } from '../args.ts';
@@ -12,6 +13,7 @@ import {
     chooseModel,
     DEFAULT_RESUMES,
     defaultRef,
+    lastSession,
     launch,
     listPrompts,
     loadPrompt,
@@ -25,6 +27,7 @@ import {
     providersWarning,
     readMeta,
     RECOMMENDED,
+    recordSession,
     RESUME_PROMPT,
     resumeDelayMs,
     SOURCE_LABELS,
@@ -63,7 +66,10 @@ import { locate as locateRun } from './inspect.ts';
 
 const USAGE = 'zen meta run [project] [prompt] [options]';
 
-const VERBS = new Set(['model', 'run', 'prompts', 'inspect']);
+const VERBS = new Set(['model', 'run', 'prompts', 'inspect', 'resume']);
+
+/** A copilot session id, or the 7+ hex prefix of one it also accepts. */
+const SESSION_ID = /^[0-9a-f]{7,}(?:-[0-9a-f]+)*$/i;
 
 interface Flags {
     project?: string;
@@ -101,6 +107,7 @@ export const meta: Command = {
         '  zen meta run [project]                   pick one of its stored prompts',
         '  zen meta prompts [project]               list the stored prompts',
         '  zen meta inspect [project] [run]         audit one run with /inspect',
+        '  zen meta resume [project] [session]      carry on a run that stopped',
         '  zen meta model [ref]                     show or set the model it uses',
         '',
         'The project may come before the verb instead: `zen meta acme run`.',
@@ -141,6 +148,9 @@ export const meta: Command = {
         '`zen meta inspect` is `zen meta run /inspect <run dir>` with the run',
         'picked from a list - project, session, then run. Off a terminal, name it.',
         '',
+        '`zen meta resume` picks up the last session the project ran - or the one',
+        'named - where it stopped. A run that ends any way but success prints it.',
+        '',
         'Nothing it needs is put on a command line: every credential reaches it',
         'through the environment, where other processes cannot read it.',
         '',
@@ -165,6 +175,7 @@ export const meta: Command = {
         '  zen meta run acme /spec-sync-project agents/triage.md',
         '  zen meta inspect',
         '  zen meta inspect acme 20260825-143012-a7f3',
+        '  zen meta resume acme',
         '  git diff | zen meta run "what broke?" --allow-tool read',
         '  zen meta model vertex/gemini-3.8-flash',
         '  zen meta model --pick',
@@ -229,6 +240,9 @@ export const meta: Command = {
         }
         if (verb === 'inspect') {
             return await inspectRun(ctx, values, args);
+        }
+        if (verb === 'resume') {
+            return await resumeRun(ctx, values, args);
         }
         throw usageError(
             first === undefined ? 'nothing to run' : 'a prompt goes through `run`',
@@ -418,6 +432,31 @@ async function inspectRun(ctx: Context, values: Flags, args: string[]): Promise<
 }
 
 // ---------------------------------------------------------------------------
+// zen meta resume [project] [session id] [words...]
+//
+// A long run stops for reasons nobody chose - a refused request, a closed
+// laptop, Ctrl-C. Copilot keeps the session; this hands it back, by default the
+// last one the project ran, with the words (or a plain "continue") as the turn.
+// ---------------------------------------------------------------------------
+
+async function resumeRun(ctx: Context, values: Flags, args: string[]): Promise<void> {
+    const { project, rest } = await where(ctx, values.project, args);
+    const named = rest[0] !== undefined && SESSION_ID.test(rest[0]) ? rest[0] : undefined;
+    const words = named ? rest.slice(1) : rest;
+    const session = named ?? values.resume ?? lastSession(project.dir);
+    if (!session) {
+        throw usageError(
+            `no meta session recorded in ${project.name}`,
+            `name one: zen meta resume ${project.name} <session id>`,
+        );
+    }
+    note(dim(`resuming session ${session}`));
+    refresh(project);
+    const message = (values.prompt ?? words.join(' ')).trim() || RESUME_PROMPT;
+    await go(ctx, { ...values, resume: session, continue: false }, project, message);
+}
+
+// ---------------------------------------------------------------------------
 // The run itself
 // ---------------------------------------------------------------------------
 
@@ -467,7 +506,9 @@ async function go(
 
     const wiring = wire(store, entry, id);
     const binary = locate();
-    const args = argv(values, project.dir, prompt, wiring.secret);
+    // Named up front, so a run killed before copilot reports its id can still be resumed.
+    let session = values.resume ?? (values.continue ? undefined : randomUUID());
+    const args = argv(values, project.dir, prompt, wiring.secret, session);
     const retries = count(values.retries, '--retries') ?? DEFAULT_RESUMES;
 
     if (values['dry-run']) {
@@ -508,16 +549,35 @@ async function go(
     log.line(`project ${project.name} ${project.dir}`);
     log.line(`model   ${chosen.ref} from ${SOURCE_LABELS[chosen.from]}`);
     log.line(`command ${[binary.command, ...binary.args, ...elided].join(' ')}`);
+    if (session) {
+        recordSession(project.dir, session);
+        log.line(`session ${session}`);
+    }
     log.line('');
     log.line('--- prompt ---');
     log.line(prompt);
     log.line('');
     log.line('--- run ---');
 
+    const resumeHint = (): string | undefined =>
+        session ? `resume it: zen meta resume ${project.name} ${session}` : undefined;
+
     // A run that dies still has to leave a readable file behind.
     try {
-        const run = (argList: string[]) =>
-            launch({ binary, args: argList, env: wiring.env, cwd: project.dir, log });
+        const run = async (argList: string[]) => {
+            const outcome = await launch({
+                binary,
+                args: argList,
+                env: wiring.env,
+                cwd: project.dir,
+                log,
+            });
+            if (outcome.sessionId && outcome.sessionId !== session) {
+                session = outcome.sessionId;
+                recordSession(project.dir, session);
+            }
+            return outcome;
+        };
         let outcome = await run(args);
         let resumes = 0;
         for (let reason = transient(outcome); reason && resumes < retries;) {
@@ -527,8 +587,8 @@ async function go(
             warn(said);
             log.line('');
             log.line(`--- resume ${resumes}: ${said} ---`);
-            await sleep(wait);
-            const again = { ...values, resume: outcome.sessionId, continue: false };
+            await pause(wait, resumeHint());
+            const again = { ...values, resume: session, continue: false };
             outcome = await run(argv(again, project.dir, RESUME_PROMPT, wiring.secret));
             reason = transient(outcome);
         }
@@ -563,16 +623,43 @@ async function go(
             throw new CliError(
                 `the meta agent exited ${outcome.exitCode}`,
                 EXIT.failed,
-                binary.from === 'npx' ? 'install it: npm i -g @github/copilot' : undefined,
+                resumeHint() ??
+                    (binary.from === 'npx' ? 'install it: npm i -g @github/copilot' : undefined),
             );
         }
+    } catch (err) {
+        const hint = resumeHint();
+        if (hint && !(err instanceof CliError)) {
+            note(dim(hint));
+        }
+        throw err;
     } finally {
         log.close();
     }
 }
 
+/** The wait before a resume, cut short by Ctrl-C - which still says how to resume. */
+async function pause(ms: number, hint: string | undefined): Promise<void> {
+    const stop = new AbortController();
+    const onInt = (): void => stop.abort();
+    process.once('SIGINT', onInt);
+    try {
+        await sleep(ms, undefined, { signal: stop.signal });
+    } catch {
+        throw new CliError('interrupted', EXIT.failed, hint);
+    } finally {
+        process.off('SIGINT', onInt);
+    }
+}
+
 /** Copilot's own flags, assembled once. Nothing secret goes on this line. */
-function argv(values: Flags, dir: string, prompt: string, secret: string[]): string[] {
+function argv(
+    values: Flags,
+    dir: string,
+    prompt: string,
+    secret: string[],
+    fresh?: string,
+): string[] {
     const args = ['-C', dir, '-p', prompt, '--output-format', 'json', '--no-color'];
     // A prompt written for an editor expects to read, write and run things, and
     // there is nobody at a `-p` run to answer the question. Naming tools is the
@@ -597,9 +684,10 @@ function argv(values: Flags, dir: string, prompt: string, secret: string[]): str
     }
     if (values.resume) {
         args.push('--resume', values.resume);
-    }
-    if (values.continue) {
+    } else if (values.continue) {
         args.push('--continue');
+    } else if (fresh) {
+        args.push('--session-id', fresh);
     }
     if (secret.length > 0) {
         args.push('--secret-env-vars', secret.join(','));
