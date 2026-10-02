@@ -20,9 +20,15 @@
 // how many committed nodes the graph already held. In a with-memory run every
 // one of those is a call spent on nothing.
 //
+// `commits`, `recalls` and `answers` are the reading behind those numbers:
+// the nodes each case committed (against the candidate, with re-commits
+// marked, when it had memory), every memory step it took, and what it answered.
+// They go through `zen memory` and `zen inspect`, never the files on disk.
+//
 // Run it from anywhere; it finds the project root from its own location.
 // See .github/skills/zen-finetune/SKILL.md.
 
+import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,6 +43,10 @@ const USAGE = `Report on one run's batch: what each case did, and where its traj
   ${NAME} failures           only the cases that did not finish, with errors
   ${NAME} oom                were commands killed - is this run gradeable at all
   ${NAME} memory             per case: recalls, memory searches, commits, already known
+  ${NAME} commits [id...]    per case: every node it committed; with memory, against the
+                             candidate, re-commits of what it already held marked
+  ${NAME} recalls [id...]    per case: every recall and memory tool step, top recalled nodes
+  ${NAME} answers [id...]    per case: the final answer, with its rubric above it
   ${NAME} compare            the per-case table findings.md opens with
 
   -d <dir>    the batch directory; default the newest .finetune/runs/*/batch
@@ -61,7 +71,18 @@ function die(msg, code = 2) {
 // Arguments
 // ---------------------------------------------------------------------------
 
-const MODES = ['index', 'graphs', 'paths', 'failures', 'oom', 'memory', 'compare'];
+const MODES = [
+    'index',
+    'graphs',
+    'paths',
+    'failures',
+    'oom',
+    'memory',
+    'commits',
+    'recalls',
+    'answers',
+    'compare',
+];
 
 let mode = '';
 let batch = '';
@@ -145,6 +166,35 @@ function json(path) {
     } catch {
         return undefined;
     }
+}
+
+/**
+ * `zen <args> --json`, parsed; `{ error }` when it refused.
+ *
+ * @param {string[]} args
+ * @returns {any}
+ */
+function zen(args) {
+    const res = spawnSync('zen', [...args, '--json'], {
+        encoding: 'utf8',
+        maxBuffer: 256 * 1024 * 1024,
+    });
+    if (res.error) {
+        die(`cannot run zen: ${res.error.message}`);
+    }
+    try {
+        const out = JSON.parse(res.stdout);
+        return res.status === 0 ? out : { error: out?.error ?? `zen exited ${res.status}` };
+    } catch {
+        const said = `${res.stderr}\n${res.stdout}`.trim().split('\n').at(-1);
+        return { error: said || `zen exited ${res.status}` };
+    }
+}
+
+/** One line, at most `n` long. @param {string} text @param {number} [n] */
+function flat(text, n = Infinity) {
+    const one = String(text).replace(/\s+/g, ' ').trim();
+    return one.length > n ? `${one.slice(0, n - 1)}…` : one;
 }
 
 const batchDoc = json(join(batch, 'batch.json'));
@@ -282,6 +332,17 @@ function cell(was, now, kind) {
 }
 
 /**
+ * The memory a batch started from, where it is now: `memory.mjs checkpoint`
+ * renames `candidate-batchNN` to `after-batchNN` once the batch passes.
+ *
+ * @param {string} source
+ */
+function startedFrom(source) {
+    const kept = source.replace(/candidate-(batch\d+)\/?$/, 'after-$1');
+    return source && !existsSync(source) && existsSync(kept) ? kept : source;
+}
+
+/**
  * `memory off` / `no memory` / `with memory`, for a batch directory.
  *
  * batch.json records `--memory .finetune/empty` as mode `copied`, exactly like
@@ -293,7 +354,7 @@ function cell(was, now, kind) {
 function memory(dir) {
     const mem = json(join(dir, 'batch.json'))?.batch?.memory ?? {};
     const mode = mem.mode ?? 'none';
-    const source = mem.source ?? '';
+    const source = startedFrom(mem.source ?? '');
     if (mode === 'none') {
         return {
             kind: 'memory off',
@@ -519,6 +580,155 @@ if (mode === 'index') {
         say('');
         say(`${sum.known} committed node(s) were already known: a call spent re-saying what`);
         say('the graph held. Find the commit nodes and ask why it did not check first.');
+    }
+} else if (mode === 'commits') {
+    // Without memory a case starts empty, so everything in its graph it committed.
+    // With memory its graph is the candidate plus its commits: diff against it.
+    const mem = memory(batch);
+    const against =
+        mem.kind === 'with memory' ? startedFrom(batchDoc?.batch?.memory?.source ?? '') : '';
+    say(`memory ${mem.line}`);
+    let added = 0;
+    let twins = 0;
+    for (const { id } of roster(batch)) {
+        const dir = join(batch, id, 'memory');
+        say('');
+        if (!existsSync(join(dir, 'manifest.json'))) {
+            say(`-- ${id}   committed nothing`);
+            continue;
+        }
+        const out = against
+            ? zen(['memory', 'diff', against, '--dir', dir])
+            : zen(['memory', 'ls', '--dir', dir, '--limit', '100000']);
+        if (out?.error) {
+            say(`-- ${id}   ${out.error}`);
+            continue;
+        }
+        /** @type {{ node: any, nearest?: { id: string, score: number }, twin?: boolean }[]} */
+        const rows = against ? out.added : out.nodes.map((/** @type {any} */ node) => ({ node }));
+        const held = rows.filter((r) => r.twin).length;
+        added += rows.length;
+        twins += held;
+        const extra = against
+            ? [
+                  held ? `${held} already held` : '',
+                  out.revised.length ? `${out.revised.length} revised` : '',
+                  out.used.length ? `${out.used.length} loaded` : '',
+              ].filter(Boolean)
+            : [];
+        say(`-- ${id}   ${rows.length} committed${extra.length ? `, ${extra.join(', ')}` : ''}`);
+        for (const { node, nearest, twin } of rows) {
+            const near = nearest
+                ? `  ${twin ? 'ALREADY HELD as' : 'nearest'} ${nearest.id} ${nearest.score.toFixed(2)}`
+                : '';
+            const file = node.file ? `  file .${node.file.format}` : '';
+            say(`   ${node.id}  ${node.kind}  ${node.audience.join(',')}${file}${near}`);
+            say(`      ${flat(node.text)}`);
+        }
+        for (const { before, after } of against ? out.revised : []) {
+            say(`   ${after.id}  ${after.kind}  revised r${before.revision} -> r${after.revision}`);
+            say(`      ${flat(after.text)}`);
+        }
+        for (const { node, loads } of against ? out.used : []) {
+            say(`   ${node.id}  ${node.kind}  loaded ${loads}x`);
+            say(`      ${flat(node.text)}`);
+        }
+    }
+    say('');
+    say(`total  ${added} committed${against ? `, ${twins} already held` : ''}`);
+    if (against) {
+        say(`against ${against}`);
+        if (twins > 0) {
+            say('');
+            say(`${twins} commit(s) said again what the candidate held: merge folds them,`);
+            say('so each was a call that bought nothing. Ask at the commit why it did not');
+            say('recall first.');
+        }
+    }
+    say('');
+    say(`one node in full: zen memory show <node-id> --dir ${join(batch, '<case>', 'memory')}`);
+} else if (mode === 'recalls') {
+    say(`memory ${memory(batch).line}`);
+    const STEP =
+        /^\s*(n\d+)\S*"n\d+ ((?:recall \d+ nodes|memory_(?:search|grep|load|commit)) .*?)(?: · t\+|")/;
+    for (const { id } of roster(batch)) {
+        const out = output(id);
+        const graph = out?.run?.graph;
+        say('');
+        if (!graph || !existsSync(graph)) {
+            say(`-- ${id}   no graph`);
+            continue;
+        }
+        /** @type {{ node: string, label: string }[]} */
+        const steps = [];
+        for (const line of readFileSync(graph, 'utf8').split('\n')) {
+            const m = STEP.exec(line);
+            if (m) {
+                steps.push({ node: m[1], label: m[2] });
+            }
+        }
+        if (steps.length === 0) {
+            say(`-- ${id}   never touched memory`);
+            continue;
+        }
+        const recalls = steps.filter((s) => s.label.startsWith('recall '));
+        /** @type {Map<string, string[]>} */
+        const seeds = new Map();
+        if (recalls.length > 0) {
+            const res = zen([
+                'inspect',
+                'node',
+                ...recalls.map((r) => r.node),
+                '--dir',
+                out.run.dir,
+            ]);
+            for (const n of res?.nodes ?? []) {
+                const text = n.parts?.find((/** @type {any} */ p) => p.name === 'recalled')?.text;
+                const top = [
+                    ...String(text ?? '').matchAll(/^(\d\.\d\d) +(\S+) +(\S+)\n +(.+)$/gm),
+                ];
+                seeds.set(
+                    n.id,
+                    top.slice(0, 3).map((m) => `${m[1]} ${m[2]} ${m[3]}  ${flat(m[4], 90)}`),
+                );
+            }
+        }
+        const calls = steps.filter(
+            (s) => !s.label.startsWith('recall ') && !s.label.includes(' = '),
+        );
+        say(`-- ${id}   ${recalls.length} recalls, ${calls.length} memory tool calls`);
+        for (const s of steps) {
+            say(`   ${s.node.padEnd(5)} ${flat(s.label, 120)}`);
+            for (const line of seeds.get(s.node) ?? []) {
+                say(`         ${line}`);
+            }
+        }
+    }
+    say('');
+    say(
+        `one step in full: zen inspect node <nN> --dir "$(${NAME} -d ${batch} paths <case> | cut -f2)"`,
+    );
+} else if (mode === 'answers') {
+    for (const { id, ok } of roster(batch)) {
+        const out = output(id);
+        say('================================================================');
+        say(`== ${id}   ok=${ok}`);
+        const lines = rubric(id);
+        if (lines.length > 0) {
+            say('== rubric:');
+            for (const line of lines) {
+                say(`== ${line}`);
+            }
+        }
+        say('================================================================');
+        if (!out) {
+            say('no output.json');
+        } else if (out.ok === false) {
+            say(`did not finish: ${out.error?.message ?? 'unknown'}`);
+        } else {
+            say(String(out.output ?? '').trim() || '(no answer)');
+        }
+        say('');
     }
 } else if (mode === 'oom') {
     // The graph is where an exit code survives: a killed `run_command` reads

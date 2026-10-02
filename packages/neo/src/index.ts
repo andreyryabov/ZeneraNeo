@@ -9,6 +9,7 @@ export * from './frontmatter.ts';
 export * from './ids.ts';
 export * from './inspect/index.ts';
 export * as Kernel from './kernel.ts';
+export * from './memory/diff.ts';
 export * from './memory/files.ts';
 export * from './memory/graph.ts';
 export * from './memory/grep.ts';

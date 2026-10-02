@@ -2,6 +2,7 @@ import {
     ALL_AGENTS,
     buildMemoryReport,
     createEmbedder,
+    diffMemories,
     GREP_FIELDS,
     grepMemory,
     hostPath,
@@ -48,6 +49,7 @@ import {
     isInteractive,
     json,
     note,
+    plain,
     table,
     usageError,
     write,
@@ -55,7 +57,7 @@ import {
     yellow,
 } from '../term.ts';
 
-const USAGE = 'zen memory [stats|ls|search|grep|show|export|merge|forget] [args] [options]';
+const USAGE = 'zen memory [stats|ls|search|grep|show|diff|export|merge|forget] [args] [options]';
 
 interface Flags {
     project?: string;
@@ -82,7 +84,7 @@ interface Flags {
     'no-dedupe'?: boolean;
 }
 
-const SUBCOMMANDS = ['stats', 'ls', 'search', 'grep', 'show', 'export', 'merge', 'forget'];
+const SUBCOMMANDS = ['stats', 'ls', 'search', 'grep', 'show', 'diff', 'export', 'merge', 'forget'];
 
 /** Enough to see the shape of it; the rest is a number. */
 const LISTED = 30;
@@ -118,6 +120,7 @@ export const memory: Command = {
         '  search <text>          Recall it, the way an agent does. Ranked.',
         '  grep <pattern>         Every node containing it, with the matching lines.',
         '  show <id>              One node in full, with what it links to.',
+        '  diff <base>            What this memory holds that <base> did not.',
         '  export [file]          The whole graph as one HTML page.',
         '  merge <dir...>         Fold other memories into this one.',
         '  forget <id...>         Remove nodes, their vectors and their files.',
@@ -180,6 +183,12 @@ export const memory: Command = {
         '  zen memory merge <batch-dir>/*/memory',
         '',
         'which is where `zen run batch` leaves them.',
+        '',
+        '`diff` is the question after a run that started from a copy: what it',
+        'added, which of those `merge` would fold onto a node <base> already held',
+        '(a re-commit), what it revised, and which nodes `memory_load` read:',
+        '',
+        '  zen memory diff <candidate> --dir <batch-dir>/<id>/memory',
     ],
     run: async (ctx) => {
         const { values, positionals } = parse<Flags>(
@@ -238,6 +247,8 @@ export const memory: Command = {
                     return await grep(opened, rest, values, ctx.json);
                 case 'show':
                     return show(opened, rest, ctx.json);
+                case 'diff':
+                    return await diff(opened, rest, ctx.cwd, ctx.json);
                 case 'export':
                     return await write_(opened, rest, values, ctx.cwd, ctx.json);
                 case 'merge':
@@ -438,17 +449,17 @@ function list(o: Opened, flags: Flags, asJson: boolean): void {
     }
 
     writeAll(
-        table(
+        textLast(
             all
                 .slice(0, limit)
                 .map((n) => [
                     cyan(n.id),
-                    n.kind,
-                    n.file ? dim('⎘ ' + n.file.format) : '',
-                    clip(n.text, 56),
-                    dim(ago(n.createdAt)),
-                    stale.has(n.id) ? yellow('superseded') : '',
+                    n.kind + (n.file ? dim(' ⎘ ' + n.file.format) : ''),
+                    n.audience.join(','),
+                    dim(`r${n.revision}`),
+                    dim(ago(n.createdAt)) + (stale.has(n.id) ? ' ' + yellow('superseded') : ''),
                 ]),
+            all.slice(0, limit).map((n) => n.text),
         ),
     );
     if (all.length > limit) {
@@ -821,6 +832,111 @@ function show(o: Opened, ids: string[], asJson: boolean): void {
 }
 
 // ---------------------------------------------------------------------------
+// diff
+// ---------------------------------------------------------------------------
+
+async function diff(o: Opened, rest: string[], cwd: string, asJson: boolean): Promise<void> {
+    if (rest.length !== 1) {
+        throw usageError(
+            'diff takes exactly one base memory',
+            'zen memory diff <base> [--dir <dir>]',
+        );
+    }
+    const at = resolve(cwd, rest[0]!);
+    if (!existsSync(join(at, 'manifest.json'))) {
+        throw usageError(`${at} is not a memory`, 'no manifest.json in it');
+    }
+    const base = await MemoryStore.open(at, { lock: false });
+    try {
+        const d = diffMemories(base, o.store);
+        const mine = (n: MemoryNode): MemoryNode => onHost(o, n);
+        const theirs = (n: MemoryNode): MemoryNode =>
+            n.file ? { ...n, file: { ...n.file, path: hostPath(at, n.file) } } : n;
+
+        if (asJson) {
+            json({
+                ...d,
+                added: d.added.map((a) => ({ ...a, node: mine(a.node) })),
+                revised: d.revised.map((r) => ({ before: theirs(r.before), after: mine(r.after) })),
+                used: d.used.map((u) => ({ ...u, node: mine(u.node) })),
+                removed: d.removed.map(theirs),
+            });
+            return;
+        }
+
+        const twins = d.added.filter((a) => a.twin).length;
+        write(bold(o.dir) + dim(` against ${at} · nearest by ${d.by}`));
+        write();
+        write(
+            `${bold('added')} ${d.added.length}` +
+                (twins ? ` · ${yellow(`${twins} already held`)}` : '') +
+                ` · ${bold('revised')} ${d.revised.length}` +
+                ` · ${bold('used')} ${d.used.length}` +
+                ` · ${bold('removed')} ${d.removed.length}` +
+                ` · ${bold('edges')} +${d.edges}`,
+        );
+        if (d.added.length) {
+            write();
+            write(dim('added'));
+            writeAll(
+                textLast(
+                    d.added.map((a) => [
+                        `  ${cyan(a.node.id)}`,
+                        a.node.kind,
+                        a.node.audience.join(','),
+                        a.nearest
+                            ? `${a.twin ? yellow('twin of') : dim('near')} ${a.nearest.id} ${dim(a.nearest.score.toFixed(2))}`
+                            : dim('nothing near'),
+                    ]),
+                    d.added.map((a) => a.node.text),
+                ),
+            );
+        }
+        if (d.revised.length) {
+            write();
+            write(dim('revised'));
+            writeAll(
+                textLast(
+                    d.revised.map((r) => [
+                        `  ${cyan(r.after.id)}`,
+                        r.after.kind,
+                        dim(`r${r.before.revision} → r${r.after.revision}`),
+                    ]),
+                    d.revised.map((r) => r.after.text),
+                ),
+            );
+        }
+        if (d.used.length) {
+            write();
+            write(dim('used — returned by memory_load'));
+            writeAll(
+                textLast(
+                    d.used.map((u) => [`  ${cyan(u.node.id)}`, u.node.kind, `${u.loads}×`]),
+                    d.used.map((u) => u.node.text),
+                ),
+            );
+        }
+        if (d.removed.length) {
+            write();
+            write(dim('removed'));
+            writeAll(
+                textLast(
+                    d.removed.map((n) => [`  ${cyan(n.id)}`, n.kind]),
+                    d.removed.map((n) => n.text),
+                ),
+            );
+        }
+        if (d.supersedes.length) {
+            write();
+            write(dim('supersedes'));
+            writeAll(table(d.supersedes.map((s) => [`  ${cyan(s.source)}`, '→', cyan(s.target)])));
+        }
+    } finally {
+        base.release();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // export
 // ---------------------------------------------------------------------------
 
@@ -1037,6 +1153,21 @@ async function forget(o: Opened, ids: string[], flags: Flags, asJson: boolean): 
 function clip(text: string, n: number): string {
     const one = text.replace(/\s+/g, ' ').trim();
     return one.length > n ? one.slice(0, n - 1) + '…' : one;
+}
+
+/**
+ * A table whose last column is the text: cut to what the terminal has left,
+ * and whole when nobody is looking at a terminal — a pipe or an agent wants all of it.
+ */
+function textLast(rows: string[][], texts: string[]): string[] {
+    const widths = rows[0]?.map((_, c) => Math.max(...rows.map((r) => plain(r[c] ?? '').length)));
+    const room = process.stdout.isTTY
+        ? Math.max(
+              24,
+              (process.stdout.columns || 120) - (widths ?? []).reduce((t, w) => t + w + 2, 0),
+          )
+        : Infinity;
+    return table(rows.map((r, i) => [...r, clip(texts[i] ?? '', room)]));
 }
 
 /** The stored `/memory/<id>.<ext>` is the agent's mount path; a terminal needs the host one. */

@@ -10,7 +10,23 @@ queries produce.
 **Load the `zen-finetune` skill before anything else**, and load `zen-inspect`,
 `zen-analyze-run` and `zen-inspect-ask` before you grade, and `zen-instructions`
 before you write a policy file. This prompt is the order of the work; the skill
-is how each step is done, and it holds the rules that are easy to get wrong.
+is how each step is done, and it holds the rules that are easy to get wrong. If
+loading a skill fails, read `.github/skills/<name>/SKILL.md` with your file tool
+before going on - never carry on without it.
+
+**Read runs and memories through commands, never by code.** Do not open
+`output.json`, `batch.json`, `state.json`, `graph.json` or `manifest.json` with
+`node -e`, `python -c`, `jq` or a script of your own - every question has a
+command:
+
+| Question                                     | Command                                                           |
+| -------------------------------------------- | ----------------------------------------------------------------- |
+| each case's trajectory directory             | `report.mjs -d "$RUN/batch" paths [id...]`                        |
+| what each case answered, under its rubric    | `report.mjs -d "$RUN/batch" answers [id...]`                      |
+| what each case committed to memory           | `report.mjs -d "$RUN/batch" commits [id...]`                      |
+| every recall and memory tool step            | `report.mjs -d "$RUN/batch" recalls [id...]`                      |
+| one memory node in full                      | `zen memory show <node-id> --dir "$RUN/batch/<id>/memory"`        |
+| a whole memory, or what one added to another | `zen memory ls --dir <dir>`, `zen memory diff <base> --dir <dir>` |
 
 This prompt is **reentrant**. Tuning is long and gets interrupted - a run dies, a
 session ends, I stop you mid-batch. Every step leaves its result on disk under
@@ -398,7 +414,8 @@ makes one run comparable to the next.
 ## 4. Grade without memory (steps 2-4)
 
 `report.mjs oom` first - a run with any exit 137 is void, is not graded, and its
-tokens are compared to nothing. Then read the graphs before the numbers. Grade
+tokens are compared to nothing. Then read the answers (`report.mjs answers`) and
+the graphs before the numbers. Grade
 every case against all eight criteria in the skill: rubric compliance,
 optimality, memory hygiene, fork, delegation, tools and skills, grounding,
 failure handling. **Cite a node id for every finding.** A finding you cannot
@@ -446,8 +463,9 @@ one. It contains:
 of a look. A case averaging 40+ llm calls almost never has `none` on all three.
 
 **See what each case committed** (step 3), as seriously as the answer it gave.
-Start from `report.mjs -d "$RUN/batch" memory`, then read `<id>/memory/`
-across the run: every commit should be an operation, a pointer, a shape or a
+Start from `report.mjs -d "$RUN/batch" memory` for the counts, then
+`report.mjs -d "$RUN/batch" commits` for every node each case committed: every
+commit should be an operation, a pointer, a shape or a
 rule that is still true next week. A cached live reading poisons every future
 run, and committing nothing after learning something durable throws the run
 away. The candidate memory is built from exactly these commits, so commit
@@ -614,6 +632,10 @@ in two ways instead of one.
 
 **Analyze the memory use** (step 11). `report.mjs oom` first, then
 `report.mjs memory` - recalls, memory reads, commits and `known` per case - then
+`report.mjs recalls` - what each recall put in front of the model and every
+memory tool step - and `report.mjs commits` - each case against the candidate:
+what it committed, which of those the candidate already held, and which nodes
+it loaded - then
 `compare` against **the no-memory run that passed the same batch**, and from
 run 2 on also against the previous with-memory run. Read the trajectories, and
 `zen inspect ask` at the critical points - the first research call that ignored
@@ -631,7 +653,8 @@ _live reading_. The recheck cases, recalling what earlier batches committed,
 are where that shows up first.
 
 **Do not commit what memory already holds.** Every commit of a fact the graph
-had - `known` above 0 in `report.mjs memory`, or a near-copy of a node it just
+had - `known` above 0 in `report.mjs memory`, `ALREADY HELD` in
+`report.mjs commits`, or a near-copy of a node it just
 recalled - is an llm turn and a tool call that bought nothing, in every future
 run. The target is `known` 0, and commits only of what the run genuinely
 learned. A correction committed without `SUPERSEDES` beside the stale node it

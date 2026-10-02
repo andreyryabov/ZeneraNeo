@@ -18,16 +18,21 @@ skill.
 
 ## Subcommands
 
-| Command                   | What it does                                |
-| ------------------------- | ------------------------------------------- |
-| `zen memory stats`        | Size, vocabulary, whether it is embedded    |
-| `zen memory ls`           | Nodes, newest first. Changes nothing        |
-| `zen memory search <q>`   | Recall it, the way an agent does. Ranked    |
-| `zen memory grep <pat>`   | Every node containing it, with the lines    |
-| `zen memory show <id>`    | One node in full, with what it links to     |
-| `zen memory export [f]`   | The whole graph as one HTML page            |
-| `zen memory merge <dir…>` | Fold other memories into this one           |
-| `zen memory forget <id…>` | Remove nodes, their vectors and their files |
+| Command                   | What it does                                        |
+| ------------------------- | --------------------------------------------------- |
+| `zen memory stats`        | Size, vocabulary, whether it is embedded            |
+| `zen memory ls`           | Nodes, newest first: kind, audience, revision, text |
+| `zen memory search <q>`   | Recall it, the way an agent does. Ranked            |
+| `zen memory grep <pat>`   | Every node containing it, with the lines            |
+| `zen memory show <id>`    | One node in full, with what it links to             |
+| `zen memory diff <base>`  | What this memory holds that `<base>` did not        |
+| `zen memory export [f]`   | The whole graph as one HTML page                    |
+| `zen memory merge <dir…>` | Fold other memories into this one                   |
+| `zen memory forget <id…>` | Remove nodes, their vectors and their files         |
+
+`ls` cuts the text to the terminal's width; piped, or run by an agent, it prints
+all of it. Never read `graph.json` directly - `ls --json` is the same nodes in a
+shape that does not change under you.
 
 | Flag                          | Meaning                                        |
 | ----------------------------- | ---------------------------------------------- |
@@ -98,6 +103,24 @@ The count it prints is the true one even when `--limit` cut the list, and a
 remembered file it could not read - too big, binary, missing - is named rather
 than silently skipped, because a file that went unsearched must not pass for one
 with no match.
+
+## `diff` says what a run did to a copy
+
+A run started from a copy of a memory leaves the whole copy behind, so `ls` on
+it shows everything the base held too. `diff` shows only what changed:
+
+```sh
+zen memory diff <candidate> --dir <batch-dir>/<id>/memory
+```
+
+- **added** - each with the nearest node `<base>` held and its score. One
+  `merge` would fold onto it is marked a twin: the run said again what the
+  memory already held.
+- **revised** - same id, new revision.
+- **used** - nodes `memory_load` returned, and how often: what the run read.
+- **removed**, and new `SUPERSEDES` edges.
+
+It reads both sides without the lock, so it works on a memory a run is writing.
 
 Superseded nodes are left out unless you ask: `--all` includes them marked, and
 `--stale` narrows to them alone.

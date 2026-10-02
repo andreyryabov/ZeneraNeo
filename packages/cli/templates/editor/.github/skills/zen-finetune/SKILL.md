@@ -829,15 +829,33 @@ why `oom` is a separate mode and runs first.
 
 ```sh
 .github/skills/zen-finetune/scripts/report.mjs -d "$RUN/batch"
+.github/skills/zen-finetune/scripts/report.mjs -d "$RUN/batch" answers
 .github/skills/zen-finetune/scripts/report.mjs -d "$RUN/batch" graphs > /tmp/batch01-run1.mmd
 ```
 
 `report.mjs` with no mode prints one line per case — ok, agent, stop reason,
-tokens, seconds, rubric lines. `graphs` concatenates every case's `graph.mmd`
+tokens, seconds, rubric lines. `answers` prints each case's final answer under
+its rubric. `graphs` concatenates every case's `graph.mmd`
 with its id and rubric above it: one read instead of one `zen inspect graph` per
 case. `compare` is the per-case cost table the findings open with, and it is the
 last thing this phase does — read the trajectories before the numbers, or the
 numbers decide what you look at.
+
+**Every question about a run has a command.** Never open `output.json`,
+`batch.json`, `state.json` or a memory's `graph.json` with `node -e`,
+`python -c` or `jq` — the formats are the CLI's, and a guess at one costs a
+probe call to find out it was wrong.
+
+| Question                                               | Command                                                    |
+| ------------------------------------------------------ | ---------------------------------------------------------- |
+| A case's trajectory directory                          | `report.mjs -d "$RUN/batch" paths <id>`                    |
+| What it answered, under its rubric                     | `report.mjs -d "$RUN/batch" answers <id>`                  |
+| What it committed (against the candidate, with memory) | `report.mjs -d "$RUN/batch" commits <id>`                  |
+| Every recall and memory tool step, top recalls         | `report.mjs -d "$RUN/batch" recalls <id>`                  |
+| One memory node in full, with its links                | `zen memory show <node-id> --dir "$RUN/batch/<id>/memory"` |
+| A whole memory                                         | `zen memory ls --dir <dir> --limit 200`                    |
+| What one memory holds that another did not             | `zen memory diff <base> --dir <dir>`                       |
+| One step of a trajectory                               | `zen inspect node <nN> --dir <trajectory dir>`             |
 
 Then work case by case. Load **zen-inspect** for the mechanics,
 **zen-analyze-run** for how to read one trajectory's decisions, and
@@ -937,8 +955,9 @@ Record `nodes`, `llm` and `tokens` from the header. The llm-call count is the
 run-to-run number; tokens are the one that swings.
 
 **3. Memory hygiene — what it committed (step 3).** Start from
-`report.mjs -d "$RUN/batch" memory` — commits per case — then read
-`<id>/memory/` and the commit nodes. Every commit becomes part of the candidate
+`report.mjs -d "$RUN/batch" memory` — commits per case — then
+`report.mjs -d "$RUN/batch" commits` — every node each case committed, kind,
+audience and text — and the commit nodes. Every commit becomes part of the candidate
 the with-memory runs start from, so this is graded as hard as the answer. The rule is
 commit what _produces_ the answer, not the material it was made from: a file
 becomes a pointer, a call becomes the operation. A run that stored the
@@ -1413,8 +1432,10 @@ Five things follow from copying rather than sharing:
   with-memory run as before the first, so run 2 starts where run 1 did.
 - **`<id>/memory/` existing means nothing here.** Without memory a directory is
   there only if the case committed. With it every copy arrives with the
-  candidate's manifest, so every case has one. What a case actually added is in
-  its trajectory, as the `memory_op` nodes, and in `report.mjs memory`.
+  candidate's manifest, so every case has one. What a case actually added is
+  `report.mjs commits`: it diffs each copy against the candidate the batch
+  started from (`zen memory diff`), marks every commit the candidate already
+  held, and lists the nodes `memory_load` read.
 - **Never fold a with-memory run's copies back in.** Each copy holds the whole
   graph again; `memory.mjs candidate` refuses a with-memory run for exactly that
   reason.
@@ -1434,6 +1455,8 @@ batch**, and from run 2 on also against the previous with-memory run:
 R=.finetune/runs
 .github/skills/zen-finetune/scripts/report.mjs -d $R/batch01-mem-run1/batch oom
 .github/skills/zen-finetune/scripts/report.mjs -d $R/batch01-mem-run1/batch memory
+.github/skills/zen-finetune/scripts/report.mjs -d $R/batch01-mem-run1/batch recalls
+.github/skills/zen-finetune/scripts/report.mjs -d $R/batch01-mem-run1/batch commits
 .github/skills/zen-finetune/scripts/report.mjs \
     -d $R/batch01-mem-run1/batch -p $R/batch01-nomem-run2/batch compare
 ```
@@ -1456,7 +1479,9 @@ worst finding a with-memory run can have.
 **Re-committing is a cost finding, not a hygiene nicety.** Every
 `memory_commit` of something the graph held is an llm turn and a tool call that
 bought nothing — `zen memory merge` would have folded it anyway. The `commits
-(known)` column and `report.mjs memory` count them per case; the target with
+(known)` column and `report.mjs memory` count them per case, and
+`report.mjs commits` names them — `ALREADY HELD as <id>`, with the nearest
+candidate node and its score beside every other commit; the target with
 memory is **zero known**, and commits only of what the run genuinely learned
 that the graph did not have. A case that recalled a node and then committed the
 same fact in its own words is the pattern to ask about.
@@ -1620,14 +1645,14 @@ graphs built from them. Add to `.gitignore`:
 
 ## Scripts this skill ships
 
-| Script                  | What it does                                                                                                                                                                                                                   |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `scripts/select.mjs`    | `dataset.json` → `selection.json`: up to the limit, evenly by class, rubric then complex first — the order batches take new cases in                                                                                           |
-| `scripts/batch.mjs`     | builds the next batch's `cases.json` and `plan.json`: its size by the growth rule, new cases from the selection + rechecks, difficult then complex first; only difficult ones once the selection is used. No command: progress |
-| `scripts/report.mjs`    | one run's `batch/` → an index, the concatenated graphs, the trajectory paths, the failures, the OOM check, memory use per case, or the comparison against another run                                                          |
-| `scripts/difficult.mjs` | the difficult list: `add` / `fix` a case with its reason and run; with no command, the list with `open` / `fixed` / `stuck` and retry counts                                                                                   |
-| `scripts/memory.mjs`    | `candidate <run>` builds a batch's candidate from a passed no-memory run; `checkpoint <run>` keeps it after a passed with-memory run; `path [--candidate]` names a graph; no command says what built them                      |
-| `scripts/next.mjs`      | reads `.finetune/` and prints the next step — including when a candidate or checkpoint is missing and when the final check is due — and whether the README has fallen behind                                                   |
+| Script                  | What it does                                                                                                                                                                                                                                         |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/select.mjs`    | `dataset.json` → `selection.json`: up to the limit, evenly by class, rubric then complex first — the order batches take new cases in                                                                                                                 |
+| `scripts/batch.mjs`     | builds the next batch's `cases.json` and `plan.json`: its size by the growth rule, new cases from the selection + rechecks, difficult then complex first; only difficult ones once the selection is used. No command: progress                       |
+| `scripts/report.mjs`    | one run's `batch/` → an index, the concatenated graphs, the trajectory paths, the failures, the OOM check, memory use per case, each case's commits (against the candidate, with memory), recalls and answers, or the comparison against another run |
+| `scripts/difficult.mjs` | the difficult list: `add` / `fix` a case with its reason and run; with no command, the list with `open` / `fixed` / `stuck` and retry counts                                                                                                         |
+| `scripts/memory.mjs`    | `candidate <run>` builds a batch's candidate from a passed no-memory run; `checkpoint <run>` keeps it after a passed with-memory run; `path [--candidate]` names a graph; no command says what built them                                            |
+| `scripts/next.mjs`      | reads `.finetune/` and prints the next step — including when a candidate or checkpoint is missing and when the final check is due — and whether the README has fallen behind                                                                         |
 
 The README template is `references/readme-template.md`.
 

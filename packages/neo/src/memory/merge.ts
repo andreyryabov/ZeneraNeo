@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { hostPath } from './files.ts';
 import { DUPLICATE_SCORE, flatten } from './index.ts';
 import { MANIFEST_FILE, MemoryStore, lockHolder, type MemoryEmbedding } from './store.ts';
+import { comparable, sameContent, twinKey } from './twin.ts';
 import { MemoryError, type MemoryNode } from './types.ts';
 
 // ---------------------------------------------------------------------------
@@ -358,18 +359,6 @@ function twinOf(
     return id && !stale.has(id) ? id : undefined;
 }
 
-function comparable(a: MemoryNode, b: MemoryNode): boolean {
-    return a.id !== b.id && a.kind === b.kind && !a.file && audienceKey(a) === audienceKey(b);
-}
-
-function twinKey(node: MemoryNode): string {
-    return [node.kind, audienceKey(node), flatten(node.text)].join('\u0000');
-}
-
-function audienceKey(node: MemoryNode): string {
-    return [...node.audience].sort().join('|');
-}
-
 function carryVector(from: MemoryStore, to: MemoryStore, id: string): void {
     const vector = from.vectors?.get(id);
     const block = to.vectors;
@@ -395,32 +384,6 @@ function reconcile(keep: MemoryNode, other: MemoryNode): MemoryNode {
 
 function newer(a: MemoryNode, b: MemoryNode): boolean {
     return a.revision === b.revision ? a.updatedAt > b.updatedAt : a.revision > b.revision;
-}
-
-function sameContent(a: MemoryNode, b: MemoryNode): boolean {
-    return (
-        a.kind === b.kind &&
-        a.text === b.text &&
-        audienceKey(a) === audienceKey(b) &&
-        a.file?.sha256 === b.file?.sha256 &&
-        deep(a.metadata, b.metadata)
-    );
-}
-
-function deep(a: unknown, b: unknown): boolean {
-    if (a === b) {
-        return true;
-    }
-    if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) {
-        return false;
-    }
-    if (Array.isArray(a) !== Array.isArray(b)) {
-        return false;
-    }
-    const left = a as Record<string, unknown>;
-    const right = b as Record<string, unknown>;
-    const keys = Object.keys(left);
-    return keys.length === Object.keys(right).length && keys.every((k) => deep(left[k], right[k]));
 }
 
 /** Stat every file the merge would copy before it copies any of them. */
