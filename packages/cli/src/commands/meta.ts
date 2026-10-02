@@ -1,5 +1,6 @@
 import { readProjectConfig } from '@zenera/neo';
 import { existsSync } from 'node:fs';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { parse } from '../args.ts';
 import type { Command, Context } from '../command.ts';
 import { loadProjectEnv } from '../env.ts';
@@ -9,6 +10,7 @@ import { probeChat, probeModel } from '../liveness.ts';
 import {
     answerBox,
     chooseModel,
+    DEFAULT_RESUMES,
     defaultRef,
     launch,
     listPrompts,
@@ -23,12 +25,16 @@ import {
     providersWarning,
     readMeta,
     RECOMMENDED,
+    RESUME_PROMPT,
+    resumeDelayMs,
     SOURCE_LABELS,
     splitRef,
+    transient,
     wire,
     writeMeta,
     type ModelSources,
 } from '../meta.ts';
+import { duration } from '../narrate.ts';
 import * as Projects from '../projects.ts';
 import { project as resolveProject } from '../resolve.ts';
 import { editorFiles } from '../scaffold.ts';
@@ -72,6 +78,7 @@ interface Flags {
     share?: string;
     resume?: string;
     continue?: boolean;
+    retries?: string;
     'allow-all'?: boolean;
     'allow-tool'?: string;
     ask?: boolean;
@@ -115,6 +122,7 @@ export const meta: Command = {
         '  --ask                  Have it ask before each tool. Default: it does not.',
         '  --add-dir <dir>        Another directory it may touch. Repeatable.',
         '  --resume <id>          Continue a copilot session. --continue takes the last.',
+        `  --retries <n>          Resume after a rate limit or outage. Default ${DEFAULT_RESUMES}, 0 = off.`,
         '  --share <file>         Write the transcript to a markdown file.',
         '  --dry-run              Print what would run, secrets masked, and stop.',
         '  --session <id>         inspect: the session to pick the run from.',
@@ -178,6 +186,7 @@ export const meta: Command = {
                 share: { type: 'string' },
                 resume: { type: 'string' },
                 continue: { type: 'boolean' },
+                retries: { type: 'string' },
                 'allow-all': { type: 'boolean' },
                 'allow-tool': { type: 'string' },
                 ask: { type: 'boolean' },
@@ -459,6 +468,7 @@ async function go(
     const wiring = wire(store, entry, id);
     const binary = locate();
     const args = argv(values, project.dir, prompt, wiring.secret);
+    const retries = count(values.retries, '--retries') ?? DEFAULT_RESUMES;
 
     if (values['dry-run']) {
         const lines = masked(wiring.env, wiring.secret);
@@ -506,13 +516,22 @@ async function go(
 
     // A run that dies still has to leave a readable file behind.
     try {
-        const outcome = await launch({
-            binary,
-            args,
-            env: wiring.env,
-            cwd: project.dir,
-            log,
-        });
+        const run = (argList: string[]) =>
+            launch({ binary, args: argList, env: wiring.env, cwd: project.dir, log });
+        let outcome = await run(args);
+        let resumes = 0;
+        for (let reason = transient(outcome); reason && resumes < retries;) {
+            const wait = resumeDelayMs(resumes);
+            resumes += 1;
+            const said = `${reason}: resuming in ${duration(wait)} (${resumes}/${retries})`;
+            warn(said);
+            log.line('');
+            log.line(`--- resume ${resumes}: ${said} ---`);
+            await sleep(wait);
+            const again = { ...values, resume: outcome.sessionId, continue: false };
+            outcome = await run(argv(again, project.dir, RESUME_PROMPT, wiring.secret));
+            reason = transient(outcome);
+        }
 
         log.line('');
         log.line('--- answer ---');
@@ -528,6 +547,7 @@ async function go(
                 model: chosen.ref,
                 sessionId: outcome.sessionId,
                 exitCode: outcome.exitCode,
+                resumes,
                 usage: outcome.usage,
                 answer: outcome.answer,
                 answerFile: outcome.answer ? log.answerPath : undefined,
@@ -604,6 +624,17 @@ function projectModel(dir: string): string | undefined {
     } catch {
         return undefined;
     }
+}
+
+function count(text: string | undefined, flag: string): number | undefined {
+    if (text === undefined) {
+        return undefined;
+    }
+    const value = Number(text);
+    if (!Number.isInteger(value) || value < 0) {
+        throw usageError(`${flag} takes a whole number, 0 or more`, `got "${text}"`);
+    }
+    return value;
 }
 
 function asProvider(name: string): Provider {

@@ -60,8 +60,10 @@ import {
     misspelledProvider,
     promptPath,
     readPrompt,
+    resumeDelayMs,
     splitRef,
     toneAt,
+    transient,
     wire,
     wireApi,
     type Outcome,
@@ -3382,6 +3384,53 @@ describe('re-rendering copilot output', () => {
         const { out, said } = run([{ type: 'session.something_new', data: { x: 1 } }]);
         expect(said).toEqual([]);
         expect(out.events).toHaveLength(1);
+    });
+
+    // Copilot's own retries are fixed; zen resumes the session only when
+    // waiting could change the answer.
+    describe('which failures are worth resuming', () => {
+        const failed = (data: object, sessionId: string | null = 's1') =>
+            transient(
+                run([
+                    { type: 'session.error', data },
+                    { type: 'result', exitCode: 1, sessionId: sessionId ?? undefined },
+                ]).out,
+            );
+
+        it('resumes a rate limit, a provider outage and a timeout', () => {
+            expect(
+                failed({
+                    errorType: 'rate_limit',
+                    message: 'Failed to get response from the AI model; retried 5 times',
+                    statusCode: 429,
+                }),
+            ).toContain('429');
+            expect(failed({ errorType: 'query', message: '503', statusCode: 503 })).toContain(
+                '503',
+            );
+            expect(
+                failed({ errorType: 'query', message: 'Connection timed out to provider at x' }),
+            ).toBeDefined();
+        });
+
+        it('does not resume what fails the same way every time', () => {
+            expect(
+                failed({ errorType: 'query', message: '400 Bad Request', statusCode: 400 }),
+            ).toBeUndefined();
+            expect(failed({ errorType: 'authentication', statusCode: 403 })).toBeUndefined();
+        });
+
+        it('cannot resume without a session, nor a run that succeeded', () => {
+            expect(failed({ errorType: 'rate_limit', statusCode: 429 }, null)).toBeUndefined();
+            const ok = run([{ type: 'result', exitCode: 0, sessionId: 's1' }]).out;
+            expect(transient(ok)).toBeUndefined();
+        });
+
+        it('waits longer each time, up to a ceiling', () => {
+            expect(resumeDelayMs(0)).toBe(30_000);
+            expect(resumeDelayMs(1)).toBe(60_000);
+            expect(resumeDelayMs(10)).toBe(300_000);
+        });
     });
 
     it('processes progress commentary lines as inline markdown', () => {

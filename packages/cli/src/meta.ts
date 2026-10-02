@@ -913,6 +913,58 @@ export async function launch(opts: Launch): Promise<Outcome> {
     return out;
 }
 
+// ---------------------------------------------------------------------------
+// Resuming
+//
+// Copilot retries a failed model call itself, five times over about a minute,
+// and has no setting to change that. A run that outlasts it is still a session
+// on disk, so the retry happens one level up: wait, then resume that session.
+// ---------------------------------------------------------------------------
+
+/** Resumes after copilot's own retries run out; `--retries` overrides. */
+export const DEFAULT_RESUMES = 5;
+
+/** The first wait; it doubles per resume, up to `RESUME_MAX_MS`. */
+const RESUME_INITIAL_MS = 30_000;
+const RESUME_MAX_MS = 300_000;
+
+/** What the resumed session is told, since `-p` has to say something. */
+export const RESUME_PROMPT =
+    'The previous model call failed after several retries. Continue the task from where you stopped.';
+
+export function resumeDelayMs(attempt: number): number {
+    return Math.min(RESUME_INITIAL_MS * 2 ** attempt, RESUME_MAX_MS);
+}
+
+/**
+ * Why the run is worth resuming, or undefined when waiting cannot help.
+ *
+ * Only a refusal that time can cure counts: a rate limit, the provider's own
+ * failure, a connection that timed out. A 400 or a bad key fails the same way
+ * however often it is sent.
+ */
+export function transient(out: Outcome): string | undefined {
+    if (out.exitCode === 0 || !out.sessionId) {
+        return undefined;
+    }
+    const error = out.events.findLast((e) => e.type === 'session.error');
+    const data = error?.data;
+    if (!data) {
+        return undefined;
+    }
+    const status = Number(data.statusCode ?? 0);
+    if (data.errorType === 'rate_limit' || status === 429) {
+        return 'rate-limited (429)';
+    }
+    if (status === 408 || status >= 500) {
+        return `the provider failed (${status})`;
+    }
+    if (/timed out|ECONNRESET|socket hang up/i.test(String(data.message ?? ''))) {
+        return 'the connection failed';
+    }
+    return undefined;
+}
+
 /** Non-fatal, said once, because a competing file is a silent override. */
 export function providersWarning(): string | undefined {
     const configured = process.env.COPILOT_PROVIDERS_CONFIG;
