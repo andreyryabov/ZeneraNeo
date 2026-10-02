@@ -64,7 +64,6 @@ import {
     resumeDelayMs,
     shutdownModels,
     splitLines,
-    splitRef,
     Tally,
     toneAt,
     transient,
@@ -72,7 +71,8 @@ import {
     wireApi,
     type Outcome,
     type Sink,
-} from '../src/meta.ts';
+} from '../src/meta/index.ts';
+import { splitRef } from '../src/modelref.ts';
 import { duration } from '../src/narrate.ts';
 import { engineDisk, ensurePodmanReady, ownedContainers, sharedEndpoint } from '../src/podman.ts';
 import { dirSize, lastUsedAt, projectMounts } from '../src/projects.ts';

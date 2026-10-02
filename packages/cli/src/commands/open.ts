@@ -4,8 +4,8 @@ import { homedir } from 'node:os';
 import { delimiter, join, resolve, sep } from 'node:path';
 import { one, parse } from '../args.ts';
 import type { Command } from '../command.ts';
+import { editorFiles } from '../meta/editor.ts';
 import { project as resolveProject } from '../resolve.ts';
-import { editorFiles } from '../scaffold.ts';
 import { CliError, cyan, dim, EXIT, isInteractive, json, note, usageError } from '../term.ts';
 
 const USAGE = 'zen open [project] [--editor <cmd>] [--wait]';

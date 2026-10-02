@@ -801,7 +801,15 @@ the repository ships.
 
 Which coding agent is an implementation detail, and the CLI surface is written
 so it can be replaced: today it drives GitHub Copilot CLI, and nothing above
-[meta.ts](packages/cli/src/meta.ts) names it.
+[meta/launch.ts](packages/cli/src/meta/launch.ts) and
+[meta/wire.ts](packages/cli/src/meta/wire.ts) names it.
+
+Everything the meta agent is given lives under
+[src/meta/](packages/cli/src/meta/): the launcher, the model choice, the key
+wiring, stored prompts, the window and the `.github/` editor tree. It reaches
+the rest of the CLI only through [meta/host.ts](packages/cli/src/meta/host.ts),
+and `test/meta-boundary.test.ts` fails on any other import - so the layer can
+become a package of its own by turning that file into a dependency.
 
 ```
 zen meta run [project] "<question>"      ask it something
@@ -1206,7 +1214,8 @@ replaced whether or not they were edited, and the report is taken afterwards, so
 its exit code answers the repaired project.
 
 This is the other half of `keep: true` in
-[scaffold.ts](packages/cli/src/scaffold.ts). A scaffold never overwrites, which
+[scaffold.ts](packages/cli/src/scaffold.ts) (the editor tree itself is
+[meta/editor.ts](packages/cli/src/meta/editor.ts)). A scaffold never overwrites, which
 is right for `agents.yaml`, the prompts, the specification and
 `agents/instructions.md` - the project's own house rules, whose template says
 "replace this with yours" - and wrong for the four that only restate how the

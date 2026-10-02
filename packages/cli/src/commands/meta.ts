@@ -15,6 +15,7 @@ import {
     chooseModel,
     DEFAULT_RESUMES,
     defaultRef,
+    editorFiles,
     lastSession,
     launch,
     listPrompts,
@@ -34,18 +35,17 @@ import {
     resumeDelayMs,
     sessionTotals,
     SOURCE_LABELS,
-    splitRef,
     tailSpans,
     Tally,
     transient,
     wire,
     writeMeta,
     type ModelSources,
-} from '../meta.ts';
+} from '../meta/index.ts';
+import { splitRef } from '../modelref.ts';
 import { duration } from '../narrate.ts';
 import * as Projects from '../projects.ts';
 import { project as resolveProject } from '../resolve.ts';
-import { editorFiles } from '../scaffold.ts';
 import {
     bold,
     choose,

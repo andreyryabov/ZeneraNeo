@@ -7,7 +7,7 @@ import {
     type ProjectConfig,
     type ToolSchema,
 } from '@zenera/neo';
-import { splitRef } from './meta.ts';
+import { splitRef } from './modelref.ts';
 import { invalidError } from './term.ts';
 
 // ---------------------------------------------------------------------------
