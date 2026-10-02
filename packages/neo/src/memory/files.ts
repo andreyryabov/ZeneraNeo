@@ -85,7 +85,7 @@ export async function rememberFile(
 }
 
 /** The host path of a remembered file, for reading it back or deleting it. */
-export function hostPath(dir: string, file: MemoryFile): string {
+export function hostPath(dir: string, file: Pick<MemoryFile, 'path'>): string {
     // Through `basename` so a stored path can never climb out of the tree.
     return join(dir, FILES_DIR, basename(file.path));
 }

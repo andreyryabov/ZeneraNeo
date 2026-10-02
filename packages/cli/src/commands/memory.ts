@@ -17,6 +17,7 @@ import {
     type Embedder,
     type EmbeddingRef,
     type GrepField,
+    type MemoryFile,
     type MemoryNode,
     type MemoryQuery,
     type MergeReport,
@@ -27,7 +28,7 @@ import {
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
-import { basename, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, isAbsolute, join, resolve } from 'node:path';
 import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { loadProjectEnv } from '../env.ts';
@@ -428,7 +429,7 @@ function list(o: Opened, flags: Flags, asJson: boolean): void {
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
     if (asJson) {
-        json({ total: all.length, nodes: all.slice(0, limit) });
+        json({ total: all.length, nodes: all.slice(0, limit).map((n) => onHost(o, n)) });
         return;
     }
     if (!all.length) {
@@ -697,7 +698,7 @@ async function grep(o: Opened, rest: string[], flags: Flags, asJson: boolean): P
                 hits: m.hits,
                 more: m.more,
             })),
-            unsearched: res.skipped,
+            unsearched: res.skipped.map((s) => ({ ...s, path: hostPath(o.dir, s) })),
         });
         return;
     }
@@ -707,7 +708,7 @@ async function grep(o: Opened, rest: string[], flags: Flags, asJson: boolean): P
     }
     if (!res.found) {
         note(`nothing matches ${pattern}`);
-        unsearched(res.skipped);
+        unsearched(o, res.skipped);
         return;
     }
 
@@ -717,7 +718,7 @@ async function grep(o: Opened, rest: string[], flags: Flags, asJson: boolean): P
                 ' ' +
                 m.node.kind +
                 (m.stale ? ' ' + yellow('superseded') : '') +
-                (m.node.file ? ' ' + dim(m.node.file.path) : ''),
+                (m.node.file ? ' ' + dim(hostPath(o.dir, m.node.file)) : ''),
         );
         writeAll(table(m.hits.map((h) => [`  ${dim(h.where + ':' + h.line)}`, clip(h.text, 120)])));
         if (m.more) {
@@ -728,20 +729,20 @@ async function grep(o: Opened, rest: string[], flags: Flags, asJson: boolean): P
     if (res.truncated) {
         note(dim(`${res.found - res.matches.length} more nodes — raise --limit`));
     }
-    unsearched(res.skipped);
+    unsearched(o, res.skipped);
 }
 
 /**
  * Named rather than counted. A file that was not read is a hole in an answer
  * whose whole value is that it has none, so the ids have to be printable.
  */
-function unsearched(skipped: readonly SkippedFile[]): void {
+function unsearched(o: Opened, skipped: readonly SkippedFile[]): void {
     if (!skipped.length) {
         return;
     }
     write();
     note(yellow(`${count(skipped.length, 'file')} not searched`));
-    writeAll(table(skipped.map((s) => [`  ${cyan(s.id)}`, dim(s.reason), s.path])));
+    writeAll(table(skipped.map((s) => [`  ${cyan(s.id)}`, dim(s.reason), hostPath(o.dir, s)])));
 }
 
 // ---------------------------------------------------------------------------
@@ -760,7 +761,11 @@ function show(o: Opened, ids: string[], asJson: boolean): void {
     const links = o.store.graph.neighbors(id);
 
     if (asJson) {
-        json({ node, links, file: node.file ? hostPath(o.dir, node.file) : undefined });
+        json({
+            node: onHost(o, node),
+            links,
+            file: node.file ? hostPath(o.dir, node.file) : undefined,
+        });
         return;
     }
 
@@ -832,7 +837,8 @@ async function write_(
     const named = rest[0] ?? flags.out ?? 'memory.html';
     const target = isAbsolute(named) ? named : resolve(cwd, named);
 
-    const report = await buildMemoryReport(o.store, { title: `${o.project} · memory` });
+    const built = await buildMemoryReport(o.store, { title: `${o.project} · memory` });
+    const report = { ...built, nodes: built.nodes.map((n) => onHost(o, n)) };
     await writeFile(target, renderMemoryHtml(report), 'utf8');
 
     if (asJson) {
@@ -918,7 +924,7 @@ async function merge(
         );
     } catch (err) {
         if (err instanceof MergeConflicts) {
-            throw diverged(err, cwd, asJson);
+            throw diverged(err, asJson);
         }
         throw err;
     }
@@ -931,7 +937,7 @@ async function merge(
         table([
             [dim('memory'), dim('nodes'), dim('new'), dim('shared'), dim('folded'), dim('files')],
             ...report.sources.map((s) => [
-                near(s.dir, cwd),
+                s.dir,
                 String(s.nodes),
                 s.added ? green(String(s.added)) : '0',
                 String(s.shared),
@@ -954,7 +960,7 @@ async function merge(
  * point of stopping is that a person decides, and they cannot decide from a
  * count.
  */
-function diverged(err: MergeConflicts, cwd: string, asJson: boolean): CliError {
+function diverged(err: MergeConflicts, asJson: boolean): CliError {
     if (asJson) {
         json({ error: err.message, conflicts: err.conflicts });
     } else {
@@ -964,7 +970,7 @@ function diverged(err: MergeConflicts, cwd: string, asJson: boolean): CliError {
                     cyan(c.id),
                     dim(`r${c.mine} ↔ r${c.theirs}`),
                     clip(c.text, 48),
-                    dim(near(c.dir, cwd)),
+                    dim(c.dir),
                 ]),
             ),
         );
@@ -1033,8 +1039,7 @@ function clip(text: string, n: number): string {
     return one.length > n ? one.slice(0, n - 1) + '…' : one;
 }
 
-/** A path as it was probably typed: relative when it is below here, absolute when it is not. */
-function near(dir: string, cwd: string): string {
-    const rel = relative(cwd, dir);
-    return rel && !rel.startsWith('..') ? rel : dir;
+/** The stored `/memory/<id>.<ext>` is the agent's mount path; a terminal needs the host one. */
+function onHost<T extends { file?: MemoryFile }>(o: Opened, n: T): T {
+    return n.file ? { ...n, file: { ...n.file, path: hostPath(o.dir, n.file) } } : n;
 }
