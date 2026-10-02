@@ -56,11 +56,13 @@ import {
     chooseModel,
     defaultRef,
     footerCells,
+    lastSession,
     masked,
     misspelledProvider,
     promptPath,
     readPrompt,
     readSpan,
+    recordSession,
     resumeDelayMs,
     shutdownModels,
     splitLines,
@@ -3552,6 +3554,13 @@ describe('re-rendering copilot output', () => {
             expect(
                 failed({ errorType: 'query', message: 'Connection timed out to provider at x' }),
             ).toBeDefined();
+            expect(
+                failed({
+                    errorType: 'query',
+                    message:
+                        'Failed native model HTTP request: error sending request for url (https://x): client error (SendRequest): connection error',
+                }),
+            ).toBe('the connection failed');
         });
 
         it('does not resume what fails the same way every time', () => {
@@ -3602,6 +3611,46 @@ describe('re-rendering copilot output', () => {
             expect(resumeDelayMs(0)).toBe(30_000);
             expect(resumeDelayMs(1)).toBe(60_000);
             expect(resumeDelayMs(10)).toBe(300_000);
+        });
+    });
+
+    describe('which session `zen meta resume` picks', () => {
+        const project = () => mkdtempSync(join(tmpdir(), 'zen-meta-session-'));
+
+        // Seen: a quick test run after a long one failed made resume open the test.
+        it('prefers the newest unfinished session over a newer one that finished', () => {
+            const dir = project();
+            recordSession(dir, 'long', 'running');
+            recordSession(dir, 'long', 'failed');
+            recordSession(dir, 'quick', 'running');
+            recordSession(dir, 'quick', 'done');
+            expect(lastSession(dir)).toBe('long');
+        });
+
+        it('treats a run killed mid-way as unfinished', () => {
+            const dir = project();
+            recordSession(dir, 'killed', 'running');
+            recordSession(dir, 'later', 'running');
+            recordSession(dir, 'later', 'done');
+            expect(lastSession(dir)).toBe('killed');
+        });
+
+        it('drops a session once a resume finishes it', () => {
+            const dir = project();
+            recordSession(dir, 'a', 'running');
+            recordSession(dir, 'a', 'done');
+            recordSession(dir, 'b', 'failed');
+            recordSession(dir, 'b', 'running');
+            recordSession(dir, 'b', 'done');
+            expect(lastSession(dir)).toBe('b');
+        });
+
+        it('reads the single id older versions wrote', () => {
+            const dir = project();
+            expect(lastSession(dir)).toBeUndefined();
+            mkdirSync(join(dir, '.tmp/logs'), { recursive: true });
+            writeFileSync(join(dir, '.tmp/logs/meta.session'), 'old\n');
+            expect(lastSession(dir)).toBe('old');
         });
     });
 
