@@ -31,6 +31,7 @@
 // Run directories are `batch<NN>-<nomem|mem>-run<N>`; anything else is ignored.
 // Run it from anywhere; it finds the project root from its own location.
 
+import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -384,6 +385,14 @@ if (selection.length > 0 && selection.length < datasetSize) {
             `are never tuned against. Unless the user asked for that, set "limit": ${datasetSize} ` +
             `in ${CONFIG} and re-run select.mjs -o ${SELECTION}`,
     );
+}
+
+// Every step passes through here, so the usage report never lags by more than one.
+if (existsSync(`${SCRIPTS}/usage.mjs`)) {
+    spawnSync(process.execPath, [`${SCRIPTS}/usage.mjs`, '-q'], {
+        stdio: 'ignore',
+        timeout: 30_000,
+    });
 }
 
 console.log(nextStep());

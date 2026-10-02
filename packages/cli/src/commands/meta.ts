@@ -1,6 +1,8 @@
 import { readProjectConfig } from '@zenera/neo';
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parse } from '../args.ts';
 import type { Command, Context } from '../command.ts';
@@ -30,8 +32,11 @@ import {
     recordSession,
     RESUME_PROMPT,
     resumeDelayMs,
+    sessionTotals,
     SOURCE_LABELS,
     splitRef,
+    tailSpans,
+    Tally,
     transient,
     wire,
     writeMeta,
@@ -62,6 +67,7 @@ import {
     write,
     writeAll,
 } from '../term.ts';
+import { appendUsage, LEDGER_ENV, ledgerPath, META_SESSION_ENV } from '../usage.ts';
 import { locate as locateRun } from './inspect.ts';
 
 const USAGE = 'zen meta run [project] [prompt] [options]';
@@ -150,6 +156,10 @@ export const meta: Command = {
         '',
         '`zen meta resume` picks up the last session the project ran - or the one',
         'named - where it stopped. A run that ends any way but success prints it.',
+        '',
+        'Its tokens are counted as it runs and summed when it ends. In a project with',
+        'a .finetune/, every call - and every zen run and inspect ask it makes - is',
+        'appended to .finetune/usage/ledger.jsonl, and .finetune/USAGE.md is rewritten.',
         '',
         'Nothing it needs is put on a command line: every credential reaches it',
         'through the environment, where other processes cannot read it.',
@@ -562,24 +572,65 @@ async function go(
     const resumeHint = (): string | undefined =>
         session ? `resume it: zen meta resume ${project.name} ${session}` : undefined;
 
+    // Every zen command the agent runs inherits these, so a batch it starts or
+    // an ask it makes lands in the same ledger, tagged with this session.
+    const spans = log.path.replace(/\.log$/, '.otel.jsonl');
+    const ledger = ledgerPath(project.dir);
+    const env: Record<string, string> = {
+        ...wiring.env,
+        COPILOT_OTEL_FILE_EXPORTER_PATH: spans,
+        ...(ledger ? { [LEDGER_ENV]: ledger } : {}),
+        ...(ledger && session ? { [META_SESSION_ENV]: session } : {}),
+    };
+    const tally = new Tally();
+    const tail = tailSpans(spans, (call) => {
+        tally.add(call);
+        appendUsage(project.dir, {
+            kind: 'meta.call',
+            ts: new Date(Date.parse(call.startedAt) + call.durationMs).toISOString(),
+            ...call,
+            session: call.session ?? session,
+        });
+    });
+    const reporter = usageReporter(project.dir);
+    const tokens = (): string => {
+        tail.stop();
+        return tally.toString();
+    };
+
     // A run that dies still has to leave a readable file behind.
     try {
+        let resumes = 0;
         const run = async (argList: string[]) => {
+            const launchedAt = new Date();
             const outcome = await launch({
                 binary,
                 args: argList,
-                env: wiring.env,
+                env,
                 cwd: project.dir,
                 log,
+                status: () => (tally.calls > 0 ? tally.toString() : ''),
             });
             if (outcome.sessionId && outcome.sessionId !== session) {
                 session = outcome.sessionId;
                 recordSession(project.dir, session);
             }
+            const models = session ? sessionTotals(session) : undefined;
+            if (session && models) {
+                appendUsage(project.dir, {
+                    kind: 'meta.session',
+                    ts: new Date().toISOString(),
+                    session,
+                    models,
+                    exitCode: outcome.exitCode,
+                    resumes,
+                    startedAt: launchedAt.toISOString(),
+                    durationMs: Date.now() - launchedAt.getTime(),
+                });
+            }
             return outcome;
         };
         let outcome = await run(args);
-        let resumes = 0;
         for (let reason = transient(outcome); reason && resumes < retries;) {
             const wait = resumeDelayMs(resumes);
             resumes += 1;
@@ -599,6 +650,9 @@ async function go(
         if (outcome.answer) {
             log.saveAnswer(outcome.answer);
         }
+        const spent = tokens();
+        log.line('');
+        log.line(`tokens  ${spent}`);
 
         if (ctx.json) {
             json({
@@ -609,6 +663,7 @@ async function go(
                 exitCode: outcome.exitCode,
                 resumes,
                 usage: outcome.usage,
+                tokens: { calls: tally.calls, ...tally.usage },
                 answer: outcome.answer,
                 answerFile: outcome.answer ? log.answerPath : undefined,
             });
@@ -617,6 +672,9 @@ async function go(
             // After the answer, not before: it is the thing you click once you
             // have read enough to want it in an editor.
             note(cyan(log.answerPath));
+        }
+        if (!ctx.json && tally.calls > 0) {
+            note(dim(`tokens  ${spent}`));
         }
 
         if (outcome.exitCode !== 0) {
@@ -634,8 +692,49 @@ async function go(
         }
         throw err;
     } finally {
+        tail.stop();
+        reporter.stop();
         log.close();
     }
+}
+
+/** How often a running meta agent rewrites the fine-tuning's usage report. */
+const REPORT_EVERY_MS = 5 * 60_000;
+
+/**
+ * Rewrites `.finetune/USAGE.md` on a timer and once more at the end, when the
+ * project is being tuned. Detached and silent: the report is a by-product, and
+ * neither its time nor its failure belongs to the run.
+ */
+function usageReporter(dir: string): { stop(): void } {
+    const script = join(dir, '.github/skills/zen-finetune/scripts/usage.mjs');
+    if (!existsSync(join(dir, '.finetune')) || !existsSync(script)) {
+        return { stop: () => undefined };
+    }
+    let running = false;
+    const refresh = (): void => {
+        if (running) {
+            return;
+        }
+        running = true;
+        const child = spawn(process.execPath, [script, '-q'], {
+            cwd: dir,
+            stdio: 'ignore',
+            detached: true,
+        });
+        child.on('exit', () => (running = false));
+        child.on('error', () => (running = false));
+        child.unref();
+    };
+    const timer = setInterval(refresh, REPORT_EVERY_MS);
+    timer.unref();
+    return {
+        stop: (): void => {
+            clearInterval(timer);
+            running = false;
+            refresh();
+        },
+    };
 }
 
 /** The wait before a resume, cut short by Ctrl-C - which still says how to resume. */

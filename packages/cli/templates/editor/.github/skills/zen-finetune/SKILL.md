@@ -1604,6 +1604,10 @@ shipped graph.
     selection.json          the cases up to the limit, evenly by class, rubric and complex first
     difficult.json          the difficult cases: why, when, notes, fixed — written by difficult.mjs
     README.md               the plan, the map and the progress — written by you, patched every step
+    USAGE.md                tokens per model, batch, run and stage — written by usage.mjs, never by hand
+    usage.json              the same numbers, for a script
+    usage/
+        ledger.jsonl        one line per meta agent call, run, batch and inspect ask — appended by zen
     empty/                  never created; naming it is what gives a run no memory
     memory/
         candidate.json      the batch being tuned: its candidate, and the run it was built from
@@ -1631,17 +1635,34 @@ passed, and `batch.mjs` and `difficult.mjs` read which cases each batch held
 from its first no-memory run. Any other directory under `runs/` is ignored.
 
 Commit `dataset.json`, `config.json`, `selection.json`, `difficult.json`,
-`README.md`, every `cases.json`, `plan.json`, `findings.md` and `changes.md` —
+`README.md`, `USAGE.md`, `usage.json`, every `cases.json`, `plan.json`,
+`findings.md` and `changes.md` —
 they are the
 project's eval history. The `batch/` directories are large, contain whole
 workspaces, and may contain live API responses: ignore them, and the memory
-graphs built from them. Add to `.gitignore`:
+graphs built from them, and the raw usage ledger. Add to `.gitignore`:
 
 ```
 .finetune/runs/*/batch/
 .finetune/memory/
 .finetune/empty/
+.finetune/usage/
 ```
+
+## The usage report
+
+`.finetune/USAGE.md` says what the tuning has cost in tokens — in total, by
+model, by batch, by run, the costliest cases, and the meta
+agent's own spend by stage and session. Three things spend tokens, and only one
+is the project under test: the **project agents** (every case of every run, read
+off `batch.json`, so runs from before the ledger count too), the **meta agent**
+doing the tuning, and the **`zen inspect ask`** calls of the grading.
+
+Nobody writes it by hand: `next.mjs` regenerates it on every call, and a running
+`zen meta` does every five minutes and when it exits. `zen meta`, `zen run`,
+`zen run batch` and `zen inspect ask` append to `.finetune/usage/ledger.jsonl`
+whenever the project has a `.finetune/`. Link it from the README instead of
+copying its numbers; `usage.json` holds the same numbers for a script.
 
 ## Scripts this skill ships
 
@@ -1652,11 +1673,12 @@ graphs built from them. Add to `.gitignore`:
 | `scripts/report.mjs`    | one run's `batch/` → an index, the concatenated graphs, the trajectory paths, the failures, the OOM check, memory use per case, each case's commits (against the candidate, with memory), recalls and answers, or the comparison against another run |
 | `scripts/difficult.mjs` | the difficult list: `add` / `fix` a case with its reason and run; with no command, the list with `open` / `fixed` / `stuck` and retry counts                                                                                                         |
 | `scripts/memory.mjs`    | `candidate <run>` builds a batch's candidate from a passed no-memory run; `checkpoint <run>` keeps it after a passed with-memory run; `path [--candidate]` names a graph; no command says what built them                                            |
-| `scripts/next.mjs`      | reads `.finetune/` and prints the next step — including when a candidate or checkpoint is missing and when the final check is due — and whether the README has fallen behind                                                                         |
+| `scripts/next.mjs`      | reads `.finetune/` and prints the next step — including when a candidate or checkpoint is missing and when the final check is due — and whether the README has fallen behind; refreshes `USAGE.md` on the way                                        |
+| `scripts/usage.mjs`     | the ledger and every run's `batch.json` → `USAGE.md` and `usage.json`: tokens by who spent them, model, batch, run and stage; `--stdout` prints it instead                                                                                           |
 
 The README template is `references/readme-template.md`.
 
-All six are Node programs and run on the Node that `zen` itself requires — no
+All seven are Node programs and run on the Node that `zen` itself requires — no
 `jq`, and they work the same on Windows. `memory.mjs` also needs `zen` on PATH. They find the project root from their
 own location and can be run from anywhere. They are copies: `zen init` and
 `zen open` rewrite the whole `.github/` tree, so an edit made here is gone at the

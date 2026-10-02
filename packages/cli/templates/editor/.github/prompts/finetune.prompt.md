@@ -303,6 +303,10 @@ against without, re-commits, what changed, what is left - patch the README, and
 build the next batch straight away. Never end your turn with "proposed next
 step" or "ready to proceed upon your confirmation"; take the step.
 
+`.finetune/USAGE.md` is the token bill - project agents, you, and every
+`zen inspect ask` - by model, batch, run and stage. `next.mjs` rewrites
+it; never edit it, and link it rather than copying its numbers.
+
 ## 0. Before the first run
 
 Name the training set. If I have not given you one, ask - a specification
@@ -732,9 +736,9 @@ first.
 ## Housekeeping
 
 Commit `dataset.json`, `config.json`, `selection.json`, `difficult.json`,
-`README.md`, every `cases.json`, `plan.json`, `findings.md` and `changes.md` - they are the
+`README.md`, `USAGE.md`, `usage.json`, every `cases.json`, `plan.json`, `findings.md` and `changes.md` - they are the
 eval history, and they are what a resumed session reads to find its place. Write
 each as its step ends rather than at the end of the batch, so an interruption
 never costs more than the step it lands in. Add `.finetune/runs/*/batch/`,
-`.finetune/memory/` and `.finetune/empty/` to `.gitignore` - `batch/` folders are
+`.finetune/memory/`, `.finetune/empty/` and `.finetune/usage/` to `.gitignore` - `batch/` folders are
 large and may hold live API responses, and the memory graphs are built from them.

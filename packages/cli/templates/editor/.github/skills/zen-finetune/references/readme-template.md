@@ -253,6 +253,8 @@ Last good memory: 41 nodes, from batches 1-2 (`memory.mjs`).
   answers.
 - **Difficult cases:** 1 open, 1 fixed, 0 stuck.
 - **Open problems:** none yet.
+- **Tokens:** [USAGE.md](USAGE.md) - by model, batch and run; written by
+  `usage.mjs`, never by hand.
 
 ## Next
 

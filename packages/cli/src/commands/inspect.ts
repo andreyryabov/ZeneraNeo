@@ -68,6 +68,7 @@ import {
     writeAll,
     yellow,
 } from '../term.ts';
+import { appendUsage } from '../usage.ts';
 
 const USAGE = 'zen inspect [report|graph|node|ask] [run] [--dir <run dir>] [--open]';
 
@@ -569,8 +570,31 @@ async function ask(
         );
     }
     const model = projectRegistry(config).model(picked.ref);
+    const record = async (
+        call: () => ReturnType<typeof model.generate>,
+    ): ReturnType<typeof model.generate> => {
+        const startedAt = new Date();
+        const res = await call();
+        appendUsage(project, {
+            kind: 'ask',
+            ts: new Date().toISOString(),
+            runDir: run.dir,
+            node: entry.key,
+            nodeAgent: node.agent,
+            nodeModel: node.model,
+            model: picked.label,
+            usage: res.usage,
+            startedAt: startedAt.toISOString(),
+            durationMs: Date.now() - startedAt.getTime(),
+        });
+        return res;
+    };
     const generate = (question: string) =>
-        model.generate(buildDiagnostic({ request: recorded, answer, toolCalls, query: question }));
+        record(() =>
+            model.generate(
+                buildDiagnostic({ request: recorded, answer, toolCalls, query: question }),
+            ),
+        );
     const usage = (res: Awaited<ReturnType<typeof generate>>): void => {
         note(
             dim(
@@ -615,7 +639,7 @@ async function ask(
             } else {
                 conversation.messages.push({ role: 'user', content: [text(question)] });
             }
-            const res = await model.generate(conversation);
+            const res = await record(() => model.generate(conversation!));
             conversation.messages.push({ role: 'assistant', content: res.text });
             writeAll(renderAskExchange(question, res.text, process.stdout.columns ?? 80));
             usage(res);

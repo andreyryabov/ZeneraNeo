@@ -60,8 +60,12 @@ import {
     misspelledProvider,
     promptPath,
     readPrompt,
+    readSpan,
     resumeDelayMs,
+    shutdownModels,
+    splitLines,
     splitRef,
+    Tally,
     toneAt,
     transient,
     wire,
@@ -104,6 +108,7 @@ import {
     wrap,
     type Block,
 } from '../src/tui/wrap.ts';
+import { LEDGER_ENV, ledgerPath } from '../src/usage.ts';
 import { validateProject, type Report } from '../src/validate.ts';
 
 // ---------------------------------------------------------------------------
@@ -3327,6 +3332,142 @@ describe('a stored prompt', () => {
         const found = readPrompt('/p/x.prompt.md', 'x', 'Just this.\n');
         expect(found.body).toBe('Just this.');
         expect(found.description).toBeUndefined();
+    });
+});
+
+// The spans below are trimmed from a real `COPILOT_OTEL_FILE_EXPORTER_PATH` file.
+describe('counting the meta agent’s tokens', () => {
+    const chat = (attrs: Record<string, unknown>) =>
+        JSON.stringify({
+            type: 'span',
+            traceId: 't1',
+            spanId: 's1',
+            parentSpanId: 'p1',
+            name: 'chat google/gemini-3.8-flash',
+            startTime: [1790939995, 154000000],
+            endTime: [1790939998, 922000000],
+            attributes: {
+                'gen_ai.operation.name': 'chat',
+                'gen_ai.request.model': 'google/gemini-3.8-flash',
+                'gen_ai.response.model': 'google/gemini-3.8-flash',
+                'gen_ai.conversation.id': 'sess-1',
+                'gen_ai.usage.input_tokens': 43828,
+                'gen_ai.usage.output_tokens': 49,
+                ...attrs,
+            },
+        });
+
+    it('reads a chat span, folding reasoning into output as zen counts it', () => {
+        const span = readSpan(
+            chat({
+                'gen_ai.usage.reasoning.output_tokens': 415,
+                'gen_ai.usage.cache_read.input_tokens': 40000,
+            }),
+        );
+        expect(span).toMatchObject({
+            model: 'google/gemini-3.8-flash',
+            session: 'sess-1',
+            durationMs: 3768,
+            usage: {
+                inputTokens: 43828,
+                cachedInputTokens: 40000,
+                outputTokens: 464,
+                reasoningTokens: 415,
+            },
+        });
+    });
+
+    it('ignores tools, metrics, agent spans and broken lines', () => {
+        expect(readSpan(chat({ 'gen_ai.operation.name': 'execute_tool' }))).toBeUndefined();
+        expect(readSpan(JSON.stringify({ type: 'metric', name: 'x' }))).toBeUndefined();
+        expect(
+            readSpan(
+                JSON.stringify({
+                    type: 'span',
+                    attributes: {
+                        'gen_ai.operation.name': 'invoke_agent',
+                        'gen_ai.agent.name': 'explore',
+                    },
+                }),
+            ),
+        ).toBeUndefined();
+        expect(readSpan('{"type":"span",')).toBeUndefined();
+    });
+
+    it('carries a line that has not finished arriving', () => {
+        const first = splitLines('', '{"a":1}\n{"b":');
+        expect(first).toEqual({ lines: ['{"a":1}'], carry: '{"b":' });
+        expect(splitLines(first.carry, '2}\n')).toEqual({ lines: ['{"b":2}'], carry: '' });
+    });
+
+    it('sums calls into one line', () => {
+        const tally = new Tally();
+        const call = readSpan(chat({ 'gen_ai.usage.cache_read.input_tokens': 1_500_000 }));
+        if (call) {
+            tally.add({ ...call, usage: { ...call.usage, inputTokens: 1_800_000 } });
+            tally.add(call);
+        }
+        expect(tally.toString()).toBe('2 calls · 1.84M in (3.00M cached) · 98 out');
+    });
+
+    it("takes copilot's own totals from the last shutdown, reasoning folded in", () => {
+        const shutdown = (input: number) =>
+            JSON.stringify({
+                type: 'session.shutdown',
+                data: {
+                    modelMetrics: {
+                        'google/gemini-3.8-flash': {
+                            requests: { count: 2 },
+                            usage: {
+                                inputTokens: input,
+                                outputTokens: 3,
+                                cacheReadTokens: 39364,
+                                cacheWriteTokens: 0,
+                                reasoningTokens: 27,
+                            },
+                        },
+                    },
+                },
+            });
+        const events = [shutdown(43824), '{"type":"user.message"}', shutdown(87695)].join('\n');
+        expect(shutdownModels(events)).toEqual([
+            {
+                model: 'google/gemini-3.8-flash',
+                calls: 2,
+                usage: {
+                    inputTokens: 87695,
+                    cachedInputTokens: 39364,
+                    outputTokens: 30,
+                    reasoningTokens: 27,
+                },
+            },
+        ]);
+        expect(shutdownModels('{"type":"user.message"}')).toBeUndefined();
+    });
+});
+
+describe('where usage is recorded', () => {
+    const kept = process.env[LEDGER_ENV];
+    afterEach(() => {
+        if (kept === undefined) {
+            delete process.env[LEDGER_ENV];
+        } else {
+            process.env[LEDGER_ENV] = kept;
+        }
+    });
+
+    it('records only in a project being tuned, unless told where', () => {
+        delete process.env[LEDGER_ENV];
+        const dir = mkdtempSync(join(tmpdir(), 'zen-ledger-'));
+        try {
+            expect(ledgerPath(dir)).toBeUndefined();
+            mkdirSync(join(dir, '.finetune'));
+            expect(ledgerPath(dir)).toBe(join(dir, '.finetune', 'usage', 'ledger.jsonl'));
+            process.env[LEDGER_ENV] = '/tmp/elsewhere.jsonl';
+            expect(ledgerPath(dir)).toBe('/tmp/elsewhere.jsonl');
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });
 

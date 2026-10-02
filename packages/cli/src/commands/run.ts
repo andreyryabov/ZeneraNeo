@@ -1,4 +1,5 @@
 import type { Input } from '@zenera/neo';
+import { usageByModel } from '@zenera/neo';
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parse } from '../args.ts';
@@ -23,6 +24,7 @@ import {
     write,
 } from '../term.ts';
 import { parseChoice } from '../tui/theme.ts';
+import { appendUsage } from '../usage.ts';
 
 const USAGE = 'zen run [project] [prompt] [options]';
 
@@ -368,6 +370,16 @@ async function once(
         narrator.done();
         process.off('SIGINT', onInterrupt);
     }
+    appendUsage(where.project.dir, {
+        kind: 'run',
+        ts: new Date().toISOString(),
+        runDir: outcome.run.dir,
+        session: engine.session.id,
+        ok: true,
+        stopReason: outcome.result.stopReason,
+        durationMs: outcome.durationMs,
+        models: usageByModel(outcome.result.state.trajectory),
+    });
 
     if (asJson) {
         // --out is a destination, not a copy, and with --json the answer *is*
