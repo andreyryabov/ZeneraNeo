@@ -10,7 +10,18 @@ import * as Projects from '../projects.ts';
 import { readBatch, readRequest } from '../request.ts';
 import { target, type Target } from '../resolve.ts';
 import { display } from '../session.ts';
-import { bold, cyan, dim, json, jsonText, note, readStdin, usageError, write } from '../term.ts';
+import {
+    bold,
+    cyan,
+    dim,
+    drivenByAgent,
+    json,
+    jsonText,
+    note,
+    readStdin,
+    usageError,
+    write,
+} from '../term.ts';
 import { parseChoice } from '../tui/theme.ts';
 
 const USAGE = 'zen run [project] [prompt] [options]';
@@ -230,7 +241,8 @@ export const run: Command = {
                 !shot &&
                 !values.plain &&
                 !ctx.json &&
-                Boolean(process.stdout.isTTY && process.stdin.isTTY);
+                Boolean(process.stdout.isTTY && process.stdin.isTTY) &&
+                !drivenByAgent();
 
             if (drawing) {
                 const { start } = await import('../tui/app.tsx');

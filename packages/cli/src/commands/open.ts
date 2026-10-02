@@ -6,7 +6,7 @@ import { one, parse } from '../args.ts';
 import type { Command } from '../command.ts';
 import { project as resolveProject } from '../resolve.ts';
 import { editorFiles } from '../scaffold.ts';
-import { CliError, cyan, dim, EXIT, json, note, usageError } from '../term.ts';
+import { CliError, cyan, dim, EXIT, isInteractive, json, note, usageError } from '../term.ts';
 
 const USAGE = 'zen open [project] [--editor <cmd>] [--wait]';
 
@@ -300,9 +300,9 @@ function verify(editor: Editor): void {
                 : `${editor.from} names a command that is not on PATH`,
         );
     }
-    if ((editor.from === '$VISUAL' || editor.from === '$EDITOR') && !process.stdin.isTTY) {
+    if ((editor.from === '$VISUAL' || editor.from === '$EDITOR') && !isInteractive()) {
         throw usageError(
-            `${editor.from} names a terminal editor and there is no terminal here`,
+            `${editor.from} names a terminal editor and there is no one at a terminal here`,
             'name a windowed one with --editor, or set $ZENERA_EDITOR',
         );
     }

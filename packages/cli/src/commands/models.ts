@@ -38,6 +38,7 @@ import {
     dim,
     EXIT,
     green,
+    isInteractive,
     json,
     note,
     progress,
@@ -744,9 +745,9 @@ const browse: Sub = async (ctx, args) => {
     if (initial !== undefined && !isProvider(initial)) {
         throw usageError(`unknown provider "${initial}"`, `known: ${PROVIDERS.join(', ')}`);
     }
-    if (ctx.json || !process.stdin.isTTY || !process.stderr.isTTY) {
+    if (ctx.json || !isInteractive()) {
         throw usageError(
-            'browsing needs a terminal',
+            'browsing needs a person at a terminal',
             'from a script: zen models ls --json, or zen models pick --chat',
         );
     }

@@ -422,6 +422,71 @@ describe('reading the keyboard', () => {
     });
 });
 
+describe('an agent at the terminal', () => {
+    // Not `vi.stubEnv`: earlier tests replace `process.env` and it keeps the old object.
+    const NAMES = ['ZENERA_AGENT', 'AI_AGENT', 'COPILOT_AGENT'];
+    let held: (string | undefined)[] = [];
+    const set = (name: string, value: string): void => {
+        process.env[name] = value;
+    };
+    const clear = (): void => {
+        for (const name of NAMES) {
+            delete process.env[name];
+        }
+    };
+    beforeEach(() => {
+        held = NAMES.map((name) => process.env[name]);
+        clear();
+    });
+    afterEach(() => {
+        clear();
+        NAMES.forEach((name, i) => {
+            if (held[i] !== undefined) {
+                process.env[name] = held[i];
+            }
+        });
+    });
+
+    it('is told apart by the variables agents export', () => {
+        expect(term.drivenByAgent()).toBe(false);
+        set('AI_AGENT', 'github_copilot_vscode_agent');
+        expect(term.drivenByAgent()).toBe(true);
+        clear();
+        set('COPILOT_AGENT', '1');
+        expect(term.drivenByAgent()).toBe(true);
+    });
+
+    it('lets ZENERA_AGENT decide either way, so a person can opt back in', () => {
+        set('ZENERA_AGENT', '1');
+        expect(term.drivenByAgent()).toBe(true);
+        set('AI_AGENT', 'github_copilot_vscode_agent');
+        set('ZENERA_AGENT', '0');
+        expect(term.drivenByAgent()).toBe(false);
+    });
+
+    it('is never asked anything, even on a real pty', () => {
+        const streams = [process.stdin, process.stderr];
+        const before = streams.map((s) => Object.getOwnPropertyDescriptor(s, 'isTTY'));
+        try {
+            for (const s of streams) {
+                Object.defineProperty(s, 'isTTY', { value: true, configurable: true });
+            }
+            expect(term.isInteractive()).toBe(true);
+            set('COPILOT_AGENT', '1');
+            expect(term.isInteractive()).toBe(false);
+        } finally {
+            streams.forEach((s, i) => {
+                const was = before[i];
+                if (was) {
+                    Object.defineProperty(s, 'isTTY', was);
+                } else {
+                    delete (s as { isTTY?: boolean }).isTTY;
+                }
+            });
+        }
+    });
+});
+
 describe('cutting a styled line', () => {
     // A row that wraps is a row the erase does not know about, and the width a
     // terminal counts is the visible one.

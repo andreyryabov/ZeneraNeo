@@ -138,7 +138,8 @@ export function buildSandbox(opts: SandboxInputs): SandboxSetup {
     // Skills and assets are mounted read-only, and a python script run from a
     // read-only directory fails on writing its own `__pycache__` — a confusing
     // error about a file nobody asked for.
-    const extra = { HOME, PYTHONDONTWRITEBYTECODE: '1', ...(keys?.env ?? {}) };
+    // `ZENERA_AGENT` tells a `zen` run by `run_command` that no person is there.
+    const extra = { HOME, PYTHONDONTWRITEBYTECODE: '1', ZENERA_AGENT: '1', ...(keys?.env ?? {}) };
     const spec = toSpec(base, extra, secretsOf(keys?.secrets, opts.env));
 
     const agents: Record<string, SandboxSpec> = {};
@@ -152,7 +153,7 @@ export function buildSandbox(opts: SandboxInputs): SandboxSetup {
             const own = merged.keys === false ? undefined : keys;
             agents[agent.name] = toSpec(
                 merged,
-                { HOME, PYTHONDONTWRITEBYTECODE: '1', ...(own?.env ?? {}) },
+                { HOME, PYTHONDONTWRITEBYTECODE: '1', ZENERA_AGENT: '1', ...(own?.env ?? {}) },
                 own && secretsOf(own.secrets, opts.env),
             );
         }

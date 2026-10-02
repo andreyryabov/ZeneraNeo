@@ -292,8 +292,17 @@ export function fail(message: string, hint?: string): void {
 // fails in CI, because only one of the two tells you which flag you forgot.
 // ---------------------------------------------------------------------------
 
+/** An agent's terminal can be a real pty (VS Code Copilot's is), so TTY checks alone miss it. */
+export function drivenByAgent(): boolean {
+    const own = process.env['ZENERA_AGENT'];
+    if (own !== undefined) {
+        return own !== '' && own !== '0';
+    }
+    return Boolean(process.env['AI_AGENT'] || process.env['COPILOT_AGENT']);
+}
+
 export function isInteractive(): boolean {
-    return Boolean(process.stdin.isTTY && process.stderr.isTTY);
+    return Boolean(process.stdin.isTTY && process.stderr.isTTY) && !drivenByAgent();
 }
 
 // A banner is for whoever is sitting there, and the only proof that anyone is
@@ -309,7 +318,8 @@ export function deferBanner(print: () => void): void {
 
 function requireTty(what: string, flag: string): void {
     if (!isInteractive()) {
-        throw usageError(`cannot ask for ${what} without a terminal`, `pass ${flag} instead`);
+        const why = drivenByAgent() ? 'when an agent is running zen' : 'without a terminal';
+        throw usageError(`cannot ask for ${what} ${why}`, `pass ${flag} instead`);
     }
     const banner = pending;
     pending = undefined;
