@@ -1,5 +1,4 @@
-import { tool, type AnyTool } from '@zenera/neo';
-import { loose, matcher, PatternError } from '../common/match.ts';
+import { loose, matcher, PatternError, tool, type AnyTool } from '@zenera/neo';
 import type { NodeKind } from './graph.ts';
 import { toTypeScript } from './hydrate.ts';
 import { fields, grepNodes, listNodes, propertyCount, type Row } from './lookup.ts';

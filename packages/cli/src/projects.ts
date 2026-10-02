@@ -4,6 +4,7 @@ import {
     FILES_DIR,
     MEMORY_MOUNT,
     memoryDir,
+    pidAlive,
     skillDirs,
     skillMounts,
     SKILLS_MOUNT,
@@ -377,23 +378,10 @@ export function isBusy(sessionDir: string): boolean {
     const path = join(sessionDir, '.lock');
     try {
         const { pid } = JSON.parse(readFileSync(path, 'utf8')) as { pid?: number };
-        return typeof pid === 'number' && alive(pid);
+        return typeof pid === 'number' && pidAlive(pid);
     } catch {
         // Absent, unreadable or malformed: nothing is holding it.
         return false;
-    }
-}
-
-/**
- * `kill(pid, 0)` sends no signal and only asks whether the process exists.
- * EPERM means it exists and belongs to someone else, which still counts.
- */
-export function alive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (err) {
-        return (err as NodeJS.ErrnoException).code === 'EPERM';
     }
 }
 

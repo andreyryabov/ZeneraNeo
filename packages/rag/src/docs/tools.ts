@@ -1,5 +1,4 @@
-import { tool, type AnyTool } from '@zenera/neo';
-import { PatternError } from '../common/match.ts';
+import { PatternError, tool, type AnyTool } from '@zenera/neo';
 import { assemble } from './assemble.ts';
 import { CHUNK_KINDS } from './chunk.ts';
 import {

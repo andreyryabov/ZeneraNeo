@@ -1,4 +1,4 @@
-import type { Matcher } from '../common/match.ts';
+import type { Matcher } from '@zenera/neo';
 import type { ApiGraph, NodeAttrs, NodeKind, Relation } from './graph.ts';
 import { listNodes } from './lookup.ts';
 

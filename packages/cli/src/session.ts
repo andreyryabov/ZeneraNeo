@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { hostname } from 'node:os';
+import { claimLock, ownLock } from '@zenera/neo';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { readJson, writeJson } from './home.ts';
 import { isStamp, stamp, stampInstant } from './ids.ts';
-import { alive, isBusy, runIds, sessionIds, sessionsDir } from './projects.ts';
+import { isBusy, runIds, sessionIds, sessionsDir } from './projects.ts';
 import { CliError, EXIT, invalidError, usageError } from './term.ts';
 
 // ---------------------------------------------------------------------------
@@ -144,45 +144,24 @@ export function requireSession(projectDir: string, id: string): SessionPaths {
 
 // ---------------------------------------------------------------------------
 // Locking
-//
-// There is no daemon, so "is this session running" is answered by a file that
-// names a process. A lock whose process is gone is stale by definition and is
-// taken rather than respected — the alternative is a crashed run making its
-// session permanently unusable.
 // ---------------------------------------------------------------------------
-
-interface Lock {
-    pid: number;
-    host: string;
-    startedAt: string;
-}
 
 export interface Held {
     release(): void;
 }
 
 export function acquire(p: SessionPaths): Held {
-    const lock: Lock = { pid: process.pid, host: hostname(), startedAt: new Date().toISOString() };
-    const body = `${JSON.stringify(lock, null, 2)}\n`;
-    try {
-        // 'wx' fails when the file exists — the create and the check are one
-        // operation, so two `zen run`s racing cannot both win.
-        writeFileSync(p.lock, body, { flag: 'wx' });
-    } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
-            throw err;
-        }
-        const held = current(p);
-        if (held && alive(held.pid) && held.host === hostname()) {
-            throw new CliError(
+    claimLock(
+        p.lock,
+        ownLock(),
+        (held) =>
+            new CliError(
                 `session ${p.id} is already running (pid ${held.pid})`,
                 EXIT.failed,
                 'wait for it, or start another with --new',
-            );
-        }
-        // Stale, or from another machine's run that cannot be verified here.
-        writeFileSync(p.lock, body);
-    }
+            ),
+        2,
+    );
 
     let released = false;
     const release = (): void => {
@@ -193,14 +172,6 @@ export function acquire(p: SessionPaths): Held {
         rmSync(p.lock, { force: true });
     };
     return { release };
-}
-
-function current(p: SessionPaths): Lock | undefined {
-    try {
-        return JSON.parse(readFileSync(p.lock, 'utf8')) as Lock;
-    } catch {
-        return undefined;
-    }
 }
 
 // ---------------------------------------------------------------------------

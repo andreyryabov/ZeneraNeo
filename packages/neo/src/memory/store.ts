@@ -1,7 +1,7 @@
-import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { unlinkSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { hostname } from 'node:os';
 import { join } from 'node:path';
+import { claimLock, liveHolder, ownLock, type Lock } from '../lock.ts';
 import { MemoryGraph } from './graph.ts';
 import { MemoryError } from './types.ts';
 import { VectorBlock } from './vectors.ts';
@@ -47,12 +47,6 @@ export interface MemoryManifest {
     nodes: number;
     edges: number;
     updatedAt: string;
-}
-
-export interface Lock {
-    pid: number;
-    host: string;
-    startedAt: string;
 }
 
 export interface OpenOptions {
@@ -217,35 +211,16 @@ export class MemoryStore {
         }
     }
 
-    /**
-     * `wx` makes the create and the check one operation, so two runs racing for
-     * the same project cannot both win.
-     */
     #claim(): void {
-        const path = join(this.dir, LOCK_FILE);
-        const lock: Lock = {
-            pid: process.pid,
-            host: hostname(),
-            startedAt: new Date().toISOString(),
-        };
-        const body = `${JSON.stringify(lock, null, 4)}\n`;
-        try {
-            writeFileSync(path, body, { flag: 'wx' });
-            this.#locked = true;
-            return;
-        } catch (err) {
-            if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
-                throw err;
-            }
-        }
-        const held = readLock(path);
-        if (held && held.host === hostname() && alive(held.pid)) {
-            throw new MemoryError(
-                `this memory is in use (pid ${held.pid}, since ${held.startedAt})`,
-                'wait for that run to finish, or remove .lock if it crashed',
-            );
-        }
-        writeFileSync(path, body);
+        claimLock(
+            join(this.dir, LOCK_FILE),
+            ownLock(),
+            (held) =>
+                new MemoryError(
+                    `this memory is in use (pid ${held.pid}, since ${held.startedAt})`,
+                    'wait for that run to finish, or remove .lock if it crashed',
+                ),
+        );
         this.#locked = true;
     }
 }
@@ -314,27 +289,5 @@ async function atomic(path: string, body: string | Uint8Array): Promise<void> {
  * directory this process has no intention of opening for writing.
  */
 export function lockHolder(dir: string): Lock | undefined {
-    const held = readLock(join(dir, LOCK_FILE));
-    return held && held.host === hostname() && alive(held.pid) ? held : undefined;
-}
-
-function readLock(path: string): Lock | undefined {
-    try {
-        return JSON.parse(readFileSync(path, 'utf8')) as Lock;
-    } catch {
-        return undefined;
-    }
-}
-
-/**
- * `kill(pid, 0)` sends no signal and only asks whether the process exists.
- * EPERM means it exists and belongs to someone else, which still counts.
- */
-function alive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (err) {
-        return (err as NodeJS.ErrnoException).code === 'EPERM';
-    }
+    return liveHolder(join(dir, LOCK_FILE));
 }

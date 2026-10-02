@@ -1,6 +1,5 @@
-import type { Embedder } from '@zenera/neo';
+import { loose, PatternError, type Embedder } from '@zenera/neo';
 import { assertSameEmbedding } from '../common/manifest.ts';
-import { loose, PatternError } from '../common/match.ts';
 import { CHUNK_KINDS, parseLines } from './chunk.ts';
 import {
     openIndex,

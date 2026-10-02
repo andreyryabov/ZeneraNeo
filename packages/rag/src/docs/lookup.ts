@@ -1,5 +1,5 @@
 import { CliError, EXIT } from '@zenera/cli/lib';
-import { loose, type MatchOptions } from '../common/match.ts';
+import { loose, type MatchOptions } from '@zenera/neo';
 import type { HeadingRecord } from './files.ts';
 import type { DocsIndex } from './search.ts';
 import { under } from './search.ts';
