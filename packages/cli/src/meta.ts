@@ -1,7 +1,6 @@
 import type { ModelUsage, TokenUsage } from '@zenera/neo';
 import { spawn as nodeSpawn } from 'node:child_process';
 import {
-    appendFileSync,
     closeSync,
     createWriteStream,
     existsSync,
@@ -761,47 +760,22 @@ export function openLog(dir: string, now = new Date()): Log {
     };
 }
 
-/**
- * Every meta session the project ran and how it ended, so `zen meta resume`
- * needs no id. `running` is never overwritten by a run that was killed, so it
- * reads the same as `failed`: not finished.
- */
-export type SessionState = 'running' | 'done' | 'failed';
-
-const sessionLog = (dir: string): string => `${dir}/.tmp/logs/meta.sessions`;
-/** The single-id file older versions wrote. */
-const legacySession = (dir: string): string => `${dir}/.tmp/logs/meta.session`;
-
-export function recordSession(dir: string, id: string, state: SessionState): void {
-    mkdirSync(`${dir}/.tmp/logs`, { recursive: true });
-    appendFileSync(sessionLog(dir), `${new Date().toISOString()}\t${id}\t${state}\n`);
+/** The project's last meta session, so `zen meta resume` needs no id. */
+function sessionFile(dir: string): string {
+    return `${dir}/.tmp/logs/meta.session`;
 }
 
-/**
- * The newest session that did not finish, else the newest of all. A quick
- * question asked after a long run stopped must not stand in for it.
- */
+export function recordSession(dir: string, id: string): void {
+    mkdirSync(`${dir}/.tmp/logs`, { recursive: true });
+    writeFileSync(sessionFile(dir), `${id}\n`);
+}
+
 export function lastSession(dir: string): string | undefined {
-    let text: string;
     try {
-        text = readFileSync(sessionLog(dir), 'utf8');
+        return readFileSync(sessionFile(dir), 'utf8').trim() || undefined;
     } catch {
-        try {
-            return readFileSync(legacySession(dir), 'utf8').trim() || undefined;
-        } catch {
-            return undefined;
-        }
+        return undefined;
     }
-    const latest = new Map<string, SessionState>();
-    for (const line of text.split('\n')) {
-        const [, id, state] = line.split('\t');
-        if (id && state) {
-            latest.delete(id);
-            latest.set(id, state as SessionState);
-        }
-    }
-    const newestFirst = [...latest].reverse();
-    return (newestFirst.find(([, state]) => state !== 'done') ?? newestFirst[0])?.[0];
 }
 
 /** Everything the sink is told, kept by the log too — and the detail only there. */
@@ -1019,11 +993,7 @@ export function transient(out: Outcome): string | undefined {
     if (status === 408 || status >= 500) {
         return `the provider failed (${status})`;
     }
-    if (
-        /timed out|connection error|ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up/i.test(
-            String(data.message ?? ''),
-        )
-    ) {
+    if (/timed out|ECONNRESET|socket hang up/i.test(String(data.message ?? ''))) {
         return 'the connection failed';
     }
     if (status === 400 && injected(out.events.slice(0, at))) {

@@ -154,9 +154,8 @@ export const meta: Command = {
         '`zen meta inspect` is `zen meta run /inspect <run dir>` with the run',
         'picked from a list - project, session, then run. Off a terminal, name it.',
         '',
-        '`zen meta resume` picks up the last session the project ran that did not',
-        'finish - or the one named - where it stopped. A run that ends any way but',
-        'success prints it.',
+        '`zen meta resume` picks up the last session the project ran - or the one',
+        'named - where it stopped. A run that ends any way but success prints it.',
         '',
         'Its tokens are counted as it runs and summed when it ends. In a project with',
         'a .finetune/, every call - and every zen run and inspect ask it makes - is',
@@ -447,8 +446,7 @@ async function inspectRun(ctx: Context, values: Flags, args: string[]): Promise<
 //
 // A long run stops for reasons nobody chose - a refused request, a closed
 // laptop, Ctrl-C. Copilot keeps the session; this hands it back, by default the
-// last one the project ran that did not finish, with the words (or a plain
-// "continue") as the turn.
+// last one the project ran, with the words (or a plain "continue") as the turn.
 // ---------------------------------------------------------------------------
 
 async function resumeRun(ctx: Context, values: Flags, args: string[]): Promise<void> {
@@ -562,7 +560,7 @@ async function go(
     log.line(`model   ${chosen.ref} from ${SOURCE_LABELS[chosen.from]}`);
     log.line(`command ${[binary.command, ...binary.args, ...elided].join(' ')}`);
     if (session) {
-        recordSession(project.dir, session, 'running');
+        recordSession(project.dir, session);
         log.line(`session ${session}`);
     }
     log.line('');
@@ -615,7 +613,7 @@ async function go(
             });
             if (outcome.sessionId && outcome.sessionId !== session) {
                 session = outcome.sessionId;
-                recordSession(project.dir, session, 'running');
+                recordSession(project.dir, session);
             }
             const models = session ? sessionTotals(session) : undefined;
             if (session && models) {
@@ -644,9 +642,6 @@ async function go(
             const again = { ...values, resume: session, continue: false };
             outcome = await run(argv(again, project.dir, RESUME_PROMPT, wiring.secret));
             reason = transient(outcome);
-        }
-        if (session) {
-            recordSession(project.dir, session, outcome.exitCode === 0 ? 'done' : 'failed');
         }
 
         log.line('');
