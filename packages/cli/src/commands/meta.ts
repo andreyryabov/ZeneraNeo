@@ -55,7 +55,6 @@ import {
     dim,
     EXIT,
     green,
-    invalidError,
     isInteractive,
     json,
     note,
@@ -68,20 +67,17 @@ import {
     writeAll,
 } from '../term.ts';
 import { appendUsage, LEDGER_ENV, ledgerPath, META_SESSION_ENV } from '../usage.ts';
-import { locate as locateRun } from './inspect.ts';
 
 const USAGE = 'zen meta run [project] [prompt] [options]';
 
-const VERBS = new Set(['model', 'run', 'prompts', 'inspect', 'resume']);
+const VERBS = new Set(['model', 'run', 'prompts', 'resume']);
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** A copilot session id, or the 7+ hex prefix of one it also accepts. */
 const SESSION_ID = /^[0-9a-f]{7,}(?:-[0-9a-f]+)*$/i;
 
 interface Flags {
     project?: string;
-    session?: string;
-    run?: string;
-    dir?: string;
     provider?: string;
     model?: string;
     prompt?: string;
@@ -90,6 +86,7 @@ interface Flags {
     share?: string;
     resume?: string;
     continue?: boolean;
+    'session-id'?: string;
     retries?: string;
     'allow-all'?: boolean;
     'allow-tool'?: string;
@@ -112,7 +109,6 @@ export const meta: Command = {
         '  zen meta run [project] /<name> [words]   run a stored prompt',
         '  zen meta run [project]                   pick one of its stored prompts',
         '  zen meta prompts [project]               list the stored prompts',
-        '  zen meta inspect [project] [run]         audit one run with /inspect',
         '  zen meta resume [project] [session]      carry on a run that stopped',
         '  zen meta model [ref]                     show or set the model it uses',
         '',
@@ -123,7 +119,6 @@ export const meta: Command = {
         '  [prompt]    Your question, in quotes. Also --prompt, or piped in.',
         '  /<name>     A prompt file in .github/prompts/<name>.prompt.md.',
         '  [words]     Appended to that prompt as a final line.',
-        '  [run]       A run id or a run directory. At a terminal, omit it to pick one.',
         '',
         'Options:',
         '  --project <name|dir>   Which project to work in. The agent is rooted there.',
@@ -135,12 +130,10 @@ export const meta: Command = {
         '  --ask                  Have it ask before each tool. Default: it does not.',
         '  --add-dir <dir>        Another directory it may touch. Repeatable.',
         '  --resume <id>          Continue a copilot session. --continue takes the last.',
+        '  --session-id <uuid>    Start a new session under this id. Default: a random one.',
         `  --retries <n>          Resume after a rate limit or outage. Default ${DEFAULT_RESUMES}, 0 = off.`,
         '  --share <file>         Write the transcript to a markdown file.',
         '  --dry-run              Print what would run, secrets masked, and stop.',
-        '  --session <id>         inspect: the session to pick the run from.',
-        '  --run <id|dir>         inspect: the run. Same as the [run] argument.',
-        '  --dir <run dir>        inspect: the run, by directory.',
         '',
         'It always uses your own keys — `zen key add` — and never a coding-agent',
         'subscription. The answer goes to stdout and the progress to stderr, so',
@@ -150,9 +143,6 @@ export const meta: Command = {
         'editor expects to read, write and run things, and a terminal has nobody',
         'watching to answer. Narrow it with --allow-tool, or restore the asking',
         'with --ask.',
-        '',
-        '`zen meta inspect` is `zen meta run /inspect <run dir>` with the run',
-        'picked from a list - project, session, then run. Off a terminal, name it.',
         '',
         '`zen meta resume` picks up the last session the project ran - or the one',
         'named - where it stopped. A run that ends any way but success prints it.',
@@ -183,8 +173,6 @@ export const meta: Command = {
         '  zen meta prompts',
         '  zen meta run /project-review',
         '  zen meta run acme /spec-sync-project agents/triage.md',
-        '  zen meta inspect',
-        '  zen meta inspect acme 20260825-143012-a7f3',
         '  zen meta resume acme',
         '  git diff | zen meta run "what broke?" --allow-tool read',
         '  zen meta model vertex/gemini-3.8-flash',
@@ -196,9 +184,6 @@ export const meta: Command = {
             ctx.args,
             {
                 project: { type: 'string' },
-                session: { type: 'string' },
-                run: { type: 'string' },
-                dir: { type: 'string' },
                 provider: { type: 'string' },
                 model: { type: 'string' },
                 prompt: { type: 'string', short: 'p' },
@@ -207,6 +192,7 @@ export const meta: Command = {
                 share: { type: 'string' },
                 resume: { type: 'string' },
                 continue: { type: 'boolean' },
+                'session-id': { type: 'string' },
                 retries: { type: 'string' },
                 'allow-all': { type: 'boolean' },
                 'allow-tool': { type: 'string' },
@@ -247,9 +233,6 @@ export const meta: Command = {
         }
         if (verb === 'prompts') {
             return await prompts(ctx, values, args);
-        }
-        if (verb === 'inspect') {
-            return await inspectRun(ctx, values, args);
         }
         if (verb === 'resume') {
             return await resumeRun(ctx, values, args);
@@ -400,48 +383,6 @@ async function prompts(ctx: Context, values: Flags, args: string[]): Promise<voi
 }
 
 // ---------------------------------------------------------------------------
-// zen meta inspect [project] [run id | run dir]
-//
-// `zen meta run /inspect <run dir>` with the run chosen for you. The prompt is
-// the whole behaviour; this only finds the one word it needs, so the two forms
-// send the same bytes.
-// ---------------------------------------------------------------------------
-
-async function inspectRun(ctx: Context, values: Flags, args: string[]): Promise<void> {
-    const [head, ...tail] = args;
-    const named = !values.project && head ? await Projects.find(head) : undefined;
-    const rest = named ? tail : args;
-    if (rest.length > 1) {
-        throw usageError('inspect takes one run', 'zen meta inspect [project] [run id | run dir]');
-    }
-    const handle = rest[0] ?? values.run;
-    const asking = isInteractive() && !ctx.json;
-    // Off a terminal "the newest" would be a guess nobody confirmed.
-    if (!handle && !values.dir && !asking) {
-        throw usageError(
-            'which run?',
-            'name one: zen meta inspect --run <id|dir>, or run it at a terminal to pick',
-        );
-    }
-    const at = await locateRun(
-        ctx.cwd,
-        { project: named?.dir ?? values.project, session: values.session, dir: values.dir },
-        handle,
-        asking,
-    );
-    if (!existsSync(at.run.state)) {
-        throw invalidError(
-            `run ${at.run.id} has no state.json`,
-            'only a run that got far enough to save state can be inspected',
-        );
-    }
-    const project = await Projects.openDir(at.project);
-    note(`${bold(at.run.id)} ${dim(at.run.dir)}`);
-    refresh(project);
-    await runPrompt(ctx, values, project, 'inspect', [at.run.dir]);
-}
-
-// ---------------------------------------------------------------------------
 // zen meta resume [project] [session id] [words...]
 //
 // A long run stops for reasons nobody chose - a refused request, a closed
@@ -476,6 +417,15 @@ async function go(
     project: Projects.Project,
     prompt: string,
 ): Promise<void> {
+    const fresh = values['session-id'];
+    if (fresh !== undefined) {
+        if (values.resume || values.continue) {
+            throw usageError('--session-id starts a new session', 'drop --resume / --continue');
+        }
+        if (!UUID.test(fresh)) {
+            throw usageError(`--session-id must be a UUID, not ${fresh}`, 'try: uuidgen');
+        }
+    }
     const shell = process.env[MODEL_ENV];
     loadProjectEnv(project.dir);
     ensureHome();
@@ -517,7 +467,7 @@ async function go(
     const wiring = wire(store, entry, id);
     const binary = locate();
     // Named up front, so a run killed before copilot reports its id can still be resumed.
-    let session = values.resume ?? (values.continue ? undefined : randomUUID());
+    let session = values.resume ?? (values.continue ? undefined : (fresh ?? randomUUID()));
     const args = argv(values, project.dir, prompt, wiring.secret, session);
     const retries = count(values.retries, '--retries') ?? DEFAULT_RESUMES;
 

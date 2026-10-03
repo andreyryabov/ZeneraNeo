@@ -241,7 +241,7 @@ so they never go stale - and edits to them do not survive.
 | `/spec-sync-project`   | Makes every file match `SPECIFICATION.md`, both directions.      |
 | `/spec-apply-feedback` | Folds your answers in `SPECIFICATION-FEEDBACK.md` into the spec. |
 | `/project-review`      | Reads the project as a reviewer would, and reports.              |
-| `/inspect [run]`       | Audits one run and says which instruction to change.             |
+| `/analyze [run]`       | Analyzes one run and says which instruction to change.           |
 | `/new-agent`           | Adds an agent - prompt, wiring and hand-offs.                    |
 | `/new-skill`           | Adds a skill under `agents/skills/`.                             |
 
@@ -643,8 +643,7 @@ zen meta run acme "review the last commit"
 zen meta prompts                             # which /<name> prompts this project has
 zen meta run /project-review                 # .github/prompts/project-review.prompt.md
 zen meta run acme /spec-sync-project agents/triage.md
-zen meta inspect                             # pick a run, then audit it with /inspect
-zen meta inspect acme 20260825-143012-a7f3   # the same, run named
+zen meta run /analyze 20260825-143012-a7f3   # analyze one run
 git diff | zen meta run "what broke?" --allow-tool read
 zen meta run --dry-run "hello"               # what would run, secrets masked
 ```
@@ -682,12 +681,6 @@ same prompt runs from the editor, from a terminal and from CI.
 A terminal has no menu dropping down as you type a slash, so
 `zen meta prompts` lists what this project holds, each with its description.
 `zen meta run` with nothing to say asks the same question interactively.
-
-`zen meta inspect` is `zen meta run /inspect <run dir>` with the run picked for
-you - project, session, then run, from a list. The `/inspect` prompt reads the
-run's graph, asks the recorded model calls why they skipped memory or did not
-fork, and reports the run's health and the sentences to change. Off a terminal
-there is no list, so name the run: `--run <id|dir>` or `--dir <run dir>`.
 
 ### Which model it runs on
 
