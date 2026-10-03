@@ -1,5 +1,6 @@
 import { bold, dim } from '@zenera/cli/lib';
 import type { Assembly, Excerpt, Piece } from './assemble.ts';
+import { isFailure, type ReadBlock, type ReadMany } from './lookup.ts';
 import type { Match } from './search.ts';
 
 // ---------------------------------------------------------------------------
@@ -60,6 +61,55 @@ function renderPiece(
             : `${faint(String(piece.start + at).padStart(width))} ${faint('|')} ${line}`,
     );
     return [...lines, ''];
+}
+
+/**
+ * Each read under a header that is itself a read, so a citation copied from
+ * the header, or the line that continues a cut block, pastes straight back.
+ */
+export function renderReads(read: ReadMany, options: RenderOptions = {}): string {
+    const paint = options.colour === false ? (s: string) => s : undefined;
+    const strong = paint ?? bold;
+    const faint = paint ?? dim;
+
+    const blocks = read.results.map((result) =>
+        isFailure(result)
+            ? [`## ${strong(result.target)}`, `error: ${result.error} - ${result.hint}`]
+            : renderBlock(result, options, strong, faint),
+    );
+    return blocks.map((lines) => lines.join('\n')).join('\n\n');
+}
+
+function renderBlock(
+    block: ReadBlock,
+    options: RenderOptions,
+    strong: (s: string) => string,
+    faint: (s: string) => string,
+): string[] {
+    const notes = [
+        block.section ? `(#${block.section})` : '',
+        block.asked ? `(asked ${block.asked}; the document ends at ${block.total})` : '',
+    ].filter(Boolean);
+    const width = String(block.end).length;
+    const out = [`## ${strong(block.target)}${notes.length ? ` ${faint(notes.join(' '))}` : ''}`];
+
+    for (const [at, line] of block.lines.entries()) {
+        out.push(
+            options.numbers === false
+                ? line
+                : `${faint(String(block.from + at).padStart(width))} ${faint('|')} ${line}`,
+        );
+    }
+    if (block.continue) {
+        out.push(
+            faint(
+                block.lines.length > 0
+                    ? `... truncated at line ${block.to} of ${block.end} - read ${block.continue} to continue`
+                    : `... the line budget ran out before this one - read ${block.continue}`,
+            ),
+        );
+    }
+    return out;
 }
 
 /** The one-line-per-match view, for `--quiet` and for the prompt loop. */

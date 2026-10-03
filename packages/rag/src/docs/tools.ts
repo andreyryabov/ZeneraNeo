@@ -3,9 +3,11 @@ import { assemble } from './assemble.ts';
 import { CHUNK_KINDS } from './chunk.ts';
 import {
     grepLines,
+    isFailure,
     listFiles,
     listSections,
     listTables,
+    readMany,
     readRange,
     readSection,
 } from './lookup.ts';
@@ -89,10 +91,11 @@ interface GrepArgs {
 }
 
 interface ReadArgs {
-    file: string;
+    file?: string;
     section?: string;
     from?: number;
     to?: number;
+    reads?: { file: string; section?: string; from?: number; to?: number }[];
 }
 
 export function docsTools<TCtx = unknown>(
@@ -332,7 +335,8 @@ export function docsTools<TCtx = unknown>(
         description:
             'Reads a document verbatim: a whole named section, or a line range as printed by ' +
             'search_docs or grep_docs. Use it when a passage was found and the lines around ' +
-            'it are needed in full, with nothing omitted and nothing summarised.',
+            'it are needed in full, with nothing omitted and nothing summarised. To read ' +
+            'several passages, name them all in `reads` in one call instead of calling again.',
         parameters: {
             type: 'object',
             properties: {
@@ -346,11 +350,39 @@ export function docsTools<TCtx = unknown>(
                 },
                 from: { type: 'integer', description: 'First line, 1-based. Default 1.' },
                 to: { type: 'integer', description: 'Last line. Default the end of the document.' },
+                reads: {
+                    type: 'array',
+                    description:
+                        'Instead of file: every passage to read, each as {file, section} or ' +
+                        `{file, from, to}. They share a ceiling of ${MAX_LINES} lines.`,
+                    items: {
+                        type: 'object',
+                        properties: {
+                            file: { type: 'string' },
+                            section: { type: 'string' },
+                            from: { type: 'integer' },
+                            to: { type: 'integer' },
+                        },
+                        required: ['file'],
+                        additionalProperties: false,
+                    },
+                },
             },
-            required: ['file'],
             additionalProperties: false,
         },
         execute: async (args) => {
+            if (args.reads !== undefined) {
+                if (args.file !== undefined || args.reads.length === 0) {
+                    return {
+                        error: args.file ? 'send `file` or `reads`, not both' : '`reads` is empty',
+                        hint: 'put every passage in `reads`, one {file, section} or {file, from, to} each',
+                    };
+                }
+                return await readSeveral(args.reads);
+            }
+            if (!args.file) {
+                return { error: 'nothing to read', hint: 'send `file`, or `reads` for several' };
+            }
             const file = index.resolveFiles([args.file])[0];
             if (!file) {
                 return {
@@ -380,6 +412,48 @@ export function docsTools<TCtx = unknown>(
     });
 
     return [searchDocs, listDocs, grepDocs, readDocs];
+
+    async function readSeveral(reads: NonNullable<ReadArgs['reads']>) {
+        const names = new Set(index.manifest.sources.map((s) => s.name));
+        const resolved = await guard(() =>
+            reads.map((r) => ({
+                target: r.file,
+                file: names.has(r.file) ? r.file : (index.resolveFiles([r.file])[0] ?? r.file),
+                section: r.section,
+                from: r.from,
+                to: r.to,
+            })),
+        );
+        if ('error' in resolved) {
+            return resolved;
+        }
+        const read = await readMany(index, resolved, {
+            maxLines: MAX_LINES,
+            hints: {
+                document: () => 'call list_docs for the names',
+                section: () => 'call list_docs with what "sections" for its headings',
+                range: (_, total) => `it has ${total} lines`,
+            },
+        });
+        return {
+            printed: read.printed,
+            failed: read.failed,
+            results: read.results.map((r) =>
+                isFailure(r)
+                    ? { file: r.file, error: r.error, hint: r.hint }
+                    : {
+                          file: r.file,
+                          ...(r.section ? { section: r.section } : {}),
+                          start: r.from,
+                          end: r.to,
+                          total: r.total,
+                          truncated: r.truncated,
+                          ...(r.continue ? { continue: r.continue } : {}),
+                          text: r.lines.map((line, at) => `${r.from + at} | ${line}`).join('\n'),
+                      },
+            ),
+        };
+    }
 }
 
 // ---------------------------------------------------------------------------

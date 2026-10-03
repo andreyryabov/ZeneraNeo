@@ -313,7 +313,7 @@ zen rag docs ready               Can this index answer? Exit 0 if it can, 3 if i
 zen rag docs search [text]       Ask it something. --interactive for a prompt.
 zen rag docs list <what>         Every document, section or table. No ranking.
 zen rag docs grep <pattern>      Every matching line, with the section it sits in.
-zen rag docs show <file>         A document, a section of one, or a line range.
+zen rag docs show <target...>    Documents, sections or line ranges, several in one call.
 zen rag docs stats               What is in an index, and what built it.
 ```
 
@@ -377,10 +377,18 @@ zen rag docs list tables                     # every table, with its columns
 zen rag docs grep "Retry-After"              # every matching line, and its section
 zen rag docs show api/routing.md --section "Rate limits"
 zen rag docs show api/routing.md --lines 40-80
+zen rag docs show "api/routing.md:24-31" "api/errors.md#Retries"
 ```
 
 `grep` counts every match, not the top of a list, so unlike a search it can
 answer whether a string appears at all.
+
+`show` takes any number of targets written the way a citation is -
+`<document>:<a>-<b>`, `<document>:<a>`, `<document>#<heading>`, or a bare name -
+and prints each under a header that is itself a target, so reading every
+passage an answer cites costs one call. Overlapping ranges print once, a
+missing target is reported in place, and `--max-lines` (default 400) is shared
+between them, each cut block naming the target that continues it.
 
 <details>
 <summary>Every flag</summary>
@@ -559,12 +567,12 @@ Only the first ranks. `find_types_with_property` is the one for the repair loop
 
 Four tools in the group `docs`, selectable as `docs:*`:
 
-| Tool          | For                                                          |
-| ------------- | ------------------------------------------------------------ |
-| `search_docs` | the passages that match, quoted with their line numbers      |
-| `list_docs`   | the documents, their headings, or their tables - no search   |
-| `grep_docs`   | every matching line, counted in full - no search             |
-| `read_docs`   | a section or a line range, verbatim and with nothing omitted |
+| Tool          | For                                                              |
+| ------------- | ---------------------------------------------------------------- |
+| `search_docs` | the passages that match, quoted with their line numbers          |
+| `list_docs`   | the documents, their headings, or their tables - no search       |
+| `grep_docs`   | every matching line, counted in full - no search                 |
+| `read_docs`   | a section or a line range, verbatim; several at once via `reads` |
 
 `search_docs` is the way in when the question is vague; `grep_docs` is how "it
 is not in here" can actually be concluded. Every answer carries line numbers and

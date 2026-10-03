@@ -454,4 +454,28 @@ describe('the tools an agent is given', () => {
         const result = await call('read_docs', { file: 'nowhere.md' });
         expect(String(result.error)).toContain('no document called');
     });
+
+    it('reads several passages in one call, failing only the one that is missing', async () => {
+        const result = await call('read_docs', {
+            reads: [
+                { file: 'acme_4.1.0/api/routing.md', from: 9, to: 11 },
+                { file: 'acme_4.2.0/api/routing.md', section: 'Retries' },
+                { file: 'nowhere.md' },
+            ],
+        });
+        const results = result.results as Record<string, unknown>[];
+        expect(result.printed).toBe(2);
+        expect(result.failed).toBe(1);
+        expect(results[0]!.text).toContain('| /api/users | 100 | 1m |');
+        expect(results[1]!.section).toBe('Retries');
+        expect(String(results[2]!.hint)).toContain('list_docs');
+    });
+
+    it('refuses a file beside reads', async () => {
+        const result = await call('read_docs', {
+            file: 'acme_4.1.0/api/routing.md',
+            reads: [{ file: 'acme_4.2.0/api/routing.md' }],
+        });
+        expect(String(result.error)).toContain('not both');
+    });
 });

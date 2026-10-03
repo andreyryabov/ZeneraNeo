@@ -92,11 +92,13 @@ zen rag docs search -d <index-dir> "<question in natural language>"
 zen rag docs search -d <index-dir> --file "<path-pattern>" --section "<heading>" "<question>"
 zen rag docs grep -d <index-dir> "<exact string>" --file "<path-pattern>"
 zen rag docs show -d <index-dir> "<file>" --section "<heading>"
+zen rag docs show -d <index-dir> "<doc-1>:<a>-<b>" "<doc-2>#<heading>"   # several in one call
 ```
 
 Start with one ordinary hybrid question. It is the best default for concepts and
 open questions. Search returns candidates, not proof: read the quoted lines,
-then use `show` or `grep` before claiming a fact is present or absent.
+then use `show` or `grep` before claiming a fact is present or absent. Read
+every passage you will cite with ONE `show` naming them all, not one call each.
 
 When the first answer is from the wrong product area, version, file, or heading,
 ask the same question again with `--file` and then `--section`. A bare `--file`
