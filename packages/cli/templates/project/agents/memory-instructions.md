@@ -148,12 +148,14 @@ what has been superseded unless you ask for it, and it names any file it could
 not read, so a file that went unsearched never passes for one with no match.
 
 A memory is a record, not an authority - but checking one is not the same as
-redoing it. Every node names where its content came from, so confirm the
-recollection there: the named lines still say what the node says, the route
-still resolves, the command still exists. Work it out from nothing only when
-that check fails, when the source is one that changes under you, or when being
-wrong is expensive. A check that costs what the original investigation cost is
-not a check - it is the investigation again, and the memory bought nothing.
+redoing it, and how you check depends on where its content came from.
+**Pinned** - a released spec, a versioned document: its content cannot have
+moved, so use what the node says and check only that the route still resolves.
+**Living** - code, an API, anything that changes: confirm the named lines still
+say what the node says, the route still resolves, the command still exists.
+Work it out from nothing only when that check fails, or when being wrong is
+expensive. A check that costs what the original investigation cost is not a
+check - it is the investigation again, and the memory bought nothing.
 
 ### None of it appears in an answer
 
@@ -212,9 +214,11 @@ broad rather than wrong.
 ### Which of the two
 
 `memory_search` ranks, so it returns what is closest and stops. That makes it
-right for a question and wrong for a fact about the store itself: when nothing
-comes back, you cannot tell whether the memory is empty on the subject or
-merely worded differently.
+right for a question and wrong for a fact about the store itself - whether one
+exact name, path or command was ever written down. An empty search on a
+question is still the answer to that question: it matched by meaning, so other
+wordings of the same question were covered. Do not follow it with a
+`memory_grep` for words taken from the question.
 
 `memory_grep` is exact and complete. Reach for it when the thing you are looking
 for is a **string** rather than a subject, and when the answer has to be all of
@@ -224,7 +228,7 @@ them:
 | --------------------------------------------------------------- | --------------- |
 | what was learned about a subject, however it was phrased        | `memory_search` |
 | a name, path, id, host, flag or command, spelled exactly        | `memory_grep`   |
-| whether something was already written down at all               | `memory_grep`   |
+| whether an exact name, path or command was written down at all  | `memory_grep`   |
 | everywhere a thing is mentioned, before changing or retiring it | `memory_grep`   |
 | a starting point, when you do not yet know the vocabulary       | `memory_search` |
 
@@ -272,7 +276,8 @@ When the index is over something pinned - a released spec, a versioned reference
 tree - go one further and carry the passage itself in a `file` node, headed with
 the documents and line ranges it was taken from. The pointer says where to look
 and the conclusion says what it meant, but only the passage saves the next run
-from opening the sources to find out what they actually said.
+from opening the sources to find out what they actually said. Say in the node's
+text which kind of source it was, so a later run can see why a copy was allowed.
 
 ### When to commit
 
@@ -332,11 +337,19 @@ already in memory says is folded into it, and its existing id comes back under
 your ref - so the links you asked for still land, on the memory that was already
 there.
 
+**Take the task text you were handed.** When your instructions give you the
+task text, commit that text verbatim as your `task` node and look nothing up for
+it. Agents that commit at the same moment cannot see each other; identical
+wording is what folds their nodes into one.
+
 **Grep for an entity before minting a node for it.** An endpoint, a command, a
 host, a tool, a file - anything that recurs across runs is one node the rest of
 the graph hangs off, and folding by similarity will not catch a second copy
 worded differently. `memory_grep` the exact string first, and attach your edges
-to what comes back.
+to what comes back. One grep per entity you are about to mint, for its exact
+string. A sentence describing the subject is not an entity, and neither is a
+task's text: a literal phrase misses every other wording of it, and a
+near-duplicate is folded anyway.
 
 A duplicated hub is worse than a missing one. It splits the graph into islands:
 the question reaches one copy, the artifact that answers it hangs off another,
@@ -380,16 +393,9 @@ existing file from the workspace; it is not an upload channel and does not
 write file contents from raw arguments. Write the file to the workspace first
 (using `write_file`, `apply_patch`, `copy_file`, or a command saving under
 `/workspace`), then pass its workspace path (e.g. `"file": "report.py"` or
-`"file": "/workspace/report.py"`).
-
-| Which files to commit  | What belongs in them                                                       |
-| ---------------------- | -------------------------------------------------------------------------- |
-| Working scripts        | A script, query or invocation that can be re-run directly                  |
-| Configurations & specs | Self-contained config files, schemas or request templates                  |
-| Rendered findings      | A table of findings or structured report produced by an investigation      |
-| Pinned reference text  | Verbatim passages from released specs or versioned docs that cannot change |
-| Assembled answers      | Synthesised conclusions from multiple sources with a provenance header     |
-| Specimen responses     | An API response shape to reproduce against (never raw secrets)             |
+`"file": "/workspace/report.py"`). Write it with its provenance header (below)
+the first time: adding the header in a second write pays for the whole file
+twice.
 
 Do not commit files from the living codebase (use a pointer with file and line
 ranges instead - copies go stale silently), raw ephemeral command logs, or
@@ -444,16 +450,9 @@ the point; the rows it emitted do not.
 
 Two things fall outside that. An answer you assembled from several sources is a
 copy of none of them and exists nowhere in the project, so commit it, with a
-pointer node per source `INFORMED`ing it. And a source that cannot change under
-you (a released specification, a pinned dependency, a versioned reference tree)
-does not go stale silently, so the finding may be kept whole.
-
-When it is kept whole, keep it as a `file` node rather than as a longer `text`:
-the text says what the passage establishes and names the documents it came from,
-the file carries the whole block behind its provenance header. Say in the text
-which kind of source it was, so a later run can see why a copy was allowed. A
-pointer alone, with nothing of what the source said, makes the next run open all
-of it again - which is the reading the memory was supposed to buy.
+pointer node per source `INFORMED`ing it. And a passage from a pinned source
+does not go stale silently, so it may be kept whole, as described for indexes
+above.
 
 A body or a result set may still be worth keeping as a SPECIMEN - a shape to
 write against, a case to reproduce. Commit it as a `file` node whose text says
