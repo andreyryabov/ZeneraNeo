@@ -58,9 +58,11 @@ to open a file that is not there.
 
 It exits `1` whenever it prints a candidate, because the list is meant to be
 emptied or explained rather than skimmed. It strips urls before tokenising, skips
-a handful of English constructions that contain a slash, and leaves
-`agents/memory-instructions.md` out entirely - that file is worked examples by
-design, and `check-instructions.sh` is the check it actually needs.
+a handful of English constructions that contain a slash, and leaves the four
+copies `zen` ships (`agents/{files,fork,memory,tools}-instructions.md`) out
+entirely - they are worked examples by design, `zen check` keeps them
+byte-identical (`rules.stale`), and `check-instructions.sh` is the check memory
+actually needs.
 
 Everything it does print is either noise the script has not learned yet or a
 real finding. There is no third case. A candidate that is genuinely noise is a

@@ -12,7 +12,7 @@ liveModelSuite({
     label: 'openrouter',
     ref: {
         provider: 'openrouter',
-        model: 'inclusionai/ling-3.0-flash-fin:free',
+        model: 'openrouter/free',
     },
     enabled: Boolean(process.env.OPENROUTER_API_KEY),
 });
