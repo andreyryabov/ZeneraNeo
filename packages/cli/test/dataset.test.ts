@@ -1,11 +1,11 @@
 import {
+    existsSync,
     mkdirSync,
     mkdtempSync,
     readFileSync,
     realpathSync,
     rmSync,
     writeFileSync,
-    existsSync,
 } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';

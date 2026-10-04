@@ -18,7 +18,7 @@ import {
     yellow,
 } from '../../host.ts';
 import { sessionKept } from '../../tokens.ts';
-import { planApply, planEdit, planIgnored, planStatus, type Plan } from './changes.ts';
+import { type Plan, planApply, planEdit, planIgnored, planStatus } from './changes.ts';
 import { drift } from './drift.ts';
 import { batchInput, dump } from './export.ts';
 import {
@@ -46,8 +46,8 @@ import {
     type NoteKind,
     type NoteRow,
     sameAnchor,
-    VERDICTS,
     type Verdict,
+    VERDICTS,
 } from './types.ts';
 
 // ---------------------------------------------------------------------------
