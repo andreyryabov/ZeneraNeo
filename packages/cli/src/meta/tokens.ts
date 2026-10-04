@@ -1,5 +1,5 @@
 import type { ModelUsage, TokenUsage } from '@zenera/neo';
-import { closeSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -214,4 +214,10 @@ export function sessionTotals(sessionId: string): ModelUsage[] | undefined {
     } catch {
         return undefined;
     }
+}
+
+/** Whether this machine holds the session, which is what `--resume` needs. */
+export function sessionKept(sessionId: string): boolean {
+    const home = process.env.COPILOT_HOME ?? join(homedir(), '.copilot');
+    return existsSync(join(home, 'session-state', sessionId));
 }

@@ -55,6 +55,7 @@ guess a flag, and do not read them all.
 | Run reports, trajectories, what a session directory holds           | [inspect.md](./references/inspect.md)                           |
 | Reading a run yourself: the node graph, opening a node by id        | [inspect.md](./references/inspect.md) (and `zen-inspect` skill) |
 | What the agents remember, why something was recalled, forgetting    | [memory.md](./references/memory.md)                             |
+| The evaluation dataset: cases, drift, notes, drawing a sample       | [dataset.md](./references/dataset.md) (and `zen-dataset` skill) |
 | Sharing a project: archives, what travels, importing one safely     | [export.md](./references/export.md)                             |
 | `zen faker` - a mock API from an OpenAPI/Swagger document           | [faker.md](./references/faker.md)                               |
 | `zen rag` - searching an API description, or a pile of markdown     | [rag.md](./references/rag.md)                                   |

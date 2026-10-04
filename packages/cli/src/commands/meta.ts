@@ -13,6 +13,8 @@ import { probeChat, probeModel } from '../liveness.ts';
 import {
     answerBox,
     chooseModel,
+    DATASET_HELP,
+    datasetProjectFlag,
     DEFAULT_RESUMES,
     defaultRef,
     editorFiles,
@@ -33,6 +35,7 @@ import {
     recordSession,
     RESUME_PROMPT,
     resumeDelayMs,
+    runDataset,
     sessionTotals,
     SOURCE_LABELS,
     tailSpans,
@@ -66,11 +69,17 @@ import {
     write,
     writeAll,
 } from '../term.ts';
-import { appendUsage, LEDGER_ENV, ledgerPath, META_SESSION_ENV } from '../usage.ts';
+import {
+    appendUsage,
+    LEDGER_ENV,
+    ledgerPath,
+    META_PROMPT_ENV,
+    META_SESSION_ENV,
+} from '../usage.ts';
 
 const USAGE = 'zen meta run [project] [prompt] [options]';
 
-const VERBS = new Set(['model', 'run', 'prompts', 'resume']);
+const VERBS = new Set(['model', 'run', 'prompts', 'resume', 'dataset']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** A copilot session id, or the 7+ hex prefix of one it also accepts. */
@@ -111,8 +120,11 @@ export const meta: Command = {
         '  zen meta prompts [project]               list the stored prompts',
         '  zen meta resume [project] [session]      carry on a run that stopped',
         '  zen meta model [ref]                     show or set the model it uses',
+        '  zen meta dataset <verb>                  the cases it tunes against (below)',
         '',
         'The project may come before the verb instead: `zen meta acme run`.',
+        '',
+        ...DATASET_HELP,
         '',
         'Arguments:',
         '  [project]   Name of a project. Default: the one you are in.',
@@ -180,6 +192,21 @@ export const meta: Command = {
         '  zen meta run --dry-run "hello"',
     ],
     run: async (ctx) => {
+        // Its own flags, so it is routed before the meta agent's are parsed.
+        const at =
+            ctx.args[0] === 'dataset'
+                ? 0
+                : ctx.args[1] === 'dataset' && !ctx.args[0]?.startsWith('-')
+                  ? 1
+                  : -1;
+        if (at >= 0) {
+            const args = ctx.args.slice(at + 1);
+            const found = await resolveProject({
+                cwd: ctx.cwd,
+                project: datasetProjectFlag(args) ?? (at === 1 ? ctx.args[0] : undefined),
+            });
+            return await runDataset({ args, json: ctx.json, cwd: ctx.cwd }, found);
+        }
         const { values, positionals } = parse<Flags>(
             ctx.args,
             {
@@ -337,7 +364,7 @@ async function runPrompt(
         note(dim(found.description));
     }
     const prompt = extra.length > 0 ? `${found.body}\n\n${extra.join(' ')}` : found.body;
-    await go(ctx, values, project, prompt);
+    await go(ctx, values, project, prompt, name.replace(/^\//, ''));
 }
 
 async function pickPrompt(ctx: Context, project: Projects.Project): Promise<string> {
@@ -416,6 +443,7 @@ async function go(
     values: Flags,
     project: Projects.Project,
     prompt: string,
+    promptName?: string,
 ): Promise<void> {
     const fresh = values['session-id'];
     if (fresh !== undefined) {
@@ -530,7 +558,8 @@ async function go(
         ...wiring.env,
         COPILOT_OTEL_FILE_EXPORTER_PATH: spans,
         ...(ledger ? { [LEDGER_ENV]: ledger } : {}),
-        ...(ledger && session ? { [META_SESSION_ENV]: session } : {}),
+        ...(session ? { [META_SESSION_ENV]: session } : {}),
+        ...(promptName ? { [META_PROMPT_ENV]: promptName } : {}),
     };
     const tally = new Tally();
     const tail = tailSpans(spans, (call) => {

@@ -711,6 +711,22 @@ the next run. A typed prefix that names no provider - `vertes/...` - is caught
 before that, because it would otherwise be sent whole to a vendor you never
 named. `--force` stores a ref without asking.
 
+### The dataset it evaluates against
+
+```sh
+zen meta run /dataset                        # build or refresh dataset/ from its sources
+zen meta dataset                             # revision, counts, what drifted
+zen meta dataset drift                       # which cases their source sections moved under
+zen meta dataset sample --rubric yes -n 12 --format batch -o cases.json
+zen meta dataset log planning-organize-day   # every change and verdict, and the sessions
+```
+
+`dataset/` holds every case with its rubric, an anchor to the section it was
+read from, and a journal of what changed and what was found. Only
+`zen meta dataset` writes it; `/dataset` re-reads just the sections that
+changed, and a case whose question or rubric changed is listed as restarted.
+See the `zen-dataset` skill a project carries in `.github/skills/`.
+
 ## Credentials
 
 One keyring serves every provider, and a key goes in the same way whatever it

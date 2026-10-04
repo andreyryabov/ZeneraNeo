@@ -818,6 +818,7 @@ zen meta run [project]                   pick one of those prompts
 zen meta prompts [project]               list those prompts
 zen meta resume [project] [session]      carry on a session that stopped
 zen meta model [ref]                     show or set the model it uses
+zen meta dataset <verb>                  the cases the project is evaluated on
 ```
 
 Every prompt goes through `run`. The earlier grammar asked for the verb only in
@@ -902,6 +903,47 @@ One sharp edge: copilot offers its tools as OpenAI _custom_ tools, which the
 completions API rejects outright - `400 Invalid value: 'custom'`. Only the
 responses API accepts them, so the wire API follows the model rather than being
 a flag nobody would know to set.
+
+#### The dataset - `zen meta dataset`
+
+The queries a project is evaluated on, each with its rubric, kept in
+`dataset/` at the project root and written only by this command
+([meta/finetune/dataset/](packages/cli/src/meta/finetune/dataset/)). It sits
+under `meta` because its writer is the meta agent - a project's own agents
+never see it, and must not: the rubric is the answer key.
+
+Reading a source and deciding what is a case is the model's job and stays in
+the `/dataset` prompt. Everything after - what changed, the revision, who did
+it, what drifted, what to draw next - is bookkeeping, done here, because
+bookkeeping a model half-does is worse than none.
+
+- **Plain files**: a case per file, an append-only journal per case holding
+  every change (with the case as it stood after it) and every note, a line per
+  revision, and `manifest.json` written last as the commit marker. Git diffs it;
+  `show <id>@<rev>` reads any revision back from the journal.
+- **Nothing is deleted.** A case leaves as `retired`, so an old run that names
+  it still resolves and an id is never reused.
+- **Drift is per section.** Each case anchors to a markdown heading path, a
+  JSON/YAML pointer or a whole file, and stores a hash of that section. A file
+  whose hash the manifest still holds is not opened; in one that moved, each
+  case is compared on its own section. A file's hash only moves forward once
+  the file is settled - every case matches, every section is a case or
+  ignored - or a partial refresh would hide the case it left behind.
+- **Only a different question restarts a case.** A change to `input`, `rubric`
+  or `expected` is listed as `restarted`; class, tags, notes and anchors revise
+  it without that. Rubric line ids survive edits, so a note's `r2 failed`
+  keeps meaning the same line.
+- **Every change and note says who.** `zen meta` puts its session id and the
+  prompt name in the environment of everything its agent runs
+  (`ZENERA_META_SESSION`, `ZENERA_META_PROMPT`); the command stamps them on,
+  and `log` prints how to resume each session the machine still holds.
+- **A sample is laid out whole, then cut.** Strata take turns by smooth
+  weighted round-robin, each ordered by priority with seeded ties, so a larger
+  `-n` keeps every case a smaller one chose and the same seed draws the same
+  cases anywhere.
+
+It is routed before the meta agent's own flags are parsed, so it owns its
+flags, and it never touches the keyring, the editor tree or copilot.
 
 ## 7.7. Reading a run - `zen inspect`
 

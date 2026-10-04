@@ -288,3 +288,19 @@ tool description. Never propose editing them; propose the project's policy
 file or prompt, or say the change belongs upstream in zen.
 
 **Went well** - at most three lines.
+
+## 7. Record it on the case
+
+When the run is one case of a batch - its directory is
+`<batch dir>/<id>/...` and `zen meta dataset show <id>` finds that id - leave
+the verdict on the case, so the next person to sample it sees what was found
+and which session found it:
+
+```sh
+zen meta dataset note <id> --kind analyze --run <run dir> \
+    --verdict right|wrong|void -m "<the health line and the top source of trouble>"
+```
+
+Add `--rubric r1=pass,r2=fail` when you graded against its rubric. Your session
+id is recorded on the note by itself. Skip this step when the project has no
+`dataset/`.
