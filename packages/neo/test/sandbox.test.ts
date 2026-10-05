@@ -344,6 +344,37 @@ describe('running a command', () => {
         await box(f).exec('sleep 1', { timeout: 999_999 });
         expect(f.calls.at(-1)?.opts?.timeoutMs).toBe(3_600_000);
     });
+
+    it('restarts a container that stopped under it, and runs the command once', async () => {
+        const f = fresh();
+        const b = box(f);
+        await b.start();
+        f.reply('/bin/sh -s', {
+            code: 125,
+            stderr: 'Error: can only create exec sessions on running containers: container state improper\n',
+        });
+        f.reply('container inspect', { stdout: 'exited\n' });
+        const res = await b.exec('echo hi');
+
+        expect(res.exit_code).toBe(0);
+        expect(f.calls.some((c) => c.args[0] === 'start' && c.args[1] === b.name)).toBe(true);
+        expect(f.calls.filter((c) => c.args[0] === 'exec')).toHaveLength(2);
+    });
+
+    it('says the engine is the problem when the container cannot be brought back', async () => {
+        const f = fresh();
+        const b = box(f);
+        await b.start();
+        f.reply('/bin/sh -s', { code: 125, stderr: 'Error: no such container zn-x\n' });
+        f.reply('container inspect', { code: 125, stderr: 'Cannot connect to Podman' });
+        f.reply('run --detach', { code: 125, stderr: 'Cannot connect to Podman' });
+
+        await expect(b.exec('echo hi')).rejects.toMatchObject({
+            name: 'SandboxError',
+            message: expect.stringMatching(/stopped .* could not be restarted/),
+            hint: expect.stringContaining('podman machine start'),
+        });
+    });
 });
 
 describe('background jobs', () => {

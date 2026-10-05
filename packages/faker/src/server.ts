@@ -88,7 +88,7 @@ export function build(opts: ServerOptions): Server {
 
     return createServer((req, res) => {
         handle(req, res, enriched).catch((err: unknown) => {
-            const message = err instanceof Error ? err.message : String(err);
+            const message = reason(err);
             send(res, 500, { error: message });
             opts.onRequest?.(
                 `${req.method ?? 'GET'} ${req.url ?? '/'} 500 [SERVER_INTERNAL_ERROR] ${message}`,
