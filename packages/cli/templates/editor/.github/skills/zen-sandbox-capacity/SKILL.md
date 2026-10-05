@@ -247,7 +247,7 @@ Record it into the run directory, next to the findings:
     echo "host      $(($(sysctl -n hw.memsize) / 1073741824)) GiB"
     podman info --format json | jq -r '.host | "vm        \(.memTotal / 1073741824 | floor) GiB · swap \(.swapTotal) · \(.cpus) cpus"'
     echo "batch     --concurrency 8"
-} > .finetune/runs/batch01-nomem-run1/machine.txt
+} > finetune/runs/batch01-nomem-run1/machine.txt
 ```
 
 The consequence is not bookkeeping, it is validity: **token counts and

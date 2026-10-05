@@ -3461,8 +3461,8 @@ describe('where usage is recorded', () => {
         const dir = mkdtempSync(join(tmpdir(), 'zen-ledger-'));
         try {
             expect(ledgerPath(dir)).toBeUndefined();
-            mkdirSync(join(dir, '.finetune'));
-            expect(ledgerPath(dir)).toBe(join(dir, '.finetune', 'usage', 'ledger.jsonl'));
+            mkdirSync(join(dir, 'finetune'));
+            expect(ledgerPath(dir)).toBe(join(dir, 'finetune', 'usage', 'ledger.jsonl'));
             process.env[LEDGER_ENV] = '/tmp/elsewhere.jsonl';
             expect(ledgerPath(dir)).toBe('/tmp/elsewhere.jsonl');
         } finally {

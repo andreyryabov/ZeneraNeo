@@ -727,6 +727,21 @@ read from, and a journal of what changed and what was found. Only
 changed, and a case whose question or rubric changed is listed as restarted.
 See the `zen-dataset` skill a project carries in `.github/skills/`.
 
+### Tuning on it
+
+```sh
+zen meta finetune start -N 4                 # 4 cases at a time; resumes if stopped
+zen meta finetune                            # where it stands
+zen meta finetune stop                       # finish the steps in flight, then stop
+zen meta finetune session plan-day           # resume that case's analyze session
+```
+
+Each case is run without memory and analyzed until it is right and lean, then
+run with the memory it wrote until that is cheaper. Improvement requests are
+applied in batches between runs, and every apply is a new, diffable version of
+the prose. Follow it in `finetune/STATUS.md`; each case has its own
+`finetune/cases/<id>/FEEDBACK.md` with its latest analysis.
+
 ## Credentials
 
 One keyring serves every provider, and a key goes in the same way whatever it

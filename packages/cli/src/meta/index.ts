@@ -1,5 +1,6 @@
 export * from './editor.ts';
 export * from './finetune/dataset/index.ts';
+export * from './finetune/index.ts';
 export * from './launch.ts';
 export * from './model.ts';
 export * from './prompts.ts';

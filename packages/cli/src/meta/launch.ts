@@ -84,12 +84,16 @@ export interface Log {
     close(): void;
 }
 
-/** `<project>/.tmp/logs/meta.<when>.log`, opened for append. */
-export function openLog(dir: string, now = new Date()): Log {
+/**
+ * `<project>/.tmp/logs/meta.<when>[-<session>].log`, opened for append. The
+ * session keeps runs started in the same second - a tuning loop's - apart.
+ */
+export function openLog(dir: string, now = new Date(), session?: string): Log {
     const two = (n: number): string => String(n).padStart(2, '0');
     const stamp =
         `${now.getFullYear()}${two(now.getMonth() + 1)}${two(now.getDate())}` +
-        `${two(now.getHours())}${two(now.getMinutes())}${two(now.getSeconds())}`;
+        `${two(now.getHours())}${two(now.getMinutes())}${two(now.getSeconds())}` +
+        (session ? `-${session.slice(0, 8)}` : '');
     const folder = `${dir}/.tmp/logs`;
     mkdirSync(folder, { recursive: true });
     const path = `${folder}/meta.${stamp}.log`;

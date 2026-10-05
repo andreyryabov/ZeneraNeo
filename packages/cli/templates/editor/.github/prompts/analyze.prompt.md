@@ -8,7 +8,8 @@ project. Everything about how to analyze it is in the skill.
 ## Which run
 
 The last line of this prompt may name the run - a run directory or a run id.
-If it does, use it.
+If it does, use it. Words after it like `case=<id> ... feedback=<file>` mean
+the tuning loop sent you: follow section 7 of the skill and write that file.
 
 If it does not, list this project's most recent runs, newest first:
 

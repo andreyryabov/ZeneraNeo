@@ -49,9 +49,9 @@ const USAGE = `Report on one run's batch: what each case did, and where its traj
   ${NAME} answers [id...]    per case: the final answer, with its rubric above it
   ${NAME} compare            the per-case table findings.md opens with
 
-  -d <dir>    the batch directory; default the newest .finetune/runs/*/batch
+  -d <dir>    the batch directory; default the newest finetune/runs/*/batch
   -p <dir>    the batch to compare against, for \`compare\`
-  -s <file>   the dataset, for rubrics; default .finetune/dataset.json`;
+  -s <file>   the dataset, for rubrics; default finetune/dataset.json`;
 
 process.stdout.on('error', (err) => {
     if (/** @type {NodeJS.ErrnoException} */ (err).code === 'EPIPE') {
@@ -87,7 +87,7 @@ const MODES = [
 let mode = '';
 let batch = '';
 let prev = '';
-let dataset = '.finetune/dataset.json';
+let dataset = 'finetune/dataset.json';
 /** @type {string[]} */
 const wanted = [];
 
@@ -135,12 +135,12 @@ if (!batch) {
     /** @type {string[]} */
     let names = [];
     try {
-        names = readdirSync('.finetune/runs');
+        names = readdirSync('finetune/runs');
     } catch {
         names = [];
     }
     for (const name of names) {
-        const dir = join('.finetune/runs', name, 'batch');
+        const dir = join('finetune/runs', name, 'batch');
         const file = join(dir, 'batch.json');
         if (existsSync(file) && statSync(file).mtimeMs > newest) {
             newest = statSync(file).mtimeMs;
@@ -345,7 +345,7 @@ function startedFrom(source) {
 /**
  * `memory off` / `no memory` / `with memory`, for a batch directory.
  *
- * batch.json records `--memory .finetune/empty` as mode `copied`, exactly like
+ * batch.json records `--memory finetune/empty` as mode `copied`, exactly like
  * a with-memory run. What differs is whether the source held a graph.
  *
  * @param {string} dir
@@ -764,7 +764,7 @@ if (mode === 'index') {
     const casesKilled = scan.filter((s) => s.killed > 0).length;
     const totalKilled = scan.reduce((n, s) => n + s.killed, 0);
     const totalTimedout = scan.reduce((n, s) => n + s.timedout, 0);
-    const config = json('.finetune/config.json') ?? {};
+    const config = json('finetune/config.json') ?? {};
     const current = Number(config.concurrency) || 16;
     const halved = Math.max(4, Math.floor(current / 2));
 
@@ -782,7 +782,7 @@ if (mode === 'index') {
         } else {
             say(`  Halve the concurrency and run the same cases again: set`);
             say(
-                `  "concurrency": ${halved} in .finetune/config.json (was ${current}; never below 4).`,
+                `  "concurrency": ${halved} in finetune/config.json (was ${current}; never below 4).`,
             );
         }
         process.exit(1);

@@ -13,11 +13,17 @@ import { probeChat, probeModel } from '../liveness.ts';
 import {
     answerBox,
     chooseModel,
-    DATASET_HELP,
+    DATASET_DETAILS,
+    DATASET_SUMMARY,
+    DATASET_USAGE,
     datasetProjectFlag,
     DEFAULT_RESUMES,
     defaultRef,
     editorFiles,
+    FINETUNE_DETAILS,
+    FINETUNE_SUMMARY,
+    FINETUNE_USAGE,
+    finetuneProjectFlag,
     lastSession,
     launch,
     listPrompts,
@@ -36,6 +42,7 @@ import {
     RESUME_PROMPT,
     resumeDelayMs,
     runDataset,
+    runFinetune,
     sessionTotals,
     SOURCE_LABELS,
     tailSpans,
@@ -80,11 +87,49 @@ import {
 
 const USAGE = 'zen meta run [project] [prompt] [options]';
 
-const VERBS = new Set(['model', 'run', 'prompts', 'resume', 'dataset']);
+const VERBS = new Set(['model', 'run', 'prompts', 'resume', 'dataset', 'finetune']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** A copilot session id, or the 7+ hex prefix of one it also accepts. */
 const SESSION_ID = /^[0-9a-f]{7,}(?:-[0-9a-f]+)*$/i;
+
+/** Verbs that own their flags and their help page. */
+const SUBCOMMANDS = {
+    dataset: {
+        run: runDataset,
+        projectFlag: datasetProjectFlag,
+        page: { usage: DATASET_USAGE, summary: DATASET_SUMMARY, details: DATASET_DETAILS },
+    },
+    finetune: {
+        run: runFinetune,
+        projectFlag: finetuneProjectFlag,
+        page: { usage: FINETUNE_USAGE, summary: FINETUNE_SUMMARY, details: FINETUNE_DETAILS },
+    },
+} as const;
+
+/** `zen meta dataset ...` or `zen meta acme dataset ...`: which one, and where its own args start. */
+function subcommand(
+    args: readonly string[],
+): { name: keyof typeof SUBCOMMANDS; at: number } | undefined {
+    for (const name of Object.keys(SUBCOMMANDS) as (keyof typeof SUBCOMMANDS)[]) {
+        if (args[0] === name) {
+            return { name, at: 0 };
+        }
+        if (args[1] === name && !args[0]?.startsWith('-')) {
+            return { name, at: 1 };
+        }
+    }
+    return undefined;
+}
+
+function page(p: { usage: string; summary: string; details: readonly string[] }): void {
+    write(bold(p.usage));
+    write(`\n  ${p.summary}`);
+    write('');
+    for (const line of p.details) {
+        write(line ? `  ${line}` : '');
+    }
+}
 
 interface Flags {
     project?: string;
@@ -107,6 +152,7 @@ interface Flags {
     pick?: boolean;
     clear?: boolean;
     force?: boolean;
+    'no-refresh'?: boolean;
 }
 
 export const meta: Command = {
@@ -121,11 +167,11 @@ export const meta: Command = {
         '  zen meta prompts [project]               list the stored prompts',
         '  zen meta resume [project] [session]      carry on a run that stopped',
         '  zen meta model [ref]                     show or set the model it uses',
-        '  zen meta dataset <verb>                  the cases it tunes against (below)',
+        '  zen meta dataset <verb>                  the cases it tunes against',
+        '  zen meta finetune <verb>                 tune the project on those cases',
         '',
         'The project may come before the verb instead: `zen meta acme run`.',
-        '',
-        ...DATASET_HELP,
+        '`zen meta dataset --help` and `zen meta finetune --help` have their own pages.',
         '',
         'Arguments:',
         '  [project]   Name of a project. Default: the one you are in.',
@@ -147,6 +193,7 @@ export const meta: Command = {
         `  --retries <n>          Resume after a rate limit or outage. Default ${DEFAULT_RESUMES}, 0 = off.`,
         '  --share <file>         Write the transcript to a markdown file.',
         '  --dry-run              Print what would run, secrets masked, and stop.',
+        '  --no-refresh           Leave the editor files as they are (parallel runs).',
         '  --json                 Print one object: answer, answerFile, sessionId, exitCode, tokens.',
         '',
         'It always uses your own keys — `zen key add` — and never a coding-agent',
@@ -162,8 +209,8 @@ export const meta: Command = {
         'named - where it stopped. A run that ends any way but success prints it.',
         '',
         'Its tokens are counted as it runs and summed when it ends. In a project with',
-        'a .finetune/, every call - and every zen run and inspect ask it makes - is',
-        'appended to .finetune/usage/ledger.jsonl, and .finetune/USAGE.md is rewritten.',
+        'a finetune/, every call - and every zen run and inspect ask it makes - is',
+        'appended to finetune/usage/ledger.jsonl, and finetune/USAGE.md is rewritten.',
         '',
         'Nothing it needs is put on a command line: every credential reaches it',
         'through the environment, where other processes cannot read it.',
@@ -194,21 +241,21 @@ export const meta: Command = {
         '  zen meta model --pick',
         '  zen meta run --dry-run "hello"',
     ],
+    help: (ctx) => {
+        const sub = subcommand(ctx.args);
+        page(sub ? SUBCOMMANDS[sub.name].page : { ...meta, details: meta.details ?? [] });
+    },
     run: async (ctx) => {
-        // Its own flags, so it is routed before the meta agent's are parsed.
-        const at =
-            ctx.args[0] === 'dataset'
-                ? 0
-                : ctx.args[1] === 'dataset' && !ctx.args[0]?.startsWith('-')
-                  ? 1
-                  : -1;
-        if (at >= 0) {
-            const args = ctx.args.slice(at + 1);
+        // These own their flags, so they are routed before the meta agent's are parsed.
+        const sub = subcommand(ctx.args);
+        if (sub) {
+            const { run, projectFlag } = SUBCOMMANDS[sub.name];
+            const args = ctx.args.slice(sub.at + 1);
             const found = await resolveProject({
                 cwd: ctx.cwd,
-                project: datasetProjectFlag(args) ?? (at === 1 ? ctx.args[0] : undefined),
+                project: projectFlag(args) ?? (sub.at === 1 ? ctx.args[0] : undefined),
             });
-            return await runDataset({ args, json: ctx.json, cwd: ctx.cwd }, found);
+            return await run({ args, json: ctx.json, cwd: ctx.cwd }, found);
         }
         const { values, positionals } = parse<Flags>(
             ctx.args,
@@ -233,6 +280,7 @@ export const meta: Command = {
                 pick: { type: 'boolean' },
                 clear: { type: 'boolean' },
                 force: { type: 'boolean' },
+                'no-refresh': { type: 'boolean' },
             },
             USAGE,
         );
@@ -343,7 +391,9 @@ async function stored(ctx: Context, values: Flags, args: string[]): Promise<void
     }
 
     const { project } = await where(ctx, values.project, head);
-    refresh(project);
+    if (!values['no-refresh']) {
+        refresh(project);
+    }
     if (name) {
         return await runPrompt(ctx, values, project, name, rest);
     }
@@ -432,7 +482,9 @@ async function resumeRun(ctx: Context, values: Flags, args: string[]): Promise<v
         );
     }
     note(dim(`resuming session ${session}`));
-    refresh(project);
+    if (!values['no-refresh']) {
+        refresh(project);
+    }
     const message = (values.prompt ?? words.join(' ')).trim() || RESUME_PROMPT;
     await go(ctx, { ...values, resume: session, continue: false }, project, message);
 }
@@ -533,7 +585,7 @@ async function go(
     }
     note(cyan(`${owner} · ${wiring.model} · ${project.name}`));
 
-    const log = openLog(project.dir);
+    const log = openLog(project.dir, new Date(), session);
     note(`log  ${log.path}`);
     const elided = args.map((a, i) => (args[i - 1] === '-p' ? '<prompt>' : a));
     log.line(`zen meta ${new Date().toISOString()}`);
@@ -685,13 +737,13 @@ async function go(
 const REPORT_EVERY_MS = 5 * 60_000;
 
 /**
- * Rewrites `.finetune/USAGE.md` on a timer and once more at the end, when the
+ * Rewrites `finetune/USAGE.md` on a timer and once more at the end, when the
  * project is being tuned. Detached and silent: the report is a by-product, and
  * neither its time nor its failure belongs to the run.
  */
 function usageReporter(dir: string): { stop(): void } {
     const script = join(dir, '.github/skills/zen-finetune/scripts/usage.mjs');
-    if (!existsSync(join(dir, '.finetune')) || !existsSync(script)) {
+    if (!existsSync(join(dir, 'finetune')) || !existsSync(script)) {
         return { stop: () => undefined };
     }
     let running = false;

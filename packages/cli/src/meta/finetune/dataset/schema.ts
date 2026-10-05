@@ -15,7 +15,7 @@ import {
 // Reading a proposal
 //
 // A proposal is what an extraction produced: every case it read, in the shape
-// the old `.finetune/dataset.json` had, so that file imports as it stands. It is
+// the old `finetune/dataset.json` had, so that file imports as it stands. It is
 // checked whole before anything is written, and every problem is reported at
 // once — a model fixing one issue per round trip is a slow way to learn that
 // there were nine.

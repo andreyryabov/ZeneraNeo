@@ -312,8 +312,8 @@ describe('the dataset store', () => {
     });
 
     it('imports an old dataset.json, rebasing media paths onto the project', async () => {
-        put('.finetune/assets/receipt.jpg', 'jpeg');
-        putJson('.finetune/dataset.json', {
+        put('finetune/assets/receipt.jpg', 'jpeg');
+        putJson('finetune/dataset.json', {
             version: 1,
             samples: [
                 {
@@ -324,11 +324,11 @@ describe('the dataset store', () => {
                 },
             ],
         });
-        await zen('apply', '.finetune/dataset.json', '--why', 'import');
+        await zen('apply', 'finetune/dataset.json', '--why', 'import');
         const stored = JSON.parse(
             readFileSync(join(root, 'dataset', 'cases', 'receipt.json'), 'utf8'),
         );
-        expect(stored.input[1]).toEqual({ image: '.finetune/assets/receipt.jpg' });
+        expect(stored.input[1]).toEqual({ image: 'finetune/assets/receipt.jpg' });
 
         await zen('export', '--format', 'batch', '-o', 'runs/b1/cases.json');
         const batch = JSON.parse(readFileSync(join(root, 'runs', 'b1', 'cases.json'), 'utf8'));
@@ -336,7 +336,7 @@ describe('the dataset store', () => {
             batch: [
                 {
                     id: 'receipt',
-                    input: ['file this', { image: '../../.finetune/assets/receipt.jpg' }],
+                    input: ['file this', { image: '../../finetune/assets/receipt.jpg' }],
                 },
             ],
         });

@@ -56,11 +56,11 @@ process.stdout.on('error', (err) => {
 
 process.chdir(resolve(dirname(fileURLToPath(import.meta.url)), '../../../..'));
 
-const CONFIG = '.finetune/config.json';
-const SELECTION = '.finetune/selection.json';
-const DATASET = '.finetune/dataset.json';
-const DIFFICULT = '.finetune/difficult.json';
-const RUNS = '.finetune/runs';
+const CONFIG = 'finetune/config.json';
+const SELECTION = 'finetune/selection.json';
+const DATASET = 'finetune/dataset.json';
+const DIFFICULT = 'finetune/difficult.json';
+const RUNS = 'finetune/runs';
 const RUN_NAME = /^batch(\d{2})-(nomem|mem)-run(\d+)$/;
 const SEVERITY = ['wrong', 'regressed', 'flaky', 'memory', 'costly'];
 // A batch that needed more runs than this, of either kind, does not grow the next one.

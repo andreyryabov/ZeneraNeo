@@ -289,12 +289,62 @@ file or prompt, or say the change belongs upstream in zen.
 
 **Went well** - at most three lines.
 
-## 7. Record it on the case
+## 7. Feedback for the tuning loop
 
-When the run is one case of a batch - its directory is
-`<batch dir>/<id>/...` and `zen meta dataset show <id>` finds that id - leave
-the verdict on the case, so the next person to sample it sees what was found
-and which session found it:
+`zen meta finetune` runs you with words after the run directory:
+`case=<id> rev=<n> phase=nomem|mem attempt=<n> feedback=<file>`. When they are
+there, the run is one try of that dataset case, and besides the report you
+**write `<file>`** - the loop reads it, not your report. Without them, skip this
+section.
+
+1. **Grade against the case.** `zen meta dataset show <id>@<rev>`: its input,
+   its expected answer, and each rubric line. Judge every rubric line `pass` or
+   `fail` from the trajectory alone; a line you cannot check from the run is a
+   `fail`, and say why in the report.
+2. **Compare with the last try.** This session analyzed the case's earlier
+   tries; say what changed since the last one - which findings are fixed, which
+   are not, and whether it cost more or less.
+3. **With memory** (`phase=mem`), the question is cheaper, not just right: did
+   it recall before researching, did recall replace work the try without memory
+   did, did it commit anything memory already held. Improvements in this phase
+   are to the memory policy only.
+4. **Write the file**, nothing else in it:
+
+```json
+{
+    "verdict": "right",
+    "rubric": { "r1": "pass", "r2": "fail" },
+    "done": false,
+    "summary": "One sentence: what is wrong or wasteful now, or why it is done.",
+    "improvements": [
+        {
+            "id": "i1",
+            "kind": "prompt | skill | house-rule | policy | memory-policy | tool-description | agents-yaml",
+            "file": "agents/prompts/default.md",
+            "change": "The sentence to add, narrow or delete, quoted - a rule, never this case's answer.",
+            "why": "What it caused, with node ids.",
+            "expect": "What the next run's graph should show if it worked."
+        }
+    ]
+}
+```
+
+- `verdict` is `right`, `wrong` or `void` (the run says nothing about the prose:
+  it crashed or was killed by the machine).
+- `done` is `true` only when the verdict is `right`, every rubric line passes,
+  and you found nothing left worth changing. `done: false` needs at least one
+  improvement: without one the next try runs on the same prose and learns
+  nothing.
+- Your **Improvements** in the report and `improvements` here are the same list.
+- Never edit `agents/` or any other file of the project yourself: the loop
+  applies every case's improvements together, and undoes an edit made here.
+
+Do not write a dataset note when you were given `feedback=`: the loop records
+the verdict on the case itself.
+
+When you were **not** given `feedback=` but the run is one case of a batch -
+its directory is `<batch dir>/<id>/...` and `zen meta dataset show <id>` finds
+that id - leave the verdict on the case:
 
 ```sh
 zen meta dataset note <id> --kind analyze --run <run dir> \
@@ -302,5 +352,5 @@ zen meta dataset note <id> --kind analyze --run <run dir> \
 ```
 
 Add `--rubric r1=pass,r2=fail` when you graded against its rubric. Your session
-id is recorded on the note by itself. Skip this step when the project has no
+id is recorded on the note by itself. Skip it when the project has no
 `dataset/`.
