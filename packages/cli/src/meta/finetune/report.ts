@@ -630,7 +630,7 @@ function workerDiagram(t: Tuning, w: Worker): string[] {
         return [
             '```mermaid',
             'flowchart LR',
-            `    w["worker ${w.slot}<br/>${idleWord(t)} · ${since(Date.now() - w.since)}"]`,
+            `    w["worker ${w.slot} · ${idleWord(t)} · ${since(Date.now() - w.since)}"]`,
             '    classDef idle fill:#6e7781,color:#fff',
             '    class w idle',
             '```',
@@ -645,21 +645,21 @@ function workerDiagram(t: Tuning, w: Worker): string[] {
         if (id !== current) {
             return '';
         }
-        const now = `<br/>try ${w.attempt} of ${tries} · ${since(Date.now() - w.since)}`;
+        const now = ` · try ${w.attempt} of ${tries} · ${since(Date.now() - w.since)}`;
         return w.step === 'parked'
-            ? `${now}<br/>queue ${q.pending.length} of ${t.config.applyAt}${q.applying ? ' · applying' : ''}`
+            ? `${now} · queue ${q.pending.length} of ${t.config.applyAt}${q.applying ? ' · applying' : ''}`
             : now;
     };
     const node = (id: string, text: string): string => `    ${id}["${text}${extra(id)}"]`;
     const out = [
         '```mermaid',
         'flowchart LR',
-        node('nr', 'no memory<br/>run'),
-        node('na', 'no memory<br/>analyze'),
-        node('np', 'no memory<br/>parked'),
-        node('mr', 'with memory<br/>run'),
-        node('ma', 'with memory<br/>analyze'),
-        node('mp', 'with memory<br/>parked'),
+        node('nr', 'no memory run'),
+        node('na', 'no memory analyze'),
+        node('np', 'no memory parked'),
+        node('mr', 'with memory run'),
+        node('ma', 'with memory analyze'),
+        node('mp', 'with memory parked'),
         '    cd["completed"]',
         '    df["difficult"]',
         '    nr --> na',
@@ -692,12 +692,12 @@ function overviewDiagram(counts: Record<string, number>): string[] {
     return [
         '```mermaid',
         'flowchart LR',
-        `    Q["queued<br/>${counts.queued}"] --> N["no memory<br/>${counts.nomem}"]`,
-        `    N --> M["with memory<br/>${counts.mem}"]`,
-        `    M --> C["completed<br/>${counts.completed}"]`,
-        `    N --> D["difficult<br/>${counts.difficult}"]`,
+        `    Q["queued · ${counts.queued}"] --> N["no memory · ${counts.nomem}"]`,
+        `    N --> M["with memory · ${counts.mem}"]`,
+        `    M --> C["completed · ${counts.completed}"]`,
+        `    N --> D["difficult · ${counts.difficult}"]`,
         '    M --> D',
-        `    Q -.-> S["stopped<br/>${counts.stopped}"]`,
+        `    Q -.-> S["stopped · ${counts.stopped}"]`,
         '    classDef done fill:#1a7f37,color:#fff',
         '    classDef bad fill:#cf222e,color:#fff',
         '    classDef live fill:#0969da,color:#fff',
