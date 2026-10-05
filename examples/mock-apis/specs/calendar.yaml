@@ -1,0 +1,268 @@
+openapi: 3.0.3
+info:
+    title: Calendar
+    version: 1.0.0
+    description: >
+        A calendar API, shaped after the public Google Calendar REST API (a subset,
+        simplified). Times are RFC 3339.
+paths:
+    /calendars/{calendarId}/events:
+        get:
+            operationId: listEvents
+            summary: Lists the events on a calendar.
+            parameters:
+                - name: calendarId
+                  in: path
+                  required: true
+                  description: Calendar identifier. `primary` is the caller's own calendar.
+                  schema:
+                      type: string
+                - name: timeMin
+                  in: query
+                  required: false
+                  description: Lower bound (exclusive) for an event's end time.
+                  schema:
+                      type: string
+                      format: date-time
+                - name: timeMax
+                  in: query
+                  required: false
+                  description: Upper bound (exclusive) for an event's start time.
+                  schema:
+                      type: string
+                      format: date-time
+                - name: q
+                  in: query
+                  required: false
+                  description: Free text search over summary, description, location and attendees.
+                  schema:
+                      type: string
+                - name: orderBy
+                  in: query
+                  required: false
+                  schema:
+                      type: string
+                      enum: [startTime, updated]
+                - name: maxResults
+                  in: query
+                  required: false
+                  schema:
+                      type: integer
+                      minimum: 1
+                      maximum: 2500
+                - name: pageToken
+                  in: query
+                  required: false
+                  schema:
+                      type: string
+            responses:
+                '200':
+                    description: One page of events.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [items, timeZone]
+                                properties:
+                                    items:
+                                        type: array
+                                        items:
+                                            $ref: '#/components/schemas/Event'
+                                    nextPageToken:
+                                        type: string
+                                    timeZone:
+                                        type: string
+                                        description: IANA zone name, e.g. Europe/Berlin.
+        post:
+            operationId: insertEvent
+            summary: Creates an event.
+            parameters:
+                - name: calendarId
+                  in: path
+                  required: true
+                  schema:
+                      type: string
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/EventInput'
+            responses:
+                '200':
+                    description: The created event.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Event'
+    /calendars/{calendarId}/events/{eventId}:
+        get:
+            operationId: getEvent
+            summary: Returns one event.
+            parameters:
+                - name: calendarId
+                  in: path
+                  required: true
+                  schema:
+                      type: string
+                - name: eventId
+                  in: path
+                  required: true
+                  schema:
+                      type: string
+            responses:
+                '200':
+                    description: The event.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Event'
+    /freeBusy:
+        post:
+            operationId: queryFreeBusy
+            summary: Returns busy intervals for a set of calendars.
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            required: [timeMin, timeMax, items]
+                            properties:
+                                timeMin:
+                                    type: string
+                                    format: date-time
+                                timeMax:
+                                    type: string
+                                    format: date-time
+                                items:
+                                    type: array
+                                    minItems: 1
+                                    items:
+                                        type: object
+                                        required: [id]
+                                        properties:
+                                            id:
+                                                type: string
+            responses:
+                '200':
+                    description: Busy intervals per calendar.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [timeMin, timeMax, calendars]
+                                properties:
+                                    timeMin:
+                                        type: string
+                                        format: date-time
+                                    timeMax:
+                                        type: string
+                                        format: date-time
+                                    calendars:
+                                        type: object
+                                        additionalProperties:
+                                            type: object
+                                            required: [busy]
+                                            properties:
+                                                busy:
+                                                    type: array
+                                                    items:
+                                                        $ref: '#/components/schemas/Interval'
+components:
+    schemas:
+        When:
+            type: object
+            required: [dateTime]
+            properties:
+                dateTime:
+                    type: string
+                    format: date-time
+                timeZone:
+                    type: string
+        Interval:
+            type: object
+            required: [start, end]
+            properties:
+                start:
+                    type: string
+                    format: date-time
+                end:
+                    type: string
+                    format: date-time
+        Attendee:
+            type: object
+            required: [email, responseStatus]
+            properties:
+                email:
+                    type: string
+                    format: email
+                displayName:
+                    type: string
+                optional:
+                    type: boolean
+                responseStatus:
+                    type: string
+                    enum: [needsAction, declined, tentative, accepted]
+        EventInput:
+            type: object
+            required: [summary, start, end]
+            properties:
+                summary:
+                    type: string
+                description:
+                    type: string
+                location:
+                    type: string
+                start:
+                    $ref: '#/components/schemas/When'
+                end:
+                    $ref: '#/components/schemas/When'
+                attendees:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/Attendee'
+        Event:
+            type: object
+            required: [id, status, summary, start, end, organizer, created, updated]
+            properties:
+                id:
+                    type: string
+                    pattern: '^[a-v0-9]{5,1024}$'
+                status:
+                    type: string
+                    enum: [confirmed, tentative, cancelled]
+                summary:
+                    type: string
+                description:
+                    type: string
+                location:
+                    type: string
+                start:
+                    $ref: '#/components/schemas/When'
+                end:
+                    $ref: '#/components/schemas/When'
+                organizer:
+                    type: object
+                    required: [email]
+                    properties:
+                        email:
+                            type: string
+                            format: email
+                        displayName:
+                            type: string
+                attendees:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/Attendee'
+                recurrence:
+                    type: array
+                    description: RRULE lines, RFC 5545.
+                    items:
+                        type: string
+                created:
+                    type: string
+                    format: date-time
+                updated:
+                    type: string
+                    format: date-time
