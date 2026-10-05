@@ -40,6 +40,7 @@ import {
     SOURCE_LABELS,
     tailSpans,
     Tally,
+    terminalSink,
     transient,
     wire,
     writeMeta,
@@ -146,6 +147,7 @@ export const meta: Command = {
         `  --retries <n>          Resume after a rate limit or outage. Default ${DEFAULT_RESUMES}, 0 = off.`,
         '  --share <file>         Write the transcript to a markdown file.',
         '  --dry-run              Print what would run, secrets masked, and stop.',
+        '  --json                 Print one object: answer, answerFile, sessionId, exitCode, tokens.',
         '',
         'It always uses your own keys — `zen key add` — and never a coding-agent',
         'subscription. The answer goes to stdout and the progress to stderr, so',
@@ -185,6 +187,7 @@ export const meta: Command = {
         '  zen meta prompts',
         '  zen meta run /project-review',
         '  zen meta run acme /spec-sync-project agents/triage.md',
+        '  zen meta run acme /analyze --json',
         '  zen meta resume acme',
         '  git diff | zen meta run "what broke?" --allow-tool read',
         '  zen meta model vertex/gemini-3.8-flash',
@@ -588,6 +591,7 @@ async function go(
                 env,
                 cwd: project.dir,
                 log,
+                sink: ctx.json ? terminalSink : undefined,
                 status: () => (tally.calls > 0 ? tally.toString() : ''),
             });
             if (outcome.sessionId && outcome.sessionId !== session) {

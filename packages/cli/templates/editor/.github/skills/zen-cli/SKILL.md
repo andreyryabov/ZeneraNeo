@@ -31,6 +31,8 @@ zen import   <file.zip> [dir] [--name <name>] [--force] [--no-register]
 zen sandbox  [status|up|pull|clean|disk] [options]
 zen version
 
+zen meta     <run|prompts|resume|model|dataset> [project] [args]
+
 zen faker    <serve|build|cache> [spec...]
 zen rag      schema <index|restore|ready|search|list|grep|trace|show|stats> [spec...]
 zen rag      docs <index|restore|ready|search|list|grep|show|stats> [path...]
@@ -55,6 +57,7 @@ guess a flag, and do not read them all.
 | Run reports, trajectories, what a session directory holds           | [inspect.md](./references/inspect.md)                           |
 | Reading a run yourself: the node graph, opening a node by id        | [inspect.md](./references/inspect.md) (and `zen-inspect` skill) |
 | What the agents remember, why something was recalled, forgetting    | [memory.md](./references/memory.md)                             |
+| The meta agent: `zen meta run`, stored prompts, its `--json` object | [meta.md](./references/meta.md)                                 |
 | The evaluation dataset: cases, drift, notes, drawing a sample       | [dataset.md](./references/dataset.md) (and `zen-dataset` skill) |
 | Sharing a project: archives, what travels, importing one safely     | [export.md](./references/export.md)                             |
 | `zen faker` - a mock API from an OpenAPI/Swagger document           | [faker.md](./references/faker.md)                               |
@@ -77,6 +80,7 @@ zen import a.zip                      unpack one somebody sent, run nothing in i
 zen key ls --check                    which credentials still work
 zen models test <ref>                 whether one model actually answers
 zen models pick --embedding           the first embedder that does, on stdout
+zen meta run acme /analyze --json > analyze.json   a stored prompt, the result as JSON
 ```
 
 ## Searching documents without help
