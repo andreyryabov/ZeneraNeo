@@ -905,12 +905,13 @@ export function writeStatus(t: Tuning): void {
         '## Files',
         '',
         '- `cases/<id>/FEEDBACK.md` - one case: rubric, latest analysis, decisions, history',
-        '- `cases/<id>/r<rev>/<NN>-<phase>/` - one try: `request.json`, `run.json`, `memory/`, `feedback.json`, `analysis.md`, logs',
+        '- `cases/<id>/r<rev>/<NN>-<phase>/` - one try: `request.json`, `run.json`, `memory/`, `workspace/`, `feedback.json`, `analysis.md`, logs',
         '- `applies/<NNN>/APPLY.md` - one apply: requests, decisions, files changed with their diffs, zen check',
         '- `applies/<NNN>/` - `inputs.json`, `apply.log`, `check.log`, `changes.md`, `decisions.json`, `diff.patch`',
         '- `memories/` - `submissions.jsonl`, `merges.jsonl`, `submitted/<case>@r<rev>/`, `merged/mNN/`',
         '- `systems/` - `systems.jsonl` and a copy of `agents.yaml` + `agents/` per version',
         '- `events.jsonl` - every step, in order; `loop.json` - the settings',
+        '- `journal.jsonl` - steps begun and not yet closed; a restart rolls back what a kill cut off',
         '',
     );
     atomic(join(t.dir, 'STATUS.md'), `${out.join('\n')}\n`);

@@ -2,6 +2,7 @@ import { claimLock, ownLock } from '@zenera/neo';
 import { mkdirSync, rmSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { CliError, EXIT } from '../host.ts';
+import { recover } from './journal.ts';
 import { nextCase } from './sampler.ts';
 import { markDifficult, train, VoidRun } from './train.ts';
 import { Stopped, type Seat, type Tuning } from './tuning.ts';
@@ -33,6 +34,7 @@ export async function runLoop(t: Tuning): Promise<void> {
     rmSync(t.stopFile, { force: true });
     const timer = setInterval(() => t.report(), REPORT_EVERY_MS);
     try {
+        recover(t);
         const start = t.system.record('start');
         t.event({ what: 'started', detail: `system v${start.v}, ${t.workers.length} workers` });
         const applier = t.improvements.loop();

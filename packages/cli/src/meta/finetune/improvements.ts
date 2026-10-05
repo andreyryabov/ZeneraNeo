@@ -46,6 +46,12 @@ export class Improvements {
 
     constructor(t: Tuning) {
         this.#t = t;
+        this.reload();
+    }
+
+    /** Re-reads which requests the applies took - a recovery may have removed one. */
+    reload(): void {
+        this.#applied.clear();
         for (const name of this.#names()) {
             for (const id of readJson<AppliedFile>(join(this.dir, name, 'applied.json'))?.ids ??
                 []) {
@@ -145,70 +151,77 @@ export class Improvements {
             }
             const batch = this.pending.splice(0);
             this.inApply = batch;
-            const name = pad(this.#names().length + 1);
+            const name = pad(Math.max(0, ...this.#names().map(Number)) + 1);
             const dir = join(this.dir, name);
-            const startedAt = new Date().toISOString();
-            mkdirSync(dir, { recursive: true });
-            writeFileSync(
-                join(dir, 'inputs.json'),
-                `${JSON.stringify(
-                    batch.map((f) => ({
-                        ...f,
-                        file: join(
-                            t.attemptDir({ id: f.case, rev: f.caseRev }, f.phase, f.attempt),
-                            'feedback.json',
-                        ),
-                    })),
-                    null,
-                    2,
-                )}\n`,
-            );
             const from = t.system.record('external').v;
-            const total = batch.reduce((n, f) => n + f.improvements.length, 0);
-            let to = from;
-            if (total > 0) {
-                t.event({
-                    what: 'apply',
-                    detail: `${name}: ${batch.length} request(s), ${total} improvement(s)`,
-                });
-                writeApply(t, dir);
-                try {
-                    await this.#edit(dir, from);
-                } catch (err) {
-                    writeFileSync(
-                        join(dir, 'failed.json'),
-                        `${JSON.stringify({ at: new Date().toISOString(), startedAt, error: (err as Error).message }, null, 2)}\n`,
-                    );
-                    writeApply(t, dir);
-                    throw err;
-                }
-                to = t.system.record('apply', name).v;
-                if (to !== from) {
-                    writeFileSync(join(dir, 'diff.patch'), t.system.diff(from, to));
-                }
-            }
-            const applied: AppliedFile = {
-                ids: batch.map((f) => f.id),
-                from,
-                to,
-                at: new Date().toISOString(),
-                startedAt,
-                ...(total === 0 ? { skipped: true } : {}),
-            };
-            writeFileSync(join(dir, 'applied.json'), `${JSON.stringify(applied, null, 2)}\n`);
-            writeApply(t, dir);
-            for (const f of batch) {
-                this.#applied.add(f.id);
-            }
-            this.count++;
-            t.event({
-                what: 'applied',
-                detail: `${name}: v${from} -> v${to}, see applies/${name}/APPLY.md`,
-            });
+            await t.journal.step({ kind: 'apply', dir, from }, () =>
+                this.#applyBatch(batch, name, dir, from),
+            );
         } finally {
             this.applying = false;
             this.inApply = [];
         }
+    }
+
+    async #applyBatch(batch: Feedback[], name: string, dir: string, from: number): Promise<void> {
+        const t = this.#t;
+        const startedAt = new Date().toISOString();
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(
+            join(dir, 'inputs.json'),
+            `${JSON.stringify(
+                batch.map((f) => ({
+                    ...f,
+                    file: join(
+                        t.attemptDir({ id: f.case, rev: f.caseRev }, f.phase, f.attempt),
+                        'feedback.json',
+                    ),
+                })),
+                null,
+                2,
+            )}\n`,
+        );
+        const total = batch.reduce((n, f) => n + f.improvements.length, 0);
+        let to = from;
+        if (total > 0) {
+            t.event({
+                what: 'apply',
+                detail: `${name}: ${batch.length} request(s), ${total} improvement(s)`,
+            });
+            writeApply(t, dir);
+            try {
+                await this.#edit(dir, from);
+            } catch (err) {
+                writeFileSync(
+                    join(dir, 'failed.json'),
+                    `${JSON.stringify({ at: new Date().toISOString(), startedAt, error: (err as Error).message }, null, 2)}\n`,
+                );
+                writeApply(t, dir);
+                throw err;
+            }
+            to = t.system.record('apply', name).v;
+            if (to !== from) {
+                writeFileSync(join(dir, 'diff.patch'), t.system.diff(from, to));
+            }
+        }
+        const applied: AppliedFile = {
+            ids: batch.map((f) => f.id),
+            from,
+            to,
+            at: new Date().toISOString(),
+            startedAt,
+            ...(total === 0 ? { skipped: true } : {}),
+        };
+        writeFileSync(join(dir, 'applied.json'), `${JSON.stringify(applied, null, 2)}\n`);
+        writeApply(t, dir);
+        for (const f of batch) {
+            this.#applied.add(f.id);
+        }
+        this.count++;
+        t.event({
+            what: 'applied',
+            detail: `${name}: v${from} -> v${to}, see applies/${name}/APPLY.md`,
+        });
     }
 
     /** The meta agent edits; `zen check` must pass, or the edit is undone and tried once more. */

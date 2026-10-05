@@ -5,6 +5,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import type { Case } from './dataset/types.ts';
 import type { Phase } from './feedback.ts';
 import { Improvements } from './improvements.ts';
+import { Journal } from './journal.ts';
 import { Memories } from './memories.ts';
 import { writeStatus } from './report.ts';
 import { SystemVersions } from './system.ts';
@@ -97,6 +98,7 @@ export class Tuning {
     readonly startedAt = Date.now();
     readonly recent: Event[] = [];
     readonly system: SystemVersions;
+    readonly journal: Journal;
     readonly improvements: Improvements;
     readonly memories: Memories;
     stopping = false;
@@ -119,6 +121,7 @@ export class Tuning {
             since: Date.now(),
         }));
         this.system = new SystemVersions(root, join(this.dir, 'systems'));
+        this.journal = new Journal(join(this.dir, 'journal.jsonl'));
         this.improvements = new Improvements(this);
         this.memories = new Memories(this);
     }

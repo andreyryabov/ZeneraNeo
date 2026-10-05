@@ -10,7 +10,8 @@ import { readJson, type Tuning } from './tuning.ts';
 // Memories, kept and merged
 //
 // No run ever shares a memory: each try runs on its own private directory - an
-// empty one without memory, a copy of its case's passing memory with it. What
+// empty one without memory, a copy of its case's passing memory with it. Its
+// workspace is private too, and always starts empty. What
 // is shared is only the record. A case whose with-memory run passes submits a
 // copy of that memory here; once `mergeEvery` new ones are waiting they are
 // merged, with the last merge, into a new graph. Merges are numbered and never
@@ -146,11 +147,23 @@ export class Memories {
         if (fresh.length === 0) {
             return;
         }
-        const last = this.lastMerge();
         const n = this.merges().length + 1;
         const name = `m${String(n).padStart(2, '0')}`;
         const target = join(this.dir, 'merged', name);
         const log = join(this.dir, 'merged', `${name}.log`);
+        await this.#t.journal.step({ kind: 'merge', dir: target, log }, () =>
+            this.#mergeInto(fresh, n, name, target, log),
+        );
+    }
+
+    async #mergeInto(
+        fresh: Submission[],
+        n: number,
+        name: string,
+        target: string,
+        log: string,
+    ): Promise<void> {
+        const last = this.lastMerge();
         rmSync(target, { recursive: true, force: true });
         mkdirSync(join(this.dir, 'merged'), { recursive: true });
         this.#t.event({ what: 'memory merge', detail: `${name}: ${fresh.length} new` });

@@ -301,7 +301,7 @@ async function start(
     note(
         `${bold('tuning')} ${project.name} · ${config.workers} workers · apply at ${config.applyAt}`,
     );
-    note(dim(`follow it: ${join(t.dir, 'STATUS.md')}`));
+    note(dim(`follow it: file://${join(t.dir, 'STATUS.md')}`));
     try {
         await runLoop(t);
     } finally {

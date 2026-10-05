@@ -9,6 +9,7 @@ import {
     readdirSync,
     readFileSync,
     rmSync,
+    writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
 
@@ -134,6 +135,24 @@ export class SystemVersions {
         if (existsSync(join(from, AGENTS))) {
             cpSync(join(from, AGENTS), join(this.root, AGENTS), { recursive: true });
         }
+    }
+
+    /** Forgets the versions an apply recorded, as if it never ran. */
+    drop(apply: string): void {
+        const rows = this.rows();
+        const keep = rows.filter((r) => r.apply !== apply);
+        if (keep.length === rows.length) {
+            return;
+        }
+        for (const r of rows) {
+            if (r.apply === apply) {
+                rmSync(this.snapshotDir(r.v), { recursive: true, force: true });
+            }
+        }
+        writeFileSync(
+            join(this.dir, 'systems.jsonl'),
+            keep.map((r) => `${JSON.stringify(r)}\n`).join(''),
+        );
     }
 
     /** `git diff` between two versions' copies; a file list where git is missing. */

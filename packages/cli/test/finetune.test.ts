@@ -15,6 +15,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runFinetune } from '../src/meta/finetune/command.ts';
 import { runDataset } from '../src/meta/finetune/dataset/command.ts';
+import { Journal } from '../src/meta/finetune/journal.ts';
+import { SystemVersions } from '../src/meta/finetune/system.ts';
 import type { Zen } from '../src/meta/finetune/tuning.ts';
 
 let root: string;
@@ -399,6 +401,42 @@ describe('zen meta finetune', () => {
         expect(fake.calls.length).toBeGreaterThan(first);
     });
 
+    it('rolls back the steps a kill cut off, and does them again', async () => {
+        await dataset(['a1']);
+        const ft = join(root, 'finetune');
+        const journal = new Journal(join(ft, 'journal.jsonl'));
+        // A run that wrote run.json but was killed before it committed.
+        const attempt = join(ft, 'cases', 'a1', 'r1', '01-nomem');
+        mkdirSync(join(attempt, 'memory'), { recursive: true });
+        writeFileSync(join(attempt, 'run.json'), '{"dir":"/nowhere"}');
+        journal.begin({ kind: 'run', dir: attempt });
+        // An apply killed halfway through its edit.
+        new SystemVersions(root, join(ft, 'systems')).record('start');
+        const apply = join(ft, 'applies', '001');
+        mkdirSync(apply, { recursive: true });
+        writeFileSync(join(apply, 'inputs.json'), '[]');
+        journal.begin({ kind: 'apply', dir: apply, from: 1 });
+        appendFileSync(join(root, 'agents', 'instructions.md'), '- half an edit\n');
+
+        const fake = fakeZen((_c, _p, _a, applies) => ({ done: applies > 0 }));
+        await start(fake.zen, '-N', '1');
+
+        expect(result('a1')).toMatchObject({ state: 'completed' });
+        expect(
+            runsOf(fake.calls, 'a1').filter((a) =>
+                a[a.indexOf('--input') + 1].includes('01-nomem'),
+            ),
+        ).toHaveLength(1);
+        expect(readFileSync(join(root, 'agents', 'instructions.md'), 'utf8')).toBe(
+            '# Rules\n- rule 1\n',
+        );
+        const inputs = JSON.parse(readFileSync(join(apply, 'inputs.json'), 'utf8'));
+        expect(inputs.map((f: { id: string }) => f.id)).toEqual(['a1@nomem-1']);
+        const events = readFileSync(join(ft, 'events.jsonl'), 'utf8');
+        expect(events.match(/"what":"rolled back"/g)).toHaveLength(2);
+        expect(journal.open()).toEqual([]);
+    });
+
     it('undoes an analysis that edited the project', async () => {
         await dataset(['a1']);
         const fake = fakeZen(() => ({ done: true }));
@@ -438,6 +476,13 @@ describe('zen meta finetune', () => {
         expect(new Set(memories).size).toBe(memories.length);
         for (const m of memories) {
             expect(m).toMatch(/\/cases\/\w+\/r1\/\d{2}-(nomem|mem)\/memory$/);
+        }
+        const workspaces = fake.calls
+            .filter((a) => a[0] === 'run')
+            .map((a) => a[a.indexOf('--workspace') + 1]);
+        expect(new Set(workspaces).size).toBe(workspaces.length);
+        for (const w of workspaces) {
+            expect(w).toMatch(/\/cases\/\w+\/r1\/\d{2}-(nomem|mem)\/workspace$/);
         }
 
         const dir = join(root, 'finetune', 'memories');

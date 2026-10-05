@@ -77,6 +77,8 @@ export interface Run {
     dir: string;
     /** the memory it ran with and committed into */
     memory: string;
+    /** its own empty directory, the root of the agent's file tools */
+    workspace?: string;
     /** the system version it ran on */
     system: number;
     report?: string;
@@ -113,7 +115,9 @@ async function zenRun(
         t.at(s, phase, attempt, 'run');
         t.improvements.runs++;
         try {
-            const why = await runOnce(t, c, dir, memory);
+            const why = await t.journal.step({ kind: 'run', dir }, () =>
+                runOnce(t, c, dir, memory),
+            );
             if (why) {
                 t.event({
                     what: 'void',
@@ -144,6 +148,10 @@ async function runOnce(
     if (memory && existsSync(memory)) {
         cpSync(memory, mem, { recursive: true, filter: (src) => basename(src) !== '.lock' });
     }
+    // Else `zen run` roots the agent's files at its cwd: the project, shared by every run.
+    const workspace = join(dir, 'workspace');
+    rmSync(workspace, { recursive: true, force: true });
+    mkdirSync(workspace, { recursive: true });
     const request = join(dir, 'request.json');
     const envelope = join(dir, 'envelope.json');
     rmSync(envelope, { force: true });
@@ -165,6 +173,8 @@ async function runOnce(
             request,
             '--memory',
             mem,
+            '--workspace',
+            workspace,
             '--out',
             envelope,
         ],
@@ -198,6 +208,7 @@ async function runOnce(
     const run: Run = {
         dir: runDir,
         memory: mem,
+        workspace,
         system: t.system.version(),
         ...(existsSync(join(runDir, 'report.html')) ? { report: join(runDir, 'report.html') } : {}),
         ...(existsSync(graph) ? { graph } : {}),
@@ -232,72 +243,91 @@ async function analyze(
     const dir = t.attemptDir(c, phase, attempt);
     const file = join(dir, 'feedback.json');
     const known = { case: c.id, caseRev: c.rev, phase, attempt };
-    let read = readFeedback(file, known);
-
-    if (!('feedback' in read)) {
+    const kept = readFeedback(file, known);
+    let feedback: Feedback;
+    if ('feedback' in kept) {
+        feedback = kept.feedback;
+    } else {
         t.checkStopping();
         t.at(s, phase, attempt, 'analyze');
-        let session = sessionOf(t, c);
-        if (!session) {
-            session = randomUUID();
-            mkdirSync(t.caseDir(c), { recursive: true });
-            writeFileSync(join(t.caseDir(c), 'session'), `${session}\n`);
-        }
-        const hash = t.system.hash();
-        const applies = t.improvements.started;
-        const continuing = (): string[] => [
-            'meta',
-            'run',
-            '--no-refresh',
-            '--json',
-            ...(sessionKept(session!) ? ['--resume', session!] : ['--session-id', session!]),
-        ];
+        feedback = await t.journal.step({ kind: 'analyze', dir }, () =>
+            analyzeOnce(t, s, c, phase, attempt, run, file),
+        );
+    }
+    writeFeedback(t, c);
+    return feedback;
+}
 
-        const res = await t.zen(
+async function analyzeOnce(
+    t: Tuning,
+    s: Seat,
+    c: Case,
+    phase: Phase,
+    attempt: number,
+    run: Run,
+    file: string,
+): Promise<Feedback> {
+    const dir = dirname(file);
+    const known = { case: c.id, caseRev: c.rev, phase, attempt };
+    let session = sessionOf(t, c);
+    if (!session) {
+        session = randomUUID();
+        mkdirSync(t.caseDir(c), { recursive: true });
+        writeFileSync(join(t.caseDir(c), 'session'), `${session}\n`);
+    }
+    const hash = t.system.hash();
+    const applies = t.improvements.started;
+    const continuing = (): string[] => [
+        'meta',
+        'run',
+        '--no-refresh',
+        '--json',
+        ...(sessionKept(session!) ? ['--resume', session!] : ['--session-id', session!]),
+    ];
+
+    const res = await t.zen(
+        [
+            ...continuing(),
+            '/analyze',
+            run.dir,
+            `case=${c.id}`,
+            `rev=${c.rev}`,
+            `phase=${phase}`,
+            `attempt=${attempt}`,
+            `feedback=${file}`,
+        ],
+        join(dir, 'analyze.log'),
+    );
+    keepAnalysis(dir, res.stdout);
+
+    let read = readFeedback(file, known);
+    if (!('feedback' in read)) {
+        const again = await t.zen(
             [
                 ...continuing(),
-                '/analyze',
-                run.dir,
-                `case=${c.id}`,
-                `rev=${c.rev}`,
-                `phase=${phase}`,
-                `attempt=${attempt}`,
-                `feedback=${file}`,
+                `The feedback file ${file} is ${read.problem}. Write it again exactly as section 7 of the zen-analyze-run skill describes, then stop.`,
             ],
             join(dir, 'analyze.log'),
         );
-        keepAnalysis(dir, res.stdout);
-
+        keepAnalysis(dir, again.stdout, false);
         read = readFeedback(file, known);
-        if (!('feedback' in read)) {
-            const again = await t.zen(
-                [
-                    ...continuing(),
-                    `The feedback file ${file} is ${read.problem}. Write it again exactly as section 7 of the zen-analyze-run skill describes, then stop.`,
-                ],
-                join(dir, 'analyze.log'),
-            );
-            keepAnalysis(dir, again.stdout, false);
-            read = readFeedback(file, known);
-        }
-        // Any apply that overlapped this analysis owns the change; undoing it would gut the apply.
-        const overlapped = t.improvements.applying || t.improvements.started !== applies;
-        if (t.system.hash() !== hash && !overlapped) {
-            t.system.restore(t.system.version());
-            t.event({
-                what: 'analyze edited the system - undone',
-                worker: s.worker?.slot,
-                case: c.id,
-                phase,
-                attempt,
-            });
-        }
-        if (!('feedback' in read)) {
-            throw new Error(`analysis wrote no usable feedback (${read.problem})`);
-        }
-        note(t, c, read.feedback, run, session);
     }
-    writeFeedback(t, c);
+    // Any apply that overlapped this analysis owns the change; undoing it would gut the apply.
+    const overlapped = t.improvements.applying || t.improvements.started !== applies;
+    if (t.system.hash() !== hash && !overlapped) {
+        t.system.restore(t.system.version());
+        t.event({
+            what: 'analyze edited the system - undone',
+            worker: s.worker?.slot,
+            case: c.id,
+            phase,
+            attempt,
+        });
+    }
+    if (!('feedback' in read)) {
+        throw new Error(`analysis wrote no usable feedback (${read.problem})`);
+    }
+    note(t, c, read.feedback, run, session);
     return read.feedback;
 }
 
