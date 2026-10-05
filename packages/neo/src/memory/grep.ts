@@ -1,6 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
+import { PatternError, finder, type Finder, type MatchOptions } from '../match.ts';
 import { hostPath } from './files.ts';
-import { PatternError, matcher, type MatchOptions, type Matcher } from './match.ts';
 import type { Omitted } from './report.ts';
 import type { MemoryStore } from './store.ts';
 import { MemoryError, type MemoryNode } from './types.ts';
@@ -182,9 +182,9 @@ export async function grepMemory(
  * A bad pattern is the model's mistake to fix, and `MemoryError` is the one
  * shape both surfaces already know how to hand back rather than throw.
  */
-function compile(pattern: string, options: MatchOptions): Matcher {
+function compile(pattern: string, options: MatchOptions): Finder {
     try {
-        return matcher(pattern, options);
+        return finder(pattern, options);
     } catch (err) {
         if (err instanceof PatternError) {
             throw new MemoryError(
@@ -199,7 +199,7 @@ function compile(pattern: string, options: MatchOptions): Matcher {
 }
 
 /** Every matching line, of which the first `cap` are kept; the count is of all of them. */
-function scan(out: GrepHit[], where: GrepField, body: string, match: Matcher, cap: number): number {
+function scan(out: GrepHit[], where: GrepField, body: string, match: Finder, cap: number): number {
     const lines = body.split('\n');
     let total = 0;
     for (let i = 0; i < lines.length; i++) {

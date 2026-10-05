@@ -15,12 +15,12 @@ import {
     type Command,
     type Context,
 } from '@zenera/cli/lib';
+import { isGlob, loose, matcher, PatternError, wildcard, type Matcher } from '@zenera/neo';
 import { existsSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { resolveEmbedder } from '../common/embedder.ts';
 import { locateIndex, outputDir } from '../common/locate.ts';
 import { assertSameEmbedding, inspectIndex } from '../common/manifest.ts';
-import { isGlob, loose, matcher, PatternError, wildcard, type Matcher } from '../common/match.ts';
 import { breakdown, indexing } from '../common/prose.ts';
 import { announce, reportReady, stagingFor, swapIn } from '../common/restore.ts';
 import { buildIndex } from './build.ts';

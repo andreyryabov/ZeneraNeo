@@ -524,6 +524,7 @@ use_, needs no project, and is the other half of the same question.
 | `zen models show <ref>`    | One model, every field the vendor gave.                      |
 | `zen models test <ref> …`  | One real minimal call, per ref.                              |
 | `zen models pick`          | `--chat` or `--embedding`: the first ref that answers.       |
+| `zen models browse`        | The same catalog, walked with the arrow keys (TUI).          |
 
 `zen models <provider>` is short for `ls <provider>`, because it is what people
 type. Safe only because no provider is named after a subcommand - a collision
@@ -564,6 +565,17 @@ working ref, and firing eight billable calls to find it is the wrong trade -
 particularly for the caller most likely to be running it, which is an agent that
 has just been refused. The ref goes to stdout alone and unstyled, so
 `$(zen models pick --embedding)` is the ref and nothing else.
+
+**`browse` is the same catalog for a person** (`src/tui/models.tsx`, alias
+`ui`): providers, then one provider's listing with a `/` filter and a role
+cycle, then one model in full. `t` asks the highlighted model one question,
+`p` takes it. It keeps `pick`'s contract by drawing on **stderr**, so the
+picked ref is the only thing on stdout and `$(zen models browse)` works;
+leaving without a pick is exit 1 when stdout is not a terminal, because a
+substitution waiting for a ref has not been answered. The overview is offline
+like `zen models`; a provider is fetched when it is opened. Listing and
+probing arrive as callbacks from `commands/models.ts`, so the TUI holds layout
+and keys only.
 
 The loop this closes:
 
@@ -789,14 +801,24 @@ the repository ships.
 
 Which coding agent is an implementation detail, and the CLI surface is written
 so it can be replaced: today it drives GitHub Copilot CLI, and nothing above
-[meta.ts](packages/cli/src/meta.ts) names it.
+[meta/launch.ts](packages/cli/src/meta/launch.ts) and
+[meta/wire.ts](packages/cli/src/meta/wire.ts) names it.
+
+Everything the meta agent is given lives under
+[src/meta/](packages/cli/src/meta/): the launcher, the model choice, the key
+wiring, stored prompts, the window and the `.github/` editor tree. It reaches
+the rest of the CLI only through [meta/host.ts](packages/cli/src/meta/host.ts),
+and `test/meta-boundary.test.ts` fails on any other import - so the layer can
+become a package of its own by turning that file into a dependency.
 
 ```
 zen meta run [project] "<question>"      ask it something
 zen meta run [project] /<name> [words]   run .github/prompts/<name>.prompt.md
 zen meta run [project]                   pick one of those prompts
 zen meta prompts [project]               list those prompts
+zen meta resume [project] [session]      carry on a session that stopped
 zen meta model [ref]                     show or set the model it uses
+zen meta dataset <verb>                  the cases the project is evaluated on
 ```
 
 Every prompt goes through `run`. The earlier grammar asked for the verb only in
@@ -806,6 +828,11 @@ different things on different days: `zen meta acme run` read as the question
 always there cannot be mistaken for the thing it introduces. The project may sit
 on either side of it - `zen meta acme run` and `zen meta run acme` are the same
 command - because that is the one reordering people actually type.
+
+There is no per-prompt verb. A `zen meta inspect` once wrapped `/inspect` with a
+run picker; it was dropped because it tied the CLI to one prompt's name and
+broke silently when that prompt was replaced. A prompt that needs a run reads it
+from its own last line, as `/analyze` does.
 
 Three things make it more than `copilot -C`.
 
@@ -876,6 +903,47 @@ One sharp edge: copilot offers its tools as OpenAI _custom_ tools, which the
 completions API rejects outright - `400 Invalid value: 'custom'`. Only the
 responses API accepts them, so the wire API follows the model rather than being
 a flag nobody would know to set.
+
+#### The dataset - `zen meta dataset`
+
+The queries a project is evaluated on, each with its rubric, kept in
+`dataset/` at the project root and written only by this command
+([meta/finetune/dataset/](packages/cli/src/meta/finetune/dataset/)). It sits
+under `meta` because its writer is the meta agent - a project's own agents
+never see it, and must not: the rubric is the answer key.
+
+Reading a source and deciding what is a case is the model's job and stays in
+the `/dataset` prompt. Everything after - what changed, the revision, who did
+it, what drifted, what to draw next - is bookkeeping, done here, because
+bookkeeping a model half-does is worse than none.
+
+- **Plain files**: a case per file, an append-only journal per case holding
+  every change (with the case as it stood after it) and every note, a line per
+  revision, and `manifest.json` written last as the commit marker. Git diffs it;
+  `show <id>@<rev>` reads any revision back from the journal.
+- **Nothing is deleted.** A case leaves as `retired`, so an old run that names
+  it still resolves and an id is never reused.
+- **Drift is per section.** Each case anchors to a markdown heading path, a
+  JSON/YAML pointer or a whole file, and stores a hash of that section. A file
+  whose hash the manifest still holds is not opened; in one that moved, each
+  case is compared on its own section. A file's hash only moves forward once
+  the file is settled - every case matches, every section is a case or
+  ignored - or a partial refresh would hide the case it left behind.
+- **Only a different question restarts a case.** A change to `input`, `rubric`
+  or `expected` is listed as `restarted`; class, tags, notes and anchors revise
+  it without that. Rubric line ids survive edits, so a note's `r2 failed`
+  keeps meaning the same line.
+- **Every change and note says who.** `zen meta` puts its session id and the
+  prompt name in the environment of everything its agent runs
+  (`ZENERA_META_SESSION`, `ZENERA_META_PROMPT`); the command stamps them on,
+  and `log` prints how to resume each session the machine still holds.
+- **A sample is laid out whole, then cut.** Strata take turns by smooth
+  weighted round-robin, each ordered by priority with seeded ties, so a larger
+  `-n` keeps every case a smaller one chose and the same seed draws the same
+  cases anywhere.
+
+It is routed before the meta agent's own flags are parsed, so it owns its
+flags, and it never touches the keyring, the editor tree or copilot.
 
 ## 7.7. Reading a run - `zen inspect`
 
@@ -995,6 +1063,14 @@ Three decisions carry it:
   with `zen run --model` used something its agent never declared, and the wire
   id is the only witness of which it was. `--model` names another and says on
   stderr that the answer is now a second opinion rather than self-examination.
+
+It has two modes, and the only switch between them is whether the question was
+given. A question - on the line, in `--question-file`, or implied by `--json` -
+means a program is asking: one call, the answer alone on stdout, no banner, no
+picker, no follow-up prompt, even at a terminal. No question means a person:
+pickers for whatever is not named, then a conversation. Keying it on the TTY
+instead was wrong - an agent's shell is often a pty, and the follow-up prompt
+that drew the banner landed in its tool output.
 
 ## 8. Distribution - the `zen` binary
 
@@ -1179,7 +1255,8 @@ replaced whether or not they were edited, and the report is taken afterwards, so
 its exit code answers the repaired project.
 
 This is the other half of `keep: true` in
-[scaffold.ts](packages/cli/src/scaffold.ts). A scaffold never overwrites, which
+[scaffold.ts](packages/cli/src/scaffold.ts) (the editor tree itself is
+[meta/editor.ts](packages/cli/src/meta/editor.ts)). A scaffold never overwrites, which
 is right for `agents.yaml`, the prompts, the specification and
 `agents/instructions.md` - the project's own house rules, whose template says
 "replace this with yours" - and wrong for the four that only restate how the

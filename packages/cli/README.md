@@ -241,6 +241,7 @@ so they never go stale - and edits to them do not survive.
 | `/spec-sync-project`   | Makes every file match `SPECIFICATION.md`, both directions.      |
 | `/spec-apply-feedback` | Folds your answers in `SPECIFICATION-FEEDBACK.md` into the spec. |
 | `/project-review`      | Reads the project as a reviewer would, and reports.              |
+| `/analyze [run]`       | Analyzes one run and says which instruction to change.           |
 | `/new-agent`           | Adds an agent - prompt, wiring and hand-offs.                    |
 | `/new-skill`           | Adds a skill under `agents/skills/`.                             |
 
@@ -282,6 +283,17 @@ zen inspect ask n17 "why python -c here?" --dir "$DIR"  # ask the model itself
 schemas - to a model with your question on the end and tool calling off, and
 tells it the run is over and its own instructions are quotable. It is how a
 prompt that reads correctly and behaves wrongly explains itself.
+
+`ask` has two modes, decided by whether the question is given:
+
+- **One-shot** - a question on the line, in `--question-file`, or `--json`.
+  For a script or the agent in your editor: no banner, no prompt, no picker.
+  stdout is the answer and nothing else, and the command exits.
+- **Interactive** - no question. For you, at a terminal: `zen inspect ask`
+  walks through the session, run and recorded LLM call (whichever are not
+  named), frames each question and Markdown answer separately, and keeps
+  accepting follow-ups until you submit an empty question. Without a terminal
+  it is an error, never a wait.
 
 Every step is a command, and everything each one reads or writes is a plain
 file: the specification, the findings `zen check` prints with a code, a location
@@ -631,6 +643,7 @@ zen meta run acme "review the last commit"
 zen meta prompts                             # which /<name> prompts this project has
 zen meta run /project-review                 # .github/prompts/project-review.prompt.md
 zen meta run acme /spec-sync-project agents/triage.md
+zen meta run /analyze 20260825-143012-a7f3   # analyze one run
 git diff | zen meta run "what broke?" --allow-tool read
 zen meta run --dry-run "hello"               # what would run, secrets masked
 ```
@@ -698,6 +711,22 @@ the next run. A typed prefix that names no provider - `vertes/...` - is caught
 before that, because it would otherwise be sent whole to a vendor you never
 named. `--force` stores a ref without asking.
 
+### The dataset it evaluates against
+
+```sh
+zen meta run /dataset                        # build or refresh dataset/ from its sources
+zen meta dataset                             # revision, counts, what drifted
+zen meta dataset drift                       # which cases their source sections moved under
+zen meta dataset sample --rubric yes -n 12 --format batch -o cases.json
+zen meta dataset log planning-organize-day   # every change and verdict, and the sessions
+```
+
+`dataset/` holds every case with its rubric, an anchor to the section it was
+read from, and a journal of what changed and what was found. Only
+`zen meta dataset` writes it; `/dataset` re-reads just the sections that
+changed, and a case whose question or rubric changed is listed as restarted.
+See the `zen-dataset` skill a project carries in `.github/skills/`.
+
 ## Credentials
 
 One keyring serves every provider, and a key goes in the same way whatever it
@@ -755,6 +784,7 @@ zen models search haiku --tools --free      # narrow it
 zen models show openrouter:anthropic/claude-haiku-4.5
 zen models test vertex:gemini-embedding-001 # one real call, one verdict
 zen models pick --embedding                 # the first ref that answers, on stdout
+zen models browse                           # walk providers and models with the arrow keys
 ```
 
 Listings are cached for a day in `~/.zenera/neo/cache`. If a provider cannot be
@@ -787,6 +817,11 @@ the above is a single substitution, whether a person or an agent is doing it:
 ```sh
 zen rag schema index --embedding "$(zen models pick --embedding)" ./specs/*.yaml
 ```
+
+`zen models browse [provider]` is the interactive way in: arrow keys through
+the providers and their models, `/` to filter, `tab` to cycle roles, `enter`
+for one model in full, `t` to ask it one question, `p` to pick it. The picked
+ref is printed on stdout, so `ref="$(zen models browse)"` works too.
 
 ### Setting up each provider
 

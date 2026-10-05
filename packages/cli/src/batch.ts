@@ -33,6 +33,7 @@ import {
     usageError,
     write,
 } from './term.ts';
+import { appendUsage } from './usage.ts';
 
 /**
  * Many questions, one project, at once.
@@ -232,6 +233,20 @@ export async function runBatch(opts: BatchOptions): Promise<void> {
     };
     const text = jsonText(body);
     await writeFile(join(dir, 'batch.json'), text, 'utf8');
+    appendUsage(project.dir, {
+        kind: 'batch',
+        ts: finishedAt.toISOString(),
+        batchDir: dir,
+        input: opts.input,
+        items: items.length,
+        ok: results.length - failed,
+        failed,
+        concurrency: opts.concurrency,
+        memory: mode,
+        startedAt: startedAt.toISOString(),
+        durationMs: finishedAt.getTime() - startedAt.getTime(),
+        models,
+    });
     if (opts.out) {
         await writeFile(resolve(opts.cwd, opts.out), text, 'utf8');
     }
@@ -324,6 +339,18 @@ async function runItem(item: BatchItem, ctx: ItemContext): Promise<ItemResult> {
             await writeFile(output, jsonText(Engine.envelope(engine, outcome)), 'utf8');
             const models = usageByModel(outcome.result.state.trajectory);
             ctx.spent.push(models);
+            appendUsage(ctx.projectDir, {
+                kind: 'run',
+                ts: new Date().toISOString(),
+                runDir: outcome.run.dir,
+                session: engine.session.id,
+                batchDir: ctx.dir,
+                item: item.id,
+                ok: true,
+                stopReason: outcome.result.stopReason,
+                durationMs: outcome.durationMs,
+                models,
+            });
             ctx.progress.finish(item.id, { ok: true, usage: outcome.result.usage, models });
             return { index: item.index, id: item.id, ok: true, input: index(item.input), output };
         } finally {
@@ -335,6 +362,15 @@ async function runItem(item: BatchItem, ctx: ItemContext): Promise<ItemResult> {
             ...(err instanceof CliError && err.hint ? { hint: err.hint } : {}),
         };
         await writeFile(output, jsonText({ ok: false, id: item.id, error }), 'utf8');
+        appendUsage(ctx.projectDir, {
+            kind: 'run',
+            ts: new Date().toISOString(),
+            batchDir: ctx.dir,
+            item: item.id,
+            ok: false,
+            error: error.message,
+            models: [],
+        });
         ctx.progress.finish(item.id, { ok: false, error: error.message });
         return {
             index: item.index,

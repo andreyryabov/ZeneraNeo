@@ -49,7 +49,7 @@ import {
     type KeyStore,
     type Provider,
 } from '../src/keys.ts';
-import { classify, probeModels } from '../src/liveness.ts';
+import { classify, probeChat, probeModels } from '../src/liveness.ts';
 import {
     absorb,
     answerBox,
@@ -60,13 +60,19 @@ import {
     misspelledProvider,
     promptPath,
     readPrompt,
-    splitRef,
+    readSpan,
+    resumeDelayMs,
+    shutdownModels,
+    splitLines,
+    Tally,
     toneAt,
+    transient,
     wire,
     wireApi,
     type Outcome,
     type Sink,
-} from '../src/meta.ts';
+} from '../src/meta/index.ts';
+import { splitRef } from '../src/modelref.ts';
 import { duration } from '../src/narrate.ts';
 import { engineDisk, ensurePodmanReady, ownedContainers, sharedEndpoint } from '../src/podman.ts';
 import { dirSize, lastUsedAt, projectMounts } from '../src/projects.ts';
@@ -93,6 +99,7 @@ import {
     gistOf,
     inlineOf,
     readable,
+    scrollTop,
     summarise,
     textOf,
     THINKING_ROWS,
@@ -101,6 +108,7 @@ import {
     wrap,
     type Block,
 } from '../src/tui/wrap.ts';
+import { LEDGER_ENV, ledgerPath } from '../src/usage.ts';
 import { validateProject, type Report } from '../src/validate.ts';
 
 // ---------------------------------------------------------------------------
@@ -418,6 +426,71 @@ describe('reading the keyboard', () => {
 
     it('leaves a lone escape alone, which is how cancelling is spelt', () => {
         expect([...keysIn('\u001b')]).toEqual(['\u001b']);
+    });
+});
+
+describe('an agent at the terminal', () => {
+    // Not `vi.stubEnv`: earlier tests replace `process.env` and it keeps the old object.
+    const NAMES = ['ZENERA_AGENT', 'AI_AGENT', 'COPILOT_AGENT'];
+    let held: (string | undefined)[] = [];
+    const set = (name: string, value: string): void => {
+        process.env[name] = value;
+    };
+    const clear = (): void => {
+        for (const name of NAMES) {
+            delete process.env[name];
+        }
+    };
+    beforeEach(() => {
+        held = NAMES.map((name) => process.env[name]);
+        clear();
+    });
+    afterEach(() => {
+        clear();
+        NAMES.forEach((name, i) => {
+            if (held[i] !== undefined) {
+                process.env[name] = held[i];
+            }
+        });
+    });
+
+    it('is told apart by the variables agents export', () => {
+        expect(term.drivenByAgent()).toBe(false);
+        set('AI_AGENT', 'github_copilot_vscode_agent');
+        expect(term.drivenByAgent()).toBe(true);
+        clear();
+        set('COPILOT_AGENT', '1');
+        expect(term.drivenByAgent()).toBe(true);
+    });
+
+    it('lets ZENERA_AGENT decide either way, so a person can opt back in', () => {
+        set('ZENERA_AGENT', '1');
+        expect(term.drivenByAgent()).toBe(true);
+        set('AI_AGENT', 'github_copilot_vscode_agent');
+        set('ZENERA_AGENT', '0');
+        expect(term.drivenByAgent()).toBe(false);
+    });
+
+    it('is never asked anything, even on a real pty', () => {
+        const streams = [process.stdin, process.stderr];
+        const before = streams.map((s) => Object.getOwnPropertyDescriptor(s, 'isTTY'));
+        try {
+            for (const s of streams) {
+                Object.defineProperty(s, 'isTTY', { value: true, configurable: true });
+            }
+            expect(term.isInteractive()).toBe(true);
+            set('COPILOT_AGENT', '1');
+            expect(term.isInteractive()).toBe(false);
+        } finally {
+            streams.forEach((s, i) => {
+                const was = before[i];
+                if (was) {
+                    Object.defineProperty(s, 'isTTY', was);
+                } else {
+                    delete (s as { isTTY?: boolean }).isTTY;
+                }
+            });
+        }
     });
 });
 
@@ -783,6 +856,22 @@ describe('clipping to one row', () => {
     });
 });
 
+describe('scrolling a list', () => {
+    it('stays put while the selection is in view', () => {
+        expect(scrollTop(5, 3, 10, 100)).toBe(3);
+    });
+
+    it('moves only as far as the selection needs', () => {
+        expect(scrollTop(20, 3, 10, 100)).toBe(11);
+        expect(scrollTop(2, 3, 10, 100)).toBe(2);
+    });
+
+    it('never scrolls past the last full window, nor above the first row', () => {
+        expect(scrollTop(99, 95, 10, 100)).toBe(90);
+        expect(scrollTop(0, 0, 10, 4)).toBe(0);
+    });
+});
+
 describe('the blocks of an answer', () => {
     const kinds = (text: string): string[] => blocksOf(text).map((b) => b.kind);
 
@@ -1103,6 +1192,25 @@ describe('the model probe', () => {
         expect(probe).toMatchObject({ id: 'embed-stub', kind: 'embedding' });
         expect(probe!.check.state).toBe('live');
         expect(asked?.input).toHaveLength(1);
+    });
+
+    // The registry refuses a knob the adapter never sends, and the OpenAI
+    // adapters have no output cap — so a probe that capped every vendor was
+    // refused before it asked anything (`zen models pick --chat`).
+    describe('building the chat model it asks', () => {
+        beforeEach(() => {
+            vi.stubEnv('OPENAI_API_KEY', 'sk-test');
+            vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-test');
+        });
+        afterEach(() => vi.unstubAllEnvs());
+
+        it('leaves the cap off where the adapter would not read it', () => {
+            expect(probeChat('openai', 'gpt-stub').id).toBe('gpt-stub');
+        });
+
+        it('keeps it where the vendor requires one', () => {
+            expect(probeChat('anthropic', 'claude-stub').id).toBe('claude-stub');
+        });
     });
 });
 
@@ -1725,6 +1833,7 @@ describe('the scaffold', () => {
         const written = scaffold({ dir, model: 'gpt-4o' });
 
         for (const name of [
+            'analyze.prompt.md',
             'project-review.prompt.md',
             'spec-apply-feedback.prompt.md',
             'spec-sync-project.prompt.md',
@@ -3186,6 +3295,7 @@ describe('wiring a zen key into copilot', () => {
     it('picks the wire api the model can actually serve', () => {
         expect(wireApi('openai', 'gpt-5-mini')).toBe('responses');
         expect(wireApi('openai', 'o4-mini')).toBe('responses');
+        expect(wireApi('openai', 'gpt-6-sol')).toBe('responses');
         expect(wireApi('openai', 'gpt-4o')).toBeUndefined();
         expect(wireApi('anthropic', 'claude-sonnet-4.5')).toBeUndefined();
     });
@@ -3222,6 +3332,142 @@ describe('a stored prompt', () => {
         const found = readPrompt('/p/x.prompt.md', 'x', 'Just this.\n');
         expect(found.body).toBe('Just this.');
         expect(found.description).toBeUndefined();
+    });
+});
+
+// The spans below are trimmed from a real `COPILOT_OTEL_FILE_EXPORTER_PATH` file.
+describe('counting the meta agent’s tokens', () => {
+    const chat = (attrs: Record<string, unknown>) =>
+        JSON.stringify({
+            type: 'span',
+            traceId: 't1',
+            spanId: 's1',
+            parentSpanId: 'p1',
+            name: 'chat google/gemini-3.8-flash',
+            startTime: [1790939995, 154000000],
+            endTime: [1790939998, 922000000],
+            attributes: {
+                'gen_ai.operation.name': 'chat',
+                'gen_ai.request.model': 'google/gemini-3.8-flash',
+                'gen_ai.response.model': 'google/gemini-3.8-flash',
+                'gen_ai.conversation.id': 'sess-1',
+                'gen_ai.usage.input_tokens': 43828,
+                'gen_ai.usage.output_tokens': 49,
+                ...attrs,
+            },
+        });
+
+    it('reads a chat span, folding reasoning into output as zen counts it', () => {
+        const span = readSpan(
+            chat({
+                'gen_ai.usage.reasoning.output_tokens': 415,
+                'gen_ai.usage.cache_read.input_tokens': 40000,
+            }),
+        );
+        expect(span).toMatchObject({
+            model: 'google/gemini-3.8-flash',
+            session: 'sess-1',
+            durationMs: 3768,
+            usage: {
+                inputTokens: 43828,
+                cachedInputTokens: 40000,
+                outputTokens: 464,
+                reasoningTokens: 415,
+            },
+        });
+    });
+
+    it('ignores tools, metrics, agent spans and broken lines', () => {
+        expect(readSpan(chat({ 'gen_ai.operation.name': 'execute_tool' }))).toBeUndefined();
+        expect(readSpan(JSON.stringify({ type: 'metric', name: 'x' }))).toBeUndefined();
+        expect(
+            readSpan(
+                JSON.stringify({
+                    type: 'span',
+                    attributes: {
+                        'gen_ai.operation.name': 'invoke_agent',
+                        'gen_ai.agent.name': 'explore',
+                    },
+                }),
+            ),
+        ).toBeUndefined();
+        expect(readSpan('{"type":"span",')).toBeUndefined();
+    });
+
+    it('carries a line that has not finished arriving', () => {
+        const first = splitLines('', '{"a":1}\n{"b":');
+        expect(first).toEqual({ lines: ['{"a":1}'], carry: '{"b":' });
+        expect(splitLines(first.carry, '2}\n')).toEqual({ lines: ['{"b":2}'], carry: '' });
+    });
+
+    it('sums calls into one line', () => {
+        const tally = new Tally();
+        const call = readSpan(chat({ 'gen_ai.usage.cache_read.input_tokens': 1_500_000 }));
+        if (call) {
+            tally.add({ ...call, usage: { ...call.usage, inputTokens: 1_800_000 } });
+            tally.add(call);
+        }
+        expect(tally.toString()).toBe('2 calls · 1.84M in (3.00M cached) · 98 out');
+    });
+
+    it("takes copilot's own totals from the last shutdown, reasoning folded in", () => {
+        const shutdown = (input: number) =>
+            JSON.stringify({
+                type: 'session.shutdown',
+                data: {
+                    modelMetrics: {
+                        'google/gemini-3.8-flash': {
+                            requests: { count: 2 },
+                            usage: {
+                                inputTokens: input,
+                                outputTokens: 3,
+                                cacheReadTokens: 39364,
+                                cacheWriteTokens: 0,
+                                reasoningTokens: 27,
+                            },
+                        },
+                    },
+                },
+            });
+        const events = [shutdown(43824), '{"type":"user.message"}', shutdown(87695)].join('\n');
+        expect(shutdownModels(events)).toEqual([
+            {
+                model: 'google/gemini-3.8-flash',
+                calls: 2,
+                usage: {
+                    inputTokens: 87695,
+                    cachedInputTokens: 39364,
+                    outputTokens: 30,
+                    reasoningTokens: 27,
+                },
+            },
+        ]);
+        expect(shutdownModels('{"type":"user.message"}')).toBeUndefined();
+    });
+});
+
+describe('where usage is recorded', () => {
+    const kept = process.env[LEDGER_ENV];
+    afterEach(() => {
+        if (kept === undefined) {
+            delete process.env[LEDGER_ENV];
+        } else {
+            process.env[LEDGER_ENV] = kept;
+        }
+    });
+
+    it('records only in a project being tuned, unless told where', () => {
+        delete process.env[LEDGER_ENV];
+        const dir = mkdtempSync(join(tmpdir(), 'zen-ledger-'));
+        try {
+            expect(ledgerPath(dir)).toBeUndefined();
+            mkdirSync(join(dir, '.finetune'));
+            expect(ledgerPath(dir)).toBe(join(dir, '.finetune', 'usage', 'ledger.jsonl'));
+            process.env[LEDGER_ENV] = '/tmp/elsewhere.jsonl';
+            expect(ledgerPath(dir)).toBe('/tmp/elsewhere.jsonl');
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });
 
@@ -3279,6 +3525,84 @@ describe('re-rendering copilot output', () => {
         const { out, said } = run([{ type: 'session.something_new', data: { x: 1 } }]);
         expect(said).toEqual([]);
         expect(out.events).toHaveLength(1);
+    });
+
+    // Copilot's own retries are fixed; zen resumes the session only when
+    // waiting could change the answer.
+    describe('which failures are worth resuming', () => {
+        const failed = (data: object, sessionId: string | null = 's1') =>
+            transient(
+                run([
+                    { type: 'session.error', data },
+                    { type: 'result', exitCode: 1, sessionId: sessionId ?? undefined },
+                ]).out,
+            );
+
+        it('resumes a rate limit, a provider outage and a timeout', () => {
+            expect(
+                failed({
+                    errorType: 'rate_limit',
+                    message: 'Failed to get response from the AI model; retried 5 times',
+                    statusCode: 429,
+                }),
+            ).toContain('429');
+            expect(failed({ errorType: 'query', message: '503', statusCode: 503 })).toContain(
+                '503',
+            );
+            expect(
+                failed({ errorType: 'query', message: 'Connection timed out to provider at x' }),
+            ).toBeDefined();
+        });
+
+        it('does not resume what fails the same way every time', () => {
+            expect(
+                failed({ errorType: 'query', message: '400 Bad Request', statusCode: 400 }),
+            ).toBeUndefined();
+            expect(failed({ errorType: 'authentication', statusCode: 403 })).toBeUndefined();
+        });
+
+        // The sequence recorded when a background `zen run batch` finished under
+        // Gemini 3: copilot's own read_bash carries no thought signature.
+        it('resumes a 400 on a tool call copilot injected, not one the model made', () => {
+            const error = {
+                type: 'session.error',
+                data: { errorType: 'query', message: '400 Bad Request', statusCode: 400 },
+            };
+            const tail = [
+                { type: 'assistant.turn_end', data: {} },
+                error,
+                { type: 'result', exitCode: 1, sessionId: 's1' },
+            ];
+            const modelCall = {
+                type: 'assistant.message',
+                data: { model: 'google/gemini-3.8-flash', toolRequests: [{ name: 'bash' }] },
+            };
+            const injectedCall = {
+                type: 'assistant.message',
+                data: { content: '', toolRequests: [{ name: 'read_bash' }] },
+            };
+            const notified = { type: 'system.notification', data: { content: 'done' } };
+
+            expect(transient(run([modelCall, notified, injectedCall, ...tail]).out)).toContain(
+                '400',
+            );
+            expect(transient(run([modelCall, ...tail]).out)).toBeUndefined();
+            // A resume that fails again sees only its own turn, so it is not retried twice.
+            const user = { type: 'user.message', data: { content: 'Continue' } };
+            expect(transient(run([notified, user, ...tail]).out)).toBeUndefined();
+        });
+
+        it('cannot resume without a session, nor a run that succeeded', () => {
+            expect(failed({ errorType: 'rate_limit', statusCode: 429 }, null)).toBeUndefined();
+            const ok = run([{ type: 'result', exitCode: 0, sessionId: 's1' }]).out;
+            expect(transient(ok)).toBeUndefined();
+        });
+
+        it('waits longer each time, up to a ceiling', () => {
+            expect(resumeDelayMs(0)).toBe(30_000);
+            expect(resumeDelayMs(1)).toBe(60_000);
+            expect(resumeDelayMs(10)).toBe(300_000);
+        });
     });
 
     it('processes progress commentary lines as inline markdown', () => {

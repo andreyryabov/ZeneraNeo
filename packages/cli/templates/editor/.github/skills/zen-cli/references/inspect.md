@@ -13,7 +13,8 @@ Four ways to read one run, for two different readers.
 | `report`              | you     | `report.html` - every message, payload and cost |
 | `graph`               | a model | the whole trajectory as one Mermaid flowchart   |
 | `node <id...>`        | a model | those nodes in full, payloads resolved          |
-| `ask <id> <question>` | you     | that call replayed to a model, with a question  |
+| `ask <id> <question>` | a model | one replayed answer on stdout; never prompts    |
+| `ask [<id>]`          | you     | a conversation with that call, at a terminal    |
 
 `report` is the default, so `zen inspect` on its own is unchanged.
 
@@ -26,6 +27,7 @@ Four ways to read one run, for two different readers.
 | `--dir <dir>`           | all           | A run directory, as `zen run --json` reports it      |
 | `--memory <dir>`        | report, graph | Read this memory instead of the one the run recorded |
 | `--model <ref>`         | ask           | Answer with this model instead of the run's own      |
+| `--question-file <f>`   | ask           | Read the question from a file; `-` is stdin          |
 | `--part <name>`         | node          | Print this part in full. Repeatable, prefix-matched  |
 | `--full`                | node          | Print every part, the recorded `request` included    |
 | `--open`                | report        | Open the report in a browser                         |
@@ -39,10 +41,13 @@ session that has one. "Newest" means the newest session that actually recorded a
 run, not simply the newest session: a session exists before its first run, so
 the latest one is routinely empty.
 
-**Neither `node` nor `ask` has room for a run.** Every positional `node` takes is
-a node id, and `ask` takes one id and then your question, so name the run with
-`--run`, `--session` or `--dir` - `zen inspect node <run> n13` reads the run id
-as an id and fails.
+**Neither `node` nor `ask` has room for a positional run.** Every positional
+`node` takes is a node id, and every positional `ask` takes is the id followed
+by the question, so name the run with `--run`, `--session` or `--dir`.
+`zen inspect node <run> n13` reads the run id as an id and fails. `ask`
+without a question is the interactive mode (below) and needs a terminal; a
+script, `--json` call or agent passes the id and the question and never sees a
+prompt.
 
 For `report` and `graph` the positional is a run id unless it contains a `/`, in
 which case it is read as a run directory. A run id is a stamp and never has a
@@ -214,9 +219,42 @@ ready to paste.
 
 `node` shows what a model was given. `ask` asks the model what it made of it.
 
+`ask` has two modes, and which one runs is decided by one thing: whether the
+question is given.
+
+| Mode        | Trigger                                                | For                    | Behaviour                                                                                        |
+| ----------- | ------------------------------------------------------ | ---------------------- | ------------------------------------------------------------------------------------------------ |
+| One-shot    | a question on the line, `--question-file`, or `--json` | a script or a model    | no banner, no prompt, no picker; one model call, the raw answer on stdout and nothing else, exit |
+| Interactive | no question                                            | a person at a terminal | asks for whatever is not named - session, run, `llm_call` - then the question; a conversation    |
+
+One-shot never reads the terminal, even when there is one: an unnamed run is
+the newest, not a picker, so name it with `--dir`, `--run` or `--session`.
+Interactive without a terminal is a usage error, never a wait.
+
 ```sh
 zen inspect ask n11 "why run python -c when the skill says npm test?" --dir <run dir>
 ```
+
+In the interactive mode only calls with a recorded request appear in the node
+list. Each question and Markdown answer is drawn in its own labelled panel, with
+the model and token counts on stderr. It keeps asking on the same node,
+retaining earlier exchanges as context, until an empty question is submitted.
+
+```sh
+zen inspect ask                       # pick everything
+zen inspect ask n11 --dir <run dir>   # straight to the questions
+```
+
+A question with quotes, apostrophes, backticks, `$` or more than one line goes
+in a file, so no shell parses it. The file is the whole question; `-` reads it
+from stdin. Words on the line as well are an error.
+
+```sh
+zen inspect ask n11 --question-file .tmp/ask/<run-id>/n11-tests.md --dir <run dir>
+```
+
+Do not build the question with `"$(cat <<'EOF' ... )"`: macOS `/bin/bash` 3.2
+misparses a heredoc inside `$( )` when its body holds an apostrophe.
 
 The `llm_call` node named by the id is replayed: its recorded system prompt, its
 messages and its tool schemas, exactly as the provider received them, with the
@@ -247,8 +285,8 @@ command says so on stderr, because an answer from a different model is a second
 opinion rather than the model examining itself. Either way the run's full system
 prompt goes to that provider.
 
-`graph`, `node` and `ask` print no banner. Their stdout is the answer, whole and
-ready to paste.
+`graph`, `node` and non-interactive `ask` print no banner. Their stdout is the
+answer, whole and ready to paste.
 
 ## Where it comes from
 

@@ -1,4 +1,4 @@
-import { appearance, dim, note, styled, type Appearance } from './term.ts';
+import { appearance, dim, drivenByAgent, note, styled, type Appearance } from './term.ts';
 
 // ---------------------------------------------------------------------------
 // The banner
@@ -205,7 +205,7 @@ export function bannerArt(text: BannerText): { head: string[]; accent: string[] 
 
 /** Narration, and only for someone watching. */
 export function printBanner(text: BannerText, options: PrintBannerOptions = {}): void {
-    if (!process.stderr.isTTY) {
+    if (!process.stderr.isTTY || drivenByAgent()) {
         return;
     }
     note('');

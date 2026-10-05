@@ -648,20 +648,24 @@ ranker, the same walk, the same block a model would have been given, scores and
 all. It is the only one that embeds, and the only one that can distinguish a
 memory that is missing from a memory that is merely ranked sixth.
 
-| Question                                 | Command                              |
-| ---------------------------------------- | ------------------------------------ |
-| Is memory even on, and is it embedded?   | `zen memory stats`                   |
-| What has this project learned?           | `zen memory export --open`           |
-| Is this host/flag/path in there at all?  | `zen memory grep <pattern>`          |
-| Everywhere a thing is mentioned          | `zen memory grep <pattern> --all`    |
-| What would an agent recall for this?     | `zen memory search <query>`          |
-| Why did it _not_ recall that?            | `zen memory search <q> --audience a` |
-| What is in one private slice?            | `zen memory ls --audience audit`     |
-| What has been corrected?                 | `zen memory ls --stale`              |
-| What files are being kept?               | `zen memory ls --files`              |
-| One node in full, with what it links to  | `zen memory show <id>`               |
-| Fold parallel warmup graphs into one     | `zen memory merge <dir...>`          |
-| That should never have been written down | `zen memory forget <id>`             |
+| Question                                 | Command                               |
+| ---------------------------------------- | ------------------------------------- |
+| Is memory even on, and is it embedded?   | `zen memory stats`                    |
+| What has this project learned?           | `zen memory export --open`            |
+| Is this host/flag/path in there at all?  | `zen memory grep <pattern>`           |
+| Everywhere a thing is mentioned          | `zen memory grep <pattern> --all`     |
+| What would an agent recall for this?     | `zen memory search <query>`           |
+| Why did it _not_ recall that?            | `zen memory search <q> --audience a`  |
+| What is in one private slice?            | `zen memory ls --audience audit`      |
+| What has been corrected?                 | `zen memory ls --stale`               |
+| What files are being kept?               | `zen memory ls --files`               |
+| One node in full, with what it links to  | `zen memory show <id>`                |
+| What did a run add to its copy, or read? | `zen memory diff <base> --dir <copy>` |
+| Fold parallel warmup graphs into one     | `zen memory merge <dir...>`           |
+| That should never have been written down | `zen memory forget <id>`              |
+
+Never read a memory's `graph.json` or `manifest.json` with code: every question
+above has a command, and `--json` on any of them is the stable shape.
 
 The directory is not fixed. `zen run --memory <dir>` sends one run's memory
 somewhere else - a scratch graph for a trial, one per branch, or a shared one

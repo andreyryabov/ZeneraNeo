@@ -12,7 +12,7 @@
 // agents.yaml — or read by an agent doing the pasting.
 // ---------------------------------------------------------------------------
 
-import { createEmbedder, createModel, ModelRegistry } from '@zenera/neo';
+import { createEmbedder, ModelRegistry } from '@zenera/neo';
 
 import { parse } from '../args.ts';
 import {
@@ -28,14 +28,17 @@ import {
 import type { Command, Context } from '../command.ts';
 import { ensureHome } from '../home.ts';
 import { envNames, form, isProvider, KeyStore, PROVIDERS, type Provider } from '../keys.ts';
-import { probeModel, type ModelProbe, type ModelTarget } from '../liveness.ts';
+import { probeChat, probeModel, type ModelProbe, type ModelTarget } from '../liveness.ts';
 import {
     ago,
     bold,
+    CliError,
     credentialError,
     cyan,
     dim,
+    EXIT,
     green,
+    isInteractive,
     json,
     note,
     progress,
@@ -47,7 +50,7 @@ import {
     yellow,
 } from '../term.ts';
 
-const USAGE = 'zen models <providers|ls|search|show|test|pick> [ref] [options]';
+const USAGE = 'zen models <providers|ls|search|show|test|pick|browse> [ref] [options]';
 
 type Sub = (ctx: Context, args: readonly string[]) => Promise<void>;
 
@@ -257,6 +260,7 @@ const providers: Sub = async (ctx, args) => {
     );
     note('');
     note(dim('zen models ls <provider>   what one of them serves'));
+    note(dim('zen models browse          walk them with the arrow keys'));
     note(dim('zen models pick --chat     the first one that answers'));
 };
 
@@ -523,9 +527,7 @@ function target(ref: string, provider: Provider, id: string, role: Role): ModelT
             'zen models test only exercises chat and embedding models',
         );
     }
-    // 16 tokens is enough for "ok" and not enough to matter. Anthropic requires
-    // a cap at all, so this is not merely thrift.
-    return { ref, kind: 'model', model: createModel({ provider, model: id, maxTokens: 16 }) };
+    return { ref, kind: 'model', model: probeChat(provider, id) };
 }
 
 function verdict(probe: ModelProbe): string {
@@ -723,6 +725,78 @@ const pick: Sub = async (ctx, args) => {
 };
 
 // ---------------------------------------------------------------------------
+// browse
+// ---------------------------------------------------------------------------
+
+/**
+ * The same catalog, walked with the arrow keys: providers, what one serves,
+ * one model in full, with a key to ask it a question and a key to take it.
+ *
+ * The interface is drawn on stderr, so a pick reaches stdout alone and
+ * `$(zen models browse)` is the ref, the same contract `pick` keeps.
+ */
+const browse: Sub = async (ctx, args) => {
+    const { values, positionals } = parse<{ refresh?: boolean; theme?: string }>(
+        args,
+        { refresh: { type: 'boolean' }, theme: { type: 'string' } },
+        'zen models browse [provider] [--refresh] [--theme dark|light|auto]',
+    );
+    const initial = positionals[0];
+    if (initial !== undefined && !isProvider(initial)) {
+        throw usageError(`unknown provider "${initial}"`, `known: ${PROVIDERS.join(', ')}`);
+    }
+    if (ctx.json || !isInteractive()) {
+        throw usageError(
+            'browsing needs a person at a terminal',
+            'from a script: zen models ls --json, or zen models pick --chat',
+        );
+    }
+
+    const where = await credentials();
+    // Offline, like `providers`: the overview should not cost five listings.
+    // A provider is fetched when it is opened.
+    const cats = await loadCatalogs(PROVIDERS, { offline: true });
+    const { browse: draw } = await import('../tui/models.tsx');
+    const chosen = await draw({
+        providers: cats.map((c) => ({
+            provider: c.provider,
+            credential: source(where, c.provider),
+            models: c.entries.length,
+            origin: c.origin,
+            fetchedAt: c.fetchedAt,
+        })),
+        initial,
+        theme: values.theme,
+        load: (provider, refresh) => loadCatalog(provider, { refresh: refresh || values.refresh }),
+        test: async (entry) => {
+            const role: Role = entry.roles.includes('chat')
+                ? 'chat'
+                : entry.roles.includes('embedding')
+                  ? 'embedding'
+                  : (entry.roles[0] ?? 'chat');
+            const probe = await probeModel(target(entry.ref, entry.provider, entry.id, role));
+            return {
+                state: probe.check.state,
+                ms: probe.ms,
+                detail: probe.check.detail,
+                fix: probe.check.fix,
+                dimensions: probe.dimensions,
+            };
+        },
+    });
+
+    if (!chosen) {
+        // Leaving is a fine way to end a browse, but not an answer to a
+        // substitution that was waiting for one.
+        if (!process.stdout.isTTY) {
+            throw new CliError('nothing picked', EXIT.failed);
+        }
+        return;
+    }
+    write(chosen.ref);
+};
+
+// ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
 
@@ -736,6 +810,8 @@ const SUBS: Record<string, Sub> = {
     test,
     check: test,
     pick,
+    browse,
+    ui: browse,
 };
 
 export const models: Command = {
@@ -759,6 +835,8 @@ export const models: Command = {
         '  zen models show <ref>            One model, in full.',
         '  zen models test <ref> …          Ask it one real question.',
         '  zen models pick --embedding      The first ref that answers, on stdout.',
+        '  zen models browse [provider]     Walk providers and models with the',
+        '                                   arrow keys; t asks one, p prints its ref.',
     ],
     run: async (ctx) => {
         const [name, ...rest] = ctx.args;
@@ -779,7 +857,7 @@ export const models: Command = {
         }
         throw usageError(
             `unknown: zen models ${name}`,
-            `try: ${cyan('providers, ls, search, show, test, pick')} — or a provider: ${dim(PROVIDERS.join(', '))}`,
+            `try: ${cyan('providers, ls, search, show, test, pick, browse')} — or a provider: ${dim(PROVIDERS.join(', '))}`,
         );
     },
 };

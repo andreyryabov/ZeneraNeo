@@ -196,7 +196,7 @@ One container is rarely the problem. Before running several at once — a
 `zen run batch` with `--concurrency` above 1 — load **zen-sandbox-capacity** and
 run its `preflight_sandbox.sh`, which measures the VM, the container cap and the
 index and says whether the arithmetic fits. A `zen-finetune` run is the
-exception: it starts at `min(batchSize, 16)` and halves on OOM instead.
+exception: it starts at `min(maxBatch + recheck, 16)` and halves on OOM instead.
 
 ---
 

@@ -510,6 +510,36 @@ describe('smoke', () => {
         }
     });
 
+    it('reports a missing required argument instead of running the tool', async () => {
+        let ran = 0;
+        const shout = tool<{ text: string }>({
+            name: 'shout',
+            description: 'upper-cases text',
+            parameters: {
+                type: 'object',
+                properties: { text: { type: 'string' } },
+                required: ['text'],
+            },
+            execute: ({ text }) => {
+                ran++;
+                return text.toUpperCase();
+            },
+        });
+        const model = new RuleModel(
+            (req) => (hasToolResult(req, 'shout') ? say('done') : undefined),
+            () => callTool('shout', {}),
+        );
+        const runner = new AgentRunner({ model });
+        runner.agent({ name: 'a', instructions: 'A', tools: [shout] });
+
+        const res = await runner.run('a', 'go');
+        const result = findNode(res.state, 'tool_result');
+        expect(result.isError).toBe(true);
+        const output = await runner.services.payloads.get(result.result);
+        expect(output).toBe('error: shout is missing required arguments: text');
+        expect(ran).toBe(0);
+    });
+
     it('declares a skill tool up front and unlocks it on load', async () => {
         const cheapHotels = tool<Record<string, never>>({
             name: 'cheap_hotels',

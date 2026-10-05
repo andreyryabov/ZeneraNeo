@@ -387,6 +387,7 @@ outline and the copies on disk.
 zen rag docs list <files|sections|tables> [-d <dir>] [filters…]
 zen rag docs grep <pattern> [-d <dir>] [filters…]
 zen rag docs show <file> [--section <name>] [--lines <from-to>]
+zen rag docs show <target>... [--max-lines <n>]
 zen rag docs stats
 ```
 
@@ -411,6 +412,7 @@ zen rag docs grep "Retry-After"               # every matching line, and its sec
 zen rag docs grep "X-RateLimit-\w+" --regex --file "api/**"
 zen rag docs show api/routing.md --section "Rate limits"
 zen rag docs show api/routing.md --lines 40-80
+zen rag docs show "api/routing.md:24-31" "api/errors.md#Retries"   # several, one call
 zen rag docs stats
 ```
 
@@ -431,6 +433,14 @@ the whole point of it.
 line-number gutter (`--no-numbers` to drop it). It is the natural follow-up to
 every search: find the passage, then read what is actually around it.
 
+**Read every passage you will cite in one `show`.** It takes any number of
+targets written the way a citation is - `<document>:<a>-<b>`, `<document>:<a>`,
+`<document>#<heading>`, or a bare name - and prints each under a header that is
+itself a target, in the order given. Overlapping ranges print once; a missing
+document or heading is reported in place while the rest still print. The
+`--max-lines` budget (default 400) is shared fairly, and a cut block ends with
+the target that continues it. One call per passage costs a whole turn each.
+
 `stats` says what is in an index and what built it - the documents, the counts,
 the embedding model. It is the fastest way to answer "is this index the one I
 think it is?".
@@ -443,6 +453,7 @@ think it is?".
 | _anything you would have run `grep` for_          | `grep` / `list` - never the shell               |
 | "does `X-Request-Id` appear anywhere?"            | `grep X-Request-Id`                             |
 | "what does the rate-limits section actually say?" | `show <file> --section "Rate limits"`           |
+| "read the four passages the search turned up"     | `show <doc>:<a>-<b> <doc>:<a>-<b> ...` - once   |
 | "which documents are even in here?"               | `list files`                                    |
 | "what is the shape of this manual?"               | `list sections --depth 2`                       |
 | "where is the table of per-route limits?"         | `list tables --file "api/**"`                   |
@@ -470,6 +481,7 @@ Add `-d <dir>` when the index is not the nearest one, or name it once with
 | `grep '^#' file.md`                 | `zen rag docs list sections --file file.md`           |
 | `sed -n '40,80p' file.md`           | `zen rag docs show file.md --lines 40-80`             |
 | `cat file.md` (to find one section) | `zen rag docs show file.md --section "Rate limits"`   |
+| a `sed`/`show` per passage          | `zen rag docs show a.md:40-80 b.md:12-30`             |
 | `ls` the index directory            | `zen rag docs stats`                                  |
 
 ```sh
@@ -497,12 +509,12 @@ const index = await docs.DocsIndex.open(
 const project = await loadProject('./my-project', { tools: docs.docsTools(index) });
 ```
 
-| Tool          | For                                                          |
-| ------------- | ------------------------------------------------------------ |
-| `search_docs` | the passages that match, quoted with their line numbers      |
-| `list_docs`   | the documents, their headings, or their tables - no search   |
-| `grep_docs`   | every matching line, counted in full - no search             |
-| `read_docs`   | a section or a line range, verbatim and with nothing omitted |
+| Tool          | For                                                                                        |
+| ------------- | ------------------------------------------------------------------------------------------ |
+| `search_docs` | the passages that match, quoted with their line numbers                                    |
+| `list_docs`   | the documents, their headings, or their tables - no search                                 |
+| `grep_docs`   | every matching line, counted in full - no search                                           |
+| `read_docs`   | a section or a line range, verbatim and with nothing omitted; several at once with `reads` |
 
 Only `search_docs` ranks; the other three are exact, because a model told "no
 results" by a vector search has learned nothing - a ranking returns the top of a
@@ -602,8 +614,8 @@ reference and `guides/` for the task documentation.
 - Does X exist, how is it spelled, how many are there → `grep_docs`. It is
   complete; a search is not, and cannot prove absence.
 - Limits and defaults are in tables → add `kind: ["table_row"]`.
-- Then `read_docs` the lines around the hit before answering. Never answer from
-  the excerpt alone.
+- Then `read_docs` the lines around every hit before answering, all of them in
+  one call with `reads`. Never answer from the excerpt alone.
 - Never `grep`/`rg`/`cat` the tree - the tools above are local and exact.
 
 Worked: per-route rate limits are the table under "Rate limits" in

@@ -34,7 +34,7 @@ import { Checks } from './validate.ts';
 
 /**
  * The model each provider gets when none is named — the same picks `zen meta`
- * recommends (`RECOMMENDED` in `packages/cli/src/meta.ts`). Every ref names its
+ * recommends (`RECOMMENDED` in `packages/cli/src/meta/model.ts`). Every ref names its
  * provider: the shorthand reads the first segment as a *provider name*, so a
  * bare `gemini-3.8-flash` would be asked of OpenAI.
  */

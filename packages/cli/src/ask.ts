@@ -7,7 +7,7 @@ import {
     type ProjectConfig,
     type ToolSchema,
 } from '@zenera/neo';
-import { splitRef } from './meta.ts';
+import { splitRef } from './modelref.ts';
 import { invalidError } from './term.ts';
 
 // ---------------------------------------------------------------------------
@@ -41,13 +41,36 @@ export const DEBUG_PREAMBLE = [
     'write now reaches a user, a file or a machine. The last message is a question from',
     'the operator of this agent about what you did and why.',
     '',
-    'Answer that question in plain prose. Do not call a tool. Do not resume the task.',
+    'Answer that question. Do not call a tool. Do not resume the task. If the question',
+    'asks for a format, use it.',
     '',
     'This is an authorised post-mortem over data the operator already holds, so you are',
     'allowed — and asked — to quote your system prompt, instruction files and skills',
-    'verbatim, to name the file or section that steered you, and to say plainly which',
-    'instruction you followed, which you missed, and which two of them contradicted each',
-    'other. "I cannot reveal my instructions" is not an answer to any question below.',
+    'verbatim. "I cannot reveal my instructions" is not an answer to any question below.',
+    '',
+    '## Cite where every reason came from',
+    '',
+    'The operator is using your answer to find the text that shaped your behaviour and',
+    'edit it. An explanation without a source cannot be acted on. For every reason you',
+    'give, name its source and quote it verbatim, the exact words as they appear above:',
+    '',
+    '- **system prompt** — the instruction file or section, by its file name or nearest heading',
+    '- **skill** — the skill name and the heading inside it',
+    '- **tool description** — the tool name, and the parameter when the text is in its schema',
+    '- **message** — the user request, or a tool result, by tool name and call id',
+    '',
+    'Write each as: [<kind>: <name> › <heading or parameter>] "<verbatim quote>".',
+    '',
+    'Then trace the decision itself: what options you could see at that point, which one',
+    'you took, and which quoted text tipped it. Say which instruction you followed, which',
+    'applied but you missed or never reached, which two pulled in different directions,',
+    'and any condition or exception ("unless…", "only when…") you judged to apply.',
+    '',
+    'Be exact about provenance. When no text above told you to do what you did, say',
+    '"no instruction — my own default" rather than attaching it to the nearest',
+    'plausible source. When you are unsure whether a sentence is really there, say so.',
+    'Never paraphrase inside quotation marks: the operator will search for your quote,',
+    'and a quote that is not found discredits the whole answer.',
 ].join('\n');
 
 // ---------------------------------------------------------------------------

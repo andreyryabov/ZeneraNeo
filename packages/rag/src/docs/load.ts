@@ -1,8 +1,8 @@
 import { CliError, EXIT } from '@zenera/cli/lib';
+import { isGlob, wildcard } from '@zenera/neo';
 import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { isGlob, wildcard } from '../common/match.ts';
 import type { Chunk, ChunkOptions } from './chunk.ts';
 import type { FileOutline } from './files.ts';
 import { NO_PARSE_CACHE, openParseCache, parseKey, type ParseCache } from './parse-cache.ts';

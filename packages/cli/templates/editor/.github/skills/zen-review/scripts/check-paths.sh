@@ -43,9 +43,10 @@ strip_urls() {
 # The three trees §2.5 names, prose only: a skill's own script is code the
 # sandbox runs, not text rendered into a prompt, and its paths are its own.
 #
-# `agents/memory-instructions.md` is left out on purpose. It is a copy of the
-# reference, full of worked examples, so it fails this sweep by design and
-# every run of it — and it has a check of its own that a sweep cannot make:
+# The four copies `zen` ships (files-, fork-, memory-, tools-instructions.md)
+# are left out on purpose. They are full of worked examples, so they fail this
+# sweep by design, and the project cannot edit them anyway: `zen check` reports
+# any byte that differs as `rules.stale`. Memory has a check of its own too:
 # .github/skills/zen-memory/scripts/check-instructions.sh
 files() {
     {
@@ -54,7 +55,7 @@ files() {
         for file in agents/*instructions.md; do
             if [ -f "$file" ]; then echo "$file"; fi
         done
-    } | grep -v '^agents/memory-instructions\.md$' | sort -u
+    } | grep -Ev '^agents/(files|fork|memory|tools)-instructions\.md$' | sort -u
 }
 
 # Every token in those files, urls removed first, and a sentence's full stop

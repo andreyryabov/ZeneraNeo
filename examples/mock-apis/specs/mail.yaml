@@ -1,0 +1,282 @@
+openapi: 3.0.3
+info:
+    title: Mail
+    version: 1.0.0
+    description: >
+        A mailbox API, shaped after the public Gmail REST API (a subset, simplified).
+        Listing returns ids only; the message itself is a second call.
+paths:
+    /users/{userId}/messages:
+        get:
+            operationId: listMessages
+            summary: Lists the messages in the mailbox, newest first.
+            parameters:
+                - name: userId
+                  in: path
+                  required: true
+                  description: The mailbox owner. The special value `me` means the caller.
+                  schema:
+                      type: string
+                - name: q
+                  in: query
+                  required: false
+                  description: >
+                      Search query, same syntax as the mail search box. Supports free text and the
+                      operators from:, to:, subject:, is:unread, has:attachment, after:YYYY/MM/DD,
+                      before:YYYY/MM/DD.
+                  schema:
+                      type: string
+                - name: labelIds
+                  in: query
+                  required: false
+                  description: Only return messages carrying every one of these labels.
+                  schema:
+                      type: array
+                      items:
+                          type: string
+                - name: maxResults
+                  in: query
+                  required: false
+                  description: Maximum number of messages to return. Defaults to 100, maximum 500.
+                  schema:
+                      type: integer
+                      minimum: 1
+                      maximum: 500
+                - name: pageToken
+                  in: query
+                  required: false
+                  description: Page token to retrieve a specific page of results.
+                  schema:
+                      type: string
+            responses:
+                '200':
+                    description: One page of message references.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [resultSizeEstimate]
+                                properties:
+                                    messages:
+                                        type: array
+                                        items:
+                                            $ref: '#/components/schemas/MessageRef'
+                                    nextPageToken:
+                                        type: string
+                                    resultSizeEstimate:
+                                        type: integer
+                                        minimum: 0
+    /users/{userId}/messages/{id}:
+        get:
+            operationId: getMessage
+            summary: Gets one message.
+            parameters:
+                - name: userId
+                  in: path
+                  required: true
+                  schema:
+                      type: string
+                - name: id
+                  in: path
+                  required: true
+                  schema:
+                      type: string
+                - name: format
+                  in: query
+                  required: false
+                  schema:
+                      type: string
+                      enum: [full, metadata, minimal]
+            responses:
+                '200':
+                    description: The message.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Message'
+    /users/{userId}/messages/send:
+        post:
+            operationId: sendMessage
+            summary: Sends a message to the recipients in the To, Cc and Bcc headers.
+            parameters:
+                - name: userId
+                  in: path
+                  required: true
+                  schema:
+                      type: string
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            required: [to, subject, body]
+                            properties:
+                                to:
+                                    type: array
+                                    minItems: 1
+                                    items:
+                                        type: string
+                                        format: email
+                                cc:
+                                    type: array
+                                    items:
+                                        type: string
+                                        format: email
+                                subject:
+                                    type: string
+                                    maxLength: 998
+                                body:
+                                    type: string
+                                threadId:
+                                    type: string
+            responses:
+                '200':
+                    description: The sent message.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Message'
+    /users/{userId}/labels:
+        get:
+            operationId: listLabels
+            summary: Lists every label in the mailbox.
+            parameters:
+                - name: userId
+                  in: path
+                  required: true
+                  schema:
+                      type: string
+            responses:
+                '200':
+                    description: All labels. Not paged.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [labels]
+                                properties:
+                                    labels:
+                                        type: array
+                                        items:
+                                            $ref: '#/components/schemas/Label'
+    /users/{userId}/threads:
+        get:
+            operationId: listThreads
+            summary: Lists conversation threads.
+            parameters:
+                - name: userId
+                  in: path
+                  required: true
+                  schema:
+                      type: string
+                - name: q
+                  in: query
+                  required: false
+                  schema:
+                      type: string
+                - name: maxResults
+                  in: query
+                  required: false
+                  schema:
+                      type: integer
+                - name: pageToken
+                  in: query
+                  required: false
+                  schema:
+                      type: string
+            responses:
+                '200':
+                    description: One page of threads.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    threads:
+                                        type: array
+                                        items:
+                                            type: object
+                                            required: [id, snippet]
+                                            properties:
+                                                id:
+                                                    type: string
+                                                snippet:
+                                                    type: string
+                                                historyId:
+                                                    type: string
+                                    nextPageToken:
+                                        type: string
+                                    resultSizeEstimate:
+                                        type: integer
+components:
+    schemas:
+        MessageRef:
+            type: object
+            required: [id, threadId]
+            properties:
+                id:
+                    type: string
+                    pattern: '^[0-9a-f]{16}$'
+                threadId:
+                    type: string
+                    pattern: '^[0-9a-f]{16}$'
+        Message:
+            type: object
+            required: [id, threadId, labelIds, snippet, internalDate, from, to, subject]
+            properties:
+                id:
+                    type: string
+                    pattern: '^[0-9a-f]{16}$'
+                threadId:
+                    type: string
+                    pattern: '^[0-9a-f]{16}$'
+                labelIds:
+                    type: array
+                    items:
+                        type: string
+                snippet:
+                    type: string
+                    description: A short part of the message text, at most 200 characters.
+                    maxLength: 200
+                internalDate:
+                    type: string
+                    description: Epoch milliseconds, as a decimal string.
+                    pattern: '^[0-9]{13}$'
+                sizeEstimate:
+                    type: integer
+                    minimum: 0
+                from:
+                    type: string
+                    description: 'RFC 5322 address, e.g. "Ada Lovelace <ada@example.org>".'
+                to:
+                    type: array
+                    items:
+                        type: string
+                cc:
+                    type: array
+                    items:
+                        type: string
+                subject:
+                    type: string
+                hasAttachments:
+                    type: boolean
+                unread:
+                    type: boolean
+        Label:
+            type: object
+            required: [id, name, type]
+            properties:
+                id:
+                    type: string
+                name:
+                    type: string
+                type:
+                    type: string
+                    enum: [system, user]
+                messagesTotal:
+                    type: integer
+                    minimum: 0
+                messagesUnread:
+                    type: integer
+                    minimum: 0

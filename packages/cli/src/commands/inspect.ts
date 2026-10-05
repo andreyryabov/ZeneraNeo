@@ -8,6 +8,7 @@ import {
     projectRegistry,
     readProjectConfig,
     renderReportHtml,
+    text,
     type AgentState,
 } from '@zenera/neo';
 import { spawn } from 'node:child_process';
@@ -42,8 +43,11 @@ import {
     traceMermaid,
     traceOf,
     type NodeDetail,
+    type Trace,
     type TraceEntry,
 } from '../trace.ts';
+import { formatMarkdown } from '../tui/markdown.ts';
+import { boxWidth } from '../tui/wrap.ts';
 
 import {
     ago,
@@ -56,11 +60,15 @@ import {
     isInteractive,
     json,
     note,
+    pad,
+    ask as prompt,
+    readStdin,
     usageError,
     write,
     writeAll,
     yellow,
 } from '../term.ts';
+import { appendUsage } from '../usage.ts';
 
 const USAGE = 'zen inspect [report|graph|node|ask] [run] [--dir <run dir>] [--open]';
 
@@ -74,6 +82,7 @@ interface Flags {
     memory?: string;
     model?: string;
     part?: string[];
+    'question-file'?: string;
     full?: boolean;
     open?: boolean;
     rebuild?: boolean;
@@ -112,7 +121,8 @@ export const inspect: Command = {
         '  report                 Build and print the path to report.html. Default.',
         '  graph                  The whole run as one Mermaid flowchart, on stdout.',
         '  node <id...>           Those nodes of the graph in full. Ranges: n5..n9.',
-        '  ask <id> <question>    Put a question to the model that made that call.',
+        '  ask <id> <question>    One answer on stdout, then exit. Never prompts.',
+        '  ask [<id>]             A conversation at a terminal. Prompts for the rest.',
         '',
         '  --project <name|dir>   Which project. Defaults to the one you are in.',
         '  --session <id>         Which session. Defaults to the newest that ran.',
@@ -120,6 +130,7 @@ export const inspect: Command = {
         '  --dir <dir>            A run directory, as `zen run --json` reports it.',
         '  --memory <dir>         Read this memory instead of the project’s.',
         '  --model <ref>          Answer `ask` with this model instead of the run’s.',
+        '  --question-file <path> Read the `ask` question from a file; `-` is stdin.',
         '  --part <name>          Print this part of a node in full. Repeatable.',
         '  --full                 Print every part, the recorded `request` included.',
         '  --rebuild              Build report.html again from the run state.',
@@ -127,8 +138,8 @@ export const inspect: Command = {
         '  --no-timing            Leave the clock off the graph.',
         '  --no-style             Leave the colours off the graph. Shorter to read.',
         '',
-        'With no arguments: asks which session and run, or takes the newest of',
-        'each when there is nothing to ask on.',
+        'With no run named, report, graph and node ask which session and run at',
+        'a terminal, and take the newest of each when there is nothing to ask on.',
         '',
         '`graph` is written to be read by a model. Nodes are declared in the',
         'order they happened, with ids `n1`, `n2`, …; every edge is collected in',
@@ -150,9 +161,27 @@ export const inspect: Command = {
         '`ask` replays one `llm_call` — its system prompt, its messages, its tool',
         'schemas — to a model, with your question on the end and tool calling off.',
         'It is told the run is over and that it may quote its own instructions, so',
-        'the answer names the prompt or skill behind the behaviour:',
+        'the answer names the prompt or skill behind the behaviour. It has two',
+        'modes, and which one is decided by whether the question is given:',
+        '',
+        'One-shot — a question on the line, in --question-file, or --json. For a',
+        'script or a model: no banner, no prompt, no picker; stdout is the answer',
+        'and nothing else. Name the run with --dir, --run or --session, or the',
+        'newest is taken.',
         '',
         '  zen inspect ask n11 "why run python -c when the skill says npm test?"',
+        '  zen inspect ask n11 --question-file q.md --dir <run dir>',
+        '',
+        'A question with quotes, backticks or several lines goes in a file, so no',
+        'shell ever parses it.',
+        '',
+        'Interactive — no question. For a person at a terminal: asks for whatever',
+        'is not named (session, run, LLM call), then the question, and keeps the',
+        'conversation going until an empty question. Without a terminal it is an',
+        'error, never a wait.',
+        '',
+        '  zen inspect ask',
+        '  zen inspect ask n11 --dir <run dir>',
         '',
         'All of it, at length: .github/skills/zen-cli/references/inspect.md',
     ],
@@ -167,6 +196,7 @@ export const inspect: Command = {
                 memory: { type: 'string' },
                 model: { type: 'string' },
                 part: { type: 'string', multiple: true },
+                'question-file': { type: 'string' },
                 full: { type: 'boolean' },
                 open: { type: 'boolean' },
                 rebuild: { type: 'boolean' },
@@ -192,8 +222,16 @@ export const inspect: Command = {
             return await nodes(at, values, rest, ctx.json);
         }
         if (what === 'ask') {
-            const at = await locate(ctx.cwd, values, undefined, asking);
-            return await ask(at, values, rest, ctx.json);
+            // Given a question it is one-shot; only a bare `ask` converses.
+            const oneShot = ctx.json || values['question-file'] !== undefined || rest.length > 1;
+            if (!oneShot && !(asking && process.stdout.isTTY)) {
+                throw usageError(
+                    'interactive `ask` needs a terminal; give the node id and a question',
+                    'zen inspect ask n11 --question-file q.md --dir <run dir>',
+                );
+            }
+            const at = await locate(ctx.cwd, values, undefined, !oneShot);
+            return await ask(at, values, rest, ctx.cwd, ctx.json, !oneShot);
         }
         const at = await locate(ctx.cwd, values, rest[0], asking);
         if (what === 'graph') {
@@ -345,22 +383,126 @@ export function wholeParts(
  * it. Everything it sees is what it saw at the time, so an answer naming the
  * skill that steered it is checkable against the same node.
  */
+export function replayableCalls(trace: Trace) {
+    return trace.entries.flatMap((entry) =>
+        entry.node.type === 'llm_call' && entry.node.request ? [{ entry, node: entry.node }] : [],
+    );
+}
+
+const ASK_BOX = { tl: '╭', tr: '╮', bl: '╰', br: '╯', h: '─', v: '│' };
+
+function askPanel(
+    title: string,
+    text: string,
+    outer: number,
+    border: (line: string) => string,
+): string[] {
+    const inner = outer - 4;
+    const rule = ASK_BOX.h.repeat(Math.max(1, outer - title.length - 5));
+    return [
+        border(`${ASK_BOX.tl}${ASK_BOX.h} ${title} ${rule}${ASK_BOX.tr}`),
+        ...formatMarkdown(text, inner).map(
+            (line) => `${border(ASK_BOX.v)} ${pad(line, inner)} ${border(ASK_BOX.v)}`,
+        ),
+        border(`${ASK_BOX.bl}${ASK_BOX.h.repeat(outer - 2)}${ASK_BOX.br}`),
+    ];
+}
+
+export function renderAskExchange(question: string, answer: string, columns = 80): string[] {
+    const outer = boxWidth(`${question}\n\n${answer}`, columns);
+    return [
+        '',
+        ...askPanel('Question', question, outer, cyan),
+        '',
+        ...askPanel('Answer', answer, outer, dim),
+        '',
+    ];
+}
+
+export async function repeatQuestions(
+    initial: string,
+    next: () => Promise<string>,
+    answer: (question: string) => Promise<void>,
+): Promise<void> {
+    let question = initial;
+    while (question) {
+        await answer(question);
+        question = (await next()).trim();
+    }
+}
+
+/** The question: the words on the line, or the whole of `--question-file` (`-` is stdin). */
+export async function readQuestion(
+    words: readonly string[],
+    file: string | undefined,
+    cwd: string,
+): Promise<string> {
+    const typed = words.join(' ').trim();
+    if (file === undefined) {
+        return typed;
+    }
+    if (typed) {
+        throw usageError(
+            'give the question either as words or as --question-file, not both',
+            'zen inspect ask n11 --question-file q.md',
+        );
+    }
+    if (file === '-') {
+        return (await readStdin()) ?? '';
+    }
+    try {
+        return (await readFile(resolve(cwd, file), 'utf8')).trim();
+    } catch (err) {
+        throw invalidError(
+            `cannot read question file ${file}: ${(err as NodeJS.ErrnoException).code ?? err}`,
+            'write the question to that path first',
+        );
+    }
+}
+
 async function ask(
     at: Located,
     values: Flags,
     rest: readonly string[],
+    cwd: string,
     asJson: boolean,
+    interactive: boolean,
 ): Promise<void> {
     const { project, session, run } = at;
-    const [id, ...words] = rest;
-    const query = words.join(' ').trim();
-    if (!id || !query) {
+    const trace = traceOf(await readState(run));
+    let [id, ...words] = rest;
+    if (!id && interactive) {
+        const calls = replayableCalls(trace);
+        if (calls.length === 0) {
+            throw invalidError(
+                `run ${run.id} has no recorded LLM call to replay`,
+                'only runs that record requests can be asked about',
+            );
+        }
+        const entry = await choose(
+            'Which LLM call?',
+            calls.map((candidate) => ({
+                label: `${candidate.entry.key} ${candidate.node.model}`,
+                detail: [
+                    candidate.node.agent,
+                    candidate.node.toolCalls.length
+                        ? `calls ${candidate.node.toolCalls.map((call) => call.name).join(', ')}`
+                        : '',
+                    candidate.entry.branch ? `branch ${candidate.entry.branch}` : '',
+                ]
+                    .filter(Boolean)
+                    .join('  '),
+                value: candidate.entry,
+            })),
+        );
+        id = entry.key;
+    }
+    if (!id) {
         throw usageError(
             'ask takes one node id and a question',
             'zen inspect ask n11 "why did you run python -c instead of the tests?"',
         );
     }
-    const trace = traceOf(await readState(run));
     let wanted: string[];
     try {
         wanted = parseNodeIds([id], trace.byKey);
@@ -386,6 +528,18 @@ async function ask(
             `${entry.key} did not record the request that produced it`,
             'only a run made by this CLI records requests; an SDK run needs ' +
                 '`runner({ recordRequests: true })`',
+        );
+    }
+    const query = interactive
+        ? await prompt('Question (empty to finish)?')
+        : await readQuestion(words, values['question-file'], cwd);
+    if (!query && interactive) {
+        return;
+    }
+    if (!query) {
+        throw usageError(
+            'ask takes one node id and a question',
+            'zen inspect ask n11 "why did you run python -c instead of the tests?"',
         );
     }
 
@@ -416,11 +570,44 @@ async function ask(
         );
     }
     const model = projectRegistry(config).model(picked.ref);
-    const res = await model.generate(
-        buildDiagnostic({ request: recorded, answer, toolCalls, query }),
-    );
+    const record = async (
+        call: () => ReturnType<typeof model.generate>,
+    ): ReturnType<typeof model.generate> => {
+        const startedAt = new Date();
+        const res = await call();
+        appendUsage(project, {
+            kind: 'ask',
+            ts: new Date().toISOString(),
+            runDir: run.dir,
+            node: entry.key,
+            nodeAgent: node.agent,
+            nodeModel: node.model,
+            model: picked.label,
+            usage: res.usage,
+            startedAt: startedAt.toISOString(),
+            durationMs: Date.now() - startedAt.getTime(),
+        });
+        return res;
+    };
+    const generate = (question: string) =>
+        record(() =>
+            model.generate(
+                buildDiagnostic({ request: recorded, answer, toolCalls, query: question }),
+            ),
+        );
+    const usage = (res: Awaited<ReturnType<typeof generate>>): void => {
+        note(
+            dim(
+                `${bold(entry.key)} ${picked.label}` +
+                    (res.usage
+                        ? ` · ${res.usage.inputTokens} in, ${res.usage.outputTokens} out`
+                        : ''),
+            ),
+        );
+    };
 
     if (asJson) {
+        const res = await generate(query);
         json({
             session: session.id,
             run: run.id,
@@ -433,12 +620,30 @@ async function ask(
         });
         return;
     }
-    write(res.text);
-    note(
-        dim(
-            `${bold(entry.key)} ${picked.label}` +
-                (res.usage ? ` · ${res.usage.inputTokens} in, ${res.usage.outputTokens} out` : ''),
-        ),
+    if (!interactive) {
+        write((await generate(query)).text);
+        return;
+    }
+    let conversation: ReturnType<typeof buildDiagnostic> | undefined;
+    await repeatQuestions(
+        query,
+        () => prompt('Question (empty to finish)?'),
+        async (question) => {
+            if (!conversation) {
+                conversation = buildDiagnostic({
+                    request: recorded,
+                    answer,
+                    toolCalls,
+                    query: question,
+                });
+            } else {
+                conversation.messages.push({ role: 'user', content: [text(question)] });
+            }
+            const res = await record(() => model.generate(conversation!));
+            conversation.messages.push({ role: 'assistant', content: res.text });
+            writeAll(renderAskExchange(question, res.text, process.stdout.columns ?? 80));
+            usage(res);
+        },
     );
 }
 
@@ -511,7 +716,7 @@ export function renderNode(
 // Choosing what to show
 // ---------------------------------------------------------------------------
 
-interface Located {
+export interface Located {
     project: string;
     session: SessionPaths;
     run: RunPaths;
@@ -525,9 +730,9 @@ interface Located {
  * it can be used again would be work for nothing. A person holds an id, or
  * nothing at all and gets asked.
  */
-async function locate(
+export async function locate(
     cwd: string,
-    values: Flags,
+    values: Pick<Flags, 'project' | 'session' | 'run' | 'dir'>,
     positional: string | undefined,
     asking: boolean,
 ): Promise<Located> {

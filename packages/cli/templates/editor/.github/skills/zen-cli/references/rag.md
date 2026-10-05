@@ -558,6 +558,7 @@ ordinary hybrid search and narrow by file or section.
 zen rag docs list <files|sections|tables> [-f <pattern>] [-s <section>]
 zen rag docs grep <pattern> [-f <pattern>] [--regex] [--case-sensitive]
 zen rag docs show <file> [--section <name>] [--lines <from-to>]
+zen rag docs show <target>... [--max-lines <n>]
 ```
 
 `list sections` gives every heading with the lines it spans, which is how a
@@ -565,6 +566,23 @@ section is named before it is searched. `grep` reports `found` as the true
 total even when `--limit` cuts the rows, so unlike a search it can answer
 whether a string appears at all. `show` prints a document, a named section, or
 a line range, verbatim.
+
+### Reading several passages in one call
+
+Name every passage you will read or cite in **one** `show`, as
+`<document>:<a>-<b>`, `<document>:<a>` or `<document>#<heading>` - the form a
+citation is written in, so a citation pastes back unchanged:
+
+```sh
+zen rag docs show -d <index-dir> "<doc-1>:24-60" "<doc-2>:25-40" "<doc-3>#<heading>"
+```
+
+Each target prints under a header that is itself a target, in the order given;
+overlapping ranges in one document print once. A missing document or heading is
+reported in place and the rest still print (exit 1 only when none could be
+read). `--max-lines` (default 400) is shared fairly between targets, and a cut
+block ends with the target that continues it. `--json` returns
+`{results, printed, failed}`. `--section` and `--lines` read one document only.
 
 ### Reading a complete section or table
 
@@ -596,12 +614,12 @@ the answer needs every row.
 
 `@zenera/rag/docs/tools` exports four tools in the group `docs`:
 
-| Tool          | For                                                             |
-| ------------- | --------------------------------------------------------------- |
-| `search_docs` | The search above, with the same narrowing parameters            |
-| `list_docs`   | The documents, their headings, or their tables - no ranking     |
-| `grep_docs`   | Every matching line, counted in full - the way to prove absence |
-| `read_docs`   | A section or a line range, verbatim and complete                |
+| Tool          | For                                                              |
+| ------------- | ---------------------------------------------------------------- |
+| `search_docs` | The search above, with the same narrowing parameters             |
+| `list_docs`   | The documents, their headings, or their tables - no ranking      |
+| `grep_docs`   | Every matching line, counted in full - the way to prove absence  |
+| `read_docs`   | A section or a line range, verbatim; several at once via `reads` |
 
 Only `search_docs` ranks. Every answer carries line numbers and `read_docs`
 takes them, which is the loop the subject exists for: find the passage, read

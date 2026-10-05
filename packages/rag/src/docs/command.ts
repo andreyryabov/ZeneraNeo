@@ -15,12 +15,12 @@ import {
     type Command,
     type Context,
 } from '@zenera/cli/lib';
+import { PatternError } from '@zenera/neo';
 import { existsSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { resolveEmbedder } from '../common/embedder.ts';
 import { locateIndex, outputDir } from '../common/locate.ts';
 import { assertSameEmbedding, inspectIndex } from '../common/manifest.ts';
-import { PatternError } from '../common/match.ts';
 import { INTERVAL_MS } from '../common/progress.ts';
 import { breakdown, grid, indexing } from '../common/prose.ts';
 import { announce, reportReady, stagingFor, swapIn } from '../common/restore.ts';
@@ -31,14 +31,18 @@ import { DOCS_INDEX, readManifest, SOURCES_DIR, type DocRecord, type Manifest } 
 import { DOC_EXTENSIONS } from './load.ts';
 import {
     grepLines,
+    isFailure,
     listFiles,
     listSections,
     listTables,
+    readMany,
     readRange,
     readSection,
+    spanOf,
     type Listing,
+    type Read,
 } from './lookup.ts';
-import { MATCH_HEADERS, matchRows, renderAssembly } from './render.ts';
+import { MATCH_HEADERS, matchRows, renderAssembly, renderReads } from './render.ts';
 import { repl } from './repl.ts';
 import {
     DEFAULT_LIMIT,
@@ -49,6 +53,7 @@ import {
     type SearchMode,
 } from './search.ts';
 import { ChunkStore } from './store.ts';
+import { parseTarget, selects, TargetError } from './targets.ts';
 
 const { defaultDir: DEFAULT_DIR, envName: DIR_ENV } = DOCS_INDEX;
 
@@ -85,7 +90,8 @@ const SEARCH_USAGE =
     'zen rag docs search [--dir <dir>] [query... | --text-query <text> --vector-query <text>]';
 const LIST_USAGE = 'zen rag docs list <files|sections|tables> [--dir <dir>]';
 const GREP_USAGE = 'zen rag docs grep <pattern> [--dir <dir>]';
-const SHOW_USAGE = 'zen rag docs show <file> [--section <name>] [--lines <from-to>]';
+const SHOW_USAGE =
+    'zen rag docs show <file> [--section <name>] [--lines <from-to>] | <target>... [--max-lines <n>]';
 
 export const command: Command = {
     summary: 'Search a pile of markdown and text documents.',
@@ -115,8 +121,8 @@ export const command: Command = {
                 dim('Find every literal or regex line match; use it to prove whether text exists.'),
             ],
             [
-                '  show <file>',
-                dim('Read a document, heading or line range verbatim after finding its location.'),
+                '  show <target...>',
+                dim('Read documents, headings or line ranges verbatim, several in one call.'),
             ],
             ['  stats', dim('Inspect the index contents, size and embedding configuration.')],
         ]),
@@ -234,8 +240,19 @@ export const command: Command = {
             ['  <file>', dim('A document name, as `list files` prints it.')],
             ['  --section <name>', dim('Just that heading and what nests under it.')],
             ['  --lines <from-to>', dim('Just those lines, e.g. --lines 40-80.')],
+            ['  <doc>:<a>-<b>', dim('Lines a to b. <doc>:<a> is one line.')],
+            ['  <doc>#<heading>', dim('A heading and what nests under it.')],
+            [
+                '  --max-lines <n>',
+                dim(`A ceiling shared by every target. Default ${DEFAULT_MAX_LINES}.`),
+            ],
             ['  --no-numbers', dim('Without the line-number gutter.')],
         ]),
+        '',
+        dim('  Name every passage you will read in one call, as the search printed them:'),
+        dim(`  ${cyan('zen rag docs show "api/routing.md:24-60" "api/limits.md#Rate limits"')}`),
+        dim('  Each prints under a header that is itself a target, in the order given;'),
+        dim('  overlapping ranges print once. --section and --lines take one document.'),
         '',
         dim(`Without --dir, the index is the nearest one at or above the working`),
         dim(`directory; ${cyan(DIR_ENV)} names it outright.`),
@@ -842,6 +859,7 @@ interface ShowFlags {
     dir?: string;
     section?: string;
     lines?: string;
+    'max-lines'?: string;
     'no-numbers'?: boolean;
     quiet?: boolean;
 }
@@ -858,18 +876,37 @@ async function show(args: readonly string[], ctx: Context): Promise<void> {
             dir: { type: 'string', short: 'd' },
             section: { type: 'string', short: 's' },
             lines: { type: 'string' },
+            'max-lines': { type: 'string' },
             'no-numbers': { type: 'boolean' },
             quiet: { type: 'boolean' },
         },
         SHOW_USAGE,
     );
-    const [name] = positionals;
-    if (!name) {
+    if (positionals.length === 0) {
         throw usageError('no document named', SHOW_USAGE);
     }
+    const flagged = values.section !== undefined || values.lines !== undefined;
+    if (flagged && positionals.length > 1) {
+        throw usageError(
+            '--section and --lines read one document',
+            'name each part instead: <document>:<a>-<b> or <document>#<heading>',
+        );
+    }
+    const span = values.lines ? range(values.lines) : undefined;
+    const maxLines = values['max-lines'] ? count(values['max-lines'], '--max-lines') : undefined;
 
     const found = await open(ctx, values.dir);
     try {
+        const names = new Set(found.manifest.sources.map((s) => s.name));
+        const several =
+            !flagged && (positionals.length > 1 || targeted(() => selects(positionals[0]!, names)));
+        if (several) {
+            const reads = targeted(() => positionals.map((raw) => parseTarget(raw, names)));
+            await showMany(ctx, found, reads, values, maxLines ?? DEFAULT_MAX_LINES);
+            return;
+        }
+
+        const name = positionals[0]!;
         const file = found.resolveFiles([name])[0];
         if (!file) {
             throw new CliError(
@@ -878,22 +915,36 @@ async function show(args: readonly string[], ctx: Context): Promise<void> {
                 'list them with `zen rag docs list files`',
             );
         }
-        const span = values.lines ? range(values.lines) : undefined;
-        const excerpt = values.section
+        const whole = values.section
             ? await readSection(found, file, values.section)
             : await readRange(found, file, span?.[0] ?? 1, span?.[1] ?? Infinity);
+        // Uncapped unless asked: this form printed whole documents before the cap existed.
+        const cut = maxLines !== undefined && whole.lines.length > maxLines;
+        const excerpt = cut
+            ? { ...whole, lines: whole.lines.slice(0, maxLines), end: whole.start + maxLines - 1 }
+            : whole;
 
         if (ctx.json) {
-            json(excerpt);
+            json(cut ? { ...excerpt, truncated: true } : excerpt);
             return;
         }
-        const width = String(excerpt.end).length;
+        const width = String(whole.end).length;
         write(
             excerpt.lines
                 .map((line, at) =>
                     values['no-numbers']
                         ? line
                         : `${dim(String(excerpt.start + at).padStart(width))} ${dim('|')} ${line}`,
+                )
+                .concat(
+                    cut
+                        ? [
+                              dim(
+                                  `... truncated at line ${excerpt.end} of ${whole.end} - read ` +
+                                      `${spanOf(file, excerpt.end + 1, whole.end)} to continue`,
+                              ),
+                          ]
+                        : [],
                 )
                 .join('\n'),
         );
@@ -902,6 +953,71 @@ async function show(args: readonly string[], ctx: Context): Promise<void> {
         }
     } finally {
         found.close();
+    }
+}
+
+async function showMany(
+    ctx: Context,
+    found: DocsIndex,
+    reads: readonly Read[],
+    values: ShowFlags,
+    maxLines: number,
+): Promise<void> {
+    const read = await patterned(() => readMany(found, reads, { maxLines }));
+
+    if (ctx.json) {
+        json({
+            results: read.results.map((result) =>
+                isFailure(result)
+                    ? result
+                    : {
+                          target: result.target,
+                          file: result.file,
+                          from: result.from,
+                          to: result.to,
+                          section: result.section ?? null,
+                          text: result.lines.join('\n'),
+                          truncated: result.truncated,
+                          ...(result.continue ? { continue: result.continue } : {}),
+                      },
+            ),
+            printed: read.printed,
+            failed: read.failed,
+        });
+    } else {
+        write(renderReads(read, { numbers: !values['no-numbers'] }));
+        if (!values.quiet) {
+            const lines = read.results.reduce(
+                (sum, r) => sum + (isFailure(r) ? 0 : r.lines.length),
+                0,
+            );
+            const cut = read.results.some((r) => !isFailure(r) && r.truncated);
+            note(
+                dim(
+                    `  ${read.printed} of ${read.results.length} target(s) · ${lines} line(s)` +
+                        (cut ? ` · cut to --max-lines ${maxLines}` : ''),
+                ),
+            );
+        }
+    }
+    if (read.printed === 0) {
+        throw new CliError(
+            'none of the targets could be read',
+            EXIT.failed,
+            '`zen rag docs list files` lists the document names',
+        );
+    }
+}
+
+/** A malformed target is a bad invocation, so nothing is printed for any of them. */
+function targeted<T>(run: () => T): T {
+    try {
+        return run();
+    } catch (err) {
+        if (err instanceof TargetError) {
+            throw usageError(err.message, SHOW_USAGE);
+        }
+        throw err;
     }
 }
 

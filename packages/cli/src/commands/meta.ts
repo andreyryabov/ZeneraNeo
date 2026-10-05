@@ -1,14 +1,24 @@
-import { createModel, readProjectConfig } from '@zenera/neo';
+import { readProjectConfig } from '@zenera/neo';
+import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { parse } from '../args.ts';
 import type { Command, Context } from '../command.ts';
 import { loadProjectEnv } from '../env.ts';
 import { ensureHome } from '../home.ts';
 import { assertOwner, KeyStore, PROVIDERS, type Provider } from '../keys.ts';
-import { probeModel } from '../liveness.ts';
+import { probeChat, probeModel } from '../liveness.ts';
 import {
     answerBox,
     chooseModel,
+    DATASET_HELP,
+    datasetProjectFlag,
+    DEFAULT_RESUMES,
     defaultRef,
+    editorFiles,
+    lastSession,
     launch,
     listPrompts,
     loadPrompt,
@@ -22,15 +32,23 @@ import {
     providersWarning,
     readMeta,
     RECOMMENDED,
+    recordSession,
+    RESUME_PROMPT,
+    resumeDelayMs,
+    runDataset,
+    sessionTotals,
     SOURCE_LABELS,
-    splitRef,
+    tailSpans,
+    Tally,
+    transient,
     wire,
     writeMeta,
     type ModelSources,
-} from '../meta.ts';
+} from '../meta/index.ts';
+import { splitRef } from '../modelref.ts';
+import { duration } from '../narrate.ts';
 import * as Projects from '../projects.ts';
 import { project as resolveProject } from '../resolve.ts';
-import { editorFiles } from '../scaffold.ts';
 import {
     bold,
     choose,
@@ -51,10 +69,21 @@ import {
     write,
     writeAll,
 } from '../term.ts';
+import {
+    appendUsage,
+    LEDGER_ENV,
+    ledgerPath,
+    META_PROMPT_ENV,
+    META_SESSION_ENV,
+} from '../usage.ts';
 
 const USAGE = 'zen meta run [project] [prompt] [options]';
 
-const VERBS = new Set(['model', 'run', 'prompts']);
+const VERBS = new Set(['model', 'run', 'prompts', 'resume', 'dataset']);
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A copilot session id, or the 7+ hex prefix of one it also accepts. */
+const SESSION_ID = /^[0-9a-f]{7,}(?:-[0-9a-f]+)*$/i;
 
 interface Flags {
     project?: string;
@@ -66,6 +95,8 @@ interface Flags {
     share?: string;
     resume?: string;
     continue?: boolean;
+    'session-id'?: string;
+    retries?: string;
     'allow-all'?: boolean;
     'allow-tool'?: string;
     ask?: boolean;
@@ -87,9 +118,13 @@ export const meta: Command = {
         '  zen meta run [project] /<name> [words]   run a stored prompt',
         '  zen meta run [project]                   pick one of its stored prompts',
         '  zen meta prompts [project]               list the stored prompts',
+        '  zen meta resume [project] [session]      carry on a run that stopped',
         '  zen meta model [ref]                     show or set the model it uses',
+        '  zen meta dataset <verb>                  the cases it tunes against (below)',
         '',
         'The project may come before the verb instead: `zen meta acme run`.',
+        '',
+        ...DATASET_HELP,
         '',
         'Arguments:',
         '  [project]   Name of a project. Default: the one you are in.',
@@ -107,6 +142,8 @@ export const meta: Command = {
         '  --ask                  Have it ask before each tool. Default: it does not.',
         '  --add-dir <dir>        Another directory it may touch. Repeatable.',
         '  --resume <id>          Continue a copilot session. --continue takes the last.',
+        '  --session-id <uuid>    Start a new session under this id. Default: a random one.',
+        `  --retries <n>          Resume after a rate limit or outage. Default ${DEFAULT_RESUMES}, 0 = off.`,
         '  --share <file>         Write the transcript to a markdown file.',
         '  --dry-run              Print what would run, secrets masked, and stop.',
         '',
@@ -118,6 +155,13 @@ export const meta: Command = {
         'editor expects to read, write and run things, and a terminal has nobody',
         'watching to answer. Narrow it with --allow-tool, or restore the asking',
         'with --ask.',
+        '',
+        '`zen meta resume` picks up the last session the project ran - or the one',
+        'named - where it stopped. A run that ends any way but success prints it.',
+        '',
+        'Its tokens are counted as it runs and summed when it ends. In a project with',
+        'a .finetune/, every call - and every zen run and inspect ask it makes - is',
+        'appended to .finetune/usage/ledger.jsonl, and .finetune/USAGE.md is rewritten.',
         '',
         'Nothing it needs is put on a command line: every credential reaches it',
         'through the environment, where other processes cannot read it.',
@@ -141,12 +185,28 @@ export const meta: Command = {
         '  zen meta prompts',
         '  zen meta run /project-review',
         '  zen meta run acme /spec-sync-project agents/triage.md',
+        '  zen meta resume acme',
         '  git diff | zen meta run "what broke?" --allow-tool read',
         '  zen meta model vertex/gemini-3.8-flash',
         '  zen meta model --pick',
         '  zen meta run --dry-run "hello"',
     ],
     run: async (ctx) => {
+        // Its own flags, so it is routed before the meta agent's are parsed.
+        const at =
+            ctx.args[0] === 'dataset'
+                ? 0
+                : ctx.args[1] === 'dataset' && !ctx.args[0]?.startsWith('-')
+                  ? 1
+                  : -1;
+        if (at >= 0) {
+            const args = ctx.args.slice(at + 1);
+            const found = await resolveProject({
+                cwd: ctx.cwd,
+                project: datasetProjectFlag(args) ?? (at === 1 ? ctx.args[0] : undefined),
+            });
+            return await runDataset({ args, json: ctx.json, cwd: ctx.cwd }, found);
+        }
         const { values, positionals } = parse<Flags>(
             ctx.args,
             {
@@ -159,6 +219,8 @@ export const meta: Command = {
                 share: { type: 'string' },
                 resume: { type: 'string' },
                 continue: { type: 'boolean' },
+                'session-id': { type: 'string' },
+                retries: { type: 'string' },
                 'allow-all': { type: 'boolean' },
                 'allow-tool': { type: 'string' },
                 ask: { type: 'boolean' },
@@ -198,6 +260,9 @@ export const meta: Command = {
         }
         if (verb === 'prompts') {
             return await prompts(ctx, values, args);
+        }
+        if (verb === 'resume') {
+            return await resumeRun(ctx, values, args);
         }
         throw usageError(
             first === undefined ? 'nothing to run' : 'a prompt goes through `run`',
@@ -299,7 +364,7 @@ async function runPrompt(
         note(dim(found.description));
     }
     const prompt = extra.length > 0 ? `${found.body}\n\n${extra.join(' ')}` : found.body;
-    await go(ctx, values, project, prompt);
+    await go(ctx, values, project, prompt, name.replace(/^\//, ''));
 }
 
 async function pickPrompt(ctx: Context, project: Projects.Project): Promise<string> {
@@ -345,6 +410,31 @@ async function prompts(ctx: Context, values: Flags, args: string[]): Promise<voi
 }
 
 // ---------------------------------------------------------------------------
+// zen meta resume [project] [session id] [words...]
+//
+// A long run stops for reasons nobody chose - a refused request, a closed
+// laptop, Ctrl-C. Copilot keeps the session; this hands it back, by default the
+// last one the project ran, with the words (or a plain "continue") as the turn.
+// ---------------------------------------------------------------------------
+
+async function resumeRun(ctx: Context, values: Flags, args: string[]): Promise<void> {
+    const { project, rest } = await where(ctx, values.project, args);
+    const named = rest[0] !== undefined && SESSION_ID.test(rest[0]) ? rest[0] : undefined;
+    const words = named ? rest.slice(1) : rest;
+    const session = named ?? values.resume ?? lastSession(project.dir);
+    if (!session) {
+        throw usageError(
+            `no meta session recorded in ${project.name}`,
+            `name one: zen meta resume ${project.name} <session id>`,
+        );
+    }
+    note(dim(`resuming session ${session}`));
+    refresh(project);
+    const message = (values.prompt ?? words.join(' ')).trim() || RESUME_PROMPT;
+    await go(ctx, { ...values, resume: session, continue: false }, project, message);
+}
+
+// ---------------------------------------------------------------------------
 // The run itself
 // ---------------------------------------------------------------------------
 
@@ -353,7 +443,17 @@ async function go(
     values: Flags,
     project: Projects.Project,
     prompt: string,
+    promptName?: string,
 ): Promise<void> {
+    const fresh = values['session-id'];
+    if (fresh !== undefined) {
+        if (values.resume || values.continue) {
+            throw usageError('--session-id starts a new session', 'drop --resume / --continue');
+        }
+        if (!UUID.test(fresh)) {
+            throw usageError(`--session-id must be a UUID, not ${fresh}`, 'try: uuidgen');
+        }
+    }
     const shell = process.env[MODEL_ENV];
     loadProjectEnv(project.dir);
     ensureHome();
@@ -394,7 +494,10 @@ async function go(
 
     const wiring = wire(store, entry, id);
     const binary = locate();
-    const args = argv(values, project.dir, prompt, wiring.secret);
+    // Named up front, so a run killed before copilot reports its id can still be resumed.
+    let session = values.resume ?? (values.continue ? undefined : (fresh ?? randomUUID()));
+    const args = argv(values, project.dir, prompt, wiring.secret, session);
+    const retries = count(values.retries, '--retries') ?? DEFAULT_RESUMES;
 
     if (values['dry-run']) {
         const lines = masked(wiring.env, wiring.secret);
@@ -434,21 +537,91 @@ async function go(
     log.line(`project ${project.name} ${project.dir}`);
     log.line(`model   ${chosen.ref} from ${SOURCE_LABELS[chosen.from]}`);
     log.line(`command ${[binary.command, ...binary.args, ...elided].join(' ')}`);
+    if (session) {
+        recordSession(project.dir, session);
+        log.line(`session ${session}`);
+    }
     log.line('');
     log.line('--- prompt ---');
     log.line(prompt);
     log.line('');
     log.line('--- run ---');
 
+    const resumeHint = (): string | undefined =>
+        session ? `resume it: zen meta resume ${project.name} ${session}` : undefined;
+
+    // Every zen command the agent runs inherits these, so a batch it starts or
+    // an ask it makes lands in the same ledger, tagged with this session.
+    const spans = log.path.replace(/\.log$/, '.otel.jsonl');
+    const ledger = ledgerPath(project.dir);
+    const env: Record<string, string> = {
+        ...wiring.env,
+        COPILOT_OTEL_FILE_EXPORTER_PATH: spans,
+        ...(ledger ? { [LEDGER_ENV]: ledger } : {}),
+        ...(session ? { [META_SESSION_ENV]: session } : {}),
+        ...(promptName ? { [META_PROMPT_ENV]: promptName } : {}),
+    };
+    const tally = new Tally();
+    const tail = tailSpans(spans, (call) => {
+        tally.add(call);
+        appendUsage(project.dir, {
+            kind: 'meta.call',
+            ts: new Date(Date.parse(call.startedAt) + call.durationMs).toISOString(),
+            ...call,
+            session: call.session ?? session,
+        });
+    });
+    const reporter = usageReporter(project.dir);
+    const tokens = (): string => {
+        tail.stop();
+        return tally.toString();
+    };
+
     // A run that dies still has to leave a readable file behind.
     try {
-        const outcome = await launch({
-            binary,
-            args,
-            env: wiring.env,
-            cwd: project.dir,
-            log,
-        });
+        let resumes = 0;
+        const run = async (argList: string[]) => {
+            const launchedAt = new Date();
+            const outcome = await launch({
+                binary,
+                args: argList,
+                env,
+                cwd: project.dir,
+                log,
+                status: () => (tally.calls > 0 ? tally.toString() : ''),
+            });
+            if (outcome.sessionId && outcome.sessionId !== session) {
+                session = outcome.sessionId;
+                recordSession(project.dir, session);
+            }
+            const models = session ? sessionTotals(session) : undefined;
+            if (session && models) {
+                appendUsage(project.dir, {
+                    kind: 'meta.session',
+                    ts: new Date().toISOString(),
+                    session,
+                    models,
+                    exitCode: outcome.exitCode,
+                    resumes,
+                    startedAt: launchedAt.toISOString(),
+                    durationMs: Date.now() - launchedAt.getTime(),
+                });
+            }
+            return outcome;
+        };
+        let outcome = await run(args);
+        for (let reason = transient(outcome); reason && resumes < retries;) {
+            const wait = resumeDelayMs(resumes);
+            resumes += 1;
+            const said = `${reason}: resuming in ${duration(wait)} (${resumes}/${retries})`;
+            warn(said);
+            log.line('');
+            log.line(`--- resume ${resumes}: ${said} ---`);
+            await pause(wait, resumeHint());
+            const again = { ...values, resume: session, continue: false };
+            outcome = await run(argv(again, project.dir, RESUME_PROMPT, wiring.secret));
+            reason = transient(outcome);
+        }
 
         log.line('');
         log.line('--- answer ---');
@@ -456,6 +629,9 @@ async function go(
         if (outcome.answer) {
             log.saveAnswer(outcome.answer);
         }
+        const spent = tokens();
+        log.line('');
+        log.line(`tokens  ${spent}`);
 
         if (ctx.json) {
             json({
@@ -464,7 +640,9 @@ async function go(
                 model: chosen.ref,
                 sessionId: outcome.sessionId,
                 exitCode: outcome.exitCode,
+                resumes,
                 usage: outcome.usage,
+                tokens: { calls: tally.calls, ...tally.usage },
                 answer: outcome.answer,
                 answerFile: outcome.answer ? log.answerPath : undefined,
             });
@@ -474,21 +652,92 @@ async function go(
             // have read enough to want it in an editor.
             note(cyan(log.answerPath));
         }
+        if (!ctx.json && tally.calls > 0) {
+            note(dim(`tokens  ${spent}`));
+        }
 
         if (outcome.exitCode !== 0) {
             throw new CliError(
                 `the meta agent exited ${outcome.exitCode}`,
                 EXIT.failed,
-                binary.from === 'npx' ? 'install it: npm i -g @github/copilot' : undefined,
+                resumeHint() ??
+                    (binary.from === 'npx' ? 'install it: npm i -g @github/copilot' : undefined),
             );
         }
+    } catch (err) {
+        const hint = resumeHint();
+        if (hint && !(err instanceof CliError)) {
+            note(dim(hint));
+        }
+        throw err;
     } finally {
+        tail.stop();
+        reporter.stop();
         log.close();
     }
 }
 
+/** How often a running meta agent rewrites the fine-tuning's usage report. */
+const REPORT_EVERY_MS = 5 * 60_000;
+
+/**
+ * Rewrites `.finetune/USAGE.md` on a timer and once more at the end, when the
+ * project is being tuned. Detached and silent: the report is a by-product, and
+ * neither its time nor its failure belongs to the run.
+ */
+function usageReporter(dir: string): { stop(): void } {
+    const script = join(dir, '.github/skills/zen-finetune/scripts/usage.mjs');
+    if (!existsSync(join(dir, '.finetune')) || !existsSync(script)) {
+        return { stop: () => undefined };
+    }
+    let running = false;
+    const refresh = (): void => {
+        if (running) {
+            return;
+        }
+        running = true;
+        const child = spawn(process.execPath, [script, '-q'], {
+            cwd: dir,
+            stdio: 'ignore',
+            detached: true,
+        });
+        child.on('exit', () => (running = false));
+        child.on('error', () => (running = false));
+        child.unref();
+    };
+    const timer = setInterval(refresh, REPORT_EVERY_MS);
+    timer.unref();
+    return {
+        stop: (): void => {
+            clearInterval(timer);
+            running = false;
+            refresh();
+        },
+    };
+}
+
+/** The wait before a resume, cut short by Ctrl-C - which still says how to resume. */
+async function pause(ms: number, hint: string | undefined): Promise<void> {
+    const stop = new AbortController();
+    const onInt = (): void => stop.abort();
+    process.once('SIGINT', onInt);
+    try {
+        await sleep(ms, undefined, { signal: stop.signal });
+    } catch {
+        throw new CliError('interrupted', EXIT.failed, hint);
+    } finally {
+        process.off('SIGINT', onInt);
+    }
+}
+
 /** Copilot's own flags, assembled once. Nothing secret goes on this line. */
-function argv(values: Flags, dir: string, prompt: string, secret: string[]): string[] {
+function argv(
+    values: Flags,
+    dir: string,
+    prompt: string,
+    secret: string[],
+    fresh?: string,
+): string[] {
     const args = ['-C', dir, '-p', prompt, '--output-format', 'json', '--no-color'];
     // A prompt written for an editor expects to read, write and run things, and
     // there is nobody at a `-p` run to answer the question. Naming tools is the
@@ -513,9 +762,10 @@ function argv(values: Flags, dir: string, prompt: string, secret: string[]): str
     }
     if (values.resume) {
         args.push('--resume', values.resume);
-    }
-    if (values.continue) {
+    } else if (values.continue) {
         args.push('--continue');
+    } else if (fresh) {
+        args.push('--session-id', fresh);
     }
     if (secret.length > 0) {
         args.push('--secret-env-vars', secret.join(','));
@@ -540,6 +790,17 @@ function projectModel(dir: string): string | undefined {
     } catch {
         return undefined;
     }
+}
+
+function count(text: string | undefined, flag: string): number | undefined {
+    if (text === undefined) {
+        return undefined;
+    }
+    const value = Number(text);
+    if (!Number.isInteger(value) || value < 0) {
+        throw usageError(`${flag} takes a whole number, 0 or more`, `got "${text}"`);
+    }
+    return value;
 }
 
 function asProvider(name: string): Provider {
@@ -674,7 +935,7 @@ async function vet(ctx: Context, ref: string): Promise<void> {
         // The colon form, so a refusal suggests `zen models ls <provider>`.
         ref: `${owner}:${id}`,
         kind: 'model',
-        model: createModel({ provider: owner, model: id, maxTokens: 16 }),
+        model: probeChat(owner, id),
     });
     bar?.done();
 

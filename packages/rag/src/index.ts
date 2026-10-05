@@ -1,6 +1,16 @@
+export {
+    anyOf,
+    isGlob,
+    loose,
+    matcher,
+    MAX_PATTERN,
+    PatternError,
+    wildcard,
+    type Matcher,
+    type MatchOptions,
+} from '@zenera/neo';
 export * from './common/locate.ts';
 export * from './common/manifest.ts';
-export * from './common/match.ts';
 // A namespace rather than a re-export: both subjects have a `Manifest`, a
 // `writeIndex` and a `search`, and flattening them would collide on every one.
 export * as docs from './docs/index.ts';

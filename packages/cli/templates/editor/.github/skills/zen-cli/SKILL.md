@@ -55,6 +55,7 @@ guess a flag, and do not read them all.
 | Run reports, trajectories, what a session directory holds           | [inspect.md](./references/inspect.md)                           |
 | Reading a run yourself: the node graph, opening a node by id        | [inspect.md](./references/inspect.md) (and `zen-inspect` skill) |
 | What the agents remember, why something was recalled, forgetting    | [memory.md](./references/memory.md)                             |
+| The evaluation dataset: cases, drift, notes, drawing a sample       | [dataset.md](./references/dataset.md) (and `zen-dataset` skill) |
 | Sharing a project: archives, what travels, importing one safely     | [export.md](./references/export.md)                             |
 | `zen faker` - a mock API from an OpenAPI/Swagger document           | [faker.md](./references/faker.md)                               |
 | `zen rag` - searching an API description, or a pile of markdown     | [rag.md](./references/rag.md)                                   |
@@ -92,11 +93,13 @@ zen rag docs search -d <index-dir> "<question in natural language>"
 zen rag docs search -d <index-dir> --file "<path-pattern>" --section "<heading>" "<question>"
 zen rag docs grep -d <index-dir> "<exact string>" --file "<path-pattern>"
 zen rag docs show -d <index-dir> "<file>" --section "<heading>"
+zen rag docs show -d <index-dir> "<doc-1>:<a>-<b>" "<doc-2>#<heading>"   # several in one call
 ```
 
 Start with one ordinary hybrid question. It is the best default for concepts and
 open questions. Search returns candidates, not proof: read the quoted lines,
-then use `show` or `grep` before claiming a fact is present or absent.
+then use `show` or `grep` before claiming a fact is present or absent. Read
+every passage you will cite with ONE `show` naming them all, not one call each.
 
 When the first answer is from the wrong product area, version, file, or heading,
 ask the same question again with `--file` and then `--section`. A bare `--file`

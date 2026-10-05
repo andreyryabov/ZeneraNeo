@@ -1,5 +1,5 @@
 import { CliError, EXIT } from '@zenera/cli/lib';
-import { loose, type MatchOptions } from '../common/match.ts';
+import { loose, type MatchOptions } from '@zenera/neo';
 import type { HeadingRecord } from './files.ts';
 import type { DocsIndex } from './search.ts';
 import { under } from './search.ts';
@@ -239,6 +239,238 @@ export async function readRange(
         lines: lines.slice(start - 1, end),
         total: lines.length,
     };
+}
+
+// ---------------------------------------------------------------------------
+// Several reads at once
+//
+// An agent that cites five passages otherwise spends five turns on five reads,
+// each resending the whole conversation, because no model we run will issue
+// them in parallel however it is asked. One call naming all five leaves
+// nothing to batch.
+//
+// The reads share one line budget, divided so the first cannot spend it all:
+// each gets an even share, and what a short one leaves goes to the rest. A read
+// that was cut says which read continues it, so the budget costs a call and
+// never a passage.
+// ---------------------------------------------------------------------------
+
+export interface Read {
+    /** what the caller wrote, so a failure can be put back next to it */
+    target: string;
+    file: string;
+    /** a heading title, id or path; wins over from/to */
+    section?: string;
+    from?: number;
+    to?: number;
+}
+
+export interface ReadBlock {
+    /** what was printed, as a read that would print it again */
+    target: string;
+    file: string;
+    /** first line printed */
+    from: number;
+    /** last line printed; `from - 1` when the budget left none */
+    to: number;
+    /** last line that was asked for, after clamping to the document */
+    end: number;
+    total: number;
+    /** the heading, when the block is exactly one section */
+    section?: string;
+    /** the range asked for, when it ran past the end of the document */
+    asked?: string;
+    lines: string[];
+    truncated: boolean;
+    /** the read that prints the rest of a cut block */
+    continue?: string;
+}
+
+export interface ReadFailure {
+    target: string;
+    file: string;
+    error: string;
+    hint: string;
+}
+
+export type ReadResult = ReadBlock | ReadFailure;
+
+export interface ReadMany {
+    results: ReadResult[];
+    printed: number;
+    failed: number;
+}
+
+export interface ReadHints {
+    document: (file: string) => string;
+    section: (file: string) => string;
+    range: (file: string, total: number) => string;
+}
+
+export interface ReadManyOptions {
+    maxLines?: number;
+    hints?: Partial<ReadHints>;
+}
+
+const CLI_HINTS: ReadHints = {
+    document: (file) =>
+        `\`zen rag docs list files --file "*${file.split('/').at(-1)}*"\` lists close names`,
+    section: (file) => `\`zen rag docs list sections --file "${file}"\` lists its headings`,
+    range: (file, total) => `read ${spanOf(file, 1, total)}`,
+};
+
+export const isFailure = <T extends object>(result: T | ReadFailure): result is ReadFailure =>
+    'error' in result;
+
+export const spanOf = (file: string, from: number, to: number): string =>
+    from === to ? `${file}:${from}` : `${file}:${from}-${to}`;
+
+interface Span {
+    target: string;
+    file: string;
+    from: number;
+    end: number;
+    total: number;
+    section?: string;
+    asked?: string;
+}
+
+export async function readMany(
+    index: DocsIndex,
+    reads: readonly Read[],
+    options: ReadManyOptions = {},
+): Promise<ReadMany> {
+    const hints = { ...CLI_HINTS, ...options.hints };
+    const slots: (Span | ReadFailure)[] = [];
+
+    for (const read of reads) {
+        const span = await spanFor(index, read, hints);
+        if (isFailure(span)) {
+            slots.push(span);
+            continue;
+        }
+        // Everything it overlaps or touches folds into the first of them, so a
+        // line is printed once however many reads named it.
+        const touching = slots.filter(
+            (slot): slot is Span =>
+                !isFailure(slot) &&
+                slot.file === span.file &&
+                span.from <= slot.end + 1 &&
+                span.end >= slot.from - 1,
+        );
+        if (touching.length === 0) {
+            slots.push(span);
+            continue;
+        }
+        const [first, ...rest] = touching;
+        const all = [first!, ...rest, span];
+        const from = Math.min(...all.map((s) => s.from));
+        const end = Math.max(...all.map((s) => s.end));
+        const same = all.every((s) => s.from === from && s.end === end);
+        Object.assign(first!, {
+            from,
+            end,
+            section:
+                same && all.every((s) => s.section === first!.section) ? first!.section : undefined,
+            asked: same ? first!.asked : undefined,
+        });
+        for (const gone of rest) {
+            slots.splice(slots.indexOf(gone), 1);
+        }
+    }
+
+    const spans = slots.filter((slot): slot is Span => !isFailure(slot));
+    const grants = share(
+        spans.map((s) => s.end - s.from + 1),
+        options.maxLines ?? Infinity,
+    );
+
+    const results: ReadResult[] = [];
+    for (const slot of slots) {
+        if (isFailure(slot)) {
+            results.push(slot);
+            continue;
+        }
+        const granted = grants[spans.indexOf(slot)]!;
+        const to = slot.from + granted - 1;
+        const lines = (await index.lines(slot.file)).slice(slot.from - 1, to);
+        const truncated = to < slot.end;
+        results.push({
+            target: spanOf(slot.file, slot.from, granted > 0 ? to : slot.end),
+            file: slot.file,
+            from: slot.from,
+            to,
+            end: slot.end,
+            total: slot.total,
+            ...(slot.section ? { section: slot.section } : {}),
+            ...(slot.asked ? { asked: slot.asked } : {}),
+            lines,
+            truncated,
+            ...(truncated ? { continue: spanOf(slot.file, to + 1, slot.end) } : {}),
+        });
+    }
+    const failed = results.filter(isFailure).length;
+    return { results, printed: results.length - failed, failed };
+}
+
+async function spanFor(
+    index: DocsIndex,
+    read: Read,
+    hints: ReadHints,
+): Promise<Span | ReadFailure> {
+    const fail = (error: string, hint: string): ReadFailure => ({
+        target: read.target,
+        file: read.file,
+        error,
+        hint,
+    });
+    const outline = index.file(read.file);
+    if (!outline) {
+        return fail('no document by that name', hints.document(read.file));
+    }
+    const total = (await index.lines(read.file)).length;
+    const base = { target: read.target, file: read.file, total };
+
+    if (read.section !== undefined) {
+        const found = index.resolveSections([read.section], [read.file]);
+        const wanted = read.section.toLowerCase();
+        const heading = found.find((h) => h.title.toLowerCase() === wanted) ?? found[0];
+        if (!heading) {
+            return fail(`no section called ${read.section}`, hints.section(read.file));
+        }
+        return { ...base, from: heading.line, end: heading.end, section: heading.title };
+    }
+
+    const from = read.from ?? 1;
+    const to = read.to ?? total;
+    if (from > total) {
+        return fail(
+            `line ${from} is past the end; the document has ${total} lines`,
+            hints.range(read.file, total),
+        );
+    }
+    return {
+        ...base,
+        from,
+        end: Math.min(to, total),
+        ...(to > total && read.to !== undefined ? { asked: `${from}-${to}` } : {}),
+    };
+}
+
+/**
+ * Divides a budget so no request can starve the rest: an even share each, and
+ * what a short one does not use is shared again among those still wanting.
+ */
+function share(sizes: readonly number[], budget: number): number[] {
+    const grants = sizes.map(() => 0);
+    const order = sizes.map((_, at) => at).sort((a, b) => sizes[a]! - sizes[b]!);
+    let left = budget;
+    for (const [rank, at] of order.entries()) {
+        const fair = Math.floor(left / (order.length - rank));
+        grants[at] = Math.min(sizes[at]!, fair === Infinity ? sizes[at]! : fair);
+        left -= grants[at]!;
+    }
+    return grants;
 }
 
 // ---------------------------------------------------------------------------

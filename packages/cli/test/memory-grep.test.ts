@@ -171,7 +171,26 @@ describe('zen memory grep', () => {
         expect(out.matches[0]!.hits).toEqual([
             { where: 'file', line: 2, text: 'HOST = "db.internal"' },
         ]);
-        expect(out.unsearched).toEqual([{ id: 'B', path: '/memory/B.py', reason: 'missing' }]);
+        expect(out.unsearched).toEqual([
+            { id: 'B', path: join(dir, 'files', 'B.py'), reason: 'missing' },
+        ]);
+    });
+
+    it('prints the host path in ls and show, never the agent’s /memory mount', async () => {
+        await memory([
+            node('A', {
+                kind: 'file',
+                file: { path: '/memory/A.py', bytes: 1, sha256: 'x', format: 'py' },
+            }),
+        ]);
+        const host = join(dir, 'files', 'A.py');
+
+        const ls = await run('ls', '--dir', 'mem');
+        expect(ls.out.nodes[0].file.path).toBe(host);
+
+        const show = await run('show', 'A', '--dir', 'mem');
+        expect(show.out.node.file.path).toBe(host);
+        expect(show.out.file).toBe(host);
     });
 
     it('narrows to a field, so metadata can be searched on its own', async () => {

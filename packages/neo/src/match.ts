@@ -8,6 +8,9 @@
 // `password` appear anywhere at all", a ranking is the wrong instrument and no
 // amount of tuning makes it the right one.
 //
+// Memory grep and @zenera/rag's lookups both stand on this. A `finder` says
+// *where*, for grep, which reports the line; a `matcher` says *whether*.
+//
 // A pattern may arrive from a model, so a regex is a bounded promise: the
 // length is capped here and the scan that uses it keeps a deadline.
 // ---------------------------------------------------------------------------
@@ -25,23 +28,32 @@ export interface MatchOptions {
 
 export type Matcher = (text: string) => boolean;
 
+/** The offset of the first match in `text`, or -1. */
+export type Finder = (text: string) => number;
+
 /**
- * A predicate over a string. Literal by default: someone typing `user.id` means
- * those seven characters, and a dot that quietly matched anything would be a
- * worse answer than no answer.
+ * Where a pattern first occurs. Literal by default: someone typing `user.id`
+ * means those seven characters, and a dot that quietly matched anything would
+ * be a worse answer than no answer.
  */
-export function matcher(pattern: string, options: MatchOptions = {}): Matcher {
+export function finder(pattern: string, options: MatchOptions = {}): Finder {
     guard(pattern);
     if (!options.regex) {
         if (options.caseSensitive) {
-            return (text) => text.includes(pattern);
+            return (text) => text.indexOf(pattern);
         }
         const needle = pattern.toLowerCase();
-        return (text) => text.toLowerCase().includes(needle);
+        return (text) => text.toLowerCase().indexOf(needle);
     }
     const expression = compile(pattern, options.caseSensitive ? '' : 'i');
     // `lastIndex` is not carried between calls: the flags never include `g`.
-    return (text) => expression.test(text);
+    return (text) => text.search(expression);
+}
+
+/** Whether a pattern occurs at all, read the same way `finder` reads it. */
+export function matcher(pattern: string, options: MatchOptions = {}): Matcher {
+    const find = finder(pattern, options);
+    return (text) => find(text) >= 0;
 }
 
 /**

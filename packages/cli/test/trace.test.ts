@@ -3,9 +3,16 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { renderNode, wholeParts } from '../src/commands/inspect.ts';
+import {
+    readQuestion,
+    renderAskExchange,
+    renderNode,
+    repeatQuestions,
+    replayableCalls,
+    wholeParts,
+} from '../src/commands/inspect.ts';
 import { runPathsAt } from '../src/session.ts';
-import { CliError, choose, deferBanner } from '../src/term.ts';
+import { CliError, choose, deferBanner, plain } from '../src/term.ts';
 import { parseNodeIds, safe, traceIndex, traceMermaid, traceOf } from '../src/trace.ts';
 
 // ---------------------------------------------------------------------------
@@ -152,6 +159,61 @@ describe('numbering', () => {
         );
         expect(traceIndex(trace).map((n) => n.id)).toEqual(['n1', 'n2', 'n3']);
         expect(traceIndex(trace).map((n) => n.kind)).toEqual(['llm_call', 'join', 'join']);
+    });
+});
+
+describe('interactive ask choices', () => {
+    it('offers only LLM calls with a recorded request', () => {
+        const trace = traceOf(
+            state([
+                node({ type: 'llm_call', ...llm([]) }),
+                node({ type: 'tool_call', callId: 'c1', name: 'read_file', args: payload('{}') }),
+                node({ type: 'llm_call', ...llm([]), request: payload('recorded request') }),
+            ]),
+        );
+
+        expect(replayableCalls(trace).map(({ entry }) => entry.key)).toEqual(['n3']);
+    });
+
+    it('separates the question and markdown answer in labelled panels', () => {
+        const answer = '# Finding\n\n- **Cause:** `python -c`';
+        const rendered = plain(renderAskExchange('Why?', answer, 40).join('\n'));
+
+        expect(rendered).toContain('╭─ Question ');
+        expect(rendered).toContain('│ Why?');
+        expect(rendered).toContain('╭─ Answer ');
+        expect(rendered).toContain('│ Finding');
+        expect(rendered).toContain('│ • Cause: python -c');
+    });
+
+    it('keeps asking until the person submits an empty question', async () => {
+        const answered: string[] = [];
+        const next = ['second', ''];
+
+        await repeatQuestions(
+            'first',
+            async () => next.shift() ?? '',
+            async (question) => {
+                answered.push(question);
+            },
+        );
+
+        expect(answered).toEqual(['first', 'second']);
+    });
+
+    it('reads the question from a file verbatim', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'zen-ask-'));
+        try {
+            const body = "Why didn't you run `npm test`? (it's in $SKILL)\n";
+            writeFileSync(join(dir, 'q.md'), body);
+
+            expect(await readQuestion([], 'q.md', dir)).toBe(body.trim());
+            expect(await readQuestion(['why', 'not?'], undefined, dir)).toBe('why not?');
+            await expect(readQuestion(['why'], 'q.md', dir)).rejects.toThrow(/not both/);
+            await expect(readQuestion([], 'missing.md', dir)).rejects.toThrow(/ENOENT/);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });
 

@@ -1,7 +1,7 @@
 # Models - `zen models`
 
 ```
-zen models <providers|ls|search|show|test|pick> [ref] [options]
+zen models <providers|ls|search|show|test|pick|browse> [ref] [options]
 ```
 
 Alias: `model`.
@@ -21,12 +21,16 @@ but a credential.
 | `zen models show <ref>`     | One model, every field the vendor gave                 |
 | `zen models test <ref> …`   | One real minimal call per ref, and a verdict           |
 | `zen models pick`           | The first ref that answers, printed on stdout          |
+| `zen models browse`         | Interactive TUI for a person; needs a terminal         |
 
 Filters, on `ls` and `search`: `--chat`, `--embeddings`, `--images`, `--audio`,
 `--tools`, `--vision`, `--free`, `--min-context <n>`, `--provider <name>`,
 `--limit <n>`, `--all`, `--refresh`.
 
 `pick` requires `--chat` or `--embedding`, and takes `--provider` and `--limit`.
+
+`browse` is for a person at a terminal and refuses without one (exit 2). An
+agent wants `ls --json`, `search` or `pick` instead.
 
 ## Where the lists come from
 

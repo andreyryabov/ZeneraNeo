@@ -81,6 +81,7 @@ zen rag docs list files          # every document, with what it holds
 zen rag docs list sections       # every heading
 zen rag docs grep deprecated     # every matching line, counted in full
 zen rag docs show guide.md --section "Rate limits"
+zen rag docs show "guide.md:40-80" "faq.md#Limits"   # several passages, one call
 ```
 
 Reach for those whenever the question is whether something is there at all. A
@@ -130,12 +131,12 @@ const index = await docs.DocsIndex.open(
 const project = await loadProject('./my-project', { tools: docs.docsTools(index) });
 ```
 
-| Tool          | For                                                          |
-| ------------- | ------------------------------------------------------------ |
-| `search_docs` | the passages that match, quoted with their line numbers      |
-| `list_docs`   | the documents, their headings, or their tables - no search   |
-| `grep_docs`   | every matching line, counted in full - no search             |
-| `read_docs`   | a section or a line range, verbatim and with nothing omitted |
+| Tool          | For                                                              |
+| ------------- | ---------------------------------------------------------------- |
+| `search_docs` | the passages that match, quoted with their line numbers          |
+| `list_docs`   | the documents, their headings, or their tables - no search       |
+| `grep_docs`   | every matching line, counted in full - no search                 |
+| `read_docs`   | a section or a line range, verbatim; several at once via `reads` |
 
 Only `search_docs` ranks. Every answer carries line numbers and `read_docs`
 takes them, which is the loop the whole subject exists for: **find the passage,

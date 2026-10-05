@@ -1,6 +1,6 @@
 import { CliError, EXIT } from '@zenera/cli/lib';
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { hostname } from 'node:os';
+import { claimLock, ownLock, type Lock as Held } from '@zenera/neo';
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
 // ---------------------------------------------------------------------------
@@ -98,10 +98,7 @@ export interface Journal<S, M, P extends string> {
     readonly timings: readonly PhaseTiming[];
 }
 
-interface Lock {
-    pid: number;
-    host: string;
-    startedAt: string;
+interface Lock extends Held {
     indexer: string;
     embedding: string;
     documents: string[];
@@ -114,14 +111,12 @@ interface Lock {
 export function beginBuild<S, M, P extends string>(plan: BuildPlan<S, M, P>): Journal<S, M, P> {
     const documents = plan.files.map((file) => basename(file));
     const started = Date.now();
-    const lock: Lock = {
-        pid: process.pid,
-        host: hostname(),
+    const lock: Lock = ownLock({
         startedAt: new Date(started).toISOString(),
         indexer: plan.indexer,
         embedding: plan.embedding,
         documents,
-    };
+    });
 
     mkdirSync(plan.dir, { recursive: true });
     claim(join(plan.dir, LOCK_FILE), lock);
@@ -241,50 +236,16 @@ export function beginBuild<S, M, P extends string>(plan: BuildPlan<S, M, P>): Jo
     };
 }
 
-/**
- * `wx` makes the create and the check one operation, so two builds racing for
- * the same directory cannot both win. A lock whose process is gone is stale by
- * definition and is taken rather than respected — a crashed build must not make
- * a directory permanently unbuildable.
- */
+/** Two builds writing one index would interleave their store writes. */
 function claim(path: string, lock: Lock): void {
-    const body = `${JSON.stringify(lock, null, 4)}\n`;
-    try {
-        writeFileSync(path, body, { flag: 'wx' });
-        return;
-    } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
-            throw err;
-        }
-    }
-    const held = readLock(path);
-    if (held && held.host === hostname() && alive(held.pid)) {
-        throw new CliError(
-            `this index is already being built (pid ${held.pid}, since ${held.startedAt})`,
-            EXIT.failed,
-            `wait for it, or build elsewhere with --out`,
-        );
-    }
-    writeFileSync(path, body);
-}
-
-function readLock(path: string): Lock | undefined {
-    try {
-        return JSON.parse(readFileSync(path, 'utf8')) as Lock;
-    } catch {
-        return undefined;
-    }
-}
-
-/**
- * `kill(pid, 0)` sends no signal and only asks whether the process exists.
- * EPERM means it exists and belongs to someone else, which still counts.
- */
-function alive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (err) {
-        return (err as NodeJS.ErrnoException).code === 'EPERM';
-    }
+    claimLock(
+        path,
+        lock,
+        (held) =>
+            new CliError(
+                `this index is already being built (pid ${held.pid}, since ${held.startedAt})`,
+                EXIT.failed,
+                `wait for it, or build elsewhere with --out`,
+            ),
+    );
 }
