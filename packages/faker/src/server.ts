@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
-import type { Box } from './box.ts';
+import { SandboxUnavailable, type Box, type Outcome } from './box.ts';
 import { BuildFailed, type Cache } from './cache.ts';
 import type { GeneratorInput } from './envelope.ts';
 import { reason } from './generate.ts';
@@ -137,6 +137,7 @@ async function handle(
         meta: {
             errorKind?: ErrorKind;
             errorMessage?: string;
+            hint?: string;
             stderr?: string;
             buildDump?: string;
             issues?: readonly unknown[];
@@ -176,6 +177,7 @@ async function handle(
             responseBody: meta.responseBody,
             errorKind: meta.errorKind,
             errorMessage: meta.errorMessage,
+            hint: meta.hint,
             stderr: meta.stderr,
             buildDump: meta.buildDump,
             cacheStatus: meta.cacheStatus,
@@ -271,6 +273,34 @@ async function handle(
     const { operation, pathParams } = match;
     res.setHeader('x-faker-operation', operation.operationId);
 
+    /** The container could not run anything: say so, and never blame the generator. */
+    const sandboxDown = async (
+        err: SandboxUnavailable,
+        extra: { requestBody?: unknown; cacheStatus?: 'hit' | 'miss' | 'regenerated' } = {},
+    ): Promise<void> => {
+        const bodyObj = {
+            error: err.message,
+            hint: err.hint,
+            container: err.container,
+            stderr: err.stderr,
+        };
+        res.setHeader('retry-after', '1');
+        const end = prepareSend(res, 503, bodyObj);
+        await finish(503, {
+            operationId: operation.operationId,
+            routePath: operation.path,
+            pathParams,
+            ...extra,
+            errorKind: 'SANDBOX_UNAVAILABLE',
+            errorMessage: err.message,
+            hint: err.hint,
+            stderr: err.stderr,
+            responseBody: bodyObj,
+            note: 'container engine failed',
+        });
+        end();
+    };
+
     let body: unknown;
     try {
         body = await readBody(req, opts.maxBody ?? DEFAULT_MAX_BODY);
@@ -331,6 +361,10 @@ async function handle(
     try {
         generator = await opts.cache.ensure(operation);
     } catch (err) {
+        if (err instanceof SandboxUnavailable) {
+            await sandboxDown(err, { requestBody: body });
+            return;
+        }
         const status = err instanceof BuildFailed ? 501 : 500;
         const detail = reason(err);
         const bodyObj = {
@@ -368,7 +402,16 @@ async function handle(
         seed: seedFor(opts.seed, operation, pathParams, url.searchParams),
     };
 
-    let outcome = await opts.box.run(operation.key, input);
+    let outcome: Outcome;
+    try {
+        outcome = await opts.box.run(operation.key, input);
+    } catch (err) {
+        if (err instanceof SandboxUnavailable) {
+            await sandboxDown(err, { requestBody: body, cacheStatus });
+            return;
+        }
+        throw err;
+    }
 
     const responseValidator = opts.checks.for(operation).response;
     let schemaMismatch = false;
@@ -429,6 +472,7 @@ async function handle(
                 opts.limiter!.limit,
                 operation.operationId,
                 outcome.fault,
+                outcome.stderr,
             ),
         );
 
@@ -478,6 +522,10 @@ async function handle(
                 };
             }
         } catch (regenErr) {
+            if (regenErr instanceof SandboxUnavailable) {
+                await sandboxDown(regenErr, { requestBody: body, cacheStatus });
+                return;
+            }
             const detail = reason(regenErr);
             const bodyObj = {
                 error: `regeneration failed for ${operation.operationId}: ${detail}`,

@@ -20,8 +20,8 @@ already decided, and do not go further while `zen check` fails - nothing below
 matters until it passes.
 
 **Then list the capabilities this project turns on** — a `memory:` block, a
-`zen rag` index, a sandbox, a `SPECIFICATION.md` — and load the editor skill
-for each before judging it. The obligations live in the skill, not in
+`zen rag` index, a sandbox, an agent that writes code (`zen-code-python`), a
+`SPECIFICATION.md` — and load the editor skill for each before judging it. The obligations live in the skill, not in
 `agents.yaml`, and `zen check` reports none of them. A capability that is
 already configured and already passing is exactly the case that looks finished
 and is not.

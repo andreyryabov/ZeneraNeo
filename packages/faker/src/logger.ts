@@ -18,6 +18,7 @@ export type ErrorKind =
     | 'GENERATOR_TIMEOUT'
     | 'GENERATOR_SCHEMA_MISMATCH'
     | 'GENERATOR_BUILD_FAILED'
+    | 'SANDBOX_UNAVAILABLE'
     | 'SERVER_INTERNAL_ERROR'
     | 'REGENERATION_LIMIT_HIT'
     | 'REGENERATION_FAILED'
@@ -42,6 +43,8 @@ export interface RequestDumpData {
     responseBody?: unknown;
     errorKind?: ErrorKind;
     errorMessage?: string;
+    /** what to do about it, when the fix is not in the generator */
+    hint?: string;
     stderr?: string;
     /** the build report, when the answer was "there is no generator" */
     buildDump?: string;
@@ -98,6 +101,8 @@ export function statusText(status: number): string {
             return 'Not Implemented';
         case 502:
             return 'Bad Gateway';
+        case 503:
+            return 'Service Unavailable';
         case 504:
             return 'Gateway Timeout';
         default:
@@ -249,6 +254,9 @@ export async function saveRequestDump(dir: string, data: RequestDumpData): Promi
         if (data.errorMessage) {
             lines.push(`### Error Message`, `\`${data.errorMessage}\``, '');
         }
+        if (data.hint) {
+            lines.push(`### What to do`, data.hint, '');
+        }
         if (data.issues && data.issues.length > 0) {
             lines.push(
                 '### Validation Issues',
@@ -392,6 +400,10 @@ export function formatLogLine(data: RequestDumpData, dumpPath: string): string {
         lines.push(`  ${dim('stderr:')} ${red(lastStderr)}`);
     }
 
+    if (data.hint) {
+        lines.push(`  ${dim('↳ fix:')} ${yellow(data.hint)}`);
+    }
+
     if (dumpPath) {
         const fileUrl = `file://${resolve(dumpPath)}`;
         lines.push(`  ${dim('↳ dump:')} ${cyan(fileUrl)}`);
@@ -420,11 +432,14 @@ export function formatRegenerating(
     limit: number,
     operationId?: string,
     reason?: string,
+    stderr?: string,
 ): string {
     const ts = dim(`[${formatTimestamp(new Date())}]`);
     const op = operationId ? ` (${operationId})` : '';
     const r = reason ? ` [${reason}]` : '';
-    return `${ts} ${yellow(bold('[REGENERATING]'))} Error in generator for "${urlPath}"${op}${r}. Attempting regeneration (${attempt}/${limit})...`;
+    const head = `${ts} ${yellow(bold('[REGENERATING]'))} Error in generator for "${urlPath}"${op}${r}. Attempting regeneration (${attempt}/${limit})...`;
+    const tail = stderr?.trim().split('\n').slice(-3).join('\n    ');
+    return tail ? `${head}\n  ${dim('stderr:')} ${red(tail)}` : head;
 }
 
 export function formatRegenerated(

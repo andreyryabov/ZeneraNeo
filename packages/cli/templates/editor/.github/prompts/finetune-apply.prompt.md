@@ -5,7 +5,8 @@ description: Apply a batch of improvement requests from the tuning loop to the p
 The tuning loop has collected improvement requests from several cases and
 wants them applied **together**. The last line of this prompt names the apply
 directory. Load the `zen-instructions` skill before you edit anything under
-`agents/`, and `zen-memory` when any request is from a run with memory.
+`agents/`, `zen-memory` when any request is from a run with memory, and
+`zen-code-python` when any request touches an agent that writes or runs code.
 
 ## What you are given
 

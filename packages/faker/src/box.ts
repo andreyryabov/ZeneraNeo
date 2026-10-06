@@ -1,8 +1,17 @@
+import {
+    SANDBOX_MOUNT,
+    SandboxError,
+    SandboxPool,
+    pidAlive,
+    runProcess,
+    type ExecResult,
+    type Runner,
+    type Sandbox,
+} from '@zenera/neo';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { SANDBOX_MOUNT, SandboxPool, runProcess, type Runner, type Sandbox } from '@zenera/neo';
 
 // ---------------------------------------------------------------------------
 // Where generators run
@@ -22,6 +31,14 @@ export const GENERATORS = 'generators';
 const IO = 'io';
 const ENTRY = 'gen.py';
 
+/** Every faker container's name starts with this; `cache clear` relies on it. */
+export const CONTAINER_PREFIX = 'zn-faker-';
+/** `zn-faker-<pid>-<digest>`; a name without the pid predates per-process containers. */
+const OWNED_BY = /^zn-faker-(\d+)-[0-9a-f]+$/;
+
+/** Pause before the one retry of an engine failure, long enough for a concurrent rm to finish. */
+const ENGINE_RETRY_MS = 300;
+
 export interface BoxOptions {
     /** host directory mounted at /workspace; holds generators/ and io/ */
     root: string;
@@ -30,6 +47,27 @@ export interface BoxOptions {
     timeout?: number;
     engine?: string;
     exec?: Runner;
+    /** the process the container belongs to; defaults to this one */
+    owner?: number;
+}
+
+/**
+ * The container engine could not run the generator at all. Nothing is known
+ * about the generator from this, so it must never be fed back to a model as a
+ * fault in the code: rewriting a working file cannot bring a container back.
+ */
+export class SandboxUnavailable extends Error {
+    readonly hint: string;
+    readonly container: string;
+    readonly stderr?: string;
+
+    constructor(message: string, opts: { hint: string; container: string; stderr?: string }) {
+        super(message);
+        this.name = 'SandboxUnavailable';
+        this.hint = opts.hint;
+        this.container = opts.container;
+        this.stderr = opts.stderr;
+    }
 }
 
 export interface Outcome {
@@ -48,18 +86,24 @@ export class Box {
     readonly #timeout: number;
     readonly #engine: string;
     readonly #exec: Runner;
+    readonly #owner: number;
 
     constructor(opts: BoxOptions) {
         this.root = opts.root;
         this.#timeout = opts.timeout ?? 30;
         this.#engine = opts.engine ?? 'podman';
         this.#exec = opts.exec ?? runProcess;
+        this.#owner = opts.owner ?? process.pid;
         mkdirSync(join(opts.root, GENERATORS), { recursive: true });
         mkdirSync(join(opts.root, IO), { recursive: true });
 
         this.#pool = new SandboxPool({
             root: opts.root,
-            key: 'faker',
+            // One container per process. The name is otherwise a pure function
+            // of the configuration, so two servers on the same --cache shared
+            // one container, and each start (`fresh`) or exit (`dispose`)
+            // removed it from under the other: `exited 125, no such container`.
+            key: `faker-${this.#owner}`,
             image: opts.image,
             // The one line that keeps model-written code from calling home.
             network: 'none',
@@ -89,14 +133,29 @@ export class Box {
     }
 
     /**
-     * Removes a container of this name left behind by a process that did not
-     * get to clean up. Belt to `persist: false`'s braces: a hard kill never
-     * runs `dispose`, and the leftover is exactly the stale-mount trap above.
+     * Removes this process's container if a previous owner of the pid left one,
+     * and every faker container whose owning process is gone. Belt to
+     * `persist: false`'s braces: a hard kill never runs `dispose`, and the
+     * leftover is exactly the stale-mount trap above. A container whose owner
+     * is alive is another server's, and is never touched.
      */
     async fresh(): Promise<void> {
-        await this.#exec(this.#engine, ['rm', '--force', '--volumes', this.sandbox.name], {
-            timeoutMs: 60_000,
-        }).catch(() => undefined);
+        const listed = await this.#exec(
+            this.#engine,
+            ['ps', '--all', '--filter', `name=^${CONTAINER_PREFIX}`, '--format', '{{.Names}}'],
+            { timeoutMs: 60_000 },
+        ).catch(() => undefined);
+        const orphans = (listed?.code === 0 ? listed.stdout.split('\n') : [])
+            .map((n) => n.trim())
+            .filter((name) => {
+                const pid = Number(OWNED_BY.exec(name)?.[1]);
+                return Number.isInteger(pid) && pid !== this.#owner && !pidAlive(pid);
+            });
+        await this.#exec(
+            this.#engine,
+            ['rm', '--force', '--volumes', this.sandbox.name, ...orphans],
+            { timeoutMs: 60_000 },
+        ).catch(() => undefined);
     }
 
     /** Host path of a generator's source file. */
@@ -113,6 +172,8 @@ export class Box {
      * One generator, one input, one output. The io directory is removed
      * afterwards whatever happened — a mock server left alone for a week must
      * not fill a disk with request envelopes.
+     *
+     * Throws `SandboxUnavailable` when the engine, not the generator, failed.
      */
     async run(key: string, input: unknown): Promise<Outcome> {
         const id = randomUUID();
@@ -129,7 +190,17 @@ export class Box {
                 inside(IO, id, 'output.json'),
             ].join(' ');
 
-            const res = await this.sandbox.exec(script, { timeout: this.#timeout });
+            let res = await this.#exec1(script);
+            if (engineFault(res)) {
+                // `exec` already brought a vanished container back once; a
+                // second fault is usually a concurrent rm still settling.
+                await new Promise((settle) => setTimeout(settle, ENGINE_RETRY_MS));
+                res = await this.#exec1(script);
+            }
+            const fault = engineFault(res);
+            if (fault) {
+                throw this.#unavailable(fault, res.stderr.trim() || res.stdout.trim());
+            }
             const stderr = res.stderr.trim();
 
             if (res.timed_out) {
@@ -183,6 +254,71 @@ export class Box {
     async dispose(): Promise<void> {
         await this.#pool.dispose();
     }
+
+    async #exec1(script: string): Promise<ExecResult> {
+        try {
+            return await this.sandbox.exec(script, { timeout: this.#timeout });
+        } catch (err) {
+            if (err instanceof SandboxError) {
+                throw new SandboxUnavailable(
+                    `${this.#engine} could not run the generator: ${err.message}`,
+                    {
+                        hint:
+                            err.hint ??
+                            `check \`${this.#engine} ps -a --filter name=${CONTAINER_PREFIX}\``,
+                        container: this.sandbox.name,
+                    },
+                );
+            }
+            throw err;
+        }
+    }
+
+    #unavailable(fault: EngineFault, stderr: string): SandboxUnavailable {
+        const name = this.sandbox.name;
+        const first = stderr.split('\n')[0] ?? '';
+        const hint =
+            fault === 'missing-file'
+                ? `the generator is on the host but not inside ${name}, so its bind mount is stale ` +
+                  `(the --cache directory was deleted and recreated while the server ran). ` +
+                  `Restart \`zen faker serve\`.`
+                : fault === 'no-python'
+                  ? `the image has no python3. Rebuild it: \`zen faker serve --rebuild …\`, or pass a working --image.`
+                  : `${name} was removed or stopped while this server was using it, twice in a row. ` +
+                    `Usual causes: \`zen sandbox clean\` or \`zen faker cache clear\` run meanwhile, ` +
+                    `a ${this.#engine} machine restart, or an older \`zen faker\` (before per-process ` +
+                    `containers) started on the same --cache. Check \`${this.#engine} ps -a --filter ` +
+                    `name=${CONTAINER_PREFIX}\` and \`${this.#engine} machine list\`; the next request ` +
+                    `recreates the container.`;
+        return new SandboxUnavailable(
+            `${this.#engine} could not run the generator in ${name} — ${first || fault} ` +
+                `(an engine failure, not a fault in the generator; nothing was regenerated)`,
+            { hint, container: name, stderr: stderr || undefined },
+        );
+    }
+}
+
+type EngineFault = 'engine' | 'missing-file' | 'no-python';
+
+/**
+ * A failure of the container rather than of the code in it. 125 is podman's
+ * own exit code for "could not exec at all"; the other two are our command
+ * line failing before a line of the generator ran.
+ */
+function engineFault(res: ExecResult): EngineFault | undefined {
+    if (res.timed_out) {
+        return undefined;
+    }
+    if (res.exit_code === 125) {
+        return 'engine';
+    }
+    if (res.exit_code === 2 && /can't open file '\/workspace\/generators\//.test(res.stderr)) {
+        return 'missing-file';
+    }
+    if (res.exit_code === 127 && /python3: (not found|No such file)/.test(res.stderr)) {
+        return 'no-python';
+    }
+    return undefined;
 }
 
 /** A path inside the container. Every segment is derived here, never given. */

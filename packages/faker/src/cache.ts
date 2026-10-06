@@ -211,6 +211,8 @@ export class Cache {
             return gen;
         } catch (err) {
             const error = err instanceof Error ? err : new Error(String(err));
+            // The box holds the last rejected attempt; the next request must run the old file.
+            await box.write(operation.key, ctx.currentSource).catch(() => undefined);
             const dump = await this.#finished(operation, error);
             this.#opts.onFail?.({ operation, error, dump });
             throw error;

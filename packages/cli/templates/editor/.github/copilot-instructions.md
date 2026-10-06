@@ -47,7 +47,8 @@ visible in `agents.yaml` and that `zen check` does not report.** Before
 reviewing or changing a project, list the capabilities it has turned on and load
 the editor skill for each one - `zen-memory` for a `memory:` block,
 `zen-sandbox` for sandbox configuration or shell tools, `zen-rag-schema` or
-`zen-rag-docs` for an index, `zen-sandbox-capacity` before any `zen run batch`
+`zen-rag-docs` for an index, `zen-code-python` for an agent that writes or runs
+code, `zen-sandbox-capacity` before any `zen run batch`
 (except under `zen-finetune`, which sets its own concurrency),
 `zen-cli` always. A capability that is already
 configured and already passing `zen check` is exactly the case that looks
@@ -63,6 +64,14 @@ init` or `zen open`, with no diff to show for it. The skill is what says which
 three those are, where a project's own rules on the same subjects go instead,
 how `requires:` conditions a document, and what filename order decides. None of
 that is visible in the file being edited.
+
+**Load `zen-code-python` before writing, editing or reviewing any prompt, skill
+or house rule for an agent that writes or runs code** - any agent holding
+`sandbox:*` or `run_command` - and before shipping a script inside a skill.
+Code an agent writes must be a reusable tool, so that memory can keep it and the
+next similar question runs it instead of writing it again. The skill holds the
+coding rules and decides where they go: a section of a dedicated code agent's
+system prompt, or a coding skill for generic agents that sometimes run code.
 
 First determine whether the target project uses RAG: a `zen rag` command in an
 agent prompt or skill, RAG tools supplied by its host, or a documentation or
@@ -2005,6 +2014,9 @@ candidates; these are the judgements to make about each one)**
 - [ ] Catalog >~30 entries → `discovery: search`
 - [ ] A skill that ships a script writes its `/skills/<name>/...` path, the agent
       holds `sandbox:*`, and the sandbox image already has the interpreter
+- [ ] Every agent that writes or runs code has the `zen-code-python` rules -
+      in its prompt if it is the dedicated code agent, as a skill otherwise -
+      and nothing else restates or softens them - §0.1
 - [ ] A skill whose procedure needs particular tools, an index or a mounted file
       opens by naming them and says what to do without them - rather than naming
       the agents allowed to load it, which `agents.yaml` already decides - §0.1

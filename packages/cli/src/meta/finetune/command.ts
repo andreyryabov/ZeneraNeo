@@ -345,6 +345,13 @@ function status(ctx: FinetuneContext, project: { dir: string; name: string }): v
     write(
         `${c.total} cases: ${green(`${c.completed} completed`)}, ${yellow(`${c.difficult} difficult`)}, ${c.stopped} part-way, ${c.queued} not started`,
     );
+    if (!holder && c.queued + c.stopped > 0) {
+        note(
+            dim(
+                `${c.stopped > 0 ? 'resume it' : 'start it'}: ${cyan(`zen meta ${project.name} finetune start`)} [-N <workers>] - see zen meta finetune --help`,
+            ),
+        );
+    }
     if (existsSync(join(dir, 'STATUS.md'))) {
         note(dim(`the detail: ${cyan(join(dir, 'STATUS.md'))}`));
     }
