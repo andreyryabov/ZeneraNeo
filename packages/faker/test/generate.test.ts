@@ -154,6 +154,40 @@ describe('the build loop', () => {
         expect(model.seen[1]).toContain('echo the path parameter');
     });
 
+    // A loose path parameter and a patterned property: echoing the probe's value
+    // would break the schema, so no generator could pass both.
+    it('does not demand an echo the response schema forbids', async () => {
+        const spec = join(root, 'mail.yaml');
+        writeFileSync(
+            spec,
+            [
+                'openapi: 3.0.3',
+                'info: { title: Mail, version: 1.0.0 }',
+                'paths:',
+                '    /messages/{id}:',
+                '        get:',
+                '            operationId: getMessage',
+                '            parameters:',
+                '                - { name: id, in: path, required: true, schema: { type: string } }',
+                '            responses:',
+                "                '200':",
+                '                    description: the message',
+                '                    content:',
+                '                        application/json:',
+                '                            schema:',
+                '                                type: object',
+                '                                required: [id]',
+                '                                properties:',
+                "                                    id: { type: string, pattern: '^[0-9a-f]{16}$' }",
+            ].join('\n'),
+        );
+        const [getMessage] = await loadSpec(spec);
+        const { box } = boxWith(() => ({ id: '0123456789abcdef' }));
+
+        const built = await build(getMessage, { model: fakeModel(['# fine']), box, checks });
+        expect(built.attempts).toBe(1);
+    });
+
     it('feeds stderr back when the file will not run', async () => {
         const { box } = boxWith(() => ({ crash: 'NameError: fakerr is not defined' }));
         const model = fakeModel(['# broken']);

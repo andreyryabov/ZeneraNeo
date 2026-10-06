@@ -1,6 +1,6 @@
 import type { GeneratorInput } from './envelope.ts';
 import type { Paging } from './paging.ts';
-import { propertyNames, type Schema } from './schema.ts';
+import { properties, type Schema } from './schema.ts';
 import type { Operation, ParamSpec } from './spec.ts';
 import type { Issue } from './validate.ts';
 
@@ -268,11 +268,19 @@ export function echoIssues(
     if (!schema) {
         return [];
     }
-    const declared = propertyNames(schema);
+    const declared = new Map<string, Schema[]>();
+    for (const p of properties(schema)) {
+        declared.set(p.name, [...(declared.get(p.name) ?? []), p.schema]);
+    }
     const out: Issue[] = [];
 
     for (const [name, expected] of Object.entries(input.pathParams)) {
-        if (!declared.has(name) || expected === undefined || expected === null) {
+        const subs = declared.get(name);
+        if (!subs || expected === undefined || expected === null) {
+            continue;
+        }
+        // A value the response may not hold cannot be echoed: the schema check wins.
+        if (!subs.some((s) => admits(s, expected))) {
             continue;
         }
         if (!carries(value, name, expected)) {
@@ -283,6 +291,17 @@ export function echoIssues(
         }
     }
     return out;
+}
+
+function admits(schema: Schema, value: unknown): boolean {
+    if (typeof schema.pattern !== 'string') {
+        return true;
+    }
+    try {
+        return new RegExp(schema.pattern, 'u').test(String(value));
+    } catch {
+        return true;
+    }
 }
 
 /** Whether `name` anywhere in the value holds something equal to `expected`. */
