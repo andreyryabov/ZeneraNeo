@@ -1025,6 +1025,9 @@ const inOrder = (prefix: string, n: number): string[] =>
         ? [`        ${Array.from({ length: n }, (_, i) => `${prefix}${i + 1}`).join(' ~~~ ')}`]
         : [];
 
+// A markdown label: real newlines, since some previews swallow `<br/>` before Mermaid sees it.
+const lines = (...parts: string[]): string => `\`${parts.join('\n')}\``;
+
 // The whole machine right now: every worker, the queue filling toward an apply, the merge.
 // Each node links to what it is working on.
 function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
@@ -1051,9 +1054,15 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
     };
     const out = [
         '```mermaid',
+        '---',
+        'config:',
+        '  flowchart:',
+        '    wrappingWidth: 480',
+        '---',
         'flowchart TB',
-        `    DS[("dataset · ${counts.queued} queued")] --> D["dispatcher<br/>seats a case on a free worker<br/>woken cases first"]`,
+        `    DS[("dataset · ${counts.queued} queued")] --> D["${lines('dispatcher', 'seats a case on a free worker', 'woken cases first')}"]`,
         `    subgraph WORKERS["workers · ${t.busy()} of ${t.workers.length} busy"]`,
+        '        direction LR',
     ];
     click('DS', join(t.root, DATASET_DIR), 'the dataset');
     click('D', join(t.dir, 'events.jsonl'), 'every step, in order');
@@ -1066,8 +1075,11 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
             const tries = w.phase === 'mem' ? t.config.memTries : t.config.tries;
             label =
                 w.attempt === undefined
-                    ? `${safe(w.case.id, 48)}<br/>starting`
-                    : `${safe(w.case.id, 48)}<br/>${PHASE_WORD[w.phase ?? 'nomem']} · try ${w.attempt} of ${tries}<br/>${step} · ${since(Date.now() - w.since)}`;
+                    ? lines(`**${safe(w.case.id, 48)}**`, 'starting')
+                    : lines(
+                          `**${safe(w.case.id, 48)}**`,
+                          `${PHASE_WORD[w.phase ?? 'nomem']} · try ${w.attempt} of ${tries} · ${step} ${since(Date.now() - w.since)}`,
+                      );
             click(`C${n}`, feedbackPath(t, w.case), 'the case: rubric, tries, decisions');
             if (w.attempt !== undefined) {
                 const dir = t.attemptDir(w.case, w.phase ?? 'nomem', w.attempt);
@@ -1086,6 +1098,7 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
         }
         out.push(
             `        subgraph W${n}["worker ${n}"]`,
+            '            direction TB',
             `            C${n}["${label}"] --> R${n}["run"] --> A${n}["analyze"]`,
             '        end',
         );
@@ -1094,14 +1107,14 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
         lit[step === 'analyze' ? 'analyze' : 'off'].push(`A${n}`);
         lanes.push(`    style W${n} ${LANE[step]}`);
     }
-    // Seating each lane, rather than the box, is what keeps the lanes in slot order.
-    const each = (ids: string): string => t.workers.map((w) => `${ids}${w.slot}`).join(' & ');
+    // Edges go to the box, not its nodes, so it keeps LR and the chain puts the lanes in slot order.
     out.push(
+        ...inOrder('W', t.workers.length),
         '    end',
-        `    D --> ${each('C')}`,
-        `    ${each('A')} --> V{"feedback done?"}`,
-        '    V -.->|"passed without memory:<br/>again with memory"| WORKERS',
-        '    V -->|"failed, tries left:<br/>park, free the worker"| Q',
+        '    D --> WORKERS',
+        '    WORKERS --> V{"feedback done?"}',
+        `    V -.->|"${lines('passed without memory:', 'again with memory')}"| WORKERS`,
+        `    V -->|"${lines('failed, tries left:', 'park, free the worker')}"| Q`,
         `    V -->|"no tries left"| X["difficult · ${counts.difficult}"]`,
         `    V -->|"passed with memory"| CD["completed · ${counts.completed}"]`,
         `    subgraph Q["improvement queue · ${q.pending.length} of ${t.config.applyAt}"]`,
@@ -1114,7 +1127,7 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
         const f = q.pending[i];
         out.push(
             f
-                ? `        Q${i + 1}["${safe(f.case, 40)}<br/>${PHASE_WORD[f.phase]} try ${f.attempt}<br/>${f.improvements.length} improvement(s)"]`
+                ? `        Q${i + 1}["${lines(`**${safe(f.case, 40)}**`, `${PHASE_WORD[f.phase]} try ${f.attempt} · ${f.improvements.length} improvement(s)`)}"]`
                 : `        Q${i + 1}["empty"]`,
         );
         lit[f ? 'full' : 'empty'].push(`Q${i + 1}`);
@@ -1135,10 +1148,10 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
         '    end',
         '    Q -->|"full, or nothing left to start"| AP',
         `    subgraph AP["applier · ${applier}"]`,
-        `        P1["wait for runs in flight · ${q.runs}"] --> P2["meta run /finetune-apply<br/>then zen check"]`,
-        '        P2 --> P3["applied.json<br/>wake the batch"]',
+        `        P1["wait for runs in flight · ${q.runs}"] --> P2["${lines('meta run /finetune-apply', 'then zen check')}"]`,
+        `        P2 --> P3["${lines('applied.json', 'wake the batch')}"]`,
         '    end',
-        `    P2 -->|"writes the next version"| S[("system prose · v${t.system.version()}<br/>read by every new run")]`,
+        `    P2 -->|"writes the next version"| S[("${lines(`system prose · v${t.system.version()}`, 'read by every new run')}")]`,
         '    P3 -->|"wake"| D',
     );
     const active = !q.applying ? undefined : q.runs > 0 ? 'P1' : 'P2';
