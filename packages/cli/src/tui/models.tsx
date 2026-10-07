@@ -18,7 +18,14 @@
 import { Box, render, Text, useApp, useInput, useStdout } from 'ink';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
-import { matches, type Catalog, type CatalogEntry, type Role } from '../catalog.ts';
+import {
+    byGroup,
+    isPartner,
+    matches,
+    type Catalog,
+    type CatalogEntry,
+    type Role,
+} from '../catalog.ts';
 import type { Provider } from '../keys.ts';
 import { ago } from '../term.ts';
 import { resolveTheme, type Theme } from './theme.ts';
@@ -194,7 +201,7 @@ function Browser({ options, theme, onPick }: BrowserProps): React.JSX.Element | 
         () =>
             (catalog?.entries ?? [])
                 .filter((e) => matches(e, query, { roles: only ? [only] : [] }))
-                .sort((a, b) => a.id.localeCompare(b.id)),
+                .sort(byGroup),
         [catalog, query, only],
     );
     const index = Math.min(selected, Math.max(0, rows.length - 1));
@@ -440,6 +447,11 @@ function Browser({ options, theme, onPick }: BrowserProps): React.JSX.Element | 
                                 {here ? '› ' : '  '}
                                 {clip(e.id, idW - 2).padEnd(idW)}
                             </Text>
+                            {e.publisher ? (
+                                <Text color={isPartner(e) ? theme.warn : theme.code.color}>
+                                    {clip(e.publisher, 11).padEnd(12)}
+                                </Text>
+                            ) : null}
                             <Text color={theme.chrome.color}>
                                 {e.roles.join('+').padEnd(16)}
                                 {thousands(e.contextLength).padStart(6)}

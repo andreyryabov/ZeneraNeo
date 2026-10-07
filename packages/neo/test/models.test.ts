@@ -21,8 +21,10 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { StreamDelta } from '../src/events.ts';
 import type { ModelRequest } from '../src/model.ts';
-import { expandEnv, ModelRegistry } from '../src/models/factory.ts';
+import { AnthropicModel } from '../src/models/anthropic.ts';
+import { expandEnv, ModelRegistry, vertexRoute } from '../src/models/factory.ts';
 import { GeminiModel } from '../src/models/gemini.ts';
+import { OpenAIModel } from '../src/models/openai-chat.ts';
 import { OpenAIResponsesModel } from '../src/models/openai-responses.ts';
 import { OpenRouterModel } from '../src/models/openrouter.ts';
 import { text, type Message } from '../src/types.ts';
@@ -293,6 +295,114 @@ describe('vertex', () => {
         const models = new ModelRegistry().provider('vx', { kind: 'vertex', project: 'p' });
         expect(models.model('vx:gemini-2.5-pro').id).toBe('gemini-2.5-pro');
         expect(models.model('vx:gemini-3-pro-preview')).toBeInstanceOf(GeminiModel);
+    });
+});
+
+describe('vertex partner models', () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    const vertex = (location?: string): ModelRegistry =>
+        new ModelRegistry().provider('vx', {
+            kind: 'vertex',
+            project: 'acme',
+            location,
+            token: () => 'tok',
+        });
+
+    /** Every request the clients send, answered with `body`. */
+    const capture = (body: object) => {
+        const sent: { url: string; headers: Headers; body: Record<string, unknown> }[] = [];
+        vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+            sent.push({
+                url: String(input instanceof Request ? input.url : input),
+                headers: new Headers(init?.headers),
+                body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+            });
+            return new Response(JSON.stringify(body), {
+                status: 200,
+                headers: { 'content-type': 'application/json' },
+            });
+        });
+        return sent;
+    };
+
+    const ask = (): ModelRequest => ({
+        messages: [{ role: 'user', content: [text('hi')] }],
+        tools: [],
+    });
+
+    it('routes by id: Gemini, Claude, and publisher/model', () => {
+        expect(vertexRoute('gemini-3.8-flash')).toBe('gemini');
+        expect(vertexRoute('claude-sonnet-5')).toBe('anthropic');
+        expect(vertexRoute('anthropic/claude-sonnet-5')).toBe('anthropic');
+        expect(vertexRoute('xai/grok-4.6')).toBe('openai');
+        const models = vertex();
+        expect(models.model('vx:claude-sonnet-5')).toBeInstanceOf(AnthropicModel);
+        expect(models.model('vx:anthropic/claude-sonnet-5').id).toBe('claude-sonnet-5');
+        expect(models.model('vx:qwen/qwen3-maas')).toBeInstanceOf(OpenAIModel);
+    });
+
+    it('checks knobs and apis against the route, not the kind', () => {
+        const models = vertex();
+        expect(models.knobs({ provider: 'vx', model: 'claude-sonnet-5', maxTokens: 8 })).toEqual(
+            [],
+        );
+        expect(models.knobs({ provider: 'vx', model: 'xai/grok-4.6', maxTokens: 8 })).toEqual([
+            expect.objectContaining({ knob: 'maxTokens', target: 'openai/chat' }),
+        ]);
+        expect(() => models.model('vx/responses:xai/grok-4.6')).toThrow(
+            'does not speak the "responses" api (supported: chat)',
+        );
+    });
+
+    it("sends Claude to rawPredict, with the model in the path and Vertex's version in the body", async () => {
+        const sent = capture({
+            id: 'm',
+            type: 'message',
+            role: 'assistant',
+            model: 'claude-sonnet-5',
+            content: [{ type: 'text', text: 'ok' }],
+            stop_reason: 'end_turn',
+            usage: { input_tokens: 3, output_tokens: 1 },
+        });
+        await vertex('us-east5').model('vx:claude-sonnet-5').generate(ask());
+        expect(sent[0]!.url).toBe(
+            'https://us-east5-aiplatform.googleapis.com/v1/projects/acme/locations/us-east5/publishers/anthropic/models/claude-sonnet-5:rawPredict',
+        );
+        expect(sent[0]!.body.anthropic_version).toBe('vertex-2023-10-16');
+        expect(sent[0]!.body.model).toBeUndefined();
+        expect(sent[0]!.headers.get('authorization')).toBe('Bearer tok');
+        expect(sent[0]!.headers.get('x-api-key')).toBeNull();
+    });
+
+    it('sends every other publisher to the OpenAI-compatible endpoint, at global for a multi-region', async () => {
+        const sent = capture({
+            id: 'c',
+            object: 'chat.completion',
+            created: 0,
+            model: 'xai/grok-4.6',
+            choices: [
+                { index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'ok' } },
+            ],
+            usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+        });
+        await vertex('us').model('vx:xai/grok-4.6').generate(ask());
+        expect(sent[0]!.url).toBe(
+            'https://aiplatform.googleapis.com/v1/projects/acme/locations/global/endpoints/openapi/chat/completions',
+        );
+        expect(sent[0]!.body.model).toBe('xai/grok-4.6');
+        expect(sent[0]!.headers.get('authorization')).toBe('Bearer tok');
+    });
+
+    it('says an express-mode key reaches Gemini only', () => {
+        vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
+        vi.stubEnv('GOOGLE_APPLICATION_CREDENTIALS', '');
+        const models = new ModelRegistry().provider('vx', { kind: 'vertex', apiKey: 'k' });
+        expect(() => models.model('vx:claude-sonnet-5')).toThrow(
+            'an express-mode key reaches Gemini only',
+        );
     });
 });
 

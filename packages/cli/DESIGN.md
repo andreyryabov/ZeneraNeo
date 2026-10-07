@@ -544,6 +544,16 @@ Vertex additionally lists the whole Model Garden. Those rows carry no
 model ids, and asking one a question fails in a way no error message explains.
 They are dropped.
 
+Partner models are the exception, because the runtime can call them: a
+`vertex` provider routes on the id - Google's models through the GenAI API,
+`claude-*` through Anthropic's format at `rawPredict`, and any `publisher/model`
+through Vertex's OpenAI-compatible endpoint. The GenAI listing holds Google's
+alone, so Anthropic's and xAI's Model Garden listings are asked as well, and
+open-weight models, which Model Garden serves but does not list, come from the
+built-in table. Every Vertex row carries its `publisher`; `ls` puts Google's
+first and heads each partner's group, since a partner model is billed
+differently and has to be enabled for the project before it answers.
+
 **The cache is the shared store's `catalog` kind (§4.2), one day old at most,**
 `0644` because it is public data and someone will want to look at it. The order
 when it is cold is: fresh cache, the provider, a _stale_ cache, then a short

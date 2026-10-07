@@ -21,11 +21,13 @@ import { auditModels } from '../src/audit.ts';
 import { bannerLines, NEO_BANNER } from '../src/banner.ts';
 import { Cache, cacheKey } from '../src/cache.ts';
 import {
+    byGroup,
     CATALOG_KIND,
     CATALOG_TTL_MS,
     catalogKey,
     CURATED,
     fetchCatalog,
+    groupOf,
     loadCatalog,
     matches,
     type CatalogEntry,
@@ -2872,14 +2874,18 @@ describe('reading a provider listing', () => {
 
     it('asks Google for base models, not tuned ones', async () => {
         let asked: unknown;
-        await fetchCatalog('vertex', {
-            models: {
-                list: async (params: unknown) => {
-                    asked = params;
-                    return [];
+        await fetchCatalog(
+            'vertex',
+            {
+                models: {
+                    list: async (params: unknown) => {
+                        asked = params;
+                        return [];
+                    },
                 },
             },
-        });
+            async () => [],
+        );
         // Without this the SDK lists tuned models, and an account with none
         // looks like an account with no models at all.
         expect(asked).toMatchObject({ config: { queryBase: true } });
@@ -2899,8 +2905,9 @@ describe('reading a provider listing', () => {
                     supportedActions: ['embedContent'],
                 },
             ),
+            async () => [],
         );
-        expect(rows.map((r) => [r.id, r.roles])).toEqual([
+        expect(rows.filter((r) => r.publisher === 'google').map((r) => [r.id, r.roles])).toEqual([
             ['gemini-2.5-flash', ['chat']],
             ['text-embedding-005', ['embedding']],
         ]);
@@ -2917,8 +2924,38 @@ describe('reading a provider listing', () => {
                 { name: 'publishers/google/models/alphafold3-request' },
                 { name: 'publishers/google/models/gemini-3-experimental' },
             ),
+            async () => [],
         );
-        expect(rows.map((r) => r.id)).toEqual(['gemini-3-experimental']);
+        expect(rows.filter((r) => r.publisher === 'google').map((r) => r.id)).toEqual([
+            'gemini-3-experimental',
+        ]);
+    });
+
+    it("lists Vertex partner models after Google's, and survives their listing failing", async () => {
+        const google = pages({
+            name: 'publishers/google/models/gemini-3.8-flash',
+            supportedActions: ['generateContent'],
+        });
+        const claude = {
+            ref: 'vertex:claude-sonnet-5',
+            id: 'claude-sonnet-5',
+            provider: 'vertex' as const,
+            roles: ['chat' as const],
+            publisher: 'anthropic',
+            source: 'live' as const,
+        };
+        const rows = (await fetchCatalog('vertex', google, async () => [claude])).sort(byGroup);
+        expect(rows.map((r) => [r.id, groupOf(r)])).toEqual([
+            ['gemini-3.8-flash', 'vertex · Google (Gemini, Gemma, Imagen, Veo)'],
+            ['claude-sonnet-5', 'vertex · partner · anthropic'],
+            ['openai/gpt-oss-120b-maas', 'vertex · partner · openai'],
+            ['qwen/qwen3-235b-a22b-instruct-2507-maas', 'vertex · partner · qwen'],
+        ]);
+
+        const failed = await fetchCatalog('vertex', google, async () => {
+            throw new Error('403');
+        });
+        expect(failed.map((r) => r.id)).toContain('gemini-3.8-flash');
     });
 
     it('walks every OpenRouter page and folds in the separate embedding list', async () => {
