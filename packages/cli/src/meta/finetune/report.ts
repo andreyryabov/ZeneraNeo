@@ -1220,7 +1220,25 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
         '    style M fill:#e6f6f5,stroke:#1b7c83',
         '```',
     );
-    return out;
+    const running = lit.run.length;
+    const analyzing = lit.analyze.length;
+    const now = [
+        running > 0 && `- **Blue** - ${running} worker(s) running a case`,
+        analyzing > 0 && `- **Purple** - ${analyzing} worker(s) analyzing the run just finished`,
+        q.applying &&
+            '- **Orange** - fixes are being applied to the agent instructions; no new run starts until that is done',
+        q.pending.length > 0 &&
+            `- **Yellow** - ${q.pending.length} failed case(s) waiting for fixes; they are applied when ${t.config.applyAt} wait, or when no other case can run`,
+        waiting.length > 0 &&
+            `- **Teal** - memory from ${waiting.length} passed case(s) waiting to be merged; merged when ${t.config.mergeEvery} wait`,
+    ].filter((x): x is string => typeof x === 'string');
+    return [
+        ...(now.length > 0 ? ['Now:', '', ...now] : ['Nothing is in progress right now.']),
+        '',
+        'Click a box to open it.',
+        '',
+        ...out,
+    ];
 }
 
 function summarySection(
@@ -1378,8 +1396,6 @@ export function writeStatus(t: Tuning): void {
         ...overviewDiagram(counts),
         '',
         '## System',
-        '',
-        'Lit: a step in progress. Yellow slots: parked feedback waiting for an apply. Teal slots: kept memories waiting for a merge.',
         '',
         ...systemDiagram(t, counts),
         '',
