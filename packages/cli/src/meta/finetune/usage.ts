@@ -103,7 +103,13 @@ export interface RunMetrics {
     branches: number;
     compactions: number;
     handoffs: number;
+    /** the first error a sandbox tool got from the container engine, not from a command */
+    sandbox?: string;
 }
+
+/** `SandboxError`s the engine causes; a path outside the workspace is the model's own doing. */
+const SANDBOX_DOWN =
+    /could not (create|start) container|the sandbox container \S+ stopped|could not (write|start) the job|is not installed, or not on PATH|exceeded num_locks|cannot connect to podman/i;
 
 const cache = new Map<string, { key: string; metrics: RunMetrics }>();
 
@@ -166,11 +172,16 @@ export function runMetrics(runDir: string): RunMetrics | undefined {
                 }
                 return;
             }
-            case 'tool_result':
+            case 'tool_result': {
                 m.toolCalls++;
                 m.toolErrors += o.isError ? 1 : 0;
                 m.toolMs += typeof o.durationMs === 'number' ? o.durationMs : ms;
+                const said = (o.result as { preview?: unknown } | undefined)?.preview;
+                if (!m.sandbox && typeof said === 'string' && SANDBOX_DOWN.test(said)) {
+                    m.sandbox = /"error":\s*"([^"]+)/.exec(said)?.[1] ?? said;
+                }
                 return;
+            }
             case 'memory_recall':
                 m.memory.recall++;
                 return;

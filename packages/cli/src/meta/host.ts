@@ -15,6 +15,7 @@ export { copyTree, MEMORY_RULES, TEMPLATES } from '../scaffold.ts';
 export {
     bold,
     CliError,
+    confirm,
     credentialError,
     cut,
     cyan,

@@ -1,7 +1,16 @@
 import { type ChildProcess, spawn } from 'node:child_process';
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync } from 'node:fs';
+import {
+    appendFileSync,
+    closeSync,
+    existsSync,
+    mkdirSync,
+    openSync,
+    readdirSync,
+    readFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { CliError, EXIT } from '../host.ts';
 import { forget, remember } from './children.ts';
 import type { Case } from './dataset/types.ts';
 import type { Phase } from './feedback.ts';
@@ -88,6 +97,9 @@ export interface Event {
 
 const pad = (n: number): string => String(n).padStart(2, '0');
 
+/** Failed cases in a row, with nothing going through between, that stop the loop. */
+export const FAILURES_IN_A_ROW = 3;
+
 export class Tuning {
     readonly root: string;
     readonly dir: string;
@@ -109,6 +121,10 @@ export class Tuning {
     resuming = 0;
     /** every case of the selection has been started */
     drained = false;
+    /** cases started by this process: a failed one is not taken twice in one start */
+    readonly tried = new Set<string>();
+    /** cases failed since the last step that went through */
+    failures = 0;
 
     constructor(root: string, config: Config, zen: Zen, tickMs = 1000) {
         this.root = root;
@@ -156,8 +172,58 @@ export class Tuning {
         return join(this.dir, 'cases', c.id, `r${c.rev}`);
     }
 
+    /** Where `retry` puts a case's earlier rounds: `r<rev>.<round>`. */
+    roundsDir(c: { id: string }): string {
+        return join(this.dir, 'cases', c.id, 'rounds');
+    }
+
+    /** 1 for a case never retried at this revision. */
+    round(c: { id: string; rev: number }): number {
+        try {
+            return (
+                readdirSync(this.roundsDir(c)).filter((n) => n.startsWith(`r${c.rev}.`)).length + 1
+            );
+        } catch {
+            return 1;
+        }
+    }
+
+    /** A step went through: the sandbox and the providers are up. */
+    succeeded(): void {
+        this.failures = 0;
+    }
+
+    /** A case failed for a reason outside the prose. Enough in a row means nothing will go through. */
+    failed(why: string): void {
+        this.failures++;
+        if (this.failures >= FAILURES_IN_A_ROW && !this.stopping) {
+            this.fatal = new CliError(
+                `${this.failures} cases failed in a row - the last: ${why}`,
+                EXIT.failed,
+                'fix what broke (the sandbox, a provider, a key), then start again: failed cases carry on where they stopped',
+            );
+            this.stop(`${this.failures} cases failed in a row`);
+        }
+    }
+
+    /** No run goes through without the container engine: stop at the first sign, not the third. */
+    sandboxDown(why: string): void {
+        this.fatal ??= new CliError(
+            `the sandbox failed: ${why}`,
+            EXIT.sandbox,
+            'see what the engine says: zen sandbox status - fix it, then start again: failed cases carry on where they stopped',
+        );
+        this.stop('the sandbox failed');
+    }
+
     attemptDir(c: { id: string; rev: number }, phase: Phase, attempt: number): string {
         return join(this.caseDir(c), `${pad(attempt)}-${phase}`);
+    }
+
+    /** What the loop knows of a try, which a feedback file is never trusted for. */
+    known(c: { id: string; rev: number }, phase: Phase, attempt: number) {
+        const round = this.round(c);
+        return { case: c.id, caseRev: c.rev, ...(round > 1 ? { round } : {}), phase, attempt };
     }
 
     freeWorker(): Worker | undefined {

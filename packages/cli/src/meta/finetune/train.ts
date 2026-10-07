@@ -6,12 +6,14 @@ import {
     existsSync,
     mkdirSync,
     readFileSync,
+    renameSync,
     rmSync,
     statSync,
     writeFileSync,
 } from 'node:fs';
 import { hostname } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import { EXIT } from '../host.ts';
 import { sessionKept } from '../tokens.ts';
 import { batchInput } from './dataset/export.ts';
 import { DatasetStore } from './dataset/store.ts';
@@ -34,8 +36,7 @@ import { type ByModel, type RunMetrics, runMetrics, tokensOf } from './usage.ts'
 export async function train(t: Tuning, s: Seat, c: Case): Promise<void> {
     let passed: Run | undefined;
     for (let attempt = 1; attempt <= t.config.tries; attempt++) {
-        const run = await zenRun(t, s, c, 'nomem', attempt);
-        const feedback = await analyze(t, s, c, 'nomem', attempt, run);
+        const { run, feedback } = await tryOnce(t, s, c, 'nomem', attempt);
         if (feedback.done) {
             passed = run;
             break;
@@ -50,8 +51,7 @@ export async function train(t: Tuning, s: Seat, c: Case): Promise<void> {
 
     let cheaper = false;
     for (let attempt = 1; attempt <= t.config.memTries; attempt++) {
-        const run = await zenRun(t, s, c, 'mem', attempt, passed.memory);
-        const feedback = await analyze(t, s, c, 'mem', attempt, run);
+        const { run, feedback } = await tryOnce(t, s, c, 'mem', attempt, passed.memory);
         if (feedback.done) {
             cheaper = true;
             t.memories.submit(c, attempt, run);
@@ -66,6 +66,44 @@ export async function train(t: Tuning, s: Seat, c: Case): Promise<void> {
     }
 
     markCompleted(t, c);
+}
+
+/** A run its analysis finds void is set aside and run again: it says nothing about the prose. */
+async function tryOnce(
+    t: Tuning,
+    s: Seat,
+    c: Case,
+    phase: Phase,
+    attempt: number,
+    memory?: string,
+): Promise<{ run: Run; feedback: Feedback }> {
+    for (let voids = 1; ; voids++) {
+        const run = await zenRun(t, s, c, phase, attempt, memory);
+        const feedback = await analyze(t, s, c, phase, attempt, run);
+        if (feedback.verdict !== 'void') {
+            return { run, feedback };
+        }
+        const dir = t.attemptDir(c, phase, attempt);
+        let n = 1;
+        while (existsSync(`${dir}.void-${n}`)) {
+            n++;
+        }
+        renameSync(dir, `${dir}.void-${n}`);
+        t.event({
+            what: 'void',
+            worker: s.worker?.slot,
+            case: c.id,
+            phase,
+            attempt,
+            detail: feedback.infra,
+        });
+        if (voids >= VOIDS) {
+            throw new VoidRun(
+                `${VOIDS} analyses in a row found the run void - the last: ${feedback.infra}`,
+            );
+        }
+        t.checkStopping();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -94,6 +132,9 @@ export interface Run {
 }
 
 export class VoidRun extends Error {}
+
+/** The container engine failed: every run after this one would fail the same way. */
+export class SandboxDown extends Error {}
 
 /** Killed for memory, or nothing to show for it: the run says nothing about the prose. */
 const VOIDS = 3;
@@ -165,13 +206,17 @@ async function runOnce(
 
     const log = join(dir, 'run.log');
     const from = existsSync(log) ? statSync(log).size : 0;
-    await t.zen(
+    const said = (): string =>
+        existsSync(log) ? readFileSync(log).subarray(from).toString('utf8') : '';
+    const res = await t.zen(
         [
             'run',
             '--plain',
             '--new',
             '--yes',
             '--json',
+            // A try is never continued: its containers would only hold podman's locks.
+            '--disposable',
             '--input',
             request,
             '--memory',
@@ -185,13 +230,18 @@ async function runOnce(
         ],
         log,
     );
+    if (res.code === EXIT.sandbox) {
+        throw new SandboxDown(
+            /error\s+(.+)/.exec(said())?.[1]?.trim() ?? 'the sandbox is not ready',
+        );
+    }
 
     const out = readJson<{ run?: { dir: string; report?: string; graph?: string } }>(envelope);
     let runDir = out?.run?.dir;
     let failed: string | undefined;
     if (!runDir) {
         // A failed run throws before the envelope; its directory is in the hint.
-        const text = existsSync(log) ? readFileSync(log).subarray(from).toString('utf8') : '';
+        const text = said();
         const report = /report: (\S+report\.html)/.exec(text)?.[1];
         if (!report) {
             return 'no run directory';
@@ -210,6 +260,9 @@ async function runOnce(
         error?: string;
     }>(join(runDir, 'meta.json'));
     const metrics = runMetrics(runDir);
+    if (metrics?.sandbox) {
+        throw new SandboxDown(metrics.sandbox);
+    }
     const run: Run = {
         dir: runDir,
         memory: mem,
@@ -247,7 +300,7 @@ async function analyze(
 ): Promise<Feedback> {
     const dir = t.attemptDir(c, phase, attempt);
     const file = join(dir, 'feedback.json');
-    const known = { case: c.id, caseRev: c.rev, phase, attempt };
+    const known = t.known(c, phase, attempt);
     const kept = readFeedback(file, known);
     let feedback: Feedback;
     if ('feedback' in kept) {
@@ -258,6 +311,11 @@ async function analyze(
         feedback = await t.journal.step({ kind: 'analyze', dir }, () =>
             analyzeOnce(t, s, c, phase, attempt, run, file),
         );
+        // Only a try that went all the way through says the sandbox and the providers are up:
+        // a run can pass on one provider while the analysis fails on another.
+        if (feedback.verdict !== 'void') {
+            t.succeeded();
+        }
     }
     writeFeedback(t, c);
     return feedback;
@@ -273,7 +331,7 @@ async function analyzeOnce(
     file: string,
 ): Promise<Feedback> {
     const dir = dirname(file);
-    const known = { case: c.id, caseRev: c.rev, phase, attempt };
+    const known = t.known(c, phase, attempt);
     let session = sessionOf(t, c);
     if (!session) {
         session = randomUUID();
@@ -370,7 +428,7 @@ function note(t: Tuning, c: Case, f: Feedback, run: Run, session: string): void 
         run: run.dir,
         verdict: f.verdict,
         ...(Object.keys(rubric).length > 0 ? { rubric } : {}),
-        text: f.summary || f.verdict,
+        text: f.verdict === 'void' ? `void: ${f.infra}` : f.summary || f.verdict,
         by: { session, prompt: 'analyze', host: hostname() },
     });
 }
@@ -412,4 +470,9 @@ export function markDifficult(t: Tuning, c: Case, phase: Phase, reason: string):
         text: `${phase === 'nomem' ? 'without memory' : 'with memory'}: ${reason}`,
         by: { prompt: 'finetune', host: hostname() },
     });
+}
+
+/** Something outside the prose broke. The case keeps its tries and runs again at the next start. */
+export function markFailed(t: Tuning, c: Case, phase: Phase, reason: string): void {
+    finish(t, c, { state: 'failed', phase, reason });
 }

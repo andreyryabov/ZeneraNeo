@@ -12,7 +12,7 @@ import { basename, dirname, join, relative, sep } from 'node:path';
 import { safe } from '../host.ts';
 import { DatasetStore } from './dataset/store.ts';
 import { type Case, DATASET_DIR } from './dataset/types.ts';
-import { type Feedback, type Phase, readFeedback } from './feedback.ts';
+import { type Feedback, feedbackId, type Phase, readFeedback } from './feedback.ts';
 import type { AppliedFile } from './improvements.ts';
 import { resultOf, selection } from './sampler.ts';
 import type { Run } from './train.ts';
@@ -94,12 +94,7 @@ export function attemptsOf(t: Tuning, c: Case): Attempt[] {
         .map((name) => {
             const [n, phase] = name.split('-') as [string, Phase];
             const at = join(dir, name);
-            const read = readFeedback(join(at, 'feedback.json'), {
-                case: c.id,
-                caseRev: c.rev,
-                phase,
-                attempt: Number(n),
-            });
+            const read = readFeedback(join(at, 'feedback.json'), t.known(c, phase, Number(n)));
             return {
                 phase,
                 attempt: Number(n),
@@ -467,6 +462,9 @@ function compareTable(before: string, after: string, a: Flat, b: Flat): string[]
 function stateOf(t: Tuning, c: Case): string {
     const r = resultOf(t, c);
     if (r) {
+        if (r.state === 'failed') {
+            return `failed (${r.reason ?? r.phase}) - resumes at the next start`;
+        }
         return r.state === 'completed' ? 'completed' : `difficult (${r.reason ?? r.phase})`;
     }
     const w = t.workers.find((x) => x.case?.id === c.id);
@@ -548,7 +546,7 @@ export function writeFeedback(t: Tuning, c: Case): void {
         if (f.summary) {
             say(`> ${cell(f.summary)}`, '');
         }
-        const id = `${c.id}@${latest.phase}-${latest.attempt}`;
+        const id = feedbackId(c.id, latest.phase, latest.attempt, t.round(c));
         const improvements = f.improvements ?? [];
         if (improvements.length > 0) {
             say(
@@ -1008,12 +1006,15 @@ function overviewDiagram(counts: Record<string, number>): string[] {
         `    N --> D["difficult · ${counts.difficult}"]`,
         '    M --> D',
         `    Q -.-> S["stopped · ${counts.stopped}"]`,
+        ...(counts.failed ? [`    N -.-> F["failed · ${counts.failed}"]`, '    M -.-> F'] : []),
         '    classDef done fill:#1a7f37,color:#fff',
         '    classDef bad fill:#cf222e,color:#fff',
         '    classDef live fill:#0969da,color:#fff',
+        '    classDef broke fill:#9a6700,color:#fff',
         '    class C done',
         '    class D bad',
         '    class N,M live',
+        ...(counts.failed ? ['    class F broke'] : []),
         '```',
     ];
 }
@@ -1299,9 +1300,18 @@ export function writeStatus(t: Tuning): void {
     const here = t.dir;
     const cases = selection(t);
     const store = DatasetStore.open(t.root);
-    const counts = { queued: 0, nomem: 0, mem: 0, completed: 0, difficult: 0, stopped: 0 };
+    const counts = {
+        queued: 0,
+        nomem: 0,
+        mem: 0,
+        completed: 0,
+        difficult: 0,
+        failed: 0,
+        stopped: 0,
+    };
     const rows: string[] = [];
     const difficult: string[] = [];
+    const failed: string[] = [];
     let everything: ByStage = {};
     const spent: Record<Phase, { runs: number; f: Flat }> = {
         nomem: { runs: 0, f: blank() },
@@ -1376,6 +1386,11 @@ export function writeStatus(t: Tuning): void {
                 `| ${link(c.id, here, feedbackPath(t, c))} | ${PHASE_WORD[r.phase]} | ${cell(r.reason)} | ${r.phase === 'nomem' ? nomem.length : mem.length} | ${cell(last?.feedback?.summary)} | ${last && existsSync(join(last.dir, 'analysis.md')) ? link('last analysis', here, join(last.dir, 'analysis.md')) : '-'} |`,
             );
         }
+        if (r?.state === 'failed') {
+            failed.push(
+                `| ${link(c.id, here, feedbackPath(t, c))} | ${PHASE_WORD[r.phase]}, try ${(r.phase === 'nomem' ? nomem : mem).length || 1} | ${cell(r.reason)} | ${r.at.slice(11, 16)} |`,
+            );
+        }
     }
 
     const done = counts.completed + counts.difficult;
@@ -1388,7 +1403,7 @@ export function writeStatus(t: Tuning): void {
         `**${state}** · started ${new Date(t.startedAt).toISOString().slice(0, 16).replace('T', ' ')} · elapsed ${since(Date.now() - t.startedAt)} · updated ${new Date().toISOString().slice(11, 19)}`,
         `system **v${t.system.version()}** (applies: ${q.applies().length}) · dataset rev **${store.manifest.revision}** · workers **${t.workers.filter((w) => w.case).length} / ${t.workers.length}** · apply at **${t.config.applyAt}** · tries ${t.config.tries} without memory, ${t.config.memTries} with`,
         '',
-        `\`${'█'.repeat(bar)}${'░'.repeat(20 - bar)}\` ${done} of ${cases.length} cases done - ${counts.completed} completed, ${counts.difficult} difficult`,
+        `\`${'█'.repeat(bar)}${'░'.repeat(20 - bar)}\` ${done} of ${cases.length} cases done - ${counts.completed} completed, ${counts.difficult} difficult${counts.failed ? ` · ${counts.failed} failed, they resume at the next start` : ''}`,
         '',
         ...summarySection(spent, tuning, memory),
         '## Overview',
@@ -1517,6 +1532,18 @@ export function writeStatus(t: Tuning): void {
             '| Case | Phase | Reason | Tries | Last summary | Details |',
             '| --- | --- | --- | --- | --- | --- |',
             ...difficult,
+            '',
+        );
+    }
+    if (failed.length > 0) {
+        out.push(
+            '## Failed cases',
+            '',
+            'Something outside the prose broke - the sandbox, a provider, a key - so these taught nothing. They keep their tries and carry on from the step that failed at the next `zen meta finetune start`.',
+            '',
+            '| Case | Stopped at | Reason | At |',
+            '| --- | --- | --- | --- |',
+            ...failed,
             '',
         );
     }

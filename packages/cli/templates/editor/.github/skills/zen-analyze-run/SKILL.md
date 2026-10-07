@@ -436,11 +436,32 @@ section.
 ```
 
 - `verdict` is `right`, `wrong` or `void` (the run says nothing about the prose:
-  it crashed or was killed by the machine).
+  it crashed, was killed by the machine, or the infrastructure under it failed).
+- **Rule out the infrastructure before you grade.** Grep the run's tool
+  results and its error for each of these; any one the answer depended on makes
+  the verdict `void`:
+    - the container engine: a `run_command` result saying
+      `could not create container`, `could not start the job`,
+      `the sandbox container ... stopped`, `num_locks`, `Cannot connect to Podman`;
+    - the network from inside the sandbox: `Could not resolve host`,
+      `Temporary failure in name resolution`, `Connection refused`,
+      `Connection timed out`, `Network is unreachable`, TLS handshake failures -
+      to a host the case needs and the agent named correctly;
+    - a model provider or a service the case needs answering 5xx, 429 or not at
+      all, so the agent ran out of turns or gave up on it.
+- It is **not** `void`, but `wrong` with an improvement, when the project caused
+  it: `sandbox.network: none` or `hardening: strict` in `agents.yaml` cutting off
+  a host the case needs (an `agents-yaml` improvement), a misspelt host or URL,
+  a 4xx from wrong arguments, a command the image does not have.
+- With `void`, add `"infra"`: what failed, the error text quoted, and its node
+  ids - `"n14, n22: run_command - Could not resolve host: api.example.com"`.
+  Grade nothing else and leave `improvements` empty: the loop sets the run
+  aside and runs the try again, and a file that says `void` without `infra` is
+  refused.
 - `done` is `true` only when the verdict is `right`, every rubric line passes,
-  and you found nothing left worth changing. `done: false` needs at least one
-  improvement: without one the next try runs on the same prose and learns
-  nothing.
+  and you found nothing left worth changing. `done: false` on a `right` or
+  `wrong` verdict needs at least one improvement: without one the next try runs
+  on the same prose and learns nothing.
 - Your **Improvements** in the report and `improvements` here are the same list.
 - Never edit `agents/` or any other file of the project yourself: the loop
   applies every case's improvements together, and undoes an edit made here.

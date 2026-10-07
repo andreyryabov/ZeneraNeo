@@ -12,6 +12,7 @@ import {
     json,
     note,
     parse,
+    red,
     usageError,
     write,
     yellow,
@@ -20,10 +21,12 @@ import { drift } from './dataset/drift.ts';
 import { DatasetStore } from './dataset/store.ts';
 import { runLoop } from './loop.ts';
 import { attemptsOf } from './report.ts';
+import { retry } from './retry.ts';
 import { resultOf, selection } from './sampler.ts';
 import {
     type Config,
     DEFAULTS,
+    FAILURES_IN_A_ROW,
     FINETUNE_DIR,
     LEGACY_FINETUNE_DIR,
     spawnZen,
@@ -35,13 +38,14 @@ import {
 // zen meta finetune
 // ---------------------------------------------------------------------------
 
-export const FINETUNE_USAGE = 'zen meta finetune <start|status|stop|session> [options]';
+export const FINETUNE_USAGE = 'zen meta finetune <start|status|stop|retry|session> [options]';
 
 export const FINETUNE_HELP = [
     'Tuning:',
     '  zen meta finetune start [options]         train every case: run, analyze, apply, run again',
     '  zen meta finetune [status]                where it stands; the detail is finetune/STATUS.md',
     '  zen meta finetune stop                    finish the steps in flight, then stop',
+    '  zen meta finetune retry --difficult       give difficult cases another round, then start',
     "  zen meta finetune session <case>          resume that case's analyze session",
     '',
     '  start: -N <workers> (4), -M <apply at> (= workers), --tries <n> (4), --mem-tries <n> (3),',
@@ -59,6 +63,8 @@ export const FINETUNE_DETAILS = [
     '  start                  Train every case: run, analyze, apply, run again. Resumes.',
     '  status                 Where it stands (the default). The detail: finetune/STATUS.md',
     '  stop                   Let the steps in flight finish, then stop the running tuning.',
+    '  retry [ids...]         Another round for difficult cases: --difficult takes them all,',
+    '                         ids and globs add to it, --class narrows. Run them with start.',
     "  session <case>         Print the command that resumes that case's analyze session.",
     '',
     'Options for start:',
@@ -90,6 +96,14 @@ export const FINETUNE_DETAILS = [
     'No run starts during an apply. zen check must pass,',
     'or the edit is undone. Every apply is a new version of agents.yaml + agents/.',
     '',
+    'A case is difficult when its tries run out and the analysis still says no; that is',
+    'final for its revision until `retry` gives it another round on the prose of the day.',
+    'A case fails instead when something outside the prose broke - the sandbox, a',
+    'provider, a key: it keeps its tries and carries on from that step at the next start.',
+    `After ${FAILURES_IN_A_ROW} failures in a row the tuning stops, and says what broke;`,
+    'a container engine that fails stops it at once. A run its analysis finds void -',
+    'the network or a service under it down - is set aside and runs again.',
+    '',
     'Ctrl-C (or stop) finishes the steps in flight; Ctrl-C again kills them. Start',
     'again to carry on: every step is kept on disk, and nothing finished is repeated.',
     'Settings given to start are kept in finetune/loop.json.',
@@ -98,6 +112,7 @@ export const FINETUNE_DETAILS = [
     '  zen meta finetune start -N 4',
     '  zen meta finetune start --class search --limit 6 -N 2 -M 2',
     '  zen meta finetune',
+    '  zen meta finetune retry --difficult --class merge',
     '  zen meta finetune session plan-day',
 ];
 
@@ -114,6 +129,8 @@ interface Flags {
     rubric?: string;
     limit?: string;
     force?: boolean;
+    difficult?: boolean;
+    yes?: boolean;
 }
 
 const OPTIONS = {
@@ -129,6 +146,8 @@ const OPTIONS = {
     rubric: { type: 'string' },
     limit: { type: 'string' },
     force: { type: 'boolean' },
+    difficult: { type: 'boolean' },
+    yes: { type: 'boolean' },
 } as const;
 
 export interface FinetuneContext {
@@ -162,12 +181,14 @@ export async function runFinetune(
             return status(ctx, project);
         case 'stop':
             return stop(project);
+        case 'retry':
+            return retryCases(ctx, project, values, rest);
         case 'session':
             return session(project, rest);
         default:
             throw usageError(
                 `unknown finetune verb: ${verb}`,
-                'one of: start, status, stop, session',
+                'one of: start, status, stop, retry, session',
             );
     }
 }
@@ -314,7 +335,7 @@ async function start(
 
 function counts(dir: string): Record<string, number> & { total: number } {
     const t = new Tuning(dir, readConfig(dir), async () => ({ code: 1, stdout: '' }));
-    const out = { total: 0, queued: 0, stopped: 0, completed: 0, difficult: 0 };
+    const out = { total: 0, queued: 0, stopped: 0, completed: 0, difficult: 0, failed: 0 };
     for (const c of selection(t)) {
         out.total++;
         const r = resultOf(t, c);
@@ -348,12 +369,19 @@ function status(ctx: FinetuneContext, project: { dir: string; name: string }): v
         `${bold(project.name)}  ${holder ? green(`running (pid ${holder.pid})`) : dim('not running')}`,
     );
     write(
-        `${c.total} cases: ${green(`${c.completed} completed`)}, ${yellow(`${c.difficult} difficult`)}, ${c.stopped} part-way, ${c.queued} not started`,
+        `${c.total} cases: ${green(`${c.completed} completed`)}, ${yellow(`${c.difficult} difficult`)}, ${c.failed ? `${red(`${c.failed} failed`)}, ` : ''}${c.stopped} part-way, ${c.queued} not started`,
     );
-    if (!holder && c.queued + c.stopped > 0) {
+    if (!holder && c.queued + c.stopped + c.failed > 0) {
         note(
             dim(
-                `${c.stopped > 0 ? 'resume it' : 'start it'}: ${cyan(`zen meta ${project.name} finetune start`)} [-N <workers>] - see zen meta finetune --help`,
+                `${c.stopped + c.failed > 0 ? 'resume it' : 'start it'}: ${cyan(`zen meta ${project.name} finetune start`)} [-N <workers>] - see zen meta finetune --help`,
+            ),
+        );
+    }
+    if (!holder && c.difficult > 0) {
+        note(
+            dim(
+                `another round for the difficult ones: ${cyan(`zen meta ${project.name} finetune retry --difficult`)}`,
             ),
         );
     }
@@ -374,6 +402,27 @@ function stop(project: { dir: string }): void {
     }
     writeFileSync(join(dir, 'stop'), `${new Date().toISOString()}\n`);
     note('asked it to stop: the steps in flight finish first');
+}
+
+async function retryCases(
+    ctx: FinetuneContext,
+    project: { dir: string; name: string },
+    values: Flags,
+    ids: string[],
+): Promise<void> {
+    const t = new Tuning(project.dir, readConfig(project.dir), async () => ({
+        code: 1,
+        stdout: '',
+    }));
+    const plan = await retry(t, {
+        difficult: values.difficult,
+        classes: values.class,
+        ids: [...ids, ...(values.id ?? [])],
+        yes: values.yes,
+    });
+    if (ctx.json) {
+        json({ retried: plan.take.map((c) => c.id), skipped: plan.skip, tokens: plan.tokens });
+    }
 }
 
 function session(project: { dir: string; name: string }, rest: string[]): void {

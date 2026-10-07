@@ -3,8 +3,8 @@ import { mkdirSync, rmSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { CliError, EXIT } from '../host.ts';
 import { recover } from './journal.ts';
-import { nextCase } from './sampler.ts';
-import { markDifficult, train, VoidRun } from './train.ts';
+import { nextCase, resultOf } from './sampler.ts';
+import { markFailed, SandboxDown, train, VoidRun } from './train.ts';
 import { Stopped, type Seat, type Tuning } from './tuning.ts';
 
 // ---------------------------------------------------------------------------
@@ -70,6 +70,13 @@ async function dispatch(t: Tuning): Promise<void> {
         }
         const seat: Seat = { case: c };
         t.claimed.add(c.id);
+        t.tried.add(c.id);
+        const before = resultOf(t, c);
+        if (before?.state === 'failed') {
+            // Taken again: until it ends anew it is in progress, not failed.
+            rmSync(join(t.caseDir(c), 'result.json'), { force: true });
+            t.event({ what: 'resumed', case: c.id, rev: c.rev, detail: before.reason });
+        }
         await t.seat(seat, false);
         const task: Promise<void> = trainCase(t, seat).finally(() => running.delete(task));
         running.add(task);
@@ -84,10 +91,17 @@ async function trainCase(t: Tuning, s: Seat): Promise<void> {
     } catch (err) {
         if (!(err instanceof Stopped)) {
             const why =
-                err instanceof VoidRun
-                    ? `void: ${err.message}`
-                    : `error: ${(err as Error).message}`;
-            markDifficult(t, c, s.phase ?? 'nomem', why);
+                err instanceof SandboxDown
+                    ? `sandbox: ${err.message}`
+                    : err instanceof VoidRun
+                      ? `void: ${err.message}`
+                      : `error: ${(err as Error).message}`;
+            markFailed(t, c, s.phase ?? 'nomem', why);
+            if (err instanceof SandboxDown) {
+                t.sandboxDown(err.message);
+            } else {
+                t.failed(why);
+            }
         }
     } finally {
         t.unseat(s);

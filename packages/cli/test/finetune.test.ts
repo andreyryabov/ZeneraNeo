@@ -21,7 +21,7 @@ import { readFeedback } from '../src/meta/finetune/feedback.ts';
 import { Journal } from '../src/meta/finetune/journal.ts';
 import { markdownPage } from '../src/meta/finetune/report.ts';
 import { SystemVersions } from '../src/meta/finetune/system.ts';
-import type { Zen } from '../src/meta/finetune/tuning.ts';
+import { FAILURES_IN_A_ROW, type Zen } from '../src/meta/finetune/tuning.ts';
 import { runMetrics } from '../src/meta/finetune/usage.ts';
 
 let root: string;
@@ -75,6 +75,14 @@ interface Verdict {
     slow?: number;
     /** milliseconds the analysis takes */
     slowAnalyze?: number;
+    /** the analysis dies before it writes feedback, as on a provider outage */
+    broken?: boolean;
+    /** `zen run` exits with this code before it starts, as when podman is down */
+    exit?: number;
+    /** a sandbox tool got this error from the container engine mid-run */
+    sandbox?: string;
+    /** the analysis finds the run void, for this reason */
+    infra?: string;
 }
 
 /** What `zen meta run --json` reports about itself. */
@@ -100,12 +108,16 @@ function fakeZen(decide: (c: string, phase: string, attempt: number, applies: nu
     let failChecks = 0;
     let applyMs = 0;
     let editDuringAnalyze = false;
-    const zen: Zen = async (args) => {
+    const zen: Zen = async (args, log) => {
         calls.push(args);
         if (args[0] === 'run') {
             const input = JSON.parse(readFileSync(args[args.indexOf('--input') + 1], 'utf8'))
                 .input as string;
             const v = decideFor(args, decide, applies, input.replace('question ', ''));
+            if (v.exit) {
+                appendFileSync(log, 'error   podman is installed but not responding\n');
+                return { code: v.exit, stdout: '' };
+            }
             if (v.slow) {
                 await new Promise((r) => setTimeout(r, v.slow));
             }
@@ -136,6 +148,22 @@ function fakeZen(decide: (c: string, phase: string, attempt: number, applies: nu
                 JSON.stringify({
                     trajectory: [
                         call('c1', 'gemini-a', 2),
+                        ...(v.sandbox
+                            ? [
+                                  {
+                                      id: 'tb',
+                                      ts: at(3),
+                                      type: 'tool_result',
+                                      isError: true,
+                                      result: {
+                                          store: 'mem',
+                                          sha256: 'x',
+                                          size: 1,
+                                          preview: JSON.stringify({ error: v.sandbox }),
+                                      },
+                                  },
+                              ]
+                            : []),
                         {
                             id: 't1',
                             ts: at(5),
@@ -214,6 +242,23 @@ function fakeZen(decide: (c: string, phase: string, attempt: number, applies: nu
             }
             if (editDuringAnalyze) {
                 appendFileSync(join(root, 'agents', 'instructions.md'), '- sneaky\n');
+            }
+            if (v.broken) {
+                return { code: 1, stdout: '' };
+            }
+            if (v.infra) {
+                writeFileSync(
+                    word('feedback'),
+                    JSON.stringify({
+                        verdict: 'void',
+                        infra: v.infra,
+                        rubric: {},
+                        done: false,
+                        summary: '',
+                        improvements: [],
+                    }),
+                );
+                return { code: 0, stdout: JSON.stringify(META_ENVELOPE) };
             }
             writeFileSync(
                 word('feedback'),
@@ -314,8 +359,12 @@ describe('feedback', () => {
         expect('feedback' in r && r.feedback.done).toBe(false);
     });
 
-    it('lets a void run go ungraded', () => {
-        expect('feedback' in read({ verdict: 'void', done: false, rubric: {} })).toBe(true);
+    it('lets a void run go ungraded, but not unexplained', () => {
+        expect(read({ verdict: 'void', done: false, rubric: {} })).toEqual({
+            problem: expect.stringContaining('"infra"'),
+        });
+        const r = read({ verdict: 'void', done: false, rubric: {}, infra: 'n4: no DNS' });
+        expect('feedback' in r && r.feedback.infra).toBe('n4: no DNS');
     });
 });
 
@@ -500,6 +549,138 @@ describe('zen meta finetune', () => {
         expect(fake.applies).toBe(1);
         const log = (await quietJson(['log', 'a1'])) as { kind?: string }[];
         expect(log.some((r) => r.kind === 'difficult')).toBe(true);
+    });
+
+    it('marks a case failed when its analysis breaks, and resumes it at the next start', async () => {
+        await dataset(['a1']);
+        let outage = true;
+        const fake = fakeZen(() => ({ done: true, broken: outage }));
+        await start(fake.zen, '-N', '1');
+        expect(result('a1')).toMatchObject({ state: 'failed' });
+        expect(result('a1')!.reason).toMatch(/^error: analysis wrote no usable feedback/);
+
+        outage = false;
+        await start(fake.zen, '-N', '1');
+        expect(result('a1')).toMatchObject({ state: 'completed' });
+        // The run itself had gone through: only the analysis is done again.
+        const first = runsOf(fake.calls, 'a1').filter((a) =>
+            a[a.indexOf('--input') + 1].includes('01-nomem'),
+        );
+        expect(first).toHaveLength(1);
+        const events = readFileSync(join(root, 'finetune', 'events.jsonl'), 'utf8');
+        expect(events).toContain('"what":"resumed"');
+    });
+
+    it('reads an old void or error "difficult" as failed, and resumes it', async () => {
+        await dataset(['a1']);
+        const dir = join(root, 'finetune', 'cases', 'a1', 'r1');
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(
+            join(dir, 'result.json'),
+            JSON.stringify({
+                state: 'difficult',
+                phase: 'nomem',
+                reason: 'void: 3 runs in a row were void',
+            }),
+        );
+        await start(fakeZen(() => ({ done: true })).zen, '-N', '1');
+        expect(result('a1')).toMatchObject({ state: 'completed' });
+    });
+
+    it(`stops after ${FAILURES_IN_A_ROW} cases fail in a row, and leaves the rest alone`, async () => {
+        await dataset(['a1', 'b1', 'c1', 'd1']);
+        const fake = fakeZen(() => ({ done: true, broken: true }));
+        await expect(start(fake.zen, '-N', '1')).rejects.toThrow(/3 cases failed in a row/);
+        const states = ['a1', 'b1', 'c1', 'd1'].map((id) => result(id)?.state);
+        expect(states.filter((s) => s === 'failed')).toHaveLength(3);
+        expect(states.filter((s) => s === undefined)).toHaveLength(1);
+    });
+
+    it('retries a difficult case as a new round, with feedback ids of its own', async () => {
+        await dataset(['a1', 'b1']);
+        const first = fakeZen((c) => ({ done: c === 'b1' }));
+        await start(first.zen, '-N', '1', '--tries', '2');
+        expect(result('a1')).toMatchObject({ state: 'difficult' });
+        expect(first.applies).toBe(1);
+
+        await expect(quietJson(['retry'], runFinetune)).rejects.toThrow(/retry which cases/);
+        const out = (await quietJson(['retry', '--difficult', 'b1', '--yes'], runFinetune)) as {
+            retried: string[];
+            skipped: unknown[];
+        };
+        expect(out.retried).toEqual(['a1']);
+        expect(out.skipped).toHaveLength(1);
+        const cases = join(root, 'finetune', 'cases');
+        expect(existsSync(join(cases, 'a1', 'rounds', 'r1.1', '01-nomem', 'run.json'))).toBe(true);
+        expect(result('a1')).toBeUndefined();
+        expect(result('b1')).toMatchObject({ state: 'completed' });
+
+        // Round 2 fails its first try too: its feedback must not pass for round 1's, already applied.
+        const second = fakeZen((c, _p, _a, applies) => ({ done: c === 'b1' || applies > 0 }));
+        await start(second.zen, '-N', '1', '--tries', '2');
+        expect(result('a1')).toMatchObject({ state: 'completed' });
+        expect(second.applies).toBe(1);
+        const apply = second.calls.find((a) => a.includes('/finetune-apply'))!;
+        const inputs = JSON.parse(readFileSync(join(apply.at(-1)!, 'inputs.json'), 'utf8'));
+        expect(inputs.map((f: { id: string }) => f.id)).toEqual(['a1#2@nomem-1']);
+    });
+
+    it('stops at once when the container engine is down, and carries on once it is up', async () => {
+        await dataset(['a1', 'b1', 'c1']);
+        let down = true;
+        const fake = fakeZen(() => ({ done: true, exit: down ? 5 : undefined }));
+        await expect(start(fake.zen, '-N', '1')).rejects.toThrow(
+            /sandbox failed: podman is installed but not responding/,
+        );
+        expect(result('a1')?.reason).toMatch(/^sandbox: /);
+        expect(result('b1')).toBeUndefined();
+        expect(runsOf(fake.calls, 'b1')).toHaveLength(0);
+
+        down = false;
+        await start(fake.zen, '-N', '1');
+        expect(['a1', 'b1', 'c1'].map((id) => result(id)?.state)).toEqual([
+            'completed',
+            'completed',
+            'completed',
+        ]);
+    });
+
+    it('stops when a sandbox tool met a broken container engine, before any analysis', async () => {
+        await dataset(['a1', 'b1']);
+        const fake = fakeZen(() => ({
+            done: true,
+            sandbox: 'could not create container zn-1: allocating lock: exceeded num_locks (2048)',
+        }));
+        await expect(start(fake.zen, '-N', '1')).rejects.toThrow(/exceeded num_locks/);
+        expect(result('a1')).toMatchObject({ state: 'failed' });
+        expect(fake.calls.some((a) => a.includes('/analyze'))).toBe(false);
+    });
+
+    it('sets aside a run its analysis finds void, and runs the try again', async () => {
+        await dataset(['a1']);
+        const analyses = () => fake.calls.filter((a) => a.includes('/analyze')).length;
+        const fake = fakeZen(() =>
+            analyses() === 1
+                ? { done: false, infra: 'n4: run_command - Could not resolve host' }
+                : { done: true },
+        );
+        await start(fake.zen, '-N', '1', '--tries', '1');
+        expect(result('a1')).toMatchObject({ state: 'completed' });
+        expect(fake.applies).toBe(0);
+        const tries = join(root, 'finetune', 'cases', 'a1', 'r1');
+        expect(existsSync(join(tries, '01-nomem.void-1', 'run.json'))).toBe(true);
+        expect(existsSync(join(tries, '01-nomem', 'feedback.json'))).toBe(true);
+        const events = readFileSync(join(root, 'finetune', 'events.jsonl'), 'utf8');
+        expect(events).toContain('Could not resolve host');
+    });
+
+    it('fails a case whose runs keep coming back void', async () => {
+        await dataset(['a1']);
+        const fake = fakeZen(() => ({ done: false, infra: 'n4: the mock API answered 503' }));
+        await start(fake.zen, '-N', '1');
+        expect(result('a1')).toMatchObject({ state: 'failed' });
+        expect(result('a1')!.reason).toMatch(/^void: 3 analyses in a row found the run void/);
+        expect(fake.applies).toBe(0);
     });
 
     it('reuses one analyze session for every try of a case', async () => {
@@ -747,7 +928,7 @@ describe('zen meta finetune', () => {
     });
 });
 
-async function quietJson(args: string[]): Promise<unknown> {
+async function quietJson(args: string[], run: typeof runDataset = runDataset): Promise<unknown> {
     const out: string[] = [];
     const write = vi
         .spyOn(process.stdout, 'write')
@@ -757,7 +938,7 @@ async function quietJson(args: string[]): Promise<unknown> {
         });
     const err = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     try {
-        await runDataset({ args, json: true, cwd: root }, { dir: root, name: 'acme' });
+        await run({ args, json: true, cwd: root }, { dir: root, name: 'acme' });
     } finally {
         write.mockRestore();
         err.mockRestore();

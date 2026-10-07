@@ -21,10 +21,12 @@ export interface Improvement {
 }
 
 export interface Feedback {
-    /** `<case>@<phase>-<attempt>`, unique across the tuning */
+    /** `<case>@<phase>-<attempt>`, `<case>#<round>@...` after a retry; unique across the tuning */
     id: string;
     case: string;
     caseRev: number;
+    /** absent in the first round */
+    round?: number;
     phase: Phase;
     attempt: number;
     verdict: Verdict;
@@ -33,10 +35,13 @@ export interface Feedback {
     done: boolean;
     summary: string;
     improvements: Improvement[];
+    /** what outside the project made the run void: the sandbox, the network, a provider */
+    infra?: string;
 }
 
-export const feedbackId = (caseId: string, phase: Phase, attempt: number): string =>
-    `${caseId}@${phase}-${attempt}`;
+// Round 1 keeps the bare form, so the ids applies already took still match.
+export const feedbackId = (caseId: string, phase: Phase, attempt: number, round = 1): string =>
+    `${caseId}${round > 1 ? `#${round}` : ''}@${phase}-${attempt}`;
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
     typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -47,7 +52,7 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
  */
 export function readFeedback(
     file: string,
-    known: { case: string; caseRev: number; phase: Phase; attempt: number },
+    known: { case: string; caseRev: number; round?: number; phase: Phase; attempt: number },
     rubricIds: readonly string[] = [],
 ): { feedback: Feedback } | { problem: string } {
     let raw: unknown;
@@ -95,6 +100,14 @@ export function readFeedback(
         }
     }
     const verdict = raw.verdict as Verdict;
+    const infra = typeof raw.infra === 'string' ? raw.infra.trim() : '';
+    if (verdict === 'void' && !infra) {
+        return {
+            problem:
+                'void without "infra" - say what outside the project failed (the sandbox, the ' +
+                'network, a provider, a service the case needs), with node ids',
+        };
+    }
     const ungraded = rubricIds.filter((id) => !(id in rubric));
     if (verdict !== 'void' && ungraded.length > 0) {
         return {
@@ -106,7 +119,7 @@ export function readFeedback(
     const failed = Object.values(rubric).includes('fail');
     return {
         feedback: {
-            id: feedbackId(known.case, known.phase, known.attempt),
+            id: feedbackId(known.case, known.phase, known.attempt, known.round),
             ...known,
             verdict,
             rubric,
@@ -114,6 +127,7 @@ export function readFeedback(
             done: raw.done && verdict === 'right' && !failed,
             summary: typeof raw.summary === 'string' ? raw.summary : '',
             improvements,
+            ...(verdict === 'void' ? { infra } : {}),
         },
     };
 }

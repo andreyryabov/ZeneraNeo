@@ -13,11 +13,14 @@ import type { ByStage } from './usage.ts';
 // No judgement here: the dataset's own draw - classes taking turns, cases with
 // a rubric first, the rest in seeded random order - cut to the limit. A case
 // is taken when it has no result at its current revision and no worker holds
-// it, so a case added or changed in the dataset is picked up on the way.
+// it, so a case added or changed in the dataset is picked up on the way. A case
+// that failed - the sandbox or a provider broke, not the prose - is taken again
+// on the next start, and carries on from the step that failed.
 // ---------------------------------------------------------------------------
 
 export interface Result {
-    state: 'completed' | 'difficult';
+    /** `failed`: something outside the prose broke, so nothing was learned and it runs again */
+    state: 'completed' | 'difficult' | 'failed';
     phase: 'nomem' | 'mem';
     reason?: string;
     caseRev: number;
@@ -49,9 +52,21 @@ export function selection(t: Tuning): Case[] {
 
 export function resultOf(t: Tuning, c: Case): Result | undefined {
     const file = join(t.caseDir(c), 'result.json');
-    return existsSync(file) ? readJson<Result>(file) : undefined;
+    const r = existsSync(file) ? readJson<Result>(file) : undefined;
+    // Written before `failed` existed: a void run or an error was filed as difficult.
+    if (r?.state === 'difficult' && /^(void|error):/.test(r.reason ?? '')) {
+        return { ...r, state: 'failed' };
+    }
+    return r;
 }
 
 export function nextCase(t: Tuning): Case | undefined {
-    return selection(t).find((c) => !t.claimed.has(c.id) && !resultOf(t, c));
+    return selection(t).find((c) => {
+        if (t.claimed.has(c.id)) {
+            return false;
+        }
+        const r = resultOf(t, c);
+        // Once per start: a sandbox that is down would only fail it again at once.
+        return !r || (r.state === 'failed' && !t.tried.has(c.id));
+    });
 }

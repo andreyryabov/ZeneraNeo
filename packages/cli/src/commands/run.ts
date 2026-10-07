@@ -46,6 +46,7 @@ interface Flags {
     theme?: string;
     out?: string;
     events?: string;
+    disposable?: boolean;
     'batch-dir'?: string;
     concurrency?: string;
 }
@@ -81,6 +82,8 @@ export const run: Command = {
         '                         With --json, the file gets the whole JSON envelope.',
         '  --events <file>        Append what the agent does to this file as it does it:',
         '                         one JSON line per model call, tool call and message.',
+        '  --disposable           Remove its containers when it ends, whatever `persist:`',
+        '                         says: for a session that will never be continued.',
         '  --yes                  Answer yes to every question.',
         '  --json                 Print machine-readable JSON (session, run, mounts, output, etc...).',
         '',
@@ -165,6 +168,7 @@ export const run: Command = {
                 theme: { type: 'string' },
                 out: { type: 'string' },
                 events: { type: 'string' },
+                disposable: { type: 'boolean' },
                 'batch-dir': { type: 'string' },
                 concurrency: { type: 'string' },
             },
@@ -240,6 +244,7 @@ export const run: Command = {
             memoryReadOnly: values['memory-read-only'],
             keys: values['no-keys'] ? false : undefined,
             yes: values.yes || ctx.json,
+            disposable: values.disposable,
         });
 
         try {
@@ -290,6 +295,7 @@ const NOT_IN_A_BATCH: [keyof Flags, string][] = [
     ['plain', 'a batch never draws the TUI'],
     ['theme', 'a batch never draws the TUI'],
     ['events', 'each item already has its own output.json'],
+    ['disposable', 'a batch removes its containers already'],
 ];
 
 async function batch(
@@ -355,10 +361,12 @@ async function once(
     };
 
     // Ctrl-C asks the run to stop rather than killing the process, so the turn
-    // still lands on disk and the session stays resumable.
+    // still lands on disk and the session stays resumable. SIGTERM too: it is
+    // how a tuning stops a run it left behind, and its containers go with it.
     const stopping = new AbortController();
     const onInterrupt = (): void => stopping.abort();
     process.once('SIGINT', onInterrupt);
+    process.once('SIGTERM', onInterrupt);
 
     if (!asJson) {
         // Two questions were just answered, possibly without being asked. Say
@@ -383,6 +391,7 @@ async function once(
     } finally {
         narrator.done();
         process.off('SIGINT', onInterrupt);
+        process.off('SIGTERM', onInterrupt);
     }
     appendUsage(where.project.dir, {
         kind: 'run',
