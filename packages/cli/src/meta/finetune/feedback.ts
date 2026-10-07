@@ -41,10 +41,14 @@ export const feedbackId = (caseId: string, phase: Phase, attempt: number): strin
 const isObject = (v: unknown): v is Record<string, unknown> =>
     typeof v === 'object' && v !== null && !Array.isArray(v);
 
-/** The feedback, or what is wrong with the file - said so a model can fix it. */
+/**
+ * The feedback, or what is wrong with the file - said so a model can fix it.
+ * `rubric` is the case's rubric ids: given, every one must be graded.
+ */
 export function readFeedback(
     file: string,
     known: { case: string; caseRev: number; phase: Phase; attempt: number },
+    rubricIds: readonly string[] = [],
 ): { feedback: Feedback } | { problem: string } {
     let raw: unknown;
     try {
@@ -91,14 +95,23 @@ export function readFeedback(
         }
     }
     const verdict = raw.verdict as Verdict;
+    const ungraded = rubricIds.filter((id) => !(id in rubric));
+    if (verdict !== 'void' && ungraded.length > 0) {
+        return {
+            problem:
+                `missing grades for rubric lines ${ungraded.join(', ')} - grade every line of ` +
+                `\`zen meta dataset show ${known.case}@${known.caseRev}\` "pass" or "fail" under "rubric"`,
+        };
+    }
+    const failed = Object.values(rubric).includes('fail');
     return {
         feedback: {
             id: feedbackId(known.case, known.phase, known.attempt),
             ...known,
             verdict,
             rubric,
-            // `done` on a wrong answer is a contradiction; the verdict wins.
-            done: raw.done && verdict === 'right',
+            // `done` on a wrong answer or a failed rubric line is a contradiction; those win.
+            done: raw.done && verdict === 'right' && !failed,
             summary: typeof raw.summary === 'string' ? raw.summary : '',
             improvements,
         },

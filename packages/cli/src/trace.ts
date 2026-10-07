@@ -487,6 +487,56 @@ function tally(entries: readonly TraceEntry[]): string[] {
         .map(([name, n]) => `${safe(name, 40)} x${n}`);
 }
 
+const WRITES = new Set(['write_file', 'apply_patch', 'copy_file', 'move_file']);
+
+/**
+ * What the run did with memory, zeros included. The `tools` row only lists
+ * calls that happened, and a commit that never happened is the commonest
+ * memory finding there is: absent from a list, a reader does not see it.
+ */
+function memoryRows(entries: readonly TraceEntry[], bound: boolean): string[] {
+    let recalls = 0;
+    let recalled = 0;
+    let commits = 0;
+    let committed = 0;
+    let files = 0;
+    let written = 0;
+    const calls = new Map<string, number>();
+    for (const { node: n } of entries) {
+        if (n.type === 'memory_recall') {
+            recalls++;
+            recalled += n.nodes.length;
+        } else if (n.type === 'memory_op' && n.op === 'commit') {
+            commits++;
+            committed += n.nodes.length;
+            files += n.files;
+        } else if (n.type === 'tool_call') {
+            calls.set(n.name, (calls.get(n.name) ?? 0) + 1);
+            if (WRITES.has(n.name)) {
+                written++;
+            }
+        }
+    }
+    const used = (name: string): number => calls.get(name) ?? 0;
+    const reads = used('memory_search') + used('memory_grep') + used('memory_load');
+    if (!bound && !recalls && !reads && !commits) {
+        return [];
+    }
+    const label = bound ? '' : 'memory';
+    const lines = [
+        row(
+            label,
+            `recall ${recalls} (${recalled} nodes) · search ${used('memory_search')} · ` +
+                `grep ${used('memory_grep')} · load ${used('memory_load')} · ` +
+                `commit ${commits} (${committed} nodes, ${files} files)`,
+        ),
+    ];
+    if (!commits && written) {
+        lines.push(row('', `nothing committed after ${written} workspace file writes`));
+    }
+    return lines;
+}
+
 function elapsed(entries: readonly TraceEntry[]): string {
     const stamps = entries.map((e) => e.endMs).filter((t): t is number => t !== null);
     return stamps.length < 2 ? '' : span(Math.max(...stamps) - Math.min(...stamps));
@@ -546,6 +596,7 @@ function header(state: AgentState, trace: Trace, opts: TraceOptions): string[] {
         ...(opts.dir ? [row('dir', safe(opts.dir, 200))] : []),
         ...(opts.workspace ? [row('workspace', safe(opts.workspace, 200))] : []),
         ...(opts.memory ? [row('memory', safe(opts.memory, 200))] : []),
+        ...memoryRows(entries, Boolean(opts.memory)),
         row(
             'agent',
             `${safe(state.agentName, 40)} · started as ${safe(state.spec.startAgent, 40)}`,

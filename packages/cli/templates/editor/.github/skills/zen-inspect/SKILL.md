@@ -150,6 +150,8 @@ diagram would make you count by eye.
 | `dir`       | the run directory                                    | paste into `--dir`, no reconstruction needed              |
 | `workspace` | the files the run worked on                          | where to go and check what actually changed               |
 | `memory`    | the memory graph the run read                        | absent when the run read none                             |
+|             | recall · search · grep · load · commit, zeros kept   | `commit 0` is nothing saved, whatever the answer says     |
+|             | `nothing committed after N workspace file writes`    | a script or file that worked and was not kept             |
 | `agent`     | the agent it ended on · the one it started as        | two different names means a hand-off happened             |
 | `phase`     | `done`, or the phase and the error                   | an error here is the verdict; the graph is the story      |
 | `nodes`     | total · llm · tool calls · forks                     | the shape and the size of what follows                    |

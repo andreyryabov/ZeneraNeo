@@ -3,7 +3,10 @@ description: Analyze one recorded run of this project - its health, what it wast
 ---
 
 Load the **zen-analyze-run** skill and follow it to analyze one run of this
-project. Everything about how to analyze it is in the skill.
+project. Everything about how to analyze it is in the skill. If `agents.yaml`
+has a `memory:` key anywhere (`grep -n 'memory:' agents.yaml`), load the
+**zen-memory** skill with it, before you read the run: the memory areas of the
+audit cannot be graded without it.
 
 ## Which run
 

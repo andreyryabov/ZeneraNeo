@@ -300,7 +300,8 @@ async function analyzeOnce(
     );
     keepAnalysis(dir, res.stdout);
 
-    let read = readFeedback(file, known);
+    const rubricIds = c.rubric.map((r) => r.id);
+    let read = readFeedback(file, known, rubricIds);
     if (!('feedback' in read)) {
         const again = await t.zen(
             [
@@ -310,7 +311,7 @@ async function analyzeOnce(
             join(dir, 'analyze.log'),
         );
         keepAnalysis(dir, again.stdout, false);
-        read = readFeedback(file, known);
+        read = readFeedback(file, known, rubricIds);
     }
     // Any apply that overlapped this analysis owns the change; undoing it would gut the apply.
     const overlapped = t.improvements.applying || t.improvements.started !== applies;

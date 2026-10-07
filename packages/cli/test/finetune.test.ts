@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runFinetune } from '../src/meta/finetune/command.ts';
 import { runDataset } from '../src/meta/finetune/dataset/command.ts';
+import { readFeedback } from '../src/meta/finetune/feedback.ts';
 import { Journal } from '../src/meta/finetune/journal.ts';
 import { SystemVersions } from '../src/meta/finetune/system.ts';
 import type { Zen } from '../src/meta/finetune/tuning.ts';
@@ -269,6 +270,32 @@ const result = (id: string): { state: string; reason?: string } | undefined => {
 
 const runsOf = (calls: string[][], id: string) =>
     calls.filter((a) => a[0] === 'run' && a[a.indexOf('--input') + 1].includes(`/cases/${id}/`));
+
+// An analysis once graded memory "ok" on a run that saved nothing; a rubric
+// left half-graded is the same failure, and the loop is where it is caught.
+describe('feedback', () => {
+    const known = { case: 'a1', caseRev: 2, phase: 'nomem' as const, attempt: 1 };
+    const read = (body: object, ids: string[] = ['r1', 'r2']) => {
+        const file = join(root, 'feedback.json');
+        writeFileSync(file, JSON.stringify({ improvements: [], summary: 's', ...body }));
+        return readFeedback(file, known, ids);
+    };
+
+    it('refuses a rubric line left ungraded, naming it and the command', () => {
+        const r = read({ verdict: 'right', done: true, rubric: { r1: 'pass' } });
+        expect(r).toEqual({ problem: expect.stringContaining('rubric lines r2') });
+        expect(r).toEqual({ problem: expect.stringContaining('zen meta dataset show a1@2') });
+    });
+
+    it('is never done while a rubric line fails', () => {
+        const r = read({ verdict: 'right', done: true, rubric: { r1: 'pass', r2: 'fail' } });
+        expect('feedback' in r && r.feedback.done).toBe(false);
+    });
+
+    it('lets a void run go ungraded', () => {
+        expect('feedback' in read({ verdict: 'void', done: false, rubric: {} })).toBe(true);
+    });
+});
 
 describe('zen meta finetune', () => {
     it('completes cases that pass first time, without memory and then with it', async () => {
