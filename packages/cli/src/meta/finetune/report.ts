@@ -1118,7 +1118,8 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
         ...inOrder('W', t.workers.length),
         '    end',
         '    D --> WORKERS',
-        '    WORKERS --> V{"feedback done?"}',
+        // Not a diamond: an edge to a box ends at the node's bounding box, short of a diamond's sides.
+        '    WORKERS --> V(["feedback done?"])',
         `    V -.->|"${lines('passed without memory:', 'again with memory')}"| WORKERS`,
         `    V -->|"${lines('failed, tries left:', 'park, free the worker')}"| Q`,
         `    V -->|"no tries left"| X["difficult · ${counts.difficult}"]`,
@@ -1152,7 +1153,8 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
           : 'waiting for runs · no run starts';
     out.push(
         '    end',
-        '    Q -->|"full, or nothing left to start"| AP',
+        // AP's own nodes link outside, so Mermaid cannot end an edge on the AP box itself.
+        '    Q -->|"full, or nothing left to start"| P1',
         `    subgraph AP["applier · ${applier}"]`,
         `        P1["wait for runs in flight · ${q.runs}"] --> P2["${lines('meta run /finetune-apply', 'then zen check')}"]`,
         `        P2 --> P3["${lines('applied.json', 'wake the batch')}"]`,
