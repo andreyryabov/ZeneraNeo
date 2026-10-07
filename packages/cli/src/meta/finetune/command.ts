@@ -301,7 +301,7 @@ async function start(
     note(
         `${bold('tuning')} ${project.name} · ${config.workers} workers · apply at ${config.applyAt}`,
     );
-    note(dim(`follow it: file://${join(t.dir, 'STATUS.md')}`));
+    note(dim(`follow it: file://${join(t.dir, 'STATUS.html')}`));
     try {
         await runLoop(t);
     } finally {
@@ -337,7 +337,12 @@ function status(ctx: FinetuneContext, project: { dir: string; name: string }): v
     const holder = liveHolder(join(dir, 'loop.lock'));
     const c = counts(project.dir);
     if (ctx.json) {
-        return json({ running: Boolean(holder), ...c, status: join(dir, 'STATUS.md') });
+        return json({
+            running: Boolean(holder),
+            ...c,
+            status: join(dir, 'STATUS.md'),
+            html: join(dir, 'STATUS.html'),
+        });
     }
     write(
         `${bold(project.name)}  ${holder ? green(`running (pid ${holder.pid})`) : dim('not running')}`,
@@ -353,7 +358,11 @@ function status(ctx: FinetuneContext, project: { dir: string; name: string }): v
         );
     }
     if (existsSync(join(dir, 'STATUS.md'))) {
-        note(dim(`the detail: ${cyan(join(dir, 'STATUS.md'))}`));
+        note(
+            dim(
+                `the detail: ${cyan(join(dir, 'STATUS.md'))} · ${cyan(`file://${join(dir, 'STATUS.html')}`)}`,
+            ),
+        );
     }
 }
 

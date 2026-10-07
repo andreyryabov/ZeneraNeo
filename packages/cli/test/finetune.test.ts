@@ -17,6 +17,7 @@ import { runFinetune } from '../src/meta/finetune/command.ts';
 import { runDataset } from '../src/meta/finetune/dataset/command.ts';
 import { readFeedback } from '../src/meta/finetune/feedback.ts';
 import { Journal } from '../src/meta/finetune/journal.ts';
+import { markdownPage } from '../src/meta/finetune/report.ts';
 import { SystemVersions } from '../src/meta/finetune/system.ts';
 import type { Zen } from '../src/meta/finetune/tuning.ts';
 import { runMetrics } from '../src/meta/finetune/usage.ts';
@@ -633,6 +634,17 @@ describe('zen meta finetune', () => {
         expect(diagrams.join('\n')).not.toContain('misses it');
         expect(status).not.toMatch(/misses it \| badly/);
         expect(readdirSync(join(root, 'finetune', 'cases'))).toEqual(['a1', 'b1']);
+
+        const html = readFileSync(join(root, 'finetune', 'STATUS.html'), 'utf8');
+        expect(html).toContain('## Workers');
+        expect(html).toContain('```mermaid');
+    });
+
+    it('keeps model text in STATUS.html inert', () => {
+        const html = markdownPage('t', '| </script><img src=x onerror=alert(1)> |\n', false);
+        expect(html.match(/<\/script>/g)).toHaveLength(2);
+        expect(html).not.toContain('<img');
+        expect(html).not.toContain('http-equiv="refresh"');
     });
 
     it('reports tokens per stage and model, for the tuning and for each case', async () => {

@@ -1,3 +1,4 @@
+import { MERMAID_URL } from '@zenera/neo';
 import {
     existsSync,
     mkdirSync,
@@ -1520,7 +1521,120 @@ export function writeStatus(t: Tuning): void {
         '- `systems/` - `systems.jsonl` and a copy of `agents.yaml` + `agents/` per version',
         '- `events.jsonl` - every step, in order; `loop.json` - the settings',
         '- `journal.jsonl` - steps begun and not yet closed; a restart rolls back what a kill cut off',
+        '- `STATUS.html` - this page, rendered for a browser',
         '',
     );
-    atomic(join(t.dir, 'STATUS.md'), `${out.join('\n')}\n`);
+    const md = `${out.join('\n')}\n`;
+    atomic(join(t.dir, 'STATUS.md'), md);
+    atomic(
+        join(t.dir, 'STATUS.html'),
+        markdownPage(`Fine-tuning - ${basename(t.root)}`, md, !t.finished),
+    );
+}
+
+// ---------------------------------------------------------------------------
+// STATUS.html - the same Markdown, rendered in the browser
+// ---------------------------------------------------------------------------
+
+const MARKED_URL = 'https://cdn.jsdelivr.net/npm/marked@14/lib/marked.esm.js';
+const PURIFY_URL = 'https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.es.mjs';
+
+// As in neo's inspect page: no byte of the payload can close the script element.
+const embed = (v: unknown): string =>
+    JSON.stringify(v)
+        .replace(/</g, '\\u003c')
+        .replace(/>/g, '\\u003e')
+        .replace(/&/g, '\\u0026')
+        .replace(/\u2028/g, '\\u2028')
+        .replace(/\u2029/g, '\\u2029');
+
+export function markdownPage(title: string, md: string, live: boolean): string {
+    return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+${live ? '<meta http-equiv="refresh" content="10">\n' : ''}<title>${title.replace(/[&<>"]/g, (ch) => `&#${ch.charCodeAt(0)};`)}</title>
+<style>
+body{font:14px/1.5 system-ui,sans-serif;margin:0;color:#24292f}
+main{margin-left:240px;padding:1em 2em;max-width:1600px}
+#toc{position:fixed;top:0;left:0;bottom:0;width:220px;overflow:auto;padding:1em 6px;box-sizing:border-box;border-right:1px solid #d0d7de;background:#f6f8fa;font-size:13px}
+#toc a{display:block;padding:2px 8px;border-radius:4px;color:#24292f;text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#toc a.top{font-weight:600;margin-bottom:6px}
+#toc a.sub{padding-left:22px;color:#57606a}
+#toc a:hover{background:#eaeef2}
+#toc a.on{background:#ddf4ff;color:#0969da;font-weight:600}
+h1,h2,h3{scroll-margin-top:8px}
+@media (max-width:800px){#toc{display:none}main{margin-left:0}}
+table{border-collapse:collapse;margin:1em 0}th,td{border:1px solid #d0d7de;padding:4px 8px;vertical-align:top}
+th{background:#f6f8fa}code{background:#f6f8fa;padding:0 4px;border-radius:4px}
+pre{background:#f6f8fa;padding:8px;overflow:auto}pre.mermaid{background:none}
+a{color:#0969da}
+</style>
+</head>
+<body>
+<nav id="toc"></nav>
+<main id="doc">loading…</main>
+<script id="md" type="application/json">${embed(md)}</script>
+<script type="module">
+const md = JSON.parse(document.getElementById('md').textContent);
+const [{ marked }, { default: DOMPurify }, { default: mermaid }] = await Promise.all([
+    import(${embed(MARKED_URL)}),
+    import(${embed(PURIFY_URL)}),
+    import(${embed(MERMAID_URL)}),
+]);
+const doc = document.getElementById('doc');
+doc.innerHTML = DOMPurify.sanitize(marked.parse(md));
+// GitHub's slugs, so the diagrams' #anchors land as they do in the .md.
+for (const h of doc.querySelectorAll('h1, h2, h3, h4')) {
+    h.id = h.textContent.trim().toLowerCase().replace(/[^\\w\\s-]/g, '').replace(/\\s/g, '-');
+}
+const toc = document.getElementById('toc');
+const heads = [...doc.querySelectorAll('h1, h2, h3')];
+for (const h of heads) {
+    const a = document.createElement('a');
+    a.href = '#' + h.id;
+    a.textContent = h.textContent;
+    a.title = h.textContent;
+    a.className = h.tagName === 'H1' ? 'top' : h.tagName === 'H3' ? 'sub' : '';
+    toc.append(a);
+}
+for (const code of doc.querySelectorAll('code.language-mermaid')) {
+    const pre = document.createElement('pre');
+    pre.className = 'mermaid';
+    pre.textContent = code.textContent;
+    code.parentElement.replaceWith(pre);
+}
+mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' });
+await mermaid.run({ querySelector: 'pre.mermaid' });
+// The live refresh would otherwise drop the reader back at the top every 10 s.
+const key = 'scroll:' + location.pathname;
+history.scrollRestoration = 'manual';
+addEventListener('beforeunload', () => sessionStorage.setItem(key, String(scrollY)));
+const kept = sessionStorage.getItem(key);
+if (kept !== null) {
+    scrollTo(0, Number(kept));
+} else if (location.hash) {
+    document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView();
+}
+const mark = () => {
+    let current = heads[0];
+    for (const h of heads) {
+        if (h.getBoundingClientRect().top > 80) break;
+        current = h;
+    }
+    for (const a of toc.children) {
+        a.classList.toggle('on', a.hash === '#' + current?.id);
+    }
+    const on = toc.querySelector('a.on');
+    if (on && (on.offsetTop < toc.scrollTop || on.offsetTop + on.offsetHeight > toc.scrollTop + toc.clientHeight)) {
+        toc.scrollTop = on.offsetTop - toc.clientHeight / 2;
+    }
+};
+addEventListener('scroll', mark, { passive: true });
+mark();
+</script>
+</body>
+</html>
+`;
 }
