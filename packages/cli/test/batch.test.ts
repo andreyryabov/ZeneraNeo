@@ -1,12 +1,20 @@
-import type { AgentEvent } from '@zenera/neo';
+import { parseConfig, type AgentEvent } from '@zenera/neo';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { concurrency, keepWritten, pool, prepareMemories } from '../src/batch.ts';
+import {
+    concurrency,
+    containersPerItem,
+    keepWritten,
+    pool,
+    prepareMemories,
+} from '../src/batch.ts';
 import { BatchProgress } from '../src/progress.ts';
 import { type BatchItem, parseBatch, readBatch } from '../src/request.ts';
+import { buildSandbox } from '../src/sandbox.ts';
+import { sessionPaths } from '../src/session.ts';
 
 /**
  * A batch pays for every mistake once per item, so the file is read strictly
@@ -26,6 +34,60 @@ function said(fn: () => unknown): string {
     }
     throw new Error('expected a refusal');
 }
+
+describe('a batch item\u2019s sandbox', () => {
+    // Every item is a fresh session nobody resumes, so a stopped container per
+    // item only holds an engine lock — 2048 of them and nothing can start.
+    it('is removed on close, whatever the project or an agent says', () => {
+        const config = parseConfig(
+            'version: 1\nsandbox:\n  image: base\n  persist: true\nagents:\n' +
+                '  - name: a\n  - name: b\n    sandbox:\n      image: other\n      persist: true\n',
+            'agents.yaml',
+        );
+        const setup = (persist?: boolean) =>
+            buildSandbox({
+                config,
+                root: '/p',
+                session: sessionPaths('/p', '20261007-120000-abcd'),
+                workspace: '/p/ws',
+                keys: false,
+                ...(persist === undefined ? {} : { persist }),
+            });
+
+        const kept = setup();
+        expect(kept.pool.for('a').spec.persist).toBe(true);
+        expect(kept.pool.for('b').spec.persist).toBe(true);
+
+        const dropped = setup(false);
+        expect(dropped.pool.for('a').spec.persist).toBe(false);
+        expect(dropped.pool.for('b').spec.persist).toBe(false);
+    });
+
+    it('counts the containers one item can start, so the locks are asked for up front', async () => {
+        const dir = await mkdtemp(join(tmpdir(), 'zen-boxes-'));
+        const count = async (yaml: string): Promise<number> => {
+            await writeFile(join(dir, 'agents.yaml'), `version: 1\nagents:\n${yaml}`);
+            return containersPerItem(dir);
+        };
+        try {
+            expect(await count('  - name: a\n    tools: ["files:*"]\n')).toBe(0);
+            expect(
+                await count(
+                    '  - name: a\n    tools: ["sandbox:*"]\n  - name: b\n    tools: [run_command]\n',
+                ),
+            ).toBe(1);
+            expect(
+                await count(
+                    '  - name: a\n    tools: ["sandbox:*"]\n' +
+                        '  - name: b\n    tools: [run_command]\n    sandbox:\n      image: other\n',
+                ),
+            ).toBe(2);
+            expect(await count('  - name: a\n    tools: [nope]\n')).toBe(0);
+        } finally {
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+});
 
 describe('reading a batch file', () => {
     it('takes a list of requests and numbers them', () => {

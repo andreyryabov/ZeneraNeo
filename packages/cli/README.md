@@ -499,6 +499,7 @@ zen sandbox pull                      # pull or build this project's image only
 zen sandbox status --project my-app   # inspect a named project from anywhere
 zen sandbox disk                      # storage used by the engine and known projects
 zen sandbox clean                     # remove containers created by zen
+zen sandbox clean --idle              # only what no live run is using
 ```
 
 `status`, `up` and `pull` use the project in the current directory, or accept

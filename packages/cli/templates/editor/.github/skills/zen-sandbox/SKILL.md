@@ -262,7 +262,8 @@ Use the `zen sandbox` commands via terminal to inspect and manage container stat
 zen sandbox status          # Check podman version, machine status, and active containers
 zen sandbox up              # Start VM (macOS) and pull or build the required image
 zen sandbox pull            # Re-pull base image or force build of sandbox/Dockerfile
-zen sandbox clean           # Force remove all zn-* containers created by this project
+zen sandbox clean           # Force remove all zn-* containers created by this CLI
+zen sandbox clean --idle    # Only what no live run uses: stopped and orphaned ones
 zen sandbox disk            # Inspect disk space consumed by images, containers, and volumes
 ```
 
@@ -274,4 +275,6 @@ zen sandbox disk            # Inspect disk space consumed by images, containers,
 - **Permission Denied in `/workspace`:**
     - In `strict` mode without `user:`, rootless Podman uses `keep-id` to preserve host UID. If using custom `user:`, verify host directory permissions allow that UID.
 - **Disk Space Pressure:**
-    - Run `zen sandbox clean` to prune stopped session containers.
+    - Run `zen sandbox clean --idle` to prune stopped and orphaned session containers.
+- **`could not create container … exceeded num_locks`:**
+    - Every container holds one engine lock (2048 by default), stopped ones included. Run `zen sandbox clean --idle`.

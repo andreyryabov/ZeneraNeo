@@ -79,7 +79,15 @@ import {
 } from '../src/meta/index.ts';
 import { splitRef } from '../src/modelref.ts';
 import { duration } from '../src/narrate.ts';
-import { engineDisk, ensurePodmanReady, ownedContainers, sharedEndpoint } from '../src/podman.ts';
+import {
+    assertLocks,
+    engineDisk,
+    ensurePodmanReady,
+    idleContainers,
+    ownedContainers,
+    sharedEndpoint,
+    type OwnedContainer,
+} from '../src/podman.ts';
 import { dirSize, lastUsedAt, projectMounts } from '../src/projects.ts';
 import { parseRequest, readRequest } from '../src/request.ts';
 import { chooseWorkspace } from '../src/resolve.ts';
@@ -2531,6 +2539,94 @@ describe('the disk report', () => {
         await ownedContainers('podman', run, { sizes: true });
         expect(seen[0]).not.toContain('--size');
         expect(seen[1]).toContain('--size');
+    });
+
+    it('reads a listing far past the default output cap', async () => {
+        // Through the real runner's cap logic: ~1 kB a container, 2048 of them.
+        const many = JSON.stringify(
+            Array.from({ length: 2048 }, (_, i) => ({
+                Names: [`zn-${i}-${'x'.repeat(1000)}`],
+                State: 'exited',
+                Labels: { zenera: '1' },
+            })),
+        );
+        let cap = 0;
+        const run: typeof runProcess = (bin, args, opts) => {
+            cap = opts?.maxBytes ?? 64 * 1024;
+            return reply(many.slice(0, cap))(bin, args, {});
+        };
+        expect(await ownedContainers('podman', run)).toHaveLength(2048);
+        expect(cap).toBeGreaterThan(many.length);
+    });
+
+    describe('engine locks', () => {
+        /** Answers by verb: `info` the free count, `container exists` the reuse, `ps` the listing. */
+        const engine = (free: string, exists = 1): typeof runProcess => {
+            return (bin, args) => {
+                if (args[0] === 'info') return reply(free)(bin, args, {});
+                if (args[0] === 'container') return reply('', exists)(bin, args, {});
+                return reply(ps)(bin, args, {});
+            };
+        };
+
+        it('lets a run through while there are enough', async () => {
+            await expect(assertLocks(4, { exec: engine('4') })).resolves.toBeUndefined();
+        });
+
+        it('says nothing when the engine will not tell', async () => {
+            await expect(assertLocks(4, { exec: engine('') })).resolves.toBeUndefined();
+        });
+
+        it('refuses a run the engine cannot hold, naming what could be freed', async () => {
+            await expect(
+                assertLocks(4, { exec: engine('3'), owners: new Map() }),
+            ).rejects.toMatchObject({
+                code: EXIT.sandbox,
+                message: expect.stringContaining('3 locks free and this run needs 4'),
+                hint: 'zen sandbox clean --idle frees 1',
+            });
+        });
+
+        it('counts a running container as idle once its run is gone', () => {
+            const dir = mkdtempSync(join(tmpdir(), 'zen-idle-'));
+            try {
+                const running = (key: string): OwnedContainer => ({
+                    name: `zn-${key}`,
+                    state: 'running',
+                    key,
+                });
+                const owners = new Map([['20260901-132913-2eac', dir]]);
+                const all = [
+                    { name: 'zn-old', state: 'exited', key: 'x' },
+                    running('20260901-132913-2eac'),
+                    running('20990101-000000-none'),
+                    running(`faker-${process.pid}`),
+                    running('faker-999999'),
+                ];
+                // No lock in the session: its run exited without cleaning up.
+                expect(idleContainers(all, owners).map((c) => c.name)).toEqual([
+                    'zn-old',
+                    'zn-20260901-132913-2eac',
+                    'zn-faker-999999',
+                ]);
+                writeFileSync(join(dir, '.lock'), JSON.stringify({ pid: process.pid }));
+                expect(idleContainers(all, owners).map((c) => c.name)).toEqual([
+                    'zn-old',
+                    'zn-faker-999999',
+                ]);
+            } finally {
+                rmSync(dir, { recursive: true, force: true });
+            }
+        });
+
+        it('lets a resumed session back into its own container at zero', async () => {
+            await expect(
+                assertLocks(1, { exec: engine('0', 0), reuses: 'zn-old-aaaaaaaaaa' }),
+            ).resolves.toBeUndefined();
+            await expect(
+                assertLocks(1, { exec: engine('0', 1), reuses: 'zn-gone' }),
+            ).rejects.toMatchObject({ code: EXIT.sandbox });
+        });
     });
 
     it('reports nothing rather than throwing when the engine talks nonsense', async () => {

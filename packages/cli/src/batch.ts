@@ -7,6 +7,8 @@ import {
     MemoryStore,
     mergeModelUsage,
     readProjectConfig,
+    SANDBOX_GROUP,
+    selectTools,
     usageByModel,
     zeroUsage,
 } from '@zenera/neo';
@@ -17,6 +19,7 @@ import * as Engine from './engine.ts';
 import { stamp } from './ids.ts';
 import { duration } from './narrate.ts';
 import { BatchProgress } from './progress.ts';
+import { assertLocks } from './podman.ts';
 import type { BatchItem, BatchRequest } from './request.ts';
 import { project as resolveProject, target } from './resolve.ts';
 import { display } from './session.ts';
@@ -34,6 +37,7 @@ import {
     write,
 } from './term.ts';
 import { appendUsage } from './usage.ts';
+import { availableTools } from './validate.ts';
 
 /**
  * Many questions, one project, at once.
@@ -94,6 +98,13 @@ const MAX_CONCURRENCY = 32;
 export async function runBatch(opts: BatchOptions): Promise<void> {
     const project = await resolveProject({ cwd: opts.cwd, project: opts.project });
     const items = opts.request.items;
+
+    // Every item at once holds its own containers, so a short engine fails
+    // here once instead of once per item.
+    const boxes = containersPerItem(project.dir);
+    if (boxes > 0) {
+        await assertLocks(boxes * Math.min(opts.concurrency, items.length));
+    }
 
     const dir = opts.dir ? resolve(opts.cwd, opts.dir) : join(project.dir, 'batches', stamp());
     // Two batches in one directory would interleave their item folders and the
@@ -282,6 +293,32 @@ export async function runBatch(opts: BatchOptions): Promise<void> {
 // One item
 // ---------------------------------------------------------------------------
 
+/**
+ * The most containers one item can start: one shared by the agents on the
+ * project's sandbox block, one more for each agent with a block of its own.
+ * A project that does not load is each item's to report, so it counts none.
+ */
+export function containersPerItem(dir: string): number {
+    let read: ReturnType<typeof readProjectConfig>;
+    try {
+        read = readProjectConfig(dir);
+    } catch {
+        return 0;
+    }
+    const tools = availableTools(read.root, read.config);
+    const shells = read.config.agents.filter((a) => {
+        try {
+            return selectTools(tools, [...(a.tools ?? [])], { where: a.name }).some(
+                (t) => t.group === SANDBOX_GROUP,
+            );
+        } catch {
+            return false;
+        }
+    });
+    const own = shells.filter((a) => a.sandbox).length;
+    return own + (shells.length > own ? 1 : 0);
+}
+
 interface ItemContext {
     opts: BatchOptions;
     projectDir: string;
@@ -327,6 +364,9 @@ async function runItem(item: BatchItem, ctx: ItemContext): Promise<ItemResult> {
             yes: true,
             // The project's own problems are the batch's, not each item's.
             quiet: true,
+            // A fresh session nobody resumes: a stopped container per item
+            // is how a few fine-tuning rounds used up every engine lock.
+            disposable: true,
         });
 
         try {

@@ -375,6 +375,19 @@ describe('running a command', () => {
             hint: expect.stringContaining('podman machine start'),
         });
     });
+
+    it('names stopped containers as the fix when the engine is out of locks', async () => {
+        const f = fresh();
+        f.reply('run --detach', {
+            code: 125,
+            stderr: 'Error: allocating lock for new container: allocation failed; exceeded num_locks (2048)\n',
+        });
+
+        await expect(box(f).start()).rejects.toMatchObject({
+            message: expect.stringContaining('exceeded num_locks'),
+            hint: expect.stringContaining('container prune --force --filter label=zenera=1'),
+        });
+    });
 });
 
 describe('background jobs', () => {

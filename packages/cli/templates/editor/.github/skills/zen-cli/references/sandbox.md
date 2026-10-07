@@ -119,7 +119,16 @@ distinguishes the two cases: a broken Dockerfile is an error, a laptop with no
 Podman is a warning.
 
 `zen sandbox clean` removes every container this CLI created - the way out of a
-container left on a bad rootfs.
+container left on a bad rootfs. `--idle` removes only what no live run is using:
+stopped containers, and running ones whose run was killed before stopping them
+(`zen sandbox status` marks those `orphaned`).
+
+`could not create container … exceeded num_locks (2048)` means the engine is out
+of locks: every container holds one, stopped ones included, and `persist: true`
+leaves one stopped per session. `zen run` and `zen run batch` check this before
+the first model call and exit `5` when the engine cannot hold them (a batch needs
+one per item it runs at once). `zen sandbox status` shows a `locks` row when few
+are left; `zen sandbox clean --idle` frees them.
 
 For complete container architecture, the `sandbox:*` tools, mount rules, and
 hardening details, load the `zen-sandbox` skill (`.github/skills/zen-sandbox/SKILL.md`).

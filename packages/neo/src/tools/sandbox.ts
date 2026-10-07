@@ -469,7 +469,13 @@ export class Sandbox {
             this.#created = true;
             return;
         }
-        await this.#must(this.#createArgs(), `could not create container ${this.name}`);
+        const made = await this.#podman(this.#createArgs());
+        if (made.code !== 0) {
+            throw new SandboxError(
+                `could not create container ${this.name}: ${message(made)}`,
+                LOCKS.test(made.stderr) ? locksHint(this.spec.engine) : undefined,
+            );
+        }
         this.#created = true;
     }
 
@@ -849,6 +855,22 @@ function mount(m: SandboxMount): string {
 
 function message(res: ProcResult): string {
     return (res.stderr.trim() || res.stdout.trim() || `exit ${res.code}`).split('\n')[0];
+}
+
+/** podman's words for "every lock is taken": `allocating lock … exceeded num_locks (2048)`. */
+const LOCKS = /exceeded num_locks|allocating lock/i;
+
+/**
+ * A stopped container holds a lock as surely as a running one, and a
+ * persisted sandbox is stopped, never removed — so they pile up one per
+ * session until the engine can create nothing at all, for anyone.
+ */
+function locksHint(engine: string): string {
+    return (
+        `the ${engine} engine has no locks left: every container it holds, stopped ones ` +
+        `included, takes one. Remove the stopped sandbox containers with ` +
+        `\`${engine} container prune --force --filter label=zenera=1\`, then retry`
+    );
 }
 
 /** podman's own exit code for "could not exec at all", with the two reasons that mean the container is not there to exec in. */
