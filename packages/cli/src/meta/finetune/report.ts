@@ -647,7 +647,12 @@ export function writeFeedback(t: Tuning, c: Case): void {
             );
         }
     }
-    atomic(file, `${lines.join('\n')}\n`);
+    const md = `${lines.join('\n')}\n`;
+    atomic(file, md);
+    atomic(
+        join(here, 'FEEDBACK.html'),
+        markdownPage(`${c.id} - ${basename(t.root)}`, md, !t.finished && !resultOf(t, c)),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1521,7 +1526,7 @@ export function writeStatus(t: Tuning): void {
         '- `systems/` - `systems.jsonl` and a copy of `agents.yaml` + `agents/` per version',
         '- `events.jsonl` - every step, in order; `loop.json` - the settings',
         '- `journal.jsonl` - steps begun and not yet closed; a restart rolls back what a kill cut off',
-        '- `STATUS.html` - this page, rendered for a browser',
+        '- `STATUS.html`, `cases/<id>/FEEDBACK.html` - the same pages, rendered for a browser',
         '',
     );
     const md = `${out.join('\n')}\n`;
@@ -1533,7 +1538,7 @@ export function writeStatus(t: Tuning): void {
 }
 
 // ---------------------------------------------------------------------------
-// STATUS.html - the same Markdown, rendered in the browser
+// STATUS.html, FEEDBACK.html - the same Markdown, rendered in the browser
 // ---------------------------------------------------------------------------
 
 const MARKED_URL = 'https://cdn.jsdelivr.net/npm/marked@14/lib/marked.esm.js';
@@ -1607,6 +1612,15 @@ for (const code of doc.querySelectorAll('code.language-mermaid')) {
 }
 mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' });
 await mermaid.run({ querySelector: 'pre.mermaid' });
+// A page with an .html twin links to it; any other .md opens as the file it is.
+for (const a of doc.querySelectorAll('a')) {
+    for (const at of ['href', 'xlink:href']) {
+        const v = a.getAttribute(at);
+        if (v) {
+            a.setAttribute(at, v.replace(/(^|\\/)(STATUS|FEEDBACK)\\.md(?=#|$)/, '$1$2.html'));
+        }
+    }
+}
 // The live refresh would otherwise drop the reader back at the top every 10 s.
 const key = 'scroll:' + location.pathname;
 history.scrollRestoration = 'manual';

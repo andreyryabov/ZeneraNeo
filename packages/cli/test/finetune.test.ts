@@ -427,6 +427,9 @@ describe('zen meta finetune', () => {
         const page = readFileSync(join(root, 'finetune', 'cases', 'a1', 'FEEDBACK.md'), 'utf8');
         expect(page).toContain('## History');
         expect(page).toContain('**Run** - fine.');
+        const html = readFileSync(join(root, 'finetune', 'cases', 'a1', 'FEEDBACK.html'), 'utf8');
+        expect(html).toContain('## History');
+        expect(html).not.toContain('http-equiv="refresh"');
 
         const apply = readFileSync(join(root, 'finetune', 'applies', '001', 'APPLY.md'), 'utf8');
         expect(apply).toContain('# Apply 001 - v1 → v2');
