@@ -628,8 +628,8 @@ describe('zen meta finetune', () => {
         expect(status).toContain('## Workers');
         expect(status).toContain('## Applies');
         const diagrams = status.match(/```mermaid[\s\S]*?```/g) ?? [];
-        // The overview, then one per worker.
-        expect(diagrams).toHaveLength(1 + 2);
+        // The overview, the system, then one per worker.
+        expect(diagrams).toHaveLength(2 + 2);
         expect(diagrams.join('\n')).not.toContain('misses it');
         expect(status).not.toMatch(/misses it \| badly/);
         expect(readdirSync(join(root, 'finetune', 'cases'))).toEqual(['a1', 'b1']);

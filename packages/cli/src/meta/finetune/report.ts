@@ -8,8 +8,9 @@ import {
     writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, relative, sep } from 'node:path';
+import { safe } from '../../trace.ts';
 import { DatasetStore } from './dataset/store.ts';
-import type { Case } from './dataset/types.ts';
+import { type Case, DATASET_DIR } from './dataset/types.ts';
 import { type Feedback, type Phase, readFeedback } from './feedback.ts';
 import type { AppliedFile } from './improvements.ts';
 import { resultOf, selection } from './sampler.ts';
@@ -1011,6 +1012,196 @@ function overviewDiagram(counts: Record<string, number>): string[] {
     ];
 }
 
+const LANE: Record<Worker['step'], string> = {
+    idle: 'fill:#f6f8fa,stroke:#d0d7de',
+    parked: 'fill:#f6f8fa,stroke:#d0d7de',
+    run: 'fill:#ddf4ff,stroke:#0969da,stroke-width:2px',
+    analyze: 'fill:#fbefff,stroke:#8250df,stroke-width:2px',
+};
+
+// A subgraph linked from outside drops its own direction; invisible links keep the slots in order.
+const inOrder = (prefix: string, n: number): string[] =>
+    n > 1
+        ? [`        ${Array.from({ length: n }, (_, i) => `${prefix}${i + 1}`).join(' ~~~ ')}`]
+        : [];
+
+// The whole machine right now: every worker, the queue filling toward an apply, the merge.
+// Each node links to what it is working on.
+function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
+    const q = t.improvements;
+    const m = t.memories;
+    const lit: Record<string, string[]> = {
+        case: [],
+        run: [],
+        analyze: [],
+        off: [],
+        full: [],
+        empty: [],
+        busy: [],
+        kept: [],
+    };
+    const clicks: string[] = [];
+    const click = (id: string, to: string | undefined, tip: string): void => {
+        if (to && (to.startsWith('#') || existsSync(to))) {
+            const url = to.startsWith('#')
+                ? to
+                : encodeURI(relative(t.dir, to).split(sep).join('/'));
+            clicks.push(`    click ${id} href "${url}" "${tip}"`);
+        }
+    };
+    const out = [
+        '```mermaid',
+        'flowchart TB',
+        `    DS[("dataset · ${counts.queued} queued")] --> D["dispatcher<br/>seats a case on a free worker<br/>woken cases first"]`,
+        `    subgraph WORKERS["workers · ${t.busy()} of ${t.workers.length} busy"]`,
+    ];
+    click('DS', join(t.root, DATASET_DIR), 'the dataset');
+    click('D', join(t.dir, 'events.jsonl'), 'every step, in order');
+    const lanes: string[] = [];
+    for (const w of t.workers) {
+        const n = w.slot;
+        const step = w.case ? w.step : 'idle';
+        let label = idleWord(t);
+        if (w.case) {
+            const tries = w.phase === 'mem' ? t.config.memTries : t.config.tries;
+            label =
+                w.attempt === undefined
+                    ? `${safe(w.case.id, 48)}<br/>starting`
+                    : `${safe(w.case.id, 48)}<br/>${PHASE_WORD[w.phase ?? 'nomem']} · try ${w.attempt} of ${tries}<br/>${step} · ${since(Date.now() - w.since)}`;
+            click(`C${n}`, feedbackPath(t, w.case), 'the case: rubric, tries, decisions');
+            if (w.attempt !== undefined) {
+                const dir = t.attemptDir(w.case, w.phase ?? 'nomem', w.attempt);
+                const run = readJson<Run>(join(dir, 'run.json'));
+                if (run) {
+                    click(`R${n}`, run.report ?? run.dir, 'the run report');
+                } else {
+                    click(`R${n}`, join(dir, 'run.log'), 'the run log, live');
+                }
+                if (existsSync(join(dir, 'analysis.md'))) {
+                    click(`A${n}`, join(dir, 'analysis.md'), 'the analysis');
+                } else {
+                    click(`A${n}`, join(dir, 'analyze.log'), 'the analysis log, live');
+                }
+            }
+        }
+        out.push(
+            `        subgraph W${n}["worker ${n}"]`,
+            `            C${n}["${label}"] --> R${n}["run"] --> A${n}["analyze"]`,
+            '        end',
+        );
+        lit[w.case ? 'case' : 'empty'].push(`C${n}`);
+        lit[step === 'run' ? 'run' : 'off'].push(`R${n}`);
+        lit[step === 'analyze' ? 'analyze' : 'off'].push(`A${n}`);
+        lanes.push(`    style W${n} ${LANE[step]}`);
+    }
+    // Seating each lane, rather than the box, is what keeps the lanes in slot order.
+    const each = (ids: string): string => t.workers.map((w) => `${ids}${w.slot}`).join(' & ');
+    out.push(
+        '    end',
+        `    D --> ${each('C')}`,
+        `    ${each('A')} --> V{"feedback done?"}`,
+        '    V -.->|"passed without memory:<br/>again with memory"| WORKERS',
+        '    V -->|"failed, tries left:<br/>park, free the worker"| Q',
+        `    V -->|"no tries left"| X["difficult · ${counts.difficult}"]`,
+        `    V -->|"passed with memory"| CD["completed · ${counts.completed}"]`,
+        `    subgraph Q["improvement queue · ${q.pending.length} of ${t.config.applyAt}"]`,
+        '        direction LR',
+    );
+    click('X', '#difficult-cases', 'the difficult cases');
+    click('CD', '#cases', 'every case');
+    const slots = Math.max(t.config.applyAt, q.pending.length);
+    for (let i = 0; i < slots; i++) {
+        const f = q.pending[i];
+        out.push(
+            f
+                ? `        Q${i + 1}["${safe(f.case, 40)}<br/>${PHASE_WORD[f.phase]} try ${f.attempt}<br/>${f.improvements.length} improvement(s)"]`
+                : `        Q${i + 1}["empty"]`,
+        );
+        lit[f ? 'full' : 'empty'].push(`Q${i + 1}`);
+        if (f) {
+            const dir = t.attemptDir({ id: f.case, rev: f.caseRev }, f.phase, f.attempt);
+            click(`Q${i + 1}`, join(dir, 'analysis.md'), 'the analysis asking for these');
+        }
+    }
+    out.push(...inOrder('Q', slots));
+
+    const last = q.applies().at(-1);
+    const applier = !q.applying
+        ? `idle${last ? ` · last ${last.name}` : ''}`
+        : q.inApply.length > 0
+          ? `applying ${q.inApply.length} request(s) · no run starts`
+          : 'waiting for runs · no run starts';
+    out.push(
+        '    end',
+        '    Q -->|"full, or nothing left to start"| AP',
+        `    subgraph AP["applier · ${applier}"]`,
+        `        P1["wait for runs in flight · ${q.runs}"] --> P2["meta run /finetune-apply<br/>then zen check"]`,
+        '        P2 --> P3["applied.json<br/>wake the batch"]',
+        '    end',
+        `    P2 -->|"writes the next version"| S[("system prose · v${t.system.version()}<br/>read by every new run")]`,
+        '    P3 -->|"wake"| D',
+    );
+    const active = !q.applying ? undefined : q.runs > 0 ? 'P1' : 'P2';
+    for (const p of ['P1', 'P2', 'P3']) {
+        lit[p === active ? 'busy' : 'off'].push(p);
+    }
+    if (last) {
+        click('P2', applyPath(last.dir), q.applying ? 'this apply' : 'the last apply');
+        click('P3', join(last.dir, 'diff.patch'), 'what the last apply changed');
+    }
+    click('S', t.system.snapshotDir(t.system.version()), 'this version of the prose');
+
+    const waiting = m.unmerged();
+    const kept = Math.max(t.config.mergeEvery, waiting.length);
+    out.push(
+        '    CD -->|"keep its memory"| M',
+        `    subgraph M["memory to merge · ${waiting.length} of ${t.config.mergeEvery}"]`,
+        '        direction LR',
+    );
+    for (let i = 0; i < kept; i++) {
+        const s = waiting[i];
+        out.push(`        K${i + 1}["${s ? safe(s.case, 40) : 'empty'}"]`);
+        lit[s ? 'kept' : 'empty'].push(`K${i + 1}`);
+        if (s) {
+            click(`K${i + 1}`, s.dir, 'the kept memory');
+        }
+    }
+    const merged = m.merges().filter((x) => x.ok);
+    click('MG', merged.at(-1)?.dir, 'the latest merged graph');
+    out.push(
+        ...inOrder('K', kept),
+        '    end',
+        `    M -->|"full, or tuning ends"| MG[("merged graphs · ${merged.length}")]`,
+        ...clicks,
+        '    classDef case fill:#ffffff,stroke:#57606a,color:#24292f',
+        '    classDef run fill:#0969da,stroke:#0550ae,color:#ffffff',
+        '    classDef analyze fill:#8250df,stroke:#6639ba,color:#ffffff',
+        '    classDef off fill:#ffffff,stroke:#d0d7de,color:#8c959f',
+        '    classDef full fill:#d4a72c,stroke:#9a6700,color:#ffffff',
+        '    classDef empty fill:#ffffff,stroke:#d0d7de,stroke-dasharray:4 3,color:#8c959f',
+        '    classDef busy fill:#e16f24,stroke:#bc4c00,color:#ffffff',
+        '    classDef kept fill:#1b7c83,stroke:#136061,color:#ffffff',
+        '    classDef done fill:#1a7f37,stroke:#116329,color:#ffffff',
+        '    classDef bad fill:#cf222e,stroke:#a40e26,color:#ffffff',
+        '    classDef store fill:#ddf4ff,stroke:#54aeff,color:#0a3069',
+        '    classDef hub fill:#eaeef2,stroke:#57606a,color:#24292f',
+        ...Object.entries(lit)
+            .filter(([, ids]) => ids.length > 0)
+            .map(([cls, ids]) => `    class ${ids.join(',')} ${cls}`),
+        '    class CD done',
+        '    class X bad',
+        '    class DS,S,MG store',
+        '    class D,V hub',
+        '    style WORKERS fill:#ffffff,stroke:#8c959f',
+        ...lanes,
+        `    style Q fill:#fff8c5,stroke:#d4a72c${q.pending.length >= t.config.applyAt ? ',stroke-width:3px' : ''}`,
+        `    style AP ${q.applying ? 'fill:#fff1e5,stroke:#e16f24,stroke-width:3px' : 'fill:#f6f8fa,stroke:#d0d7de'}`,
+        '    style M fill:#e6f6f5,stroke:#1b7c83',
+        '```',
+    );
+    return out;
+}
+
 function summarySection(
     spent: Record<Phase, { runs: number; f: Flat }>,
     tuning: { passed: number; first: number; before: Flat; after: Flat },
@@ -1164,6 +1355,12 @@ export function writeStatus(t: Tuning): void {
         '## Overview',
         '',
         ...overviewDiagram(counts),
+        '',
+        '## System',
+        '',
+        'Lit: a step in progress. Yellow slots: parked feedback waiting for an apply. Teal slots: kept memories waiting for a merge.',
+        '',
+        ...systemDiagram(t, counts),
         '',
         '## Workers',
         '',
