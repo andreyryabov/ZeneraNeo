@@ -57,7 +57,8 @@ Everything that follows is what no tool can see:
 - **Sandbox.** `persist: true` unless a throwaway rootfs is wanted on purpose.
   What the work always needs is in the image, not installed by a prompt on every
   run.
-- **Control flow.** Whichever this project uses. A handoff moves the
+- **Control flow.** Whichever this project uses - load the `zen-topology` skill
+  first when `agents.yaml` has `handoffs:` or `fork:`. A handoff moves the
   conversation and must have a path back; a fork returns by itself and condenses
   to one result, so whatever the caller needs must be in the branch's answer.
   Wanting one lookup and spending the conversation on it is a fork, not a

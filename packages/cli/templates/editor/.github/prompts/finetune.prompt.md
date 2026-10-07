@@ -8,8 +8,8 @@ the house rules under `agents/` - and the evidence is the trajectories the
 queries produce.
 
 **Load the `zen-finetune` skill before anything else**, and load `zen-inspect`,
-`zen-analyze-run` and `zen-inspect-ask` before you grade, and `zen-instructions`
-before you write a policy file. This prompt is the order of the work; the skill
+`zen-analyze-run`, `zen-topology` and `zen-inspect-ask` before you grade, and
+`zen-instructions` before you write a policy file. This prompt is the order of the work; the skill
 is how each step is done, and it holds the rules that are easy to get wrong. If
 loading a skill fails, read `.github/skills/<name>/SKILL.md` with your file tool
 before going on - never carry on without it.

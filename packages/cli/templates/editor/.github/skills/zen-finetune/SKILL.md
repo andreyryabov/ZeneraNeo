@@ -858,7 +858,8 @@ probe call to find out it was wrong.
 | One step of a trajectory                               | `zen inspect node <nN> --dir <trajectory dir>`             |
 
 Then work case by case. Load **zen-inspect** for the mechanics,
-**zen-analyze-run** for how to read one trajectory's decisions, and
+**zen-analyze-run** for how to read one trajectory's decisions,
+**zen-topology** for criteria 4 and 5 below, and
 **zen-inspect-ask** before the first `zen inspect ask` - which node, what to
 rule out first, how to word the question. The audit checklist of
 zen-analyze-run (memory used and saved, delegation, forking, tool use, cost) is
@@ -975,7 +976,8 @@ serial calls with no data dependency between them (missed fork); branches that
 read each other's output (a fork that should have been a sequence); a fork with
 one branch (that is delegation, and should be written as delegation); branches
 that all do the same thing with the same inputs. `branches` in the header and the
-shape of the graph say all of it.
+shape of the graph say all of it. The signature table in **zen-topology** §7 says
+where each fix goes, and a missed fan-out is priced in elapsed time, not tokens.
 
 **5. Delegation.** Did it hand off to the right agent, and did it hand off at
 all? Both failures are common: doing a specialist's job inline because the prompt

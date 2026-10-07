@@ -52,6 +52,11 @@ Then run `grep -n 'memory:' agents.yaml`. If it prints anything, load
 `agents/memory-instructions.md`, not in this one, and an analysis that skipped
 it has rated a run that saved nothing as `ok`.
 
+Then run `grep -nE 'handoffs:|fork:' agents.yaml`. If it prints anything, load
+**zen-topology** now. It is what the Delegation and Forking areas of §4 are
+graded against: what each shape carries, what it costs in tokens, cache and
+time, and the table of graph signatures in its §7.
+
 Load **zen-instructions** before you say where a proposed rule should live.
 
 ## 3. Read
@@ -168,6 +173,9 @@ checked.
 
 ### Delegation
 
+Work through the signature table in **zen-topology** §7 for every row that
+mentions a `handoff` or a one-branch `fork`, then:
+
 - Each `handoff`: right target for the work, fired after its own part was done
   and not before, with a `reason` the target can act on. Did control come back
   when it should have? Two agents passing the conversation back and forth is a
@@ -180,6 +188,10 @@ checked.
   a specialist in `agents.yaml` exists to do.
 
 ### Forking - parallel where it could be
+
+Work through the signature table in **zen-topology** §7 for every row about a
+fan-out, and price each finding the way its §7 says - a missed fan-out costs
+elapsed time, not tokens. Then:
 
 - Independent work done in series: several research calls one after another
   where none uses an earlier result. That is a missed `fork`, and the elapsed
@@ -265,14 +277,14 @@ the finding on its own - asking about it gets an invented reason.
 
 Ask whenever it applies:
 
-| The run...                                             | Ask the `llm` that...              | About                                                               |
-| ------------------------------------------------------ | ---------------------------------- | ------------------------------------------------------------------- |
-| researched without searching memory first              | issued the first research call     | why not `memory_search` / `memory_grep` for the subject first       |
-| recalled memory, then redid the work anyway            | came right after the recall        | why the recalled nodes were not enough                              |
-| left a paid-for item uncommitted (§4, saved, step 4)   | is the owner's last before handoff | why that item was not saved with `memory_commit`                    |
-| ran independent work one piece after another           | issued the first of the series     | why not one `fork` with a branch per piece                          |
-| handed off or delegated too early, or to the wrong one | carries `calls handoff` / `fork`   | what made it pass the work on then, and to that agent               |
-| misused a tool, or repeated a failing call             | issued the call or its first retry | which words of the tool's description led it there, or were missing |
+| The run...                                             | Ask the `llm` that...                       | About                                                               |
+| ------------------------------------------------------ | ------------------------------------------- | ------------------------------------------------------------------- |
+| researched without searching memory first              | issued the first research call              | why not `memory_search` / `memory_grep` for the subject first       |
+| recalled memory, then redid the work anyway            | came right after the recall                 | why the recalled nodes were not enough                              |
+| left a paid-for item uncommitted (§4, saved, step 4)   | is the owner's last before handoff          | why that item was not saved with `memory_commit`                    |
+| ran independent work one piece after another           | issued the first of the series              | why not one `fork` with a branch per piece                          |
+| handed off or delegated too early, or to the wrong one | carries `calls transfer_to_<name>` / `fork` | what made it pass the work on then, and to that agent               |
+| misused a tool, or repeated a failing call             | issued the call or its first retry          | which words of the tool's description led it there, or were missing |
 
 For example, a run whose first action was a workspace grep, with memory never
 searched - the ids are for you, the question never mentions them. Write
