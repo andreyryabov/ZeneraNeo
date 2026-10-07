@@ -1504,6 +1504,7 @@ export function writeStatus(t: Tuning): void {
     const allStages = mergeStages(everything, {
         apply: mergeModels(...applies.map((a) => envelopesIn(a.dir, 'apply'))),
     });
+    t.progress = { counts, total: cases.length, spent: allStages };
     const tokenRows = tokenTable(allStages);
     if (tokenRows.length > 0) {
         out.push(

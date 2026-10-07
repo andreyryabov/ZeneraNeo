@@ -62,6 +62,12 @@ export function total(by: ByModel | undefined): Tokens {
     return sum.all ?? zero();
 }
 
+/** Input plus output, the input counting cached tokens. */
+export function spent(by: ByModel | undefined): number {
+    const s = total(by);
+    return s.input + s.output;
+}
+
 interface Usage {
     inputTokens?: number;
     cachedInputTokens?: number;
@@ -78,7 +84,8 @@ const fromUsage = (u: Usage, calls: number): Tokens => ({
 });
 
 /** `vertex/gemini-3.8-flash` and `gemini-3.8-flash` are one model in a table. */
-const modelName = (m: string | undefined): string => (m ? m.replace(/^[^/:]+[/:]/, '') : '?');
+export const modelName = (m: string | undefined): string =>
+    m ? m.replace(/^[^/:]+[/:]/, '') : '?';
 
 // ---------------------------------------------------------------------------
 // What one run did, from its trajectory

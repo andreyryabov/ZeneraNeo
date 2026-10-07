@@ -244,6 +244,17 @@ function fakeZen(decide: (c: string, phase: string, attempt: number, applies: nu
                 appendFileSync(join(root, 'agents', 'instructions.md'), '- sneaky\n');
             }
             if (v.broken) {
+                appendFileSync(
+                    log,
+                    [
+                        'log  /tmp/meta.20261008-x.log',
+                        '"404 Not Found" (404)',
+                        "Model 'claude-x' not found on provider at http://127.0.0.1:1 (HTTP 404).",
+                        'error the meta agent exited 1',
+                        '        resume it: zen meta resume acme x',
+                        '',
+                    ].join('\n'),
+                );
                 return { code: 1, stdout: '' };
             }
             if (v.infra) {
@@ -557,11 +568,27 @@ describe('zen meta finetune', () => {
         const fake = fakeZen(() => ({ done: true, broken: outage }));
         await start(fake.zen, '-N', '1');
         expect(result('a1')).toMatchObject({ state: 'failed' });
-        expect(result('a1')!.reason).toMatch(/^error: analysis wrote no usable feedback/);
+        expect(result('a1')!.reason).toMatch(
+            /^error: analysis wrote no usable feedback \(missing\): Model 'claude-x' not found .*\(HTTP 404\)/,
+        );
+        // An agent that exited on an error is not asked again to fix its file.
+        const analyses = () => fake.calls.filter((a) => a[0] === 'meta' && a.includes('--events'));
+        expect(analyses()).toHaveLength(1);
+        const live = JSON.parse(readFileSync(join(root, 'finetune', 'live.json'), 'utf8'));
+        expect(live.errors[0]).toMatchObject({
+            where: 'a1 · no memory try 1',
+            message: expect.stringContaining('HTTP 404'),
+            log: '/tmp/meta.20261008-x.log',
+        });
+        expect(live.log.some((r: { action: string }) => r.action === 'error')).toBe(false);
+        const session = (a: string[]) => a[a.indexOf('--session-id') + 1];
+        const before = session(analyses()[0]);
 
         outage = false;
         await start(fake.zen, '-N', '1');
         expect(result('a1')).toMatchObject({ state: 'completed' });
+        // A failed case's analysis starts a session of its own, never the one that broke.
+        expect(session(analyses()[1])).not.toBe(before);
         // The run itself had gone through: only the analysis is done again.
         const first = runsOf(fake.calls, 'a1').filter((a) =>
             a[a.indexOf('--input') + 1].includes('01-nomem'),
@@ -681,6 +708,28 @@ describe('zen meta finetune', () => {
         expect(result('a1')).toMatchObject({ state: 'failed' });
         expect(result('a1')!.reason).toMatch(/^void: 3 analyses in a row found the run void/);
         expect(fake.applies).toBe(0);
+    });
+
+    it('keeps a live snapshot: the steps that ended, with what they came to, took and spent', async () => {
+        await dataset(['a1']);
+        await start(fakeZen(() => ({ done: true })).zen, '-N', '1');
+        const live = JSON.parse(readFileSync(join(root, 'finetune', 'live.json'), 'utf8'));
+        expect(live).toMatchObject({ state: 'finished', total: 1, now: [] });
+        expect(live.counts.completed).toBe(1);
+        const ran = live.log.findLast((r: { action: string }) => r.action === 'ran');
+        expect(ran).toMatchObject({ case: 'a1 · no memory try 1', result: '5 turns' });
+        expect(ran.tokens).toBeGreaterThan(0);
+        expect(typeof ran.took).toBe('number');
+        expect(live.log.find((r: { action: string }) => r.action === 'analyzed')).toMatchObject({
+            result: 'right 1/1, done',
+        });
+        expect(live.log.some((r: { action: string }) => r.action === 'run')).toBe(false);
+        expect(live.tokens).toContainEqual(
+            expect.objectContaining({ stage: 'run', model: 'gemini-a' }),
+        );
+        expect(live.tokens).toContainEqual(
+            expect.objectContaining({ stage: 'analyze', model: 'gemini-meta' }),
+        );
     });
 
     it('reuses one analyze session for every try of a case', async () => {

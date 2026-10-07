@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import { errorIn, sizeOf } from './failure.ts';
 import type { Feedback } from './feedback.ts';
 import { writeApply } from './report.ts';
 import { readJson, type Seat, Stopped, type Tuning } from './tuning.ts';
+import { envelopesIn, spent } from './usage.ts';
 
 // ---------------------------------------------------------------------------
 // The improvement queue
@@ -40,6 +42,8 @@ export class Improvements {
     /** `zen run`s in flight */
     runs = 0;
     applying = false;
+    /** the apply under way; `name` once it has a folder, before that it waits for runs */
+    current: { since: number; name?: string; dir?: string; requests?: number } | undefined;
     /** applies started in this process */
     started = 0;
     /** applies finished in this process - an analysis spanning one may see edits */
@@ -144,6 +148,7 @@ export class Improvements {
     async #applyNow(): Promise<void> {
         const t = this.#t;
         this.applying = true;
+        this.current = { since: Date.now() };
         this.started++;
         t.event({ what: 'apply waiting', detail: `${this.runs} run(s) to finish` });
         try {
@@ -160,6 +165,7 @@ export class Improvements {
             );
         } finally {
             this.applying = false;
+            this.current = undefined;
             this.inApply = [];
         }
     }
@@ -183,6 +189,7 @@ export class Improvements {
             )}\n`,
         );
         const total = batch.reduce((n, f) => n + f.improvements.length, 0);
+        this.current = { since: Date.now(), name, dir, requests: batch.length };
         let to = from;
         if (total > 0) {
             t.event({
@@ -219,9 +226,13 @@ export class Improvements {
             this.#applied.add(f.id);
         }
         this.count++;
+        this.current = undefined;
         t.event({
             what: 'applied',
             detail: `${name}: v${from} -> v${to}, see applies/${name}/APPLY.md`,
+            result: total === 0 ? 'nothing to change' : `v${from} → v${to}`,
+            took: Date.now() - Date.parse(startedAt),
+            tokens: spent(envelopesIn(dir, 'apply')),
         });
     }
 
@@ -231,6 +242,9 @@ export class Improvements {
         for (let attempt = 1; ; attempt++) {
             const session = randomUUID();
             writeFileSync(join(dir, 'session'), `${session}\n`);
+            const applyLog = join(dir, 'apply.log');
+            const checkLog = join(dir, 'check.log');
+            const offset = { apply: sizeOf(applyLog), check: sizeOf(checkLog) };
             const res = await t.zen(
                 [
                     'meta',
@@ -244,19 +258,23 @@ export class Improvements {
                     '/finetune-apply',
                     dir,
                 ],
-                join(dir, 'apply.log'),
+                applyLog,
             );
             writeFileSync(
                 join(dir, attempt === 1 ? 'apply.json' : `apply-${attempt}.json`),
                 res.stdout,
             );
-            const check = await t.zen(
-                ['check', '--no-models', '--no-sandbox'],
-                join(dir, 'check.log'),
-            );
+            const check = await t.zen(['check', '--no-models', '--no-sandbox'], checkLog);
             if (res.code === 0 && check.code === 0) {
                 return;
             }
+            const e =
+                res.code !== 0 ? errorIn(applyLog, offset.apply) : errorIn(checkLog, offset.check);
+            t.error(
+                `apply ${basename(dir)}${attempt > 1 ? ` try ${attempt}` : ''}`,
+                `${res.code !== 0 ? 'the apply failed' : 'zen check failed after the apply'}${e.message ? `: ${e.message}` : ''}`,
+                e.log,
+            );
             t.system.restore(from);
             if (attempt === 2) {
                 throw new Error(`apply ${dir} left the project broken twice - see check.log`);

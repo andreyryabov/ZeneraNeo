@@ -2,6 +2,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync } f
 import { basename, join } from 'node:path';
 import { DatasetStore } from './dataset/store.ts';
 import type { Case } from './dataset/types.ts';
+import { errorIn, sizeOf } from './failure.ts';
 import { writeFeedback } from './report.ts';
 import type { Run } from './train.ts';
 import { readJson, type Tuning } from './tuning.ts';
@@ -60,6 +61,7 @@ function rows<T>(file: string): T[] {
 export class Memories {
     readonly #t: Tuning;
     #chain: Promise<void> = Promise.resolve();
+    merging: { name: string; since: number } | undefined;
 
     constructor(t: Tuning) {
         this.#t = t;
@@ -138,7 +140,7 @@ export class Memories {
         this.#chain = this.#chain
             .then(() => this.#merge())
             .catch((err: Error) => {
-                this.#t.event({ what: 'memory merge failed', detail: err.message });
+                this.#t.error('memory merge', err.message);
             });
     }
 
@@ -166,12 +168,16 @@ export class Memories {
         const last = this.lastMerge();
         rmSync(target, { recursive: true, force: true });
         mkdirSync(join(this.dir, 'merged'), { recursive: true });
+        const began = Date.now();
+        const from = sizeOf(log);
+        this.merging = { name, since: began };
         this.#t.event({ what: 'memory merge', detail: `${name}: ${fresh.length} new` });
         const sources = [...(last ? [last.dir] : []), ...fresh.map((s) => s.dir)];
-        const res = await this.#t.zen(
-            ['memory', 'merge', ...sources, '--dir', target, '--yes'],
-            log,
-        );
+        const res = await this.#t
+            .zen(['memory', 'merge', ...sources, '--dir', target, '--yes'], log)
+            .finally(() => {
+                this.merging = undefined;
+            });
         const manifest = readJson<{ nodes?: number; edges?: number }>(
             join(target, 'manifest.json'),
         );
@@ -188,6 +194,10 @@ export class Memories {
             ...(manifest?.edges !== undefined ? { edges: manifest.edges } : {}),
         };
         appendFileSync(join(this.dir, 'merges.jsonl'), `${JSON.stringify(row)}\n`);
+        if (!row.ok) {
+            const e = errorIn(log, from);
+            this.#t.error(`memory ${name}`, e.message ?? 'the merge wrote no manifest', e.log);
+        }
         const store = DatasetStore.open(this.#t.root);
         for (const s of fresh) {
             const c = store.get(s.case);
@@ -198,6 +208,10 @@ export class Memories {
         this.#t.event({
             what: row.ok ? 'memory merged' : 'memory merge failed',
             detail: `${name}: ${row.includes.length} case(s)${row.ok ? '' : ' - see the log'}`,
+            result: row.ok
+                ? `${row.includes.length} case(s), ${row.nodes ?? '?'} nodes`
+                : 'see the log',
+            took: Date.now() - began,
         });
     }
 }

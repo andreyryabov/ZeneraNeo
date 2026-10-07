@@ -51,6 +51,7 @@ export const FINETUNE_HELP = [
     '  start: -N <workers> (4), -M <apply at> (= workers), --tries <n> (4), --mem-tries <n> (3),',
     '  --merge-every <k> (3), --seed <n>, --class <c>, --id <glob>, --rubric yes|no, --limit <n>,',
     '  --force (past drift).',
+    '  In a terminal start draws what runs now, the tokens and the log; --plain does not.',
     '  Settings are kept in finetune/loop.json; start again to resume where it stopped.',
 ];
 
@@ -79,6 +80,7 @@ export const FINETUNE_DETAILS = [
     '  --rubric yes|no        Only cases with, or without, a rubric.',
     '  --limit <n>            Only the first n cases of the order.',
     '  --force                Start even though the dataset drifted from its sources.',
+    '  --plain                No live view: print a line per start and stop, as in a pipe.',
     '  --project <name|dir>   Which project. Default: the one you are in.',
     '',
     'One case: without memory, run it and /analyze it until the analysis says done -',
@@ -129,6 +131,7 @@ interface Flags {
     rubric?: string;
     limit?: string;
     force?: boolean;
+    plain?: boolean;
     difficult?: boolean;
     yes?: boolean;
 }
@@ -146,6 +149,7 @@ const OPTIONS = {
     rubric: { type: 'string' },
     limit: { type: 'string' },
     force: { type: 'boolean' },
+    plain: { type: 'boolean' },
     difficult: { type: 'boolean' },
     yes: { type: 'boolean' },
 } as const;
@@ -302,10 +306,17 @@ async function start(
     }
 
     let interrupts = 0;
+    let drawing = false;
     const onInterrupt = (): void => {
         interrupts++;
         if (interrupts === 1) {
-            note(yellow('stopping: the steps in flight finish first - Ctrl-C again to kill them'));
+            if (!drawing) {
+                note(
+                    yellow(
+                        'stopping: the steps in flight finish first - Ctrl-C again to kill them',
+                    ),
+                );
+            }
             t.stop('interrupted');
             return;
         }
@@ -323,9 +334,16 @@ async function start(
         `${bold('tuning')} ${project.name} · ${config.workers} workers · apply at ${config.applyAt}`,
     );
     note(dim(`follow it: file://${join(t.dir, 'STATUS.html')}`));
+    let close: (() => void) | undefined;
+    if (!ctx.json && !values.plain && !options.zen && process.stderr.isTTY && process.stdin.isTTY) {
+        const { watch } = await import('./tui.tsx');
+        close = await watch(t, onInterrupt);
+        drawing = true;
+    }
     try {
         await runLoop(t);
     } finally {
+        close?.();
         process.off('SIGINT', onInterrupt);
     }
     if (!ctx.json) {

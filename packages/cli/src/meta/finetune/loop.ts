@@ -2,7 +2,9 @@ import { claimLock, ownLock } from '@zenera/neo';
 import { mkdirSync, rmSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { CliError, EXIT } from '../host.ts';
+import { StepError } from './failure.ts';
 import { recover } from './journal.ts';
+import { publish } from './live.ts';
 import { nextCase, resultOf } from './sampler.ts';
 import { markFailed, SandboxDown, train, VoidRun } from './train.ts';
 import { Stopped, type Seat, type Tuning } from './tuning.ts';
@@ -17,6 +19,7 @@ import { Stopped, type Seat, type Tuning } from './tuning.ts';
 // ---------------------------------------------------------------------------
 
 const REPORT_EVERY_MS = 15_000;
+const LIVE_EVERY_MS = 1000;
 
 export async function runLoop(t: Tuning): Promise<void> {
     mkdirSync(t.dir, { recursive: true });
@@ -33,10 +36,12 @@ export async function runLoop(t: Tuning): Promise<void> {
     );
     rmSync(t.stopFile, { force: true });
     const timer = setInterval(() => t.report(), REPORT_EVERY_MS);
+    const live = setInterval(() => publish(t), LIVE_EVERY_MS);
     try {
         await recover(t);
         const start = t.system.record('start');
         t.event({ what: 'started', detail: `system v${start.v}, ${t.workers.length} workers` });
+        publish(t);
         const applier = t.improvements.loop();
         await dispatch(t);
         t.finished = true;
@@ -45,6 +50,9 @@ export async function runLoop(t: Tuning): Promise<void> {
         t.event({ what: t.stopping ? 'stopped' : 'finished' });
     } finally {
         clearInterval(timer);
+        clearInterval(live);
+        t.finished = true;
+        publish(t);
         try {
             unlinkSync(lock);
         } catch {
@@ -73,8 +81,10 @@ async function dispatch(t: Tuning): Promise<void> {
         t.tried.add(c.id);
         const before = resultOf(t, c);
         if (before?.state === 'failed') {
-            // Taken again: until it ends anew it is in progress, not failed.
+            // Taken again: until it ends anew it is in progress, not failed. Its analyze session
+            // may be what broke (another model, a dead provider), so the next analysis starts fresh.
             rmSync(join(t.caseDir(c), 'result.json'), { force: true });
+            rmSync(join(t.caseDir(c), 'session'), { force: true });
             t.event({ what: 'resumed', case: c.id, rev: c.rev, detail: before.reason });
         }
         await t.seat(seat, false);
@@ -97,6 +107,12 @@ async function trainCase(t: Tuning, s: Seat): Promise<void> {
                       ? `void: ${err.message}`
                       : `error: ${(err as Error).message}`;
             markFailed(t, c, s.phase ?? 'nomem', why);
+            const attempt = s.worker?.attempt;
+            t.error(
+                `${c.id} · ${s.phase === 'mem' ? 'with memory' : 'no memory'}${attempt ? ` try ${attempt}` : ''}`,
+                (err as Error).message,
+                err instanceof StepError ? err.log : undefined,
+            );
             if (err instanceof SandboxDown) {
                 t.sandboxDown(err.message);
             } else {

@@ -18,11 +18,19 @@ import { sessionKept } from '../tokens.ts';
 import { batchInput } from './dataset/export.ts';
 import { DatasetStore } from './dataset/store.ts';
 import type { Case } from './dataset/types.ts';
+import { errorIn, sizeOf, StepError } from './failure.ts';
 import { type Feedback, type Phase, readFeedback } from './feedback.ts';
 import { caseTokens, writeFeedback } from './report.ts';
 import type { Result } from './sampler.ts';
 import { readJson, type Seat, type Tuning } from './tuning.ts';
-import { type ByModel, type RunMetrics, runMetrics, tokensOf } from './usage.ts';
+import {
+    type ByModel,
+    envelopesIn,
+    type RunMetrics,
+    runMetrics,
+    spent,
+    tokensOf,
+} from './usage.ts';
 
 // ---------------------------------------------------------------------------
 // One case, start to finish
@@ -90,16 +98,17 @@ async function tryOnce(
         }
         renameSync(dir, `${dir}.void-${n}`);
         t.event({
-            what: 'void',
+            what: 'set aside',
             worker: s.worker?.slot,
             case: c.id,
             phase,
             attempt,
-            detail: feedback.infra,
+            detail: `void, kept in ${basename(dir)}.void-${n} - running the try again`,
         });
         if (voids >= VOIDS) {
             throw new VoidRun(
                 `${VOIDS} analyses in a row found the run void - the last: ${feedback.infra}`,
+                join(`${dir}.void-${n}`, 'analysis.md'),
             );
         }
         t.checkStopping();
@@ -131,10 +140,10 @@ export interface Run {
     durationMs?: number;
 }
 
-export class VoidRun extends Error {}
+export class VoidRun extends StepError {}
 
 /** The container engine failed: every run after this one would fail the same way. */
-export class SandboxDown extends Error {}
+export class SandboxDown extends StepError {}
 
 /** Killed for memory, or nothing to show for it: the run says nothing about the prose. */
 const VOIDS = 3;
@@ -151,25 +160,26 @@ async function zenRun(
     const file = join(dir, 'run.json');
     for (let tries = 1; !existsSync(file); tries++) {
         if (tries > VOIDS) {
-            throw new VoidRun(`${VOIDS} runs in a row were void`);
+            throw new VoidRun(`${VOIDS} runs in a row were void`, join(dir, 'run.log'));
         }
         await t.improvements.notApplying();
         t.at(s, phase, attempt, 'run');
         t.improvements.runs++;
+        const began = Date.now();
         try {
             const why = await t.journal.step({ kind: 'run', dir }, () =>
                 runOnce(t, c, dir, memory),
             );
-            if (why) {
-                t.event({
-                    what: 'void',
-                    worker: s.worker?.slot,
-                    case: c.id,
-                    phase,
-                    attempt,
-                    detail: why,
-                });
-            }
+            const ran = why ? undefined : readJson<Run>(file);
+            t.ended(s, {
+                what: why ? 'void' : 'ran',
+                phase,
+                attempt,
+                result:
+                    why ?? (ran?.failed ? `failed: ${ran.failed}` : `${ran?.turns ?? '?'} turns`),
+                took: Date.now() - began,
+                tokens: spent(ran?.tokens),
+            });
         } finally {
             t.improvements.runs--;
         }
@@ -233,6 +243,7 @@ async function runOnce(
     if (res.code === EXIT.sandbox) {
         throw new SandboxDown(
             /error\s+(.+)/.exec(said())?.[1]?.trim() ?? 'the sandbox is not ready',
+            log,
         );
     }
 
@@ -261,7 +272,7 @@ async function runOnce(
     }>(join(runDir, 'meta.json'));
     const metrics = runMetrics(runDir);
     if (metrics?.sandbox) {
-        throw new SandboxDown(metrics.sandbox);
+        throw new SandboxDown(metrics.sandbox, join(runDir, 'graph.mmd'));
     }
     const run: Run = {
         dir: runDir,
@@ -308,9 +319,22 @@ async function analyze(
     } else {
         t.checkStopping();
         t.at(s, phase, attempt, 'analyze');
+        const began = Date.now();
         feedback = await t.journal.step({ kind: 'analyze', dir }, () =>
             analyzeOnce(t, s, c, phase, attempt, run, file),
         );
+        const graded = Object.values(feedback.rubric);
+        t.ended(s, {
+            what: 'analyzed',
+            phase,
+            attempt,
+            result:
+                feedback.verdict === 'void'
+                    ? `void: ${feedback.infra}`
+                    : `${feedback.verdict}${graded.length ? ` ${graded.filter((g) => g === 'pass').length}/${graded.length}` : ''}${feedback.done ? ', done' : ''}`,
+            took: Date.now() - began,
+            tokens: spent(envelopesIn(dir, 'analyze')),
+        });
         // Only a try that went all the way through says the sandbox and the providers are up:
         // a run can pass on one provider while the analysis fails on another.
         if (feedback.verdict !== 'void') {
@@ -352,6 +376,8 @@ async function analyzeOnce(
         ...(sessionKept(session!) ? ['--resume', session!] : ['--session-id', session!]),
     ];
 
+    const log = join(dir, 'analyze.log');
+    const from = sizeOf(log);
     const res = await t.zen(
         [
             ...continuing(),
@@ -363,19 +389,20 @@ async function analyzeOnce(
             `attempt=${attempt}`,
             `feedback=${file}`,
         ],
-        join(dir, 'analyze.log'),
+        log,
     );
     keepAnalysis(dir, res.stdout);
 
     const rubricIds = c.rubric.map((r) => r.id);
     let read = readFeedback(file, known, rubricIds);
-    if (!('feedback' in read)) {
+    // An agent that exited on an error would only meet it again; one that wrote a bad file can fix it.
+    if (!('feedback' in read) && res.code === 0) {
         const again = await t.zen(
             [
                 ...continuing(),
                 `The feedback file ${file} is ${read.problem}. Write it again exactly as section 7 of the zen-analyze-run skill describes, then stop.`,
             ],
-            join(dir, 'analyze.log'),
+            log,
         );
         keepAnalysis(dir, again.stdout, false);
         read = readFeedback(file, known, rubricIds);
@@ -393,7 +420,11 @@ async function analyzeOnce(
         });
     }
     if (!('feedback' in read)) {
-        throw new Error(`analysis wrote no usable feedback (${read.problem})`);
+        const e = errorIn(log, from);
+        throw new StepError(
+            `analysis wrote no usable feedback (${read.problem})${e.message ? `: ${e.message}` : ''}`,
+            e.log,
+        );
     }
     note(t, c, read.feedback, run, session);
     return read.feedback;

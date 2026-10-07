@@ -16,9 +16,11 @@ import type { Case } from './dataset/types.ts';
 import type { Phase } from './feedback.ts';
 import { Improvements } from './improvements.ts';
 import { Journal } from './journal.ts';
+import type { Snapshot } from './live.ts';
 import { Memories } from './memories.ts';
 import { writeStatus } from './report.ts';
 import { SystemVersions } from './system.ts';
+import type { ByStage } from './usage.ts';
 
 // ---------------------------------------------------------------------------
 // One tuning, in progress
@@ -93,12 +95,24 @@ export interface Event {
     phase?: Phase;
     attempt?: number;
     detail?: string;
+    /** a step that ended: what it came to, how long it took, what it spent */
+    result?: string;
+    took?: number;
+    tokens?: number;
 }
 
 const pad = (n: number): string => String(n).padStart(2, '0');
 
 /** Failed cases in a row, with nothing going through between, that stop the loop. */
 export const FAILURES_IN_A_ROW = 3;
+
+export interface StepFailure {
+    at: string;
+    /** `merge-20 · no memory try 1`, `apply 004`, `memory m03` */
+    where: string;
+    message: string;
+    log?: string;
+}
 
 export class Tuning {
     readonly root: string;
@@ -125,6 +139,12 @@ export class Tuning {
     readonly tried = new Set<string>();
     /** cases failed since the last step that went through */
     failures = 0;
+    /** what the last status page counted */
+    progress: { counts: Record<string, number>; total: number; spent: ByStage } | undefined;
+    /** called with every live snapshot */
+    readonly watchers = new Set<(s: Snapshot) => void>();
+    /** the latest step failures, newest first */
+    readonly errors: StepFailure[] = [];
 
     constructor(root: string, config: Config, zen: Zen, tickMs = 1000) {
         this.root = root;
@@ -291,6 +311,26 @@ export class Tuning {
             phase,
             attempt,
         });
+    }
+
+    /** A step ended: the worker is between steps until the next `at`, and the event says how it went. */
+    ended(s: Seat, e: Omit<Event, 'at' | 'worker' | 'case' | 'rev'>): void {
+        if (s.worker) {
+            Object.assign(s.worker, { step: 'idle', since: Date.now() });
+        }
+        this.event({ worker: s.worker?.slot, case: s.case.id, rev: s.case.rev, ...e });
+    }
+
+    /** A step failed: kept for the live view, and in events.jsonl with its log. */
+    error(where: string, message: string, log?: string): void {
+        this.errors.unshift({
+            at: new Date().toISOString(),
+            where,
+            message,
+            ...(log ? { log } : {}),
+        });
+        this.errors.length = Math.min(this.errors.length, 20);
+        this.event({ what: 'error', detail: `${where}: ${message}${log ? ` - see ${log}` : ''}` });
     }
 
     event(e: Omit<Event, 'at'>): void {

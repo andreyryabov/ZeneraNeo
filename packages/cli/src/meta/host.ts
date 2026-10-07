@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 
 export { invokedAs, parse } from '../args.ts';
+export type { EventLine } from '../eventlog.ts';
 export { paths, readJson, writeJson } from '../home.ts';
 export { envOf, type KeyEntry, type KeyStore, type Provider } from '../keys.ts';
 export { PROVIDER_NAMES, splitRef } from '../modelref.ts';
@@ -37,5 +38,6 @@ export {
 } from '../term.ts';
 export { safe } from '../trace.ts';
 export { formatInline, formatMarkdown } from '../tui/markdown.ts';
+export { resolveTheme, type Theme } from '../tui/theme.ts';
 export { boxWidth } from '../tui/wrap.ts';
 export { META_PROMPT_ENV, META_SESSION_ENV } from '../usage.ts';
