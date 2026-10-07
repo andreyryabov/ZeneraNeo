@@ -8,7 +8,7 @@ import {
     writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, relative, sep } from 'node:path';
-import { safe } from '../../trace.ts';
+import { safe } from '../host.ts';
 import { DatasetStore } from './dataset/store.ts';
 import { type Case, DATASET_DIR } from './dataset/types.ts';
 import { type Feedback, type Phase, readFeedback } from './feedback.ts';

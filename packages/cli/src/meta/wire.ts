@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import {
     credentialError,
@@ -59,7 +60,14 @@ export interface Wiring {
     secret: string[];
     /** anything true but unwelcome: a location that will be slow, a stale default */
     warnings: string[];
+    /** Claude on Vertex: a loopback relay to start, whose url becomes the base url */
+    relay?: { key: string; project: string; location: string; keyFile: string };
 }
+
+/** Where the relay's url goes once it is listening. */
+export const RELAY_URL = 'http://127.0.0.1:<relay>';
+
+const vertexClaude = (id: string): boolean => /^(anthropic\/)?claude-/.test(id);
 
 /**
  * Turns a zen key entry and a model id into copilot's environment.
@@ -77,6 +85,35 @@ export function wire(store: KeyStore, entry: KeyEntry, id: string): Wiring {
     env.COPILOT_PROVIDER_TYPE = TYPES[provider];
     env.COPILOT_MODEL = id;
 
+    if (provider === 'vertex' && vertexClaude(id)) {
+        const project = store.projectOf(entry)?.id;
+        if (entry.holds !== 'file' || !project) {
+            throw credentialError(
+                `Claude on vertex needs a service account and a GCP project, not ${entry.provider}/${entry.name}`,
+                'add one: zen key add vertex --project <id>',
+            );
+        }
+        const model = id.replace(/^anthropic\//, '');
+        const key = randomBytes(24).toString('hex');
+        env.COPILOT_PROVIDER_TYPE = 'anthropic';
+        env.COPILOT_MODEL = model;
+        env.COPILOT_PROVIDER_BASE_URL = RELAY_URL;
+        env.COPILOT_PROVIDER_API_KEY = key;
+        return {
+            provider,
+            model,
+            env,
+            secret: ['COPILOT_PROVIDER_API_KEY'],
+            warnings,
+            relay: {
+                key,
+                project,
+                location: entry.location?.trim() || 'global',
+                keyFile: store.fileOf(entry),
+            },
+        };
+    }
+
     if (provider === 'vertex') {
         const project = store.projectOf(entry)?.id;
         if (!project) {
@@ -85,8 +122,11 @@ export function wire(store: KeyStore, entry: KeyEntry, id: string): Wiring {
                 'set one: zen key add vertex --project <id>',
             );
         }
-        const location = entry.location?.trim() || 'global';
-        if (location === 'global') {
+        const named = entry.location?.trim() || 'global';
+        const partner = id.includes('/') && !id.startsWith('google/');
+        // Gemini serves the `us`/`eu` multi-regions; partner models answer them with a 404 or 429.
+        const location = partner && (named === 'us' || named === 'eu') ? 'global' : named;
+        if (location === 'global' && !partner) {
             warnings.push('location `global` adds about ten seconds of cold start');
         }
         env.COPILOT_PROVIDER_BASE_URL = `https://aiplatform.googleapis.com/v1/projects/${project}/locations/${location}/endpoints/openapi`;
@@ -94,7 +134,8 @@ export function wire(store: KeyStore, entry: KeyEntry, id: string): Wiring {
         // provider prefix; the bare id stays as the model *id* so copilot can
         // still match its catalogue for token limits and tool support.
         env.COPILOT_PROVIDER_WIRE_MODEL = id.includes('/') ? id : `google/${id}`;
-        env.COPILOT_PROVIDER_MODEL_ID = id.includes('/') ? id.slice(id.indexOf('/') + 1) : id;
+        // Only Google's own ids are bare: `gpt-oss-…` would get GPT's custom `apply_patch`, which this endpoint rejects.
+        env.COPILOT_PROVIDER_MODEL_ID = id.startsWith('google/') ? id.slice('google/'.length) : id;
     } else {
         const url = BASE_URLS[provider];
         if (!url) {

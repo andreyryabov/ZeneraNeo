@@ -45,6 +45,7 @@ import {
     runFinetune,
     sessionTotals,
     SOURCE_LABELS,
+    startVertexRelay,
     tailSpans,
     Tally,
     terminalSink,
@@ -596,6 +597,11 @@ async function go(
         recordSession(project.dir, session);
         log.line(`session ${session}`);
     }
+    const relay = wiring.relay ? await startVertexRelay(wiring.relay) : undefined;
+    if (relay) {
+        wiring.env.COPILOT_PROVIDER_BASE_URL = relay.url;
+        log.line(`relay   ${relay.url} -> vertex rawPredict`);
+    }
     log.line('');
     log.line('--- prompt ---');
     log.line(prompt);
@@ -729,6 +735,7 @@ async function go(
     } finally {
         tail.stop();
         reporter.stop();
+        await relay?.close();
         log.close();
     }
 }

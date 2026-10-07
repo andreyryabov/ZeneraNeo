@@ -4,6 +4,7 @@ export * from './finetune/index.ts';
 export * from './launch.ts';
 export * from './model.ts';
 export * from './prompts.ts';
+export * from './relay.ts';
 export * from './tokens.ts';
 export * from './window.ts';
 export * from './wire.ts';

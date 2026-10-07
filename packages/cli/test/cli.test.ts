@@ -13,6 +13,8 @@ import {
     statSync,
     writeFileSync,
 } from 'node:fs';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -66,6 +68,7 @@ import {
     resumeDelayMs,
     shutdownModels,
     splitLines,
+    startRelay,
     Tally,
     toneAt,
     transient,
@@ -3311,6 +3314,23 @@ describe('wiring a zen key into copilot', () => {
         expect(out.warnings).toEqual([]);
     });
 
+    // Vertex's completions endpoint takes `function` tools only, and a bare
+    // `gpt-oss-…` id gets copilot's GPT tool set with a custom `apply_patch`.
+    it('keeps a partner publisher on the model id so copilot falls back to function tools', () => {
+        const out = wire(
+            store,
+            entry({ provider: 'vertex', holds: 'file', location: 'us' }),
+            'openai/gpt-oss-120b-maas',
+        );
+        expect(out.env.COPILOT_PROVIDER_BASE_URL).toContain('/locations/global/');
+        expect(out.env.COPILOT_PROVIDER_WIRE_MODEL).toBe('openai/gpt-oss-120b-maas');
+        expect(out.env.COPILOT_PROVIDER_MODEL_ID).toBe('openai/gpt-oss-120b-maas');
+        expect(
+            wire(store, entry({ provider: 'vertex', holds: 'file' }), 'google/gemini-2.5-pro').env
+                .COPILOT_PROVIDER_MODEL_ID,
+        ).toBe('gemini-2.5-pro');
+    });
+
     it('says so when the location will be the slow one', () => {
         const out = wire(store, entry({ provider: 'vertex', holds: 'file' }), 'gemini-2.5-pro');
         expect(out.env.COPILOT_PROVIDER_BASE_URL).toContain('/locations/global/');
@@ -3343,6 +3363,103 @@ describe('wiring a zen key into copilot', () => {
         const shown = masked(out.env, out.secret).join('\n');
         expect(shown).not.toContain('sk-secret-value');
         expect(shown).toContain('COPILOT_PROVIDER_API_KEY=');
+    });
+
+    // The openapi endpoint answers a Claude id with a bare 404.
+    it('sends Claude on vertex through the relay as an anthropic provider', () => {
+        const out = wire(
+            store,
+            entry({ provider: 'vertex', holds: 'file', location: 'us' }),
+            'anthropic/claude-sonnet-5-5',
+        );
+        expect(out.env.COPILOT_PROVIDER_TYPE).toBe('anthropic');
+        expect(out.env.COPILOT_MODEL).toBe('claude-sonnet-5-5');
+        expect(out.env.COPILOT_PROVIDER_WIRE_MODEL).toBeUndefined();
+        expect(out.env.COPILOT_PROVIDER_API_KEY_COMMAND).toBeUndefined();
+        expect(out.relay).toMatchObject({
+            project: 'acme-ai',
+            location: 'us',
+            keyFile: '/keys/vertex.json',
+            key: out.env.COPILOT_PROVIDER_API_KEY,
+        });
+        expect(out.secret).toEqual(['COPILOT_PROVIDER_API_KEY']);
+    });
+
+    it('refuses Claude on vertex with an express-mode key', () => {
+        expect(() =>
+            wire(store, entry({ provider: 'vertex', holds: 'secret' }), 'claude-sonnet-5-5'),
+        ).toThrow(/service account/);
+    });
+});
+
+describe('the vertex Claude relay', () => {
+    const seen: { url: string; auth?: string; apiKey?: string; body: Record<string, unknown> }[] =
+        [];
+    let upstream: Server;
+    let base = '';
+
+    beforeEach(async () => {
+        seen.length = 0;
+        upstream = createServer((req, res) => {
+            let text = '';
+            req.on('data', (c: Buffer) => (text += c.toString()));
+            req.on('end', () => {
+                seen.push({
+                    url: req.url ?? '',
+                    auth: req.headers.authorization,
+                    apiKey: req.headers['x-api-key'] as string | undefined,
+                    body: JSON.parse(text) as Record<string, unknown>,
+                });
+                res.writeHead(200, { 'content-type': 'application/json' });
+                res.end('{"ok":true}');
+            });
+        });
+        await new Promise<void>((done) => upstream.listen(0, '127.0.0.1', done));
+        base = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}/v1/projects/p/locations/global`;
+    });
+    afterEach(() => {
+        upstream.closeAllConnections();
+        upstream.close();
+    });
+
+    const post = (url: string, key: string, body: object): Promise<Response> =>
+        fetch(`${url}/v1/messages`, {
+            method: 'POST',
+            headers: { 'x-api-key': key, 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+
+    it('moves the model into the path and adds the vertex version', async () => {
+        const relay = await startRelay({ key: 'k', base, token: async () => 'tok' });
+        try {
+            const res = await post(relay.url, 'k', { model: 'claude-x', max_tokens: 5 });
+            expect(res.status).toBe(200);
+            expect(await res.json()).toEqual({ ok: true });
+            await post(relay.url, 'k', { model: 'claude-x', stream: true });
+        } finally {
+            await relay.close();
+        }
+        expect(seen.map((s) => s.url)).toEqual([
+            '/v1/projects/p/locations/global/publishers/anthropic/models/claude-x:rawPredict',
+            '/v1/projects/p/locations/global/publishers/anthropic/models/claude-x:streamRawPredict',
+        ]);
+        expect(seen[0]).toMatchObject({
+            auth: 'Bearer tok',
+            apiKey: undefined,
+            body: { max_tokens: 5, anthropic_version: 'vertex-2023-10-16' },
+        });
+        expect(seen[0].body.model).toBeUndefined();
+    });
+
+    // Loopback is open to every process on the machine, and the relay mints GCP tokens.
+    it('refuses anyone without the session key', async () => {
+        const relay = await startRelay({ key: 'k', base, token: async () => 'tok' });
+        try {
+            expect((await post(relay.url, 'nope', { model: 'claude-x' })).status).toBe(401);
+        } finally {
+            await relay.close();
+        }
+        expect(seen).toEqual([]);
     });
 });
 

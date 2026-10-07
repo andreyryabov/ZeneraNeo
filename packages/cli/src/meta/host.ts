@@ -34,6 +34,7 @@ export {
     writeAll,
     yellow,
 } from '../term.ts';
+export { safe } from '../trace.ts';
 export { formatInline, formatMarkdown } from '../tui/markdown.ts';
 export { boxWidth } from '../tui/wrap.ts';
 export { META_PROMPT_ENV, META_SESSION_ENV } from '../usage.ts';
