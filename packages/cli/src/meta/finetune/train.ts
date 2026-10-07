@@ -20,7 +20,7 @@ import { type Feedback, type Phase, readFeedback } from './feedback.ts';
 import { caseTokens, writeFeedback } from './report.ts';
 import type { Result } from './sampler.ts';
 import { readJson, type Seat, type Tuning } from './tuning.ts';
-import { type ByModel, runTokens } from './usage.ts';
+import { type ByModel, type RunMetrics, runMetrics, tokensOf } from './usage.ts';
 
 // ---------------------------------------------------------------------------
 // One case, start to finish
@@ -89,6 +89,7 @@ export interface Run {
     usage?: TokenUsage;
     /** per model, from the run's trajectory */
     tokens?: ByModel;
+    metrics?: RunMetrics;
     durationMs?: number;
 }
 
@@ -204,7 +205,7 @@ async function runOnce(
         durationMs?: number;
         error?: string;
     }>(join(runDir, 'meta.json'));
-    const tokens = runTokens(runDir);
+    const metrics = runMetrics(runDir);
     const run: Run = {
         dir: runDir,
         memory: mem,
@@ -215,7 +216,7 @@ async function runOnce(
         ...(failed || meta?.error ? { failed: failed ?? meta?.error } : {}),
         ...(meta?.turns !== undefined ? { turns: meta.turns } : {}),
         ...(meta?.usage ? { usage: meta.usage } : {}),
-        ...(tokens ? { tokens } : {}),
+        ...(metrics ? { tokens: tokensOf(metrics), metrics } : {}),
         ...(meta?.durationMs !== undefined ? { durationMs: meta.durationMs } : {}),
     };
     writeFileSync(join(dir, 'run.json'), `${JSON.stringify(run, null, 2)}\n`);

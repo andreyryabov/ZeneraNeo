@@ -19,6 +19,7 @@ import { readFeedback } from '../src/meta/finetune/feedback.ts';
 import { Journal } from '../src/meta/finetune/journal.ts';
 import { SystemVersions } from '../src/meta/finetune/system.ts';
 import type { Zen } from '../src/meta/finetune/tuning.ts';
+import { runMetrics } from '../src/meta/finetune/usage.ts';
 
 let root: string;
 
@@ -107,17 +108,21 @@ function fakeZen(decide: (c: string, phase: string, attempt: number, applies: nu
             }
             const dir = join(root, 'sessions', 's', 'runs', String(++runs));
             mkdirSync(dir, { recursive: true });
+            // With memory the run recalls instead of researching: one call and one error fewer.
+            const withMemory = /\/\d{2}-mem\//.test(args[args.indexOf('--input') + 1]);
             writeFileSync(
                 join(dir, 'meta.json'),
                 JSON.stringify({
                     turns: 5,
-                    durationMs: 1200,
+                    durationMs: withMemory ? 600 : 1200,
                     usage: { inputTokens: 900, outputTokens: 100 },
                 }),
             );
             writeFileSync(join(dir, 'graph.mmd'), 'flowchart TD\n');
-            const call = (id: string, model: string) => ({
+            const at = (s: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, s)).toISOString();
+            const call = (id: string, model: string, s = 0) => ({
                 id,
+                ts: at(s),
                 type: 'llm_call',
                 model,
                 usage: { inputTokens: 300, outputTokens: 30 },
@@ -127,10 +132,24 @@ function fakeZen(decide: (c: string, phase: string, attempt: number, applies: nu
                 join(dir, 'state.json'),
                 JSON.stringify({
                     trajectory: [
-                        call('c1', 'gemini-a'),
-                        call('c2', 'gemini-a'),
-                        call('c3', 'gemini-b'),
-                        { branches: [{ trajectory: [call('c1', 'gemini-a')] }] },
+                        call('c1', 'gemini-a', 2),
+                        {
+                            id: 't1',
+                            ts: at(5),
+                            type: 'tool_result',
+                            isError: !withMemory,
+                            durationMs: 3000,
+                        },
+                        ...(withMemory
+                            ? [{ id: 'm1', ts: at(5), type: 'memory_recall' }]
+                            : [call('c2', 'gemini-a', 7)]),
+                        call('c3', 'gemini-b', 9),
+                        {
+                            id: 'j1',
+                            ts: at(9),
+                            type: 'join',
+                            branches: [{ nodes: [call('c1', 'gemini-a', 2)] }],
+                        },
                     ],
                 }),
             );
@@ -298,6 +317,74 @@ describe('feedback', () => {
 });
 
 describe('zen meta finetune', () => {
+    it('measures a run from its trajectory, branches as their own lanes', () => {
+        const at = (s: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, s)).toISOString();
+        const call = (id: string, model: string, s: number, input: number) => ({
+            id,
+            ts: at(s),
+            type: 'llm_call',
+            model,
+            usage: { inputTokens: input, cachedInputTokens: 100, outputTokens: 10 },
+        });
+        writeFileSync(
+            join(root, 'state.json'),
+            JSON.stringify({
+                trajectory: [
+                    { id: 'u', ts: at(0), type: 'user_input' },
+                    call('c1', 'vertex/gemini-a', 2, 300),
+                    { id: 'r1', ts: at(5), type: 'tool_result', isError: true, durationMs: 2500 },
+                    call('c2', 'gemini-a', 7, 500),
+                    { id: 'm1', ts: at(7), type: 'memory_op', op: 'commit' },
+                    { id: 'f1', ts: at(7), type: 'fork', branches: [{}, {}] },
+                    {
+                        id: 'j1',
+                        ts: at(12),
+                        type: 'join',
+                        branches: [
+                            {
+                                nodes: [
+                                    call('c4', 'gemini-b', 10, 200),
+                                    call('c1', 'gemini-a', 2, 300),
+                                ],
+                            },
+                            { nodes: [call('c5', 'gemini-b', 11, 100)] },
+                        ],
+                    },
+                    {
+                        id: 'k1',
+                        ts: at(13),
+                        type: 'compaction',
+                        usage: { inputTokens: 50, outputTokens: 5 },
+                    },
+                    { id: 'h1', ts: at(13), type: 'handoff' },
+                ],
+            }),
+        );
+        const m = runMetrics(root)!;
+        expect(m.models['gemini-a']).toEqual({
+            calls: 2,
+            input: 800,
+            cached: 200,
+            output: 20,
+            reasoning: 0,
+            peak: 500,
+            ms: 4000,
+        });
+        expect(m.models['gemini-b']).toMatchObject({ calls: 2, peak: 200, ms: 7000 });
+        expect(m.models.summarizer).toMatchObject({ calls: 1, input: 50, ms: 1000 });
+        expect(m).toMatchObject({
+            llmMs: 12000,
+            toolMs: 2500,
+            toolCalls: 1,
+            toolErrors: 1,
+            memory: { commit: 1, recall: 0 },
+            forks: 1,
+            branches: 2,
+            compactions: 1,
+            handoffs: 1,
+        });
+    });
+
     it('completes cases that pass first time, without memory and then with it', async () => {
         await dataset(['a1', 'b1']);
         const fake = fakeZen(() => ({ done: true }));
@@ -563,14 +650,41 @@ describe('zen meta finetune', () => {
         const result = JSON.parse(
             readFileSync(join(root, 'finetune', 'cases', 'b1', 'r1', 'result.json'), 'utf8'),
         ) as { tokens: Record<string, Record<string, { calls: number; input: number }>> };
-        expect(result.tokens.run['gemini-a']).toMatchObject({ calls: 4, input: 1200 });
+        expect(result.tokens.run['gemini-a']).toMatchObject({ calls: 3, input: 900 });
         expect(result.tokens.run['gemini-b']).toMatchObject({ calls: 2, input: 600 });
         expect(result.tokens.analyze['gemini-meta']).toMatchObject({ calls: 4, input: 1000 });
         expect(result.tokens.apply).toBeUndefined();
 
         const feedback = readFileSync(join(root, 'finetune', 'cases', 'b1', 'FEEDBACK.md'), 'utf8');
         expect(feedback).toContain('## Tokens');
-        expect(feedback).toMatch(/\| run \| gemini-a \| 4 \| 1k \|/);
+        expect(feedback).toMatch(/\| run \| gemini-a \| 3 \| 900 \|/);
+    });
+
+    it('reports each try against the one it is compared with, and sums the trend', async () => {
+        await dataset(['a1', 'b1']);
+        const fake = fakeZen((c, _p, _a, applies) => ({ done: c !== 'a1' || applies > 0 }));
+        await start(fake.zen, '-N', '2', '-M', '2');
+
+        const b1 = readFileSync(join(root, 'finetune', 'cases', 'b1', 'FEEDBACK.md'), 'utf8');
+        expect(b1).toContain('| Metric | no memory, try 1 | with memory, try 1 | Memory effect |');
+        expect(b1).toContain('| LLM calls | 3 | 2 (-1) | -33% better |');
+        expect(b1).toContain('| Tool errors | 1 | 0 (-1) | -100% better |');
+        expect(b1).toContain('| Memory recalls | 0 | 1 (+1) | new |');
+        expect(b1).toContain('### gemini-a');
+        expect(b1).toMatch(/\| Tool calls \| 1 \|/);
+
+        // a1 needed a fix: its second try is measured against its first.
+        const a1 = readFileSync(join(root, 'finetune', 'cases', 'a1', 'FEEDBACK.md'), 'utf8');
+        expect(a1).toContain('| LLM calls | 3 | 3 (=) | 2 (-1) | -33% better |');
+
+        const status = readFileSync(join(root, 'finetune', 'STATUS.md'), 'utf8');
+        expect(status).toContain('## Summary');
+        expect(status).toMatch(/\| no memory \| 3 \| 4s \| 9 \| 3 \|/);
+        expect(status).toContain('2 case(s) passed without memory, 1 on the first try.');
+        expect(status).toContain('2 completed case(s), cheaper in tokens with memory in 2.');
+        expect(status).toContain('| LLM calls | 6 | 4 | -33% | better |');
+        expect(status).toContain('| Tool errors | 2 | 0 | -100% | better |');
+        expect(status).toMatch(/\| -33% tokens · -50% time \|/);
     });
 });
 

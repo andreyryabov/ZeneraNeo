@@ -739,8 +739,10 @@ zen meta finetune session plan-day           # resume that case's analyze sessio
 Each case is run without memory and analyzed until it is right and lean, then
 run with the memory it wrote until that is cheaper. Improvement requests are
 applied in batches between runs, and every apply is a new, diffable version of
-the prose. Follow it in `finetune/STATUS.md`; each case has its own
-`finetune/cases/<id>/FEEDBACK.md` with its latest analysis.
+the prose. Follow it in `finetune/STATUS.md`, whose summary shows whether the
+fixes and the memory are making runs cheaper; each case has its own
+`finetune/cases/<id>/FEEDBACK.md` with its latest analysis and the metrics of
+every try.
 
 ## Credentials
 

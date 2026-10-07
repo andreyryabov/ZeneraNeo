@@ -52,11 +52,13 @@ tries used up  ->  difficult
 
 ```
 finetune/
-    STATUS.md            the whole tuning: workers, queue, applies, cases - generated
+    STATUS.md            the whole tuning: summary (spend per phase, tuning and memory
+                         effect), workers, queue, applies, cases - generated
     loop.json            the settings; flags on start update it
     events.jsonl         every step, in order
     cases/<id>/
-        FEEDBACK.md      that case: rubric, latest analysis, decisions, history - generated
+        FEEDBACK.md      that case: rubric, latest analysis, decisions, history, metrics
+                         of every try and how they moved - generated
         r<rev>/session   its analyze session
         r<rev>/result.json            completed or difficult, once it ends
         r<rev>/<NN>-<nomem|mem>/      one try: request.json, run.json, memory/,
@@ -67,4 +69,9 @@ finetune/
     systems/             systems.jsonl + a copy of agents.yaml and agents/ per version
 ```
 
-Open `STATUS.md` first; every row links to the detail behind it.
+Open `STATUS.md` first; every row links to the detail behind it. Its Summary
+says whether the tuning is working: the fixes, as a case's first try without
+memory against its passing one, and memory, as the passing try without memory
+against the passing try with it - tokens, calls, tool errors and time, totalled
+over the same cases. A case's `FEEDBACK.md` has the same metrics per try and per
+model, each try against the one before it in its phase.

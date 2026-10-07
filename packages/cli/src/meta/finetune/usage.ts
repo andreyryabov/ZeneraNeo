@@ -80,13 +80,40 @@ const fromUsage = (u: Usage, calls: number): Tokens => ({
 /** `vertex/gemini-3.8-flash` and `gemini-3.8-flash` are one model in a table. */
 const modelName = (m: string | undefined): string => (m ? m.replace(/^[^/:]+[/:]/, '') : '?');
 
-const cache = new Map<string, { key: string; by: ByModel }>();
+// ---------------------------------------------------------------------------
+// What one run did, from its trajectory
+// ---------------------------------------------------------------------------
+
+export interface ModelMetrics extends Tokens {
+    /** the largest input of a single call */
+    peak: number;
+    /** time spent waiting on this model */
+    ms: number;
+}
+
+export interface RunMetrics {
+    models: Record<string, ModelMetrics>;
+    /** summed over every lane, so parallel branches can exceed the wall clock */
+    llmMs: number;
+    toolMs: number;
+    toolCalls: number;
+    toolErrors: number;
+    memory: { recall: number; load: number; grep: number; commit: number; forget: number };
+    forks: number;
+    branches: number;
+    compactions: number;
+    handoffs: number;
+}
+
+const cache = new Map<string, { key: string; metrics: RunMetrics }>();
 
 /**
- * Per model, over the distinct llm calls of a run's trajectory, branches
- * included. Nested records repeat a call, so calls are counted by id.
+ * One walk of a run's `state.json`, branches included. Nested records repeat a
+ * node, so nodes are counted by id. A node is stamped when the work behind it
+ * finished, so the gap to the node before it in the same lane is that work -
+ * the same timing as the Stats tab of report.html.
  */
-export function runTokens(runDir: string): ByModel | undefined {
+export function runMetrics(runDir: string): RunMetrics | undefined {
     const file = join(runDir, 'state.json');
     if (!existsSync(file)) {
         return undefined;
@@ -95,7 +122,7 @@ export function runTokens(runDir: string): ByModel | undefined {
     const key = `${st.mtimeMs}:${st.size}`;
     const hit = cache.get(file);
     if (hit?.key === key) {
-        return hit.by;
+        return hit.metrics;
     }
     let root: unknown;
     try {
@@ -103,24 +130,111 @@ export function runTokens(runDir: string): ByModel | undefined {
     } catch {
         return undefined;
     }
-    const by: ByModel = {};
+    const m: RunMetrics = {
+        models: {},
+        llmMs: 0,
+        toolMs: 0,
+        toolCalls: 0,
+        toolErrors: 0,
+        memory: { recall: 0, load: 0, grep: 0, commit: 0, forget: 0 },
+        forks: 0,
+        branches: 0,
+        compactions: 0,
+        handoffs: 0,
+    };
     const seen = new Set<string>();
-    const stack: unknown[] = [root];
-    while (stack.length > 0) {
-        const v = stack.pop();
-        if (Array.isArray(v)) {
-            stack.push(...v);
-        } else if (v && typeof v === 'object') {
-            const o = v as Record<string, unknown>;
-            if (o.type === 'llm_call' && o.usage && typeof o.id === 'string' && !seen.has(o.id)) {
-                seen.add(o.id);
-                addTo(by, modelName(o.model as string), fromUsage(o.usage as Usage, 1));
+    const count = (o: Record<string, unknown>, ms: number): void => {
+        switch (o.type) {
+            case 'llm_call':
+            case 'compaction': {
+                if (!o.usage) {
+                    return;
+                }
+                const model = o.type === 'compaction' ? 'summarizer' : modelName(o.model as string);
+                const t = fromUsage(o.usage as Usage, 1);
+                const into = (m.models[model] ??= { ...zero(), peak: 0, ms: 0 });
+                into.calls += 1;
+                into.input += t.input;
+                into.cached += t.cached;
+                into.output += t.output;
+                into.reasoning += t.reasoning;
+                into.peak = Math.max(into.peak, t.input);
+                into.ms += ms;
+                m.llmMs += ms;
+                if (o.type === 'compaction') {
+                    m.compactions++;
+                }
+                return;
             }
-            stack.push(...Object.values(o));
+            case 'tool_result':
+                m.toolCalls++;
+                m.toolErrors += o.isError ? 1 : 0;
+                m.toolMs += typeof o.durationMs === 'number' ? o.durationMs : ms;
+                return;
+            case 'memory_recall':
+                m.memory.recall++;
+                return;
+            case 'memory_op': {
+                const op = o.op as keyof RunMetrics['memory'];
+                if (op in m.memory) {
+                    m.memory[op]++;
+                }
+                return;
+            }
+            case 'fork':
+                m.forks++;
+                m.branches += Array.isArray(o.branches) ? o.branches.length : 0;
+                return;
+            case 'handoff':
+                m.handoffs++;
+                return;
         }
-    }
-    cache.set(file, { key, by });
-    return by;
+    };
+    // A branch lane starts where its parent lane was when the fork began.
+    const walk = (v: unknown, lanePrev: number | undefined): void => {
+        if (Array.isArray(v)) {
+            let prev = lanePrev;
+            for (const item of v) {
+                const o = item as Record<string, unknown> | null;
+                const ts = o && typeof o.ts === 'string' ? Date.parse(o.ts) : NaN;
+                if (
+                    o &&
+                    typeof o.type === 'string' &&
+                    typeof o.id === 'string' &&
+                    !seen.has(o.id)
+                ) {
+                    seen.add(o.id);
+                    count(o, prev !== undefined && !Number.isNaN(ts) ? Math.max(0, ts - prev) : 0);
+                }
+                walk(item, prev);
+                if (!Number.isNaN(ts)) {
+                    prev = ts;
+                }
+            }
+        } else if (v && typeof v === 'object') {
+            for (const x of Object.values(v)) {
+                walk(x, lanePrev);
+            }
+        }
+    };
+    walk(root, undefined);
+    cache.set(file, { key, metrics: m });
+    return m;
+}
+
+/** The token part of a run's metrics, per model. */
+export function tokensOf(m: RunMetrics): ByModel {
+    return Object.fromEntries(
+        Object.entries(m.models).map(([model, { calls, input, cached, output, reasoning }]) => [
+            model,
+            { calls, input, cached, output, reasoning },
+        ]),
+    );
+}
+
+export function runTokens(runDir: string): ByModel | undefined {
+    const m = runMetrics(runDir);
+    return m ? tokensOf(m) : undefined;
 }
 
 /** One `zen meta run --json` envelope: `{ model, tokens: { calls, inputTokens, … } }`. */

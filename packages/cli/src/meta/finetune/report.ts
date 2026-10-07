@@ -21,6 +21,9 @@ import {
     envelopesIn,
     mergeModels,
     mergeStages,
+    type ModelMetrics,
+    type RunMetrics,
+    runMetrics,
     runTokens,
     short,
     STAGES,
@@ -182,6 +185,283 @@ const rubricScore = (f: Attempt['feedback']): string => {
     return r.length ? `${r.filter((x) => x === 'pass').length}/${r.length}` : '-';
 };
 
+// ---------------------------------------------------------------------------
+// What a run did, and how it moved from the try it is compared with
+// ---------------------------------------------------------------------------
+
+const FLAT_KEYS = [
+    'calls',
+    'input',
+    'cached',
+    'output',
+    'reasoning',
+    'peak',
+    'llmMs',
+    'wallMs',
+    'toolMs',
+    'tools',
+    'toolErrors',
+    'recall',
+    'load',
+    'grep',
+    'commit',
+    'forget',
+    'forks',
+    'branches',
+    'compactions',
+    'handoffs',
+] as const;
+
+/** One run, one model of it, or a sum of several. */
+type Flat = Record<(typeof FLAT_KEYS)[number], number>;
+
+const blank = (): Flat => Object.fromEntries(FLAT_KEYS.map((k) => [k, 0])) as Flat;
+
+function addFlat(...all: (Flat | undefined)[]): Flat {
+    const out = blank();
+    for (const f of all) {
+        for (const k of FLAT_KEYS) {
+            out[k] += f?.[k] ?? 0;
+        }
+    }
+    return out;
+}
+
+/** Recorded at the run, or read from its trajectory when the run predates that. */
+const metricsOf = (run: Run | undefined): RunMetrics | undefined =>
+    run ? (run.metrics ?? runMetrics(run.dir)) : undefined;
+
+const modelFlat = (x: ModelMetrics | undefined): Flat => ({
+    ...blank(),
+    ...(x
+        ? {
+              calls: x.calls,
+              input: x.input,
+              cached: x.cached,
+              output: x.output,
+              reasoning: x.reasoning,
+              peak: x.peak,
+              llmMs: x.ms,
+          }
+        : {}),
+});
+
+function runFlat(run: Run | undefined): Flat | undefined {
+    const m = metricsOf(run);
+    if (!run || !m) {
+        return undefined;
+    }
+    const models = Object.values(m.models);
+    return {
+        ...addFlat(...models.map(modelFlat)),
+        peak: Math.max(0, ...models.map((x) => x.peak)),
+        llmMs: m.llmMs,
+        wallMs: run.durationMs ?? 0,
+        toolMs: m.toolMs,
+        tools: m.toolCalls,
+        toolErrors: m.toolErrors,
+        ...m.memory,
+        forks: m.forks,
+        branches: m.branches,
+        compactions: m.compactions,
+        handoffs: m.handoffs,
+    };
+}
+
+type Kind = 'tokens' | 'time' | 'count' | 'share';
+
+interface Metric {
+    label: string;
+    kind: Kind;
+    /** absent where a move either way is not by itself good or bad */
+    better?: 'lower' | 'higher';
+    of: (f: Flat) => number;
+}
+
+const tokensIn = (f: Flat): number => f.input + f.output;
+
+const MODEL_METRICS: Metric[] = [
+    { label: 'LLM calls', kind: 'count', better: 'lower', of: (f) => f.calls },
+    { label: 'Input', kind: 'tokens', better: 'lower', of: (f) => f.input },
+    { label: 'Cached', kind: 'tokens', of: (f) => f.cached },
+    { label: 'Uncached input', kind: 'tokens', better: 'lower', of: (f) => f.input - f.cached },
+    {
+        label: 'Cache hit',
+        kind: 'share',
+        better: 'higher',
+        of: (f) => (f.input ? (f.cached / f.input) * 100 : 0),
+    },
+    { label: 'Output', kind: 'tokens', better: 'lower', of: (f) => f.output },
+    { label: 'Reasoning', kind: 'tokens', better: 'lower', of: (f) => f.reasoning },
+    { label: 'Peak input', kind: 'tokens', better: 'lower', of: (f) => f.peak },
+    { label: 'LLM time', kind: 'time', better: 'lower', of: (f) => f.llmMs },
+];
+
+const RUN_METRICS: Metric[] = [
+    { label: 'Wall clock', kind: 'time', better: 'lower', of: (f) => f.wallMs },
+    ...MODEL_METRICS,
+    { label: 'Tool calls', kind: 'count', better: 'lower', of: (f) => f.tools },
+    { label: 'Tool errors', kind: 'count', better: 'lower', of: (f) => f.toolErrors },
+    { label: 'Tool time', kind: 'time', better: 'lower', of: (f) => f.toolMs },
+    { label: 'Memory recalls', kind: 'count', of: (f) => f.recall },
+    { label: 'Memory loads', kind: 'count', of: (f) => f.load },
+    { label: 'Memory greps', kind: 'count', of: (f) => f.grep },
+    { label: 'Memory commits', kind: 'count', of: (f) => f.commit },
+    { label: 'Memory forgets', kind: 'count', of: (f) => f.forget },
+    { label: 'Forks', kind: 'count', of: (f) => f.forks },
+    { label: 'Branches', kind: 'count', of: (f) => f.branches },
+    { label: 'Compactions', kind: 'count', of: (f) => f.compactions },
+    { label: 'Handoffs', kind: 'count', of: (f) => f.handoffs },
+];
+
+const SUMMARY_METRICS = RUN_METRICS.filter((m) =>
+    [
+        'Wall clock',
+        'LLM calls',
+        'Tool calls',
+        'Tool errors',
+        'Input',
+        'Uncached input',
+        'Cache hit',
+        'Output',
+        'LLM time',
+        'Tool time',
+    ].includes(m.label),
+);
+
+function show(kind: Kind, n: number): string {
+    switch (kind) {
+        case 'tokens':
+            return short(n);
+        case 'time':
+            return since(n);
+        case 'share':
+            return `${Math.round(n)}%`;
+        default:
+            return String(n);
+    }
+}
+
+/** Percent for amounts, points for a share, a plain difference for a count unless `relative`. */
+function change(kind: Kind, now: number, before: number, relative = kind !== 'count'): string {
+    const signed = (d: number, unit: string): string =>
+        d === 0 ? '=' : `${d > 0 ? '+' : ''}${d}${unit}`;
+    if (kind === 'share') {
+        return signed(Math.round(now - before), 'pt');
+    }
+    if (!relative) {
+        return signed(now - before, '');
+    }
+    if (before === 0) {
+        return now === 0 ? '=' : 'new';
+    }
+    return signed(Math.round(((now - before) / before) * 100), '%');
+}
+
+/** Within this many percent (points, for a share) is noise, not a trend. */
+const SAME = 5;
+
+function trend(m: Metric, now: number, before: number): string {
+    if (!m.better) {
+        return '';
+    }
+    const d =
+        m.kind === 'share'
+            ? now - before
+            : before === 0
+              ? Math.sign(now) * Infinity
+              : ((now - before) / before) * 100;
+    if (Number.isNaN(d) || Math.abs(d) < SAME) {
+        return 'same';
+    }
+    return d < 0 === (m.better === 'lower') ? 'better' : 'worse';
+}
+
+interface Column {
+    label: string;
+    now?: Flat;
+    base?: Flat;
+}
+
+interface Pair {
+    now?: Flat;
+    base?: Flat;
+}
+
+/** Rows are metrics, columns tries; a metric that is zero everywhere is left out. */
+function matrix(metrics: Metric[], cols: Column[], effect?: Pair): string[] {
+    const all = [...cols.map((c) => c.now), effect?.now, effect?.base];
+    const shown = metrics.filter((m) => all.some((f) => f && m.of(f) !== 0));
+    if (shown.length === 0) {
+        return [];
+    }
+    const both = effect?.now && effect.base ? { now: effect.now, base: effect.base } : undefined;
+    const head = ['Metric', ...cols.map((c) => c.label), ...(both ? ['Memory effect'] : [])];
+    const rows = shown.map((m) => {
+        const cells = cols.map((c) => {
+            if (!c.now) {
+                return '-';
+            }
+            const v = show(m.kind, m.of(c.now));
+            return c.base ? `${v} (${change(m.kind, m.of(c.now), m.of(c.base))})` : v;
+        });
+        if (both) {
+            const now = m.of(both.now);
+            const before = m.of(both.base);
+            const word = trend(m, now, before);
+            cells.push(`${change(m.kind, now, before, true)}${word ? ` ${word}` : ''}`);
+        }
+        return `| ${m.label} | ${cells.join(' | ')} |`;
+    });
+    return [`| ${head.join(' | ')} |`, `| ${head.map(() => '---').join(' | ')} |`, ...rows, ''];
+}
+
+/** The no-memory try that passed: the one every try with memory is measured against. */
+const passedWithout = (attempts: Attempt[]): Attempt | undefined =>
+    attempts.find((a) => a.phase === 'nomem' && a.feedback?.done);
+
+const latestWith = (attempts: Attempt[]): Attempt | undefined =>
+    [...attempts].reverse().find((a) => a.phase === 'mem' && a.run);
+
+/** Each try against the one before it in its phase; the first with memory against the passing one without. */
+function tryColumns(
+    attempts: Attempt[],
+    flat: (a: Attempt) => Flat | undefined,
+): { cols: Column[]; effect?: Pair } {
+    const passed = passedWithout(attempts);
+    const cols = attempts.map((a, i) => {
+        const base =
+            attempts
+                .slice(0, i)
+                .reverse()
+                .find((b) => b.phase === a.phase) ?? (a.phase === 'mem' ? passed : undefined);
+        return {
+            label: `${PHASE_WORD[a.phase]}, try ${a.attempt}`,
+            now: flat(a),
+            base: base && flat(base),
+        };
+    });
+    const mem = latestWith(attempts);
+    return {
+        cols,
+        ...(passed && mem ? { effect: { now: flat(mem), base: flat(passed) } } : {}),
+    };
+}
+
+/** Before and after, one row per metric, with whether it moved the right way. */
+function compareTable(before: string, after: string, a: Flat, b: Flat): string[] {
+    const rows = SUMMARY_METRICS.filter((m) => m.of(a) !== 0 || m.of(b) !== 0).map(
+        (m) =>
+            `| ${m.label} | ${show(m.kind, m.of(a))} | ${show(m.kind, m.of(b))} | ${change(m.kind, m.of(b), m.of(a), true)} | ${trend(m, m.of(b), m.of(a)) || '-'} |`,
+    );
+    return [
+        `| Metric | ${before} | ${after} | Change | Trend |`,
+        '| --- | --- | --- | --- | --- |',
+        ...rows,
+        '',
+    ];
+}
+
 function stateOf(t: Tuning, c: Case): string {
     const r = resultOf(t, c);
     if (r) {
@@ -296,8 +576,8 @@ export function writeFeedback(t: Tuning, c: Case): void {
         say(
             '## History',
             '',
-            '| Phase | Try | Verdict | Rubric | LLM calls | Run tokens | Analyze tokens | Seconds | System | Links |',
-            '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+            '| Phase | Try | Verdict | Rubric | LLM calls | Tool calls | Run tokens | Analyze tokens | Seconds | System | Links |',
+            '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
         );
         for (const a of [...attempts].reverse()) {
             const links = [
@@ -311,10 +591,33 @@ export function writeFeedback(t: Tuning, c: Case): void {
                     : '',
             ].filter(Boolean);
             say(
-                `| ${PHASE_WORD[a.phase]} | ${a.attempt} | ${cell(a.feedback?.verdict ?? (a.run ? 'analyzing' : 'running'))} | ${rubricScore(a.feedback)} | ${cell(a.run?.turns)} | ${inOut(runByModel(a.run))} | ${inOut(envelopesIn(a.dir, 'analyze'))} | ${a.run?.durationMs ? Math.round(a.run.durationMs / 1000) : '-'} | ${a.run ? `v${a.run.system}` : '-'} | ${links.join(' · ') || '-'} |`,
+                `| ${PHASE_WORD[a.phase]} | ${a.attempt} | ${cell(a.feedback?.verdict ?? (a.run ? 'analyzing' : 'running'))} | ${rubricScore(a.feedback)} | ${cell(a.run?.turns)} | ${cell(metricsOf(a.run)?.toolCalls)} | ${inOut(runByModel(a.run))} | ${inOut(envelopesIn(a.dir, 'analyze'))} | ${a.run?.durationMs ? Math.round(a.run.durationMs / 1000) : '-'} | ${a.run ? `v${a.run.system}` : '-'} | ${links.join(' · ') || '-'} |`,
             );
         }
         say('');
+    }
+    const byRun = tryColumns(attempts, (a) => runFlat(a.run));
+    const runRows = matrix(RUN_METRICS, byRun.cols, byRun.effect);
+    if (runRows.length > 0) {
+        say(
+            '## Metrics',
+            '',
+            'Each try against the one before it in its phase, the first try with memory against the passing try without; Memory effect is the latest try with memory against that same passing try. LLM and tool time are summed over parallel branches.',
+            '',
+            ...runRows,
+        );
+        const models = [
+            ...new Set(attempts.flatMap((a) => Object.keys(metricsOf(a.run)?.models ?? {}))),
+        ].sort();
+        if (models.length > 1) {
+            for (const model of models) {
+                const per = tryColumns(attempts, (a) => {
+                    const m = metricsOf(a.run);
+                    return m && modelFlat(m.models[model]);
+                });
+                say(`### ${cell(model)}`, '', ...matrix(MODEL_METRICS, per.cols, per.effect));
+            }
+        }
     }
     const byStage = caseTokens(t, c);
     if (Object.keys(byStage).length > 0) {
@@ -708,6 +1011,60 @@ function overviewDiagram(counts: Record<string, number>): string[] {
     ];
 }
 
+function summarySection(
+    spent: Record<Phase, { runs: number; f: Flat }>,
+    tuning: { passed: number; first: number; before: Flat; after: Flat },
+    memory: { cases: number; cheaper: number; before: Flat; after: Flat },
+): string[] {
+    const phases = (['nomem', 'mem'] as const).filter((p) => spent[p].runs > 0);
+    if (phases.length === 0) {
+        return [];
+    }
+    const row = (label: string, runs: number, f: Flat): string =>
+        `| ${label} | ${runs} | ${since(f.wallMs)} | ${f.calls} | ${f.tools} | ${short(f.input)} | ${short(f.cached)} | ${short(f.output)} | ${short(Math.round(tokensIn(f) / runs))} / ${since(f.wallMs / runs)} |`;
+    const out = [
+        '## Summary',
+        '',
+        `Trend compares totals over the same cases; within ${SAME}% is \`same\`. Run time is the wall clock of \`zen run\`.`,
+        '',
+        '| Phase | Runs | Run time | LLM calls | Tool calls | Input | Cached | Output | Per run: tokens / time |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+        ...phases.map((p) => row(PHASE_WORD[p], spent[p].runs, spent[p].f)),
+        ...(phases.length > 1
+            ? [
+                  row(
+                      '**total**',
+                      spent.nomem.runs + spent.mem.runs,
+                      addFlat(spent.nomem.f, spent.mem.f),
+                  ),
+              ]
+            : []),
+        '',
+    ];
+    if (tuning.passed > 0) {
+        const fixed = tuning.passed - tuning.first;
+        out.push(
+            '### Tuning effect - first try without memory → passing try',
+            '',
+            `${tuning.passed} case(s) passed without memory, ${tuning.first} on the first try.${fixed > 0 ? ` The ${fixed} that needed fixes, totalled:` : ''}`,
+            '',
+            ...(fixed > 0
+                ? compareTable('First try', 'Passing try', tuning.before, tuning.after)
+                : []),
+        );
+    }
+    if (memory.cases > 0) {
+        out.push(
+            '### Memory effect - passing try without memory → passing try with memory',
+            '',
+            `${memory.cases} completed case(s), cheaper in tokens with memory in ${memory.cheaper}. Totalled:`,
+            '',
+            ...compareTable('Without memory', 'With memory', memory.before, memory.after),
+        );
+    }
+    return out;
+}
+
 export function writeStatus(t: Tuning): void {
     const here = t.dir;
     const cases = selection(t);
@@ -716,6 +1073,12 @@ export function writeStatus(t: Tuning): void {
     const rows: string[] = [];
     const difficult: string[] = [];
     let everything: ByStage = {};
+    const spent: Record<Phase, { runs: number; f: Flat }> = {
+        nomem: { runs: 0, f: blank() },
+        mem: { runs: 0, f: blank() },
+    };
+    const tuning = { passed: 0, first: 0, before: blank(), after: blank() };
+    const memory = { cases: 0, cheaper: 0, before: blank(), after: blank() };
     for (const c of cases) {
         const w = t.workers.find((x) => x.case?.id === c.id);
         const parked =
@@ -741,8 +1104,42 @@ export function writeStatus(t: Tuning): void {
         const memCalls = mem.map((a) => a.run?.turns).filter((n) => n !== undefined);
         const caseBy = caseTokens(t, c);
         everything = mergeStages(everything, caseBy);
+        for (const a of attempts) {
+            const f = runFlat(a.run);
+            if (f) {
+                spent[a.phase].runs++;
+                spent[a.phase].f = addFlat(spent[a.phase].f, f);
+            }
+        }
+        const passed = passedWithout(attempts);
+        const firstFlat = runFlat(nomem[0]?.run);
+        const passedFlat = runFlat(passed?.run);
+        if (passed) {
+            tuning.passed++;
+        }
+        if (passed?.attempt === 1) {
+            tuning.first++;
+        } else if (firstFlat && passedFlat) {
+            tuning.before = addFlat(tuning.before, firstFlat);
+            tuning.after = addFlat(tuning.after, passedFlat);
+        }
+        const withMem = runFlat(
+            r?.state === 'completed'
+                ? mem.find((a) => a.feedback?.done)?.run
+                : latestWith(attempts)?.run,
+        );
+        if (r?.state === 'completed' && withMem && passedFlat) {
+            memory.cases++;
+            memory.cheaper += tokensIn(withMem) < tokensIn(passedFlat) ? 1 : 0;
+            memory.before = addFlat(memory.before, passedFlat);
+            memory.after = addFlat(memory.after, withMem);
+        }
+        const effect =
+            withMem && passedFlat
+                ? `${change('tokens', tokensIn(withMem), tokensIn(passedFlat))} tokens · ${change('time', withMem.wallMs, passedFlat.wallMs)} time${r?.state === 'completed' ? '' : ' (so far)'}`
+                : '-';
         rows.push(
-            `| ${link(c.id, here, feedbackPath(t, c))} | ${cell(c.class)} | ${c.rubric.length} | ${cell(stateOf(t, c))} | ${nomem.length} / ${mem.length} | ${cell(last?.feedback?.verdict)} ${rubricScore(last?.feedback)} | ${calls.length ? `${calls[0]} → ${calls.at(-1)}` : '-'} | ${memCalls.length ? memCalls.at(-1) : '-'} | ${inOut(caseBy.run)} | ${inOut(caseBy.analyze)} | ${attempts.at(-1)?.run ? `v${attempts.at(-1)!.run!.system}` : '-'} |`,
+            `| ${link(c.id, here, feedbackPath(t, c))} | ${cell(c.class)} | ${c.rubric.length} | ${cell(stateOf(t, c))} | ${nomem.length} / ${mem.length} | ${cell(last?.feedback?.verdict)} ${rubricScore(last?.feedback)} | ${calls.length ? `${calls[0]} → ${calls.at(-1)}` : '-'} | ${memCalls.length ? memCalls.at(-1) : '-'} | ${effect} | ${inOut(caseBy.run)} | ${inOut(caseBy.analyze)} | ${attempts.at(-1)?.run ? `v${attempts.at(-1)!.run!.system}` : '-'} |`,
         );
         if (r?.state === 'difficult') {
             difficult.push(
@@ -763,6 +1160,7 @@ export function writeStatus(t: Tuning): void {
         '',
         `\`${'█'.repeat(bar)}${'░'.repeat(20 - bar)}\` ${done} of ${cases.length} cases done - ${counts.completed} completed, ${counts.difficult} difficult`,
         '',
+        ...summarySection(spent, tuning, memory),
         '## Overview',
         '',
         ...overviewDiagram(counts),
@@ -873,8 +1271,8 @@ export function writeStatus(t: Tuning): void {
     out.push(
         '## Cases',
         '',
-        '| Case | Class | Rubric | State | Tries without / with | Last verdict | LLM calls without memory | With memory | Run tokens | Analyze tokens | System |',
-        '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+        '| Case | Class | Rubric | State | Tries without / with | Last verdict | LLM calls without memory | With memory | Memory effect | Run tokens | Analyze tokens | System |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
         ...rows,
         '',
     );

@@ -971,6 +971,8 @@ takes the next free worker ahead of any new case.
 - **Reports are code, not agent prose.** `STATUS.md` and each case's
   `FEEDBACK.md` are regenerated from disk on every step; their diagrams carry
   only ids, numbers and fixed words, so nothing a model wrote can break them.
+  A try's metrics are read from its run's `state.json` and kept in `run.json`;
+  time is the gap between node stamps in one lane, as in report.html.
 
 ## 7.7. Reading a run - `zen inspect`
 
