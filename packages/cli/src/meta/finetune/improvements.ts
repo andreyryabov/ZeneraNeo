@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Feedback } from './feedback.ts';
@@ -228,8 +229,21 @@ export class Improvements {
     async #edit(dir: string, from: number): Promise<void> {
         const t = this.#t;
         for (let attempt = 1; ; attempt++) {
+            const session = randomUUID();
+            writeFileSync(join(dir, 'session'), `${session}\n`);
             const res = await t.zen(
-                ['meta', 'run', '--no-refresh', '--json', '/finetune-apply', dir],
+                [
+                    'meta',
+                    'run',
+                    '--no-refresh',
+                    '--json',
+                    '--session-id',
+                    session,
+                    '--events',
+                    join(dir, 'apply.events.jsonl'),
+                    '/finetune-apply',
+                    dir,
+                ],
                 join(dir, 'apply.log'),
             );
             writeFileSync(

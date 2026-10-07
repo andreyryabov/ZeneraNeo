@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
+import { reap } from './children.ts';
 import type { Tuning } from './tuning.ts';
 
 // ---------------------------------------------------------------------------
@@ -25,8 +26,14 @@ type Row =
 
 /** What a step leaves in its attempt folder; the logs stay, they only grow. */
 const OUTPUTS: Record<'run' | 'analyze', string[]> = {
-    run: ['run.json', 'envelope.json', 'request.json', 'memory', 'workspace'],
-    analyze: ['feedback.json', 'analysis.md', 'analyze.json', 'analyze-2.json'],
+    run: ['run.json', 'envelope.json', 'request.json', 'events.jsonl', 'memory', 'workspace'],
+    analyze: [
+        'feedback.json',
+        'analysis.md',
+        'analyze.json',
+        'analyze-2.json',
+        'analyze.events.jsonl',
+    ],
 };
 
 export class Journal {
@@ -113,7 +120,15 @@ export class Journal {
 }
 
 /** Rolls back what a kill cut off. Only under the loop's lock: a live step looks the same. */
-export function recover(t: Tuning): void {
+export async function recover(t: Tuning): Promise<void> {
+    // Before anything is rolled back: a child still running would write into it again.
+    const reaped = await reap(t.dir);
+    if (reaped.length > 0) {
+        t.event({
+            what: 'stopped leftovers',
+            detail: `${reaped.length} process(es) the last loop left running`,
+        });
+    }
     const open = t.journal.open().reverse();
     for (const { id, tx } of open) {
         rollback(t, tx);

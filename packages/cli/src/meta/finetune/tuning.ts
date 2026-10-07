@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { forget, remember } from './children.ts';
 import type { Case } from './dataset/types.ts';
 import type { Phase } from './feedback.ts';
 import { Improvements } from './improvements.ts';
@@ -256,6 +257,10 @@ export function spawnZen(root: string, children: Set<ChildProcess>): Zen {
                 detached: true,
             });
             children.add(child);
+            const dir = join(root, FINETUNE_DIR);
+            if (child.pid !== undefined) {
+                remember(dir, child.pid, process.argv[1]);
+            }
             let stdout = '';
             child.stdout?.on('data', (chunk: Buffer) => {
                 stdout += chunk.toString('utf8');
@@ -267,6 +272,9 @@ export function spawnZen(root: string, children: Set<ChildProcess>): Zen {
                 }
                 finished = true;
                 children.delete(child);
+                if (child.pid !== undefined) {
+                    forget(dir, child.pid);
+                }
                 closeSync(fd);
                 resolve({ code, stdout });
             };

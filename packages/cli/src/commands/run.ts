@@ -1,4 +1,4 @@
-import type { Input } from '@zenera/neo';
+import type { AgentEvent, Input } from '@zenera/neo';
 import { usageByModel } from '@zenera/neo';
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -6,6 +6,7 @@ import { parse } from '../args.ts';
 import { concurrency, runBatch } from '../batch.ts';
 import type { Command, Context } from '../command.ts';
 import * as Engine from '../engine.ts';
+import { agentEventLog } from '../eventlog.ts';
 import { duration, Narrator, stopMark, summary } from '../narrate.ts';
 import * as Projects from '../projects.ts';
 import { readBatch, readRequest } from '../request.ts';
@@ -44,6 +45,7 @@ interface Flags {
     plain?: boolean;
     theme?: string;
     out?: string;
+    events?: string;
     'batch-dir'?: string;
     concurrency?: string;
 }
@@ -77,6 +79,8 @@ export const run: Command = {
         '  --theme <dark|light>   Colours for the TUI. Default: auto.',
         '  --out <file>           Put the answer in this file instead of on screen.',
         '                         With --json, the file gets the whole JSON envelope.',
+        '  --events <file>        Append what the agent does to this file as it does it:',
+        '                         one JSON line per model call, tool call and message.',
         '  --yes                  Answer yes to every question.',
         '  --json                 Print machine-readable JSON (session, run, mounts, output, etc...).',
         '',
@@ -160,6 +164,7 @@ export const run: Command = {
                 plain: { type: 'boolean' },
                 theme: { type: 'string' },
                 out: { type: 'string' },
+                events: { type: 'string' },
                 'batch-dir': { type: 'string' },
                 concurrency: { type: 'string' },
             },
@@ -208,6 +213,9 @@ export const run: Command = {
         // TUI, where there is someone to ask, still asks.
         const input = request ? request.input : prompt;
         const shot = Boolean(prompt) || Boolean(request);
+        if (values.events && !shot) {
+            throw usageError('--events records a one-shot run', 'give a prompt or --input');
+        }
 
         const where = await target({
             cwd: ctx.cwd,
@@ -281,6 +289,7 @@ const NOT_IN_A_BATCH: [keyof Flags, string][] = [
     ['workspace', 'they cannot share one; each item gets its own, or names one in the file'],
     ['plain', 'a batch never draws the TUI'],
     ['theme', 'a batch never draws the TUI'],
+    ['events', 'each item already has its own output.json'],
 ];
 
 async function batch(
@@ -339,6 +348,11 @@ async function once(
         quiet: asJson,
         live: Boolean(process.stderr.isTTY),
     });
+    const record = values.events ? agentEventLog(resolve(cwd, values.events)) : undefined;
+    const onEvent = (event: AgentEvent): void => {
+        narrator.handle(event);
+        record?.(event);
+    };
 
     // Ctrl-C asks the run to stop rather than killing the process, so the turn
     // still lands on disk and the session stays resumable.
@@ -365,7 +379,7 @@ async function once(
 
     let outcome: Engine.RunOutcome;
     try {
-        outcome = await Engine.run(engine, input, narrator.handle, stopping.signal);
+        outcome = await Engine.run(engine, input, onEvent, stopping.signal);
     } finally {
         narrator.done();
         process.off('SIGINT', onInterrupt);

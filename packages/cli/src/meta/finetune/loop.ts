@@ -34,7 +34,7 @@ export async function runLoop(t: Tuning): Promise<void> {
     rmSync(t.stopFile, { force: true });
     const timer = setInterval(() => t.report(), REPORT_EVERY_MS);
     try {
-        recover(t);
+        await recover(t);
         const start = t.system.record('start');
         t.event({ what: 'started', detail: `system v${start.v}, ${t.workers.length} workers` });
         const applier = t.improvements.loop();

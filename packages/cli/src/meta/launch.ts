@@ -227,6 +227,8 @@ export interface Launch {
     width?: number;
     /** said after the elapsed time on the status row, e.g. the tokens so far */
     status?: () => string;
+    /** every event copilot prints, before it is folded */
+    onEvent?: (event: Event) => void;
     /** injected by the tests, which have no copilot and want none */
     spawn?: typeof nodeSpawn;
 }
@@ -283,6 +285,7 @@ export async function launch(opts: Launch): Promise<Outcome> {
                 sink.narrate(line);
                 continue;
             }
+            opts.onEvent?.(event);
             absorb(event, out, sink, width);
         }
         const code = await new Promise<number>((resolve) => {

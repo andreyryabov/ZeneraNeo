@@ -155,7 +155,9 @@ async function runOnce(
     mkdirSync(workspace, { recursive: true });
     const request = join(dir, 'request.json');
     const envelope = join(dir, 'envelope.json');
+    const events = join(dir, 'events.jsonl');
     rmSync(envelope, { force: true });
+    rmSync(events, { force: true });
     writeFileSync(
         request,
         `${JSON.stringify({ input: batchInput([c], t.root, request).batch[0].input }, null, 2)}\n`,
@@ -178,6 +180,8 @@ async function runOnce(
             workspace,
             '--out',
             envelope,
+            '--events',
+            events,
         ],
         log,
     );
@@ -278,11 +282,15 @@ async function analyzeOnce(
     }
     const hash = t.system.hash();
     const applies = t.improvements.started;
+    const events = join(dir, 'analyze.events.jsonl');
+    rmSync(events, { force: true });
     const continuing = (): string[] => [
         'meta',
         'run',
         '--no-refresh',
         '--json',
+        '--events',
+        events,
         ...(sessionKept(session!) ? ['--resume', session!] : ['--session-id', session!]),
     ];
 

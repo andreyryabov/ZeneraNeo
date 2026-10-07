@@ -1,3 +1,4 @@
+import { type ChildProcess, spawn } from 'node:child_process';
 import {
     appendFileSync,
     existsSync,
@@ -13,6 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { remember } from '../src/meta/finetune/children.ts';
 import { runFinetune } from '../src/meta/finetune/command.ts';
 import { runDataset } from '../src/meta/finetune/dataset/command.ts';
 import { readFeedback } from '../src/meta/finetune/feedback.ts';
@@ -396,6 +398,14 @@ describe('zen meta finetune', () => {
             runsOf(fake.calls, 'a1').map((a) => a[a.indexOf('--input') + 1].match(/\d{2}-\w+/)![0]),
         ).toEqual(['01-nomem', '01-mem']);
         expect(fake.applies).toBe(0);
+        const run = runsOf(fake.calls, 'a1')[0];
+        expect(run[run.indexOf('--events') + 1]).toMatch(
+            /\/cases\/a1\/r1\/01-nomem\/events\.jsonl$/,
+        );
+        const analyze = fake.calls.find((a) => a.includes('/analyze'))!;
+        expect(analyze[analyze.indexOf('--events') + 1]).toMatch(
+            /\/cases\/\w+\/r1\/01-nomem\/analyze\.events\.jsonl$/,
+        );
     });
 
     it('moves a tuning kept in .finetune/ to finetune/ and resumes it', async () => {
@@ -424,6 +434,14 @@ describe('zen meta finetune', () => {
         );
         expect(second.system).toBe(2);
         expect(existsSync(join(root, 'finetune', 'applies', '001', 'diff.patch'))).toBe(true);
+        const applyCall = fake.calls.find((a) => a.includes('/finetune-apply'))!;
+        const applyDir = join(root, 'finetune', 'applies', '001');
+        expect(applyCall[applyCall.indexOf('--session-id') + 1]).toBe(
+            readFileSync(join(applyDir, 'session'), 'utf8').trim(),
+        );
+        expect(applyCall[applyCall.indexOf('--events') + 1]).toBe(
+            join(applyDir, 'apply.events.jsonl'),
+        );
         const page = readFileSync(join(root, 'finetune', 'cases', 'a1', 'FEEDBACK.md'), 'utf8');
         expect(page).toContain('## History');
         expect(page).toContain('**Run** - fine.');
@@ -527,6 +545,7 @@ describe('zen meta finetune', () => {
         const attempt = join(ft, 'cases', 'a1', 'r1', '01-nomem');
         mkdirSync(join(attempt, 'memory'), { recursive: true });
         writeFileSync(join(attempt, 'run.json'), '{"dir":"/nowhere"}');
+        writeFileSync(join(attempt, 'events.jsonl'), '{"type":"say","text":"half"}\n');
         journal.begin({ kind: 'run', dir: attempt });
         // An apply killed halfway through its edit.
         new SystemVersions(root, join(ft, 'systems')).record('start');
@@ -552,7 +571,32 @@ describe('zen meta finetune', () => {
         expect(inputs.map((f: { id: string }) => f.id)).toEqual(['a1@nomem-1']);
         const events = readFileSync(join(ft, 'events.jsonl'), 'utf8');
         expect(events.match(/"what":"rolled back"/g)).toHaveLength(2);
+        expect(existsSync(join(attempt, 'events.jsonl'))).toBe(false);
         expect(journal.open()).toEqual([]);
+    });
+
+    it('stops what a dead loop left running before it rolls anything back', async () => {
+        await dataset(['a1']);
+        const ft = join(root, 'finetune');
+        const exited = (p: ChildProcess) =>
+            new Promise((r) => p.once('exit', (_code, signal) => r(signal)));
+        const orphan = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
+        const gone = exited(orphan);
+        remember(ft, orphan.pid!, 'sleep');
+        // Its pid was taken by something else since: never ours to kill.
+        const stranger = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
+        remember(ft, stranger.pid!, 'not-its-command');
+        try {
+            await start(fakeZen(() => ({ done: true })).zen, '-N', '1');
+            await expect(gone).resolves.toBe('SIGTERM');
+            expect(stranger.exitCode).toBeNull();
+            expect(stranger.signalCode).toBeNull();
+            expect(existsSync(join(ft, 'children'))).toBe(false);
+            const log = readFileSync(join(ft, 'events.jsonl'), 'utf8');
+            expect(log).toContain('"what":"stopped leftovers"');
+        } finally {
+            stranger.kill();
+        }
     });
 
     it('undoes an analysis that edited the project', async () => {

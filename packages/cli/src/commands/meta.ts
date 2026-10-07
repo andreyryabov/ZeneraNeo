@@ -2,11 +2,12 @@ import { readProjectConfig } from '@zenera/neo';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parse } from '../args.ts';
 import type { Command, Context } from '../command.ts';
 import { loadProjectEnv } from '../env.ts';
+import { copilotEventLog } from '../eventlog.ts';
 import { ensureHome } from '../home.ts';
 import { assertOwner, KeyStore, PROVIDERS, type Provider } from '../keys.ts';
 import { probeChat, probeModel } from '../liveness.ts';
@@ -140,6 +141,7 @@ interface Flags {
     agent?: string;
     effort?: string;
     share?: string;
+    events?: string;
     resume?: string;
     continue?: boolean;
     'session-id'?: string;
@@ -193,6 +195,8 @@ export const meta: Command = {
         '  --session-id <uuid>    Start a new session under this id. Default: a random one.',
         `  --retries <n>          Resume after a rate limit or outage. Default ${DEFAULT_RESUMES}, 0 = off.`,
         '  --share <file>         Write the transcript to a markdown file.',
+        '  --events <file>        Append what the agent does to this file as it does it:',
+        '                         one JSON line per model call, tool call and message.',
         '  --dry-run              Print what would run, secrets masked, and stop.',
         '  --no-refresh           Leave the editor files as they are (parallel runs).',
         '  --json                 Print one object: answer, answerFile, sessionId, exitCode, tokens.',
@@ -268,6 +272,7 @@ export const meta: Command = {
                 agent: { type: 'string' },
                 effort: { type: 'string' },
                 share: { type: 'string' },
+                events: { type: 'string' },
                 resume: { type: 'string' },
                 continue: { type: 'boolean' },
                 'session-id': { type: 'string' },
@@ -623,8 +628,10 @@ async function go(
         ...(promptName ? { [META_PROMPT_ENV]: promptName } : {}),
     };
     const tally = new Tally();
+    const record = values.events ? copilotEventLog(resolve(ctx.cwd, values.events)) : undefined;
     const tail = tailSpans(spans, (call) => {
         tally.add(call);
+        record?.call(call);
         appendUsage(project.dir, {
             kind: 'meta.call',
             ts: new Date(Date.parse(call.startedAt) + call.durationMs).toISOString(),
@@ -650,6 +657,7 @@ async function go(
                 cwd: project.dir,
                 log,
                 sink: ctx.json ? terminalSink : undefined,
+                onEvent: record?.event,
                 status: () => (tally.calls > 0 ? tally.toString() : ''),
             });
             if (outcome.sessionId && outcome.sessionId !== session) {
