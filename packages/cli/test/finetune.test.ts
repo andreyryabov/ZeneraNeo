@@ -83,6 +83,8 @@ interface Verdict {
     sandbox?: string;
     /** the analysis finds the run void, for this reason */
     infra?: string;
+    /** `zen meta run` started this session instead, as when the meta model changed */
+    newSession?: string;
 }
 
 /** What `zen meta run --json` reports about itself. */
@@ -296,7 +298,7 @@ function fakeZen(decide: (c: string, phase: string, attempt: number, applies: nu
                 code: 0,
                 stdout: JSON.stringify({
                     ...META_ENVELOPE,
-                    sessionId: session,
+                    sessionId: v.newSession ?? session,
                     answerFile: answer,
                 }),
             };
@@ -730,6 +732,22 @@ describe('zen meta finetune', () => {
         expect(live.tokens).toContainEqual(
             expect.objectContaining({ stage: 'analyze', model: 'gemini-meta' }),
         );
+    });
+
+    it('follows the analysis to the new session the meta agent started, after a model change', async () => {
+        await dataset(['a1']);
+        const fresh = '11111111-2222-3333-4444-555555555555';
+        const fake = fakeZen((_c, _p, attempt, applies) =>
+            attempt === 1 && applies === 0 ? { done: false, newSession: fresh } : { done: true },
+        );
+        await start(fake.zen, '-N', '1');
+        const file = join(root, 'finetune', 'cases', 'a1', 'r1', 'session');
+        expect(readFileSync(file, 'utf8').trim()).toBe(fresh);
+        const analyses = fake.calls.filter((a) => a.includes('/analyze'));
+        const id = (a: string[]) =>
+            a[a.indexOf(a.includes('--session-id') ? '--session-id' : '--resume') + 1];
+        expect(analyses.length).toBeGreaterThan(1);
+        expect(id(analyses[1])).toBe(fresh);
     });
 
     it('reuses one analyze session for every try of a case', async () => {

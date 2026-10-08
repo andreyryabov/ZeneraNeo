@@ -221,3 +221,41 @@ export function sessionKept(sessionId: string): boolean {
     const home = process.env.COPILOT_HOME ?? join(homedir(), '.copilot');
     return existsSync(join(home, 'session-state', sessionId));
 }
+
+/**
+ * The model a session's history was written by: its last answer's, else the one it started on.
+ * A failed resume on another model writes no answer, so it never becomes the session's model.
+ */
+export function sessionModel(sessionId: string): string | undefined {
+    const home = process.env.COPILOT_HOME ?? join(homedir(), '.copilot');
+    let text: string;
+    try {
+        text = readFileSync(join(home, 'session-state', sessionId, 'events.jsonl'), 'utf8');
+    } catch {
+        return undefined;
+    }
+    let started: string | undefined;
+    const lines = text.split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i];
+        if (!line.includes('"assistant.message"') && !line.includes('"session.start"')) {
+            continue;
+        }
+        try {
+            const event = JSON.parse(line) as { type?: string; data?: Record<string, unknown> };
+            if (event.type === 'assistant.message' && typeof event.data?.model === 'string') {
+                return event.data.model;
+            }
+            if (event.type === 'session.start' && typeof event.data?.selectedModel === 'string') {
+                started = event.data.selectedModel;
+            }
+        } catch {
+            // A line cut by a crash says nothing.
+        }
+    }
+    return started;
+}
+
+/** `google/gemini-3.8-flash` and `gemini-3.8-flash` are one model to copilot. */
+export const sameModel = (a: string, b: string): boolean =>
+    a.replace(/^.*\//, '').toLowerCase() === b.replace(/^.*\//, '').toLowerCase();

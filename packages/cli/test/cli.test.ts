@@ -66,6 +66,8 @@ import {
     readPrompt,
     readSpan,
     resumeDelayMs,
+    sameModel,
+    sessionModel,
     shutdownModels,
     splitLines,
     startRelay,
@@ -3693,6 +3695,41 @@ describe('counting the meta agent’s tokens', () => {
             },
         ]);
         expect(shutdownModels('{"type":"user.message"}')).toBeUndefined();
+    });
+
+    it('knows the model a session was written by, so a resume on another starts afresh', () => {
+        const home = mkdtempSync(join(tmpdir(), 'zen-copilot-'));
+        const kept = process.env.COPILOT_HOME;
+        process.env.COPILOT_HOME = home;
+        try {
+            const write = (id: string, ...events: object[]) => {
+                mkdirSync(join(home, 'session-state', id), { recursive: true });
+                writeFileSync(
+                    join(home, 'session-state', id, 'events.jsonl'),
+                    events.map((e) => JSON.stringify(e)).join('\n'),
+                );
+            };
+            write(
+                'answered',
+                { type: 'session.start', data: { selectedModel: 'gemini-3.8-flash' } },
+                { type: 'assistant.message', data: { model: 'google/gemini-3.8-flash' } },
+                // A resume on another model that failed before answering.
+                { type: 'session.start', data: { selectedModel: 'claude-sonnet-5-5' } },
+            );
+            write('silent', { type: 'session.start', data: { selectedModel: 'gpt-5' } });
+            expect(sessionModel('answered')).toBe('google/gemini-3.8-flash');
+            expect(sessionModel('silent')).toBe('gpt-5');
+            expect(sessionModel('missing')).toBeUndefined();
+            expect(sameModel('google/gemini-3.8-flash', 'gemini-3.8-flash')).toBe(true);
+            expect(sameModel('gemini-3.8-flash', 'claude-sonnet-5-5')).toBe(false);
+        } finally {
+            if (kept === undefined) {
+                delete process.env.COPILOT_HOME;
+            } else {
+                process.env.COPILOT_HOME = kept;
+            }
+            rmSync(home, { recursive: true, force: true });
+        }
     });
 });
 

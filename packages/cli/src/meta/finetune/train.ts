@@ -392,6 +392,12 @@ async function analyzeOnce(
         log,
     );
     keepAnalysis(dir, res.stdout);
+    // `zen meta run` starts a new session when the meta model changed since this one; follow it.
+    const started = sessionIn(res.stdout);
+    if (started && started !== session) {
+        session = started;
+        writeFileSync(join(t.caseDir(c), 'session'), `${session}\n`);
+    }
 
     const rubricIds = c.rubric.map((r) => r.id);
     let read = readFeedback(file, known, rubricIds);
@@ -428,6 +434,15 @@ async function analyzeOnce(
     }
     note(t, c, read.feedback, run, session);
     return read.feedback;
+}
+
+function sessionIn(stdout: string): string | undefined {
+    try {
+        const id = (JSON.parse(stdout) as { sessionId?: unknown }).sessionId;
+        return typeof id === 'string' && id ? id : undefined;
+    } catch {
+        return undefined;
+    }
 }
 
 /** The meta agent's answer is the human report: kept as analysis.md beside the feedback. A retry keeps its own envelope, so its tokens are counted too. */

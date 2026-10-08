@@ -44,6 +44,8 @@ import {
     resumeDelayMs,
     runDataset,
     runFinetune,
+    sameModel,
+    sessionModel,
     sessionTotals,
     SOURCE_LABELS,
     startVertexRelay,
@@ -555,6 +557,20 @@ async function go(
 
     const wiring = wire(store, entry, id);
     const binary = locate();
+    // Copilot cannot carry a session to another model: the resume fails on the first call.
+    const ran = values.resume ? sessionModel(values.resume) : undefined;
+    if (values.resume && ran && !sameModel(ran, wiring.model)) {
+        if (prompt === RESUME_PROMPT) {
+            throw usageError(
+                `session ${values.resume} ran on ${ran}, and the meta model is now ${wiring.model} - copilot cannot carry a session to another model`,
+                `switch back for it: zen meta model ${owner}/${ran.replace(/^.*\//, '')} - or ask again, which starts a new session`,
+            );
+        }
+        warn(
+            `session ${values.resume} ran on ${ran}; the meta model is now ${wiring.model}, so this starts a new session`,
+        );
+        values = { ...values, resume: undefined };
+    }
     // Named up front, so a run killed before copilot reports its id can still be resumed.
     let session = values.resume ?? (values.continue ? undefined : (fresh ?? randomUUID()));
     const args = argv(values, project.dir, prompt, wiring.secret, session);
