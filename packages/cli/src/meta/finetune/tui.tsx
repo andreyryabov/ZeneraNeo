@@ -248,6 +248,12 @@ function activity(e: EventLine, theme: Theme): Line {
                   ];
         case 'say':
             return [at, { text: 'says   ', color: theme.accent }, { text: e.text }];
+        case 'think':
+            return [
+                at,
+                { text: 'thinks ', color: theme.accent },
+                { text: e.text, color: theme.chrome.color },
+            ];
     }
 }
 

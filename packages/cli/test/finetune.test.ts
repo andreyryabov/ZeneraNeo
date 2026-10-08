@@ -470,12 +470,19 @@ describe('zen meta finetune', () => {
         );
     });
 
-    it('begins at most --more new cases per start, and does not keep it', async () => {
+    it('takes at most --more cases per start, failed ones included, and does not keep it', async () => {
         await dataset(['a1', 'b1', 'c1']);
-        const fake = fakeZen(() => ({ done: true }));
-        const done = () => ['a1', 'b1', 'c1'].filter((id) => result(id)).length;
+        let outage = true;
+        const fake = fakeZen(() => ({ done: true, broken: outage }));
+        const ids = ['a1', 'b1', 'c1'];
+        const done = () => ids.filter((id) => result(id)?.state === 'completed').length;
+        await start(fake.zen, '-N', '2', '--more', '1');
+        expect(ids.map((id) => result(id)?.state).sort()).toEqual(['failed', undefined, undefined]);
+        outage = false;
+        // The failed case takes the one place; nothing new begins.
         await start(fake.zen, '-N', '2', '--more', '1');
         expect(done()).toBe(1);
+        expect(ids.filter((id) => result(id))).toHaveLength(1);
         await start(fake.zen, '-N', '2', '--more', '1');
         expect(done()).toBe(2);
         expect(readFileSync(join(root, 'finetune', 'loop.json'), 'utf8')).not.toContain('more');

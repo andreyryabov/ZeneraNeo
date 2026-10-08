@@ -47,8 +47,8 @@ tries used up  ->  difficult
   step's result is on disk, and nothing finished is repeated.
 - **`--limit` and `--more` are for one start**, never kept in `loop.json`.
   `--limit <n>` cuts the order to its first n cases: once those have a result,
-  that start ends. `--more <n>` begins at most n cases not begun before - cases
-  part-way or failed still carry on - so `start --more 4` again takes the next
+  that start ends. `--more <n>` takes at most n cases of any kind - new,
+  part-way or failed - in the order, so `start --more 4` again takes the next
   four.
 - `start` refuses a dataset that has drifted from its sources - run `/dataset`
   first, or pass `--force`.

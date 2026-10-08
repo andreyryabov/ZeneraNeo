@@ -122,7 +122,8 @@ function fold(a: Activity, text: string): void {
         const tool = `${e.name} ${e.subject}`.trim();
         a.last = a.said ? `${a.said} · ${tool}` : tool;
         a.said = undefined;
-    } else if (e.type === 'say') {
+    } else if (e.type === 'say' || e.type === 'think') {
+        // A call's thought comes before what it said, so the words win.
         a.said = e.text;
         a.last = e.text;
     }

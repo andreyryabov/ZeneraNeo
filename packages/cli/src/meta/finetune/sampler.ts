@@ -61,7 +61,9 @@ export function resultOf(t: Tuning, c: Case): Result | undefined {
 }
 
 export function nextCase(t: Tuning): Case | undefined {
-    const room = t.more === undefined || t.begun < t.more;
+    if (t.more !== undefined && t.tried.size >= t.more) {
+        return undefined;
+    }
     return selection(t).find((c) => {
         if (t.claimed.has(c.id)) {
             return false;
@@ -71,9 +73,6 @@ export function nextCase(t: Tuning): Case | undefined {
             // Once per start: a sandbox that is down would only fail it again at once.
             return r.state === 'failed' && !t.tried.has(c.id);
         }
-        return room || begun(t, c);
+        return true;
     });
 }
-
-/** Begun at some start: it has a folder at its revision. */
-export const begun = (t: Tuning, c: Case): boolean => existsSync(t.caseDir(c));
