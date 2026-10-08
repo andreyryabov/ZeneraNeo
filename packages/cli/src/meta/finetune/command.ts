@@ -50,7 +50,7 @@ export const FINETUNE_HELP = [
     '',
     '  start: -N <workers> (4), -M <apply at> (= workers), --tries <n> (4), --mem-tries <n> (3),',
     '  --merge-every <k> (3), --seed <n>, --class <c>, --id <glob>, --rubric yes|no, --limit <n>,',
-    '  --force (past drift).',
+    '  --more <n> (this start only), --force (past drift).',
     '  In a terminal start draws what runs now, the tokens and the log; --plain does not.',
     '  Settings are kept in finetune/loop.json; start again to resume where it stopped.',
 ];
@@ -79,6 +79,8 @@ export const FINETUNE_DETAILS = [
     '  --id <glob>            Only cases whose id matches. Repeatable.',
     '  --rubric yes|no        Only cases with, or without, a rubric.',
     '  --limit <n>            Only the first n cases of the order.',
+    '  --more <n>             Begin at most n cases not begun before, then stop. Cases',
+    '                         part-way or failed carry on regardless. Not kept.',
     '  --force                Start even though the dataset drifted from its sources.',
     '  --plain                No live view: print a line per start and stop, as in a pipe.',
     '  --project <name|dir>   Which project. Default: the one you are in.',
@@ -113,6 +115,7 @@ export const FINETUNE_DETAILS = [
     'Examples:',
     '  zen meta finetune start -N 4',
     '  zen meta finetune start --class search --limit 6 -N 2 -M 2',
+    '  zen meta finetune start --more 4',
     '  zen meta finetune',
     '  zen meta finetune retry --difficult --class merge',
     '  zen meta finetune session plan-day',
@@ -130,6 +133,7 @@ interface Flags {
     id?: string[];
     rubric?: string;
     limit?: string;
+    more?: string;
     force?: boolean;
     plain?: boolean;
     difficult?: boolean;
@@ -148,6 +152,7 @@ const OPTIONS = {
     id: { type: 'string', multiple: true },
     rubric: { type: 'string' },
     limit: { type: 'string' },
+    more: { type: 'string' },
     force: { type: 'boolean' },
     plain: { type: 'boolean' },
     difficult: { type: 'boolean' },
@@ -293,6 +298,7 @@ async function start(
             'refresh it: zen meta run /dataset - or start with --force',
         );
     }
+    const more = whole(values.more, '--more');
     const config = configFrom(project.dir, values);
     const children = new Set<ChildProcess>();
     const t = new Tuning(
@@ -301,6 +307,7 @@ async function start(
         options.zen ?? spawnZen(project.dir, children),
         options.tickMs,
     );
+    t.more = more;
     if (!options.zen) {
         editorFiles(project.dir);
     }

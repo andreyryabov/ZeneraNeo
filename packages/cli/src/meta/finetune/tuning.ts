@@ -137,6 +137,10 @@ export class Tuning {
     drained = false;
     /** cases started by this process: a failed one is not taken twice in one start */
     readonly tried = new Set<string>();
+    /** `--more`: cases never begun that this start may begin; not kept in loop.json */
+    more: number | undefined;
+    /** cases never begun that this start has begun */
+    begun = 0;
     /** cases failed since the last step that went through */
     failures = 0;
     /** what the last status page counted */

@@ -5,7 +5,7 @@ its dataset (`zen meta dataset`). Nothing here touches model weights.
 
 ```sh
 zen meta finetune start [-N 4] [-M 4] [--tries 4] [--mem-tries 3] [--merge-every 3] [--seed 1] \
-    [--class <c>] [--id <glob>] [--rubric yes|no] [--limit <n>] [--force]
+    [--class <c>] [--id <glob>] [--rubric yes|no] [--limit <n>] [--more <n>] [--force]
 zen meta finetune [status]
 zen meta finetune stop
 zen meta finetune session <case>
@@ -45,6 +45,11 @@ tries used up  ->  difficult
 - **Stop and resume freely.** `stop` (or Ctrl-C once) lets the steps in flight
   finish, then exits; Ctrl-C twice kills them. `start` again carries on: every
   step's result is on disk, and nothing finished is repeated.
+- **`--limit` and `--more` differ.** `--limit <n>` cuts the order to its first
+  n cases and is kept in `loop.json`: once those n have a result, nothing more
+  starts until a larger `--limit`. `--more <n>` begins at most n cases not begun
+  before, this start only - cases part-way or failed still carry on - so
+  `start --more 4` again takes the next four.
 - `start` refuses a dataset that has drifted from its sources - run `/dataset`
   first, or pass `--force`.
 
