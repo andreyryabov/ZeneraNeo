@@ -155,7 +155,12 @@ export function copilotEventLog(path: string): {
                 case 'tool.execution_start': {
                     const args = (data.arguments ?? {}) as Record<string, unknown>;
                     const subject =
-                        args.command ?? args.description ?? args.path ?? args.skill ?? '';
+                        args.command ??
+                        args.description ??
+                        args.path ??
+                        args.skill ??
+                        args.pattern ??
+                        '';
                     const name = String(data.toolName ?? 'tool');
                     began.set(id, { at: Date.now(), name });
                     write({

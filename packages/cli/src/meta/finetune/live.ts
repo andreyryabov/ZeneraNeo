@@ -36,8 +36,10 @@ export interface Activity {
     input: number;
     output: number;
     byModel: Record<string, ModelSpend>;
-    /** the latest tool call or thing said */
+    /** the latest tool call, with what was said just before it, or the latest thing said */
     last?: string;
+    /** said since the last tool call */
+    said?: string;
     /** the latest lines, oldest first */
     lines: EventLine[];
 }
@@ -117,8 +119,11 @@ function fold(a: Activity, text: string): void {
         m.input += e.in;
         m.output += e.out;
     } else if (e.type === 'tool' && e.phase === 'start') {
-        a.last = `${e.name} ${e.subject}`.trim();
+        const tool = `${e.name} ${e.subject}`.trim();
+        a.last = a.said ? `${a.said} · ${tool}` : tool;
+        a.said = undefined;
     } else if (e.type === 'say') {
+        a.said = e.text;
         a.last = e.text;
     }
 }

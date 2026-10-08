@@ -54,6 +54,21 @@ describe('the live view', () => {
         expect(a.last).toBe('found it');
         expect(a.lines).toHaveLength(3);
 
+        // What was said stays on screen alongside the tool call it introduced.
+        appendFileSync(
+            file,
+            line({ type: 'tool', phase: 'start', id: '2', name: 'view', subject: 'a.md' }) +
+                line({ type: 'tool', phase: 'start', id: '3', name: 'view', subject: 'b.md' }),
+        );
+        a = tails.read(file);
+        expect(a.last).toBe('view b.md');
+        appendFileSync(
+            file,
+            line({ type: 'say', text: 'Reading c.' }) +
+                line({ type: 'tool', phase: 'start', id: '4', name: 'view', subject: 'c.md' }),
+        );
+        expect(tails.read(file).last).toBe('Reading c. · view c.md');
+
         rmSync(file);
         writeFileSync(
             file,
