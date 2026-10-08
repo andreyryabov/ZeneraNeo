@@ -483,6 +483,22 @@ describe('zen meta finetune', () => {
         expect(done()).toBe(3);
     });
 
+    it('keeps --limit for one start only, and ignores one an older version saved', async () => {
+        await dataset(['a1', 'b1', 'c1']);
+        const fake = fakeZen(() => ({ done: true }));
+        const done = () => ['a1', 'b1', 'c1'].filter((id) => result(id)).length;
+        await start(fake.zen, '-N', '2', '--limit', '1');
+        expect(done()).toBe(1);
+        const loop = join(root, 'finetune', 'loop.json');
+        expect(readFileSync(loop, 'utf8')).not.toContain('limit');
+        writeFileSync(
+            loop,
+            JSON.stringify({ ...JSON.parse(readFileSync(loop, 'utf8')), limit: 1 }),
+        );
+        await start(fake.zen, '-N', '2');
+        expect(done()).toBe(3);
+    });
+
     it('moves a tuning kept in .finetune/ to finetune/ and resumes it', async () => {
         await dataset(['a1', 'b1']);
         const fake = fakeZen(() => ({ done: true }));

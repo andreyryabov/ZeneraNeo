@@ -1319,6 +1319,24 @@ export function writeStatus(t: Tuning): void {
     };
     const tuning = { passed: 0, first: 0, before: blank(), after: blank() };
     const memory = { cases: 0, cheaper: 0, before: blank(), after: blank() };
+    const lastRun = (a: Attempt | undefined): string => {
+        if (!a) {
+            return '-';
+        }
+        const links = [
+            a.run ? link('run', here, a.run.dir) : '',
+            a.run?.report ? link('report', here, a.run.report) : '',
+            existsSync(join(a.dir, 'run.log')) ? link('run log', here, join(a.dir, 'run.log')) : '',
+            existsSync(join(a.dir, 'analysis.md'))
+                ? link('analysis', here, join(a.dir, 'analysis.md'))
+                : '',
+            existsSync(join(a.dir, 'analyze.log'))
+                ? link('analyze log', here, join(a.dir, 'analyze.log'))
+                : '',
+        ].filter(Boolean);
+        return `${PHASE_WORD[a.phase]} try ${a.attempt}: ${links.join(' · ') || '-'}`;
+    };
+    const stamp = (iso: string): string => `${iso.slice(0, 19).replace('T', ' ')} UTC`;
     for (const c of cases) {
         const w = t.workers.find((x) => x.case?.id === c.id);
         const parked =
@@ -1383,12 +1401,12 @@ export function writeStatus(t: Tuning): void {
         );
         if (r?.state === 'difficult') {
             difficult.push(
-                `| ${link(c.id, here, feedbackPath(t, c))} | ${PHASE_WORD[r.phase]} | ${cell(r.reason)} | ${r.phase === 'nomem' ? nomem.length : mem.length} | ${cell(last?.feedback?.summary)} | ${last && existsSync(join(last.dir, 'analysis.md')) ? link('last analysis', here, join(last.dir, 'analysis.md')) : '-'} |`,
+                `| ${link(c.id, here, feedbackPath(t, c))} | ${PHASE_WORD[r.phase]} | ${cell(r.reason)} | ${r.phase === 'nomem' ? nomem.length : mem.length} | ${stamp(r.at)} | ${cell(last?.feedback?.summary)} | ${lastRun(attempts.at(-1))} |`,
             );
         }
         if (r?.state === 'failed') {
             failed.push(
-                `| ${link(c.id, here, feedbackPath(t, c))} | ${PHASE_WORD[r.phase]}, try ${(r.phase === 'nomem' ? nomem : mem).length || 1} | ${cell(r.reason)} | ${r.at.slice(11, 16)} |`,
+                `| ${link(c.id, here, feedbackPath(t, c))} | ${PHASE_WORD[r.phase]}, try ${(r.phase === 'nomem' ? nomem : mem).length || 1} | ${cell(r.reason)} | ${stamp(r.at)} | ${lastRun(attempts.at(-1))} |`,
             );
         }
     }
@@ -1530,8 +1548,8 @@ export function writeStatus(t: Tuning): void {
         out.push(
             '## Difficult cases',
             '',
-            '| Case | Phase | Reason | Tries | Last summary | Details |',
-            '| --- | --- | --- | --- | --- | --- |',
+            '| Case | Phase | Reason | Tries | Difficult since | Last summary | Last run |',
+            '| --- | --- | --- | --- | --- | --- | --- |',
             ...difficult,
             '',
         );
@@ -1542,8 +1560,8 @@ export function writeStatus(t: Tuning): void {
             '',
             'Something outside the prose broke - the sandbox, a provider, a key - so these taught nothing. They keep their tries and carry on from the step that failed at the next `zen meta finetune start`.',
             '',
-            '| Case | Stopped at | Reason | At |',
-            '| --- | --- | --- | --- |',
+            '| Case | Stopped at | Reason | Failed at | Last run |',
+            '| --- | --- | --- | --- | --- |',
             ...failed,
             '',
         );

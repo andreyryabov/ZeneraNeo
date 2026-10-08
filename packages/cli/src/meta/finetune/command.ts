@@ -49,8 +49,8 @@ export const FINETUNE_HELP = [
     "  zen meta finetune session <case>          resume that case's analyze session",
     '',
     '  start: -N <workers> (4), -M <apply at> (= workers), --tries <n> (4), --mem-tries <n> (3),',
-    '  --merge-every <k> (3), --seed <n>, --class <c>, --id <glob>, --rubric yes|no, --limit <n>,',
-    '  --more <n> (this start only), --force (past drift).',
+    '  --merge-every <k> (3), --seed <n>, --class <c>, --id <glob>, --rubric yes|no,',
+    '  --limit <n> and --more <n> (this start only), --force (past drift).',
     '  In a terminal start draws what runs now, the tokens and the log; --plain does not.',
     '  Settings are kept in finetune/loop.json; start again to resume where it stopped.',
 ];
@@ -78,7 +78,7 @@ export const FINETUNE_DETAILS = [
     '  --class <c>            Only this class. Repeatable.',
     '  --id <glob>            Only cases whose id matches. Repeatable.',
     '  --rubric yes|no        Only cases with, or without, a rubric.',
-    '  --limit <n>            Only the first n cases of the order.',
+    '  --limit <n>            Only the first n cases of the order. Not kept.',
     '  --more <n>             Begin at most n cases not begun before, then stop. Cases',
     '                         part-way or failed carry on regardless. Not kept.',
     '  --force                Start even though the dataset drifted from its sources.',
@@ -248,10 +248,11 @@ const configFile = (dir: string): string => join(dir, FINETUNE_DIR, 'loop.json')
 
 export function readConfig(dir: string): Config {
     try {
-        return {
-            ...DEFAULTS,
-            ...(JSON.parse(readFileSync(configFile(dir), 'utf8')) as Partial<Config>),
-        };
+        // A limit is for one start; older versions kept it.
+        const { limit: _, ...saved } = JSON.parse(
+            readFileSync(configFile(dir), 'utf8'),
+        ) as Partial<Config>;
+        return { ...DEFAULTS, ...saved };
     } catch {
         return { ...DEFAULTS };
     }
@@ -274,11 +275,11 @@ function configFrom(dir: string, v: Flags): Config {
         ...(v.class ? { classes: v.class } : {}),
         ...(v.id ? { ids: v.id } : {}),
         ...(v.rubric ? { rubric: v.rubric === 'yes' } : {}),
-        ...(v.limit ? { limit: whole(v.limit, '--limit') } : {}),
     };
+    const limit = whole(v.limit, '--limit');
     mkdirSync(join(dir, FINETUNE_DIR), { recursive: true });
     writeFileSync(configFile(dir), `${JSON.stringify(config, null, 2)}\n`);
-    return config;
+    return limit ? { ...config, limit } : config;
 }
 
 async function start(

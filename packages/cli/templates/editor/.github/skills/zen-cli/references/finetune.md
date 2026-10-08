@@ -45,11 +45,11 @@ tries used up  ->  difficult
 - **Stop and resume freely.** `stop` (or Ctrl-C once) lets the steps in flight
   finish, then exits; Ctrl-C twice kills them. `start` again carries on: every
   step's result is on disk, and nothing finished is repeated.
-- **`--limit` and `--more` differ.** `--limit <n>` cuts the order to its first
-  n cases and is kept in `loop.json`: once those n have a result, nothing more
-  starts until a larger `--limit`. `--more <n>` begins at most n cases not begun
-  before, this start only - cases part-way or failed still carry on - so
-  `start --more 4` again takes the next four.
+- **`--limit` and `--more` are for one start**, never kept in `loop.json`.
+  `--limit <n>` cuts the order to its first n cases: once those have a result,
+  that start ends. `--more <n>` begins at most n cases not begun before - cases
+  part-way or failed still carry on - so `start --more 4` again takes the next
+  four.
 - `start` refuses a dataset that has drifted from its sources - run `/dataset`
   first, or pass `--force`.
 
