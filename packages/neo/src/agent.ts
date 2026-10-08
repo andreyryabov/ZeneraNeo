@@ -132,9 +132,10 @@ export class AgentRegistry<TCtx = unknown> {
 // model picks the next agent with the same mechanism it uses for everything
 // else. The kernel recognises them purely by this prefix.
 export function handoffTool<TCtx>(target: string, description?: string): AnyTool<TCtx> {
+    const lead = `Hand the conversation over (transfer) to the agent "${target}".`;
     return {
         name: `${HANDOFF_PREFIX}${target}`,
-        description: description ?? `Hand the conversation over to the "${target}" agent.`,
+        description: description ? `${lead} That agent: ${description}` : lead,
         parameters: {
             type: 'object',
             properties: { reason: { type: 'string', description: 'Why the hand-off is needed.' } },
