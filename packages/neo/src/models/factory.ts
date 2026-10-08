@@ -324,6 +324,32 @@ export function isProviderKind(name: string): name is ProviderKind {
     return Object.hasOwn(KINDS, name);
 }
 
+/**
+ * Vertex serves three request formats behind one account, and the model id
+ * says which: Google's own models through the GenAI API, Claude through
+ * Anthropic's Messages format at `rawPredict`, and every other publisher's
+ * (`xai/grok-4.1-fast-reasoning`, `qwen/qwen3-…-maas`) through the
+ * OpenAI-compatible endpoint, which names its models `publisher/model`.
+ */
+export type VertexRoute = 'gemini' | 'anthropic' | 'openai';
+
+export function vertexRoute(model: string): VertexRoute {
+    if (/^(anthropic\/)?claude-/.test(model)) {
+        return 'anthropic';
+    }
+    return model.includes('/') ? 'openai' : 'gemini';
+}
+
+/** The protocol one model on one kind is spoken in. Only Vertex has more than one. */
+function protocolOf(kind: ProviderKind, model: string): Protocol {
+    return kind === 'vertex' ? vertexRoute(model) : KINDS[kind].protocol;
+}
+
+/** The OpenAI-compatible endpoint on Vertex has chat completions and nothing else. */
+function apisOf(kind: ProviderKind, protocol: Protocol): readonly OpenAIApi[] {
+    return kind === 'vertex' && protocol === 'openai' ? ['chat'] : KINDS[kind].apis;
+}
+
 // ---------------------------------------------------------------------------
 // Tuning knobs
 // ---------------------------------------------------------------------------
@@ -449,7 +475,11 @@ export class ModelRegistry {
         this.#providers.set(name, spec);
         // Re-declaring after a client was handed out would otherwise leave the
         // old credentials in service for the rest of the process.
-        this.#clients.delete(name);
+        for (const key of this.#clients.keys()) {
+            if (key === name || key.startsWith(`${name}\0`)) {
+                this.#clients.delete(key);
+            }
+        }
         this.#limiters.delete(name);
         return this;
     }
@@ -490,6 +520,18 @@ export class ModelRegistry {
         return built;
     }
 
+    /** A Vertex provider's Claude or partner client: built once, beside its GenAI one. */
+    #partner(name: string, protocol: 'anthropic' | 'openai', spec: ProviderSpec): ProviderClient {
+        const key = `${name}\0${protocol}`;
+        const existing = this.#clients.get(key);
+        if (existing) {
+            return existing;
+        }
+        const built = buildVertexPartner(name, protocol, spec);
+        this.#clients.set(key, built);
+        return built;
+    }
+
     /**
      * The pacing shared by every embedder on a provider, so that what one of
      * them learns from a 429 the others do not have to learn again — and so
@@ -520,14 +562,16 @@ export class ModelRegistry {
      */
     knobs(ref: ModelRef): KnobIssue[] {
         const spec = typeof ref === 'string' ? this.parse(ref) : ref;
-        const defaults = KINDS[this.kindOf(spec.provider ?? this.#default)];
-        if (defaults.protocol !== 'openai') {
-            return unreadKnobs(spec, defaults.protocol);
+        const kind = this.kindOf(spec.provider ?? this.#default);
+        const protocol = protocolOf(kind, spec.model);
+        if (protocol !== 'openai') {
+            return unreadKnobs(spec, protocol);
         }
         // An api this vendor does not speak already has an error of its own;
         // answering about its knobs would only bury it.
-        const api = spec.api ?? defaults.apis[0];
-        return api && defaults.apis.includes(api) ? unreadKnobs(spec, `openai/${api}`) : [];
+        const apis = apisOf(kind, protocol);
+        const api = spec.api ?? apis[0];
+        return api && apis.includes(api) ? unreadKnobs(spec, `openai/${api}`) : [];
     }
 
     /** Turns a shorthand or a spec into a `Model`. */
@@ -536,7 +580,7 @@ export class ModelRegistry {
         const name = spec.provider ?? this.#default;
         const provider = this.#spec(name);
         const kind = this.kindOf(name);
-        const defaults = KINDS[kind];
+        const protocol = protocolOf(kind, spec.model);
 
         // Before the client, so a knob for the wrong vendor is reported as the
         // config mistake it is rather than behind a missing credential.
@@ -553,7 +597,11 @@ export class ModelRegistry {
         // silently ignore them.
         const client =
             spec.client ??
-            (hasCredentials(spec) ? buildClient(name, kind, spec, provider) : this.client(name));
+            (protocol !== KINDS[kind].protocol
+                ? this.#partner(name, protocol as 'anthropic' | 'openai', provider)
+                : hasCredentials(spec)
+                  ? buildClient(name, kind, spec, provider)
+                  : this.client(name));
 
         // The *resolved* name, not `spec.provider`: a bare ref carries none,
         // and a failure that cannot say which connection refused it is the
@@ -562,15 +610,19 @@ export class ModelRegistry {
 
         // Every protocol but OpenAI's has exactly one API, so naming one is a
         // mistake worth reporting rather than a field to ignore.
-        if (defaults.protocol !== 'openai') {
+        if (protocol !== 'openai') {
             if (spec.api) {
                 throw new TypeError(
                     `provider "${name}" (${kind}) has one api, so "${spec.api}" means nothing here`,
                 );
             }
-            switch (defaults.protocol) {
+            switch (protocol) {
                 case 'anthropic':
-                    return new AnthropicModel(spec.model, client as Anthropic, options);
+                    return new AnthropicModel(
+                        spec.model.replace(/^anthropic\//, ''),
+                        client as Anthropic,
+                        options,
+                    );
                 case 'gemini':
                     return new GeminiModel(spec.model, client as GoogleGenAI, options);
                 case 'openrouter':
@@ -578,11 +630,12 @@ export class ModelRegistry {
             }
         }
 
-        const api = spec.api ?? defaults.apis[0];
-        if (!defaults.apis.includes(api)) {
+        const apis = apisOf(kind, protocol);
+        const api = spec.api ?? apis[0];
+        if (!apis.includes(api)) {
             throw new TypeError(
                 `provider "${name}" (${kind}) does not speak the "${api}" api ` +
-                    `(supported: ${defaults.apis.join(', ')})`,
+                    `(supported: ${apis.join(', ')})`,
             );
         }
         return api === 'responses'
@@ -971,6 +1024,142 @@ function projectFromKeyFile(): string | undefined {
         // where it tries to authenticate with it and can say so precisely.
         return undefined;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Vertex partner models
+// ---------------------------------------------------------------------------
+
+/** Gemini has these; the partner endpoints do not, and answer them with a bare 404. */
+const MULTI_REGIONS = new Set(['us', 'eu']);
+
+export interface VertexEndpoint {
+    project: string;
+    location: string;
+    /** `https://…/v1/projects/<project>/locations/<location>` */
+    base: string;
+    /** a fresh access token from Application Default Credentials, or `spec.token` */
+    token: () => Promise<string>;
+}
+
+/**
+ * Where a Vertex provider's partner models are served, and how to authenticate
+ * there. The GenAI SDK does both for Gemini; nothing does them for Claude or
+ * the OpenAI-compatible endpoint, so they are resolved here the same way:
+ * `project`, then GOOGLE_CLOUD_PROJECT, then the service-account file.
+ */
+export function vertexEndpoint(spec: ProviderSpec = {}, name = 'vertex'): VertexEndpoint {
+    const where = `provider "${name}"`;
+    const project =
+        expand(spec.project, `${where}: project`) ??
+        fromEnv('GOOGLE_CLOUD_PROJECT') ??
+        projectFromKeyFile();
+    if (!project) {
+        throw new Error(
+            `${where}: Claude and partner models on vertex need \`project\`, or ` +
+                `GOOGLE_CLOUD_PROJECT, and a service account — an express-mode key reaches Gemini only`,
+        );
+    }
+    const named =
+        expand(spec.location, `${where}: location`) ?? fromEnv('GOOGLE_CLOUD_LOCATION') ?? 'global';
+    const location = MULTI_REGIONS.has(named) ? 'global' : named;
+    const host =
+        location === 'global'
+            ? 'https://aiplatform.googleapis.com'
+            : `https://${location}-aiplatform.googleapis.com`;
+    const token = spec.token;
+    return {
+        project,
+        location,
+        base: `${host}/v1/projects/${project}/locations/${location}`,
+        token: token ? async () => token() : adcToken(),
+    };
+}
+
+interface GoogleAuthModule {
+    GoogleAuth: new (options: { scopes: string[] }) => {
+        getAccessToken(): Promise<string | null | undefined>;
+    };
+}
+
+/** Mints and refreshes tokens the way the GenAI SDK does for Gemini. */
+function adcToken(): () => Promise<string> {
+    let auth: InstanceType<GoogleAuthModule['GoogleAuth']> | undefined;
+    return async () => {
+        if (!auth) {
+            // `@google/genai`'s own dependency, so it is resolved from there rather than declared twice.
+            const genai = sdkPath('@google/genai', 'vertex');
+            const { GoogleAuth } = createRequire(genai)('google-auth-library') as GoogleAuthModule;
+            auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
+        }
+        const token = await auth.getAccessToken();
+        if (!token) {
+            throw new Error('vertex: Application Default Credentials gave no access token');
+        }
+        return token;
+    };
+}
+
+function sdkPath(pkg: string, kind: ProviderKind): string {
+    try {
+        return requirePeer.resolve(pkg);
+    } catch (cause) {
+        throw new Error(
+            `provider kind "${kind}" needs ${pkg}, which is not installed — run: npm i ${pkg}`,
+            { cause },
+        );
+    }
+}
+
+function buildVertexPartner(
+    name: string,
+    protocol: 'anthropic' | 'openai',
+    opts: ProviderSpec,
+): Anthropic | OpenAI {
+    const at = vertexEndpoint(opts, name);
+    const common = {
+        apiKey: OAUTH_PLACEHOLDER,
+        defaultHeaders: expandHeaders(opts.headers, `provider "${name}"`),
+        timeout: opts.timeoutMs,
+        maxRetries: retriesOf(opts),
+    };
+    if (protocol === 'anthropic') {
+        const { Anthropic } = sdk<AnthropicModule>('@anthropic-ai/sdk', 'vertex');
+        return new Anthropic({
+            ...common,
+            baseURL: at.base,
+            fetch: funded(rawPredictFetch(at.base, at.token)),
+        });
+    }
+    const { OpenAI } = sdk<OpenAIModule>('openai', 'vertex');
+    return new OpenAI({
+        ...common,
+        baseURL: `${at.base}/endpoints/openapi`,
+        fetch: funded(bearerFetch(at.token)),
+    });
+}
+
+/**
+ * Anthropic's client posts to `/v1/messages`; Vertex wants the model in the
+ * path and its own `anthropic_version` in the body instead.
+ */
+function rawPredictFetch(base: string, token: () => Promise<string>): typeof fetch {
+    const authed = bearerFetch(token);
+    return async (input, init) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (!new URL(url).pathname.endsWith('/v1/messages') || typeof init?.body !== 'string') {
+            return authed(input, init);
+        }
+        const { model, ...body } = JSON.parse(init.body) as { model: string; stream?: boolean };
+        const headers = new Headers(init.headers);
+        headers.delete('x-api-key');
+        const verb = body.stream ? 'streamRawPredict' : 'rawPredict';
+        return authed(`${base}/publishers/anthropic/models/${model}:${verb}`, {
+            ...init,
+            headers,
+            body: JSON.stringify({ ...body, anthropic_version: 'vertex-2023-10-16' }),
+        });
+    };
 }
 
 // Both SDKs refuse to construct without a key. When a token callback owns the

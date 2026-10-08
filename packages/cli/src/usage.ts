@@ -28,8 +28,8 @@ export function ledgerPath(projectDir: string): string | undefined {
     if (set) {
         return set;
     }
-    return existsSync(join(projectDir, '.finetune'))
-        ? join(projectDir, '.finetune', 'usage', 'ledger.jsonl')
+    return existsSync(join(projectDir, 'finetune'))
+        ? join(projectDir, 'finetune', 'usage', 'ledger.jsonl')
         : undefined;
 }
 

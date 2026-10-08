@@ -13,6 +13,8 @@ import {
     statSync,
     writeFileSync,
 } from 'node:fs';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -21,11 +23,13 @@ import { auditModels } from '../src/audit.ts';
 import { bannerLines, NEO_BANNER } from '../src/banner.ts';
 import { Cache, cacheKey } from '../src/cache.ts';
 import {
+    byGroup,
     CATALOG_KIND,
     CATALOG_TTL_MS,
     catalogKey,
     CURATED,
     fetchCatalog,
+    groupOf,
     loadCatalog,
     matches,
     type CatalogEntry,
@@ -62,8 +66,11 @@ import {
     readPrompt,
     readSpan,
     resumeDelayMs,
+    sameModel,
+    sessionModel,
     shutdownModels,
     splitLines,
+    startRelay,
     Tally,
     toneAt,
     transient,
@@ -74,7 +81,15 @@ import {
 } from '../src/meta/index.ts';
 import { splitRef } from '../src/modelref.ts';
 import { duration } from '../src/narrate.ts';
-import { engineDisk, ensurePodmanReady, ownedContainers, sharedEndpoint } from '../src/podman.ts';
+import {
+    assertLocks,
+    engineDisk,
+    ensurePodmanReady,
+    idleContainers,
+    ownedContainers,
+    sharedEndpoint,
+    type OwnedContainer,
+} from '../src/podman.ts';
 import { dirSize, lastUsedAt, projectMounts } from '../src/projects.ts';
 import { parseRequest, readRequest } from '../src/request.ts';
 import { chooseWorkspace } from '../src/resolve.ts';
@@ -2528,6 +2543,94 @@ describe('the disk report', () => {
         expect(seen[1]).toContain('--size');
     });
 
+    it('reads a listing far past the default output cap', async () => {
+        // Through the real runner's cap logic: ~1 kB a container, 2048 of them.
+        const many = JSON.stringify(
+            Array.from({ length: 2048 }, (_, i) => ({
+                Names: [`zn-${i}-${'x'.repeat(1000)}`],
+                State: 'exited',
+                Labels: { zenera: '1' },
+            })),
+        );
+        let cap = 0;
+        const run: typeof runProcess = (bin, args, opts) => {
+            cap = opts?.maxBytes ?? 64 * 1024;
+            return reply(many.slice(0, cap))(bin, args, {});
+        };
+        expect(await ownedContainers('podman', run)).toHaveLength(2048);
+        expect(cap).toBeGreaterThan(many.length);
+    });
+
+    describe('engine locks', () => {
+        /** Answers by verb: `info` the free count, `container exists` the reuse, `ps` the listing. */
+        const engine = (free: string, exists = 1): typeof runProcess => {
+            return (bin, args) => {
+                if (args[0] === 'info') return reply(free)(bin, args, {});
+                if (args[0] === 'container') return reply('', exists)(bin, args, {});
+                return reply(ps)(bin, args, {});
+            };
+        };
+
+        it('lets a run through while there are enough', async () => {
+            await expect(assertLocks(4, { exec: engine('4') })).resolves.toBeUndefined();
+        });
+
+        it('says nothing when the engine will not tell', async () => {
+            await expect(assertLocks(4, { exec: engine('') })).resolves.toBeUndefined();
+        });
+
+        it('refuses a run the engine cannot hold, naming what could be freed', async () => {
+            await expect(
+                assertLocks(4, { exec: engine('3'), owners: new Map() }),
+            ).rejects.toMatchObject({
+                code: EXIT.sandbox,
+                message: expect.stringContaining('3 locks free and this run needs 4'),
+                hint: 'zen sandbox clean --idle frees 1',
+            });
+        });
+
+        it('counts a running container as idle once its run is gone', () => {
+            const dir = mkdtempSync(join(tmpdir(), 'zen-idle-'));
+            try {
+                const running = (key: string): OwnedContainer => ({
+                    name: `zn-${key}`,
+                    state: 'running',
+                    key,
+                });
+                const owners = new Map([['20260901-132913-2eac', dir]]);
+                const all = [
+                    { name: 'zn-old', state: 'exited', key: 'x' },
+                    running('20260901-132913-2eac'),
+                    running('20990101-000000-none'),
+                    running(`faker-${process.pid}`),
+                    running('faker-999999'),
+                ];
+                // No lock in the session: its run exited without cleaning up.
+                expect(idleContainers(all, owners).map((c) => c.name)).toEqual([
+                    'zn-old',
+                    'zn-20260901-132913-2eac',
+                    'zn-faker-999999',
+                ]);
+                writeFileSync(join(dir, '.lock'), JSON.stringify({ pid: process.pid }));
+                expect(idleContainers(all, owners).map((c) => c.name)).toEqual([
+                    'zn-old',
+                    'zn-faker-999999',
+                ]);
+            } finally {
+                rmSync(dir, { recursive: true, force: true });
+            }
+        });
+
+        it('lets a resumed session back into its own container at zero', async () => {
+            await expect(
+                assertLocks(1, { exec: engine('0', 0), reuses: 'zn-old-aaaaaaaaaa' }),
+            ).resolves.toBeUndefined();
+            await expect(
+                assertLocks(1, { exec: engine('0', 1), reuses: 'zn-gone' }),
+            ).rejects.toMatchObject({ code: EXIT.sandbox });
+        });
+    });
+
     it('reports nothing rather than throwing when the engine talks nonsense', async () => {
         expect(await ownedContainers('podman', reply('not json'))).toEqual([]);
         expect(await engineDisk('podman', reply('not json'))).toBeUndefined();
@@ -2872,14 +2975,18 @@ describe('reading a provider listing', () => {
 
     it('asks Google for base models, not tuned ones', async () => {
         let asked: unknown;
-        await fetchCatalog('vertex', {
-            models: {
-                list: async (params: unknown) => {
-                    asked = params;
-                    return [];
+        await fetchCatalog(
+            'vertex',
+            {
+                models: {
+                    list: async (params: unknown) => {
+                        asked = params;
+                        return [];
+                    },
                 },
             },
-        });
+            async () => [],
+        );
         // Without this the SDK lists tuned models, and an account with none
         // looks like an account with no models at all.
         expect(asked).toMatchObject({ config: { queryBase: true } });
@@ -2899,8 +3006,9 @@ describe('reading a provider listing', () => {
                     supportedActions: ['embedContent'],
                 },
             ),
+            async () => [],
         );
-        expect(rows.map((r) => [r.id, r.roles])).toEqual([
+        expect(rows.filter((r) => r.publisher === 'google').map((r) => [r.id, r.roles])).toEqual([
             ['gemini-2.5-flash', ['chat']],
             ['text-embedding-005', ['embedding']],
         ]);
@@ -2917,8 +3025,38 @@ describe('reading a provider listing', () => {
                 { name: 'publishers/google/models/alphafold3-request' },
                 { name: 'publishers/google/models/gemini-3-experimental' },
             ),
+            async () => [],
         );
-        expect(rows.map((r) => r.id)).toEqual(['gemini-3-experimental']);
+        expect(rows.filter((r) => r.publisher === 'google').map((r) => r.id)).toEqual([
+            'gemini-3-experimental',
+        ]);
+    });
+
+    it("lists Vertex partner models after Google's, and survives their listing failing", async () => {
+        const google = pages({
+            name: 'publishers/google/models/gemini-3.8-flash',
+            supportedActions: ['generateContent'],
+        });
+        const claude = {
+            ref: 'vertex:claude-sonnet-5',
+            id: 'claude-sonnet-5',
+            provider: 'vertex' as const,
+            roles: ['chat' as const],
+            publisher: 'anthropic',
+            source: 'live' as const,
+        };
+        const rows = (await fetchCatalog('vertex', google, async () => [claude])).sort(byGroup);
+        expect(rows.map((r) => [r.id, groupOf(r)])).toEqual([
+            ['gemini-3.8-flash', 'vertex · Google (Gemini, Gemma, Imagen, Veo)'],
+            ['claude-sonnet-5', 'vertex · partner · anthropic'],
+            ['openai/gpt-oss-120b-maas', 'vertex · partner · openai'],
+            ['qwen/qwen3-235b-a22b-instruct-2507-maas', 'vertex · partner · qwen'],
+        ]);
+
+        const failed = await fetchCatalog('vertex', google, async () => {
+            throw new Error('403');
+        });
+        expect(failed.map((r) => r.id)).toContain('gemini-3.8-flash');
     });
 
     it('walks every OpenRouter page and folds in the separate embedding list', async () => {
@@ -3274,6 +3412,23 @@ describe('wiring a zen key into copilot', () => {
         expect(out.warnings).toEqual([]);
     });
 
+    // Vertex's completions endpoint takes `function` tools only, and a bare
+    // `gpt-oss-…` id gets copilot's GPT tool set with a custom `apply_patch`.
+    it('keeps a partner publisher on the model id so copilot falls back to function tools', () => {
+        const out = wire(
+            store,
+            entry({ provider: 'vertex', holds: 'file', location: 'us' }),
+            'openai/gpt-oss-120b-maas',
+        );
+        expect(out.env.COPILOT_PROVIDER_BASE_URL).toContain('/locations/global/');
+        expect(out.env.COPILOT_PROVIDER_WIRE_MODEL).toBe('openai/gpt-oss-120b-maas');
+        expect(out.env.COPILOT_PROVIDER_MODEL_ID).toBe('openai/gpt-oss-120b-maas');
+        expect(
+            wire(store, entry({ provider: 'vertex', holds: 'file' }), 'google/gemini-2.5-pro').env
+                .COPILOT_PROVIDER_MODEL_ID,
+        ).toBe('gemini-2.5-pro');
+    });
+
     it('says so when the location will be the slow one', () => {
         const out = wire(store, entry({ provider: 'vertex', holds: 'file' }), 'gemini-2.5-pro');
         expect(out.env.COPILOT_PROVIDER_BASE_URL).toContain('/locations/global/');
@@ -3306,6 +3461,103 @@ describe('wiring a zen key into copilot', () => {
         const shown = masked(out.env, out.secret).join('\n');
         expect(shown).not.toContain('sk-secret-value');
         expect(shown).toContain('COPILOT_PROVIDER_API_KEY=');
+    });
+
+    // The openapi endpoint answers a Claude id with a bare 404.
+    it('sends Claude on vertex through the relay as an anthropic provider', () => {
+        const out = wire(
+            store,
+            entry({ provider: 'vertex', holds: 'file', location: 'us' }),
+            'anthropic/claude-sonnet-5-5',
+        );
+        expect(out.env.COPILOT_PROVIDER_TYPE).toBe('anthropic');
+        expect(out.env.COPILOT_MODEL).toBe('claude-sonnet-5-5');
+        expect(out.env.COPILOT_PROVIDER_WIRE_MODEL).toBeUndefined();
+        expect(out.env.COPILOT_PROVIDER_API_KEY_COMMAND).toBeUndefined();
+        expect(out.relay).toMatchObject({
+            project: 'acme-ai',
+            location: 'us',
+            keyFile: '/keys/vertex.json',
+            key: out.env.COPILOT_PROVIDER_API_KEY,
+        });
+        expect(out.secret).toEqual(['COPILOT_PROVIDER_API_KEY']);
+    });
+
+    it('refuses Claude on vertex with an express-mode key', () => {
+        expect(() =>
+            wire(store, entry({ provider: 'vertex', holds: 'secret' }), 'claude-sonnet-5-5'),
+        ).toThrow(/service account/);
+    });
+});
+
+describe('the vertex Claude relay', () => {
+    const seen: { url: string; auth?: string; apiKey?: string; body: Record<string, unknown> }[] =
+        [];
+    let upstream: Server;
+    let base = '';
+
+    beforeEach(async () => {
+        seen.length = 0;
+        upstream = createServer((req, res) => {
+            let text = '';
+            req.on('data', (c: Buffer) => (text += c.toString()));
+            req.on('end', () => {
+                seen.push({
+                    url: req.url ?? '',
+                    auth: req.headers.authorization,
+                    apiKey: req.headers['x-api-key'] as string | undefined,
+                    body: JSON.parse(text) as Record<string, unknown>,
+                });
+                res.writeHead(200, { 'content-type': 'application/json' });
+                res.end('{"ok":true}');
+            });
+        });
+        await new Promise<void>((done) => upstream.listen(0, '127.0.0.1', done));
+        base = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}/v1/projects/p/locations/global`;
+    });
+    afterEach(() => {
+        upstream.closeAllConnections();
+        upstream.close();
+    });
+
+    const post = (url: string, key: string, body: object): Promise<Response> =>
+        fetch(`${url}/v1/messages`, {
+            method: 'POST',
+            headers: { 'x-api-key': key, 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+
+    it('moves the model into the path and adds the vertex version', async () => {
+        const relay = await startRelay({ key: 'k', base, token: async () => 'tok' });
+        try {
+            const res = await post(relay.url, 'k', { model: 'claude-x', max_tokens: 5 });
+            expect(res.status).toBe(200);
+            expect(await res.json()).toEqual({ ok: true });
+            await post(relay.url, 'k', { model: 'claude-x', stream: true });
+        } finally {
+            await relay.close();
+        }
+        expect(seen.map((s) => s.url)).toEqual([
+            '/v1/projects/p/locations/global/publishers/anthropic/models/claude-x:rawPredict',
+            '/v1/projects/p/locations/global/publishers/anthropic/models/claude-x:streamRawPredict',
+        ]);
+        expect(seen[0]).toMatchObject({
+            auth: 'Bearer tok',
+            apiKey: undefined,
+            body: { max_tokens: 5, anthropic_version: 'vertex-2023-10-16' },
+        });
+        expect(seen[0].body.model).toBeUndefined();
+    });
+
+    // Loopback is open to every process on the machine, and the relay mints GCP tokens.
+    it('refuses anyone without the session key', async () => {
+        const relay = await startRelay({ key: 'k', base, token: async () => 'tok' });
+        try {
+            expect((await post(relay.url, 'nope', { model: 'claude-x' })).status).toBe(401);
+        } finally {
+            await relay.close();
+        }
+        expect(seen).toEqual([]);
     });
 });
 
@@ -3444,6 +3696,41 @@ describe('counting the meta agent’s tokens', () => {
         ]);
         expect(shutdownModels('{"type":"user.message"}')).toBeUndefined();
     });
+
+    it('knows the model a session was written by, so a resume on another starts afresh', () => {
+        const home = mkdtempSync(join(tmpdir(), 'zen-copilot-'));
+        const kept = process.env.COPILOT_HOME;
+        process.env.COPILOT_HOME = home;
+        try {
+            const write = (id: string, ...events: object[]) => {
+                mkdirSync(join(home, 'session-state', id), { recursive: true });
+                writeFileSync(
+                    join(home, 'session-state', id, 'events.jsonl'),
+                    events.map((e) => JSON.stringify(e)).join('\n'),
+                );
+            };
+            write(
+                'answered',
+                { type: 'session.start', data: { selectedModel: 'gemini-3.8-flash' } },
+                { type: 'assistant.message', data: { model: 'google/gemini-3.8-flash' } },
+                // A resume on another model that failed before answering.
+                { type: 'session.start', data: { selectedModel: 'claude-sonnet-5-5' } },
+            );
+            write('silent', { type: 'session.start', data: { selectedModel: 'gpt-5' } });
+            expect(sessionModel('answered')).toBe('google/gemini-3.8-flash');
+            expect(sessionModel('silent')).toBe('gpt-5');
+            expect(sessionModel('missing')).toBeUndefined();
+            expect(sameModel('google/gemini-3.8-flash', 'gemini-3.8-flash')).toBe(true);
+            expect(sameModel('gemini-3.8-flash', 'claude-sonnet-5-5')).toBe(false);
+        } finally {
+            if (kept === undefined) {
+                delete process.env.COPILOT_HOME;
+            } else {
+                process.env.COPILOT_HOME = kept;
+            }
+            rmSync(home, { recursive: true, force: true });
+        }
+    });
 });
 
 describe('where usage is recorded', () => {
@@ -3461,8 +3748,8 @@ describe('where usage is recorded', () => {
         const dir = mkdtempSync(join(tmpdir(), 'zen-ledger-'));
         try {
             expect(ledgerPath(dir)).toBeUndefined();
-            mkdirSync(join(dir, '.finetune'));
-            expect(ledgerPath(dir)).toBe(join(dir, '.finetune', 'usage', 'ledger.jsonl'));
+            mkdirSync(join(dir, 'finetune'));
+            expect(ledgerPath(dir)).toBe(join(dir, 'finetune', 'usage', 'ledger.jsonl'));
             process.env[LEDGER_ENV] = '/tmp/elsewhere.jsonl';
             expect(ledgerPath(dir)).toBe('/tmp/elsewhere.jsonl');
         } finally {

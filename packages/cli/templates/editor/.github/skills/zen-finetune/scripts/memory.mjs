@@ -14,7 +14,7 @@
 //
 // When a with-memory run passes, `checkpoint <run>` makes the candidate the last
 // good memory: it renames the directory and only then repoints
-// .finetune/memory/last-good.json at it. `zen memory merge` writes its files one
+// finetune/memory/last-good.json at it. `zen memory merge` writes its files one
 // after another, so a merge killed half-way can leave a graph whose files
 // disagree - but only ever a candidate, never the one the pointer names. Stop the
 // tuning at any moment and `memory.mjs path` still names a usable graph.
@@ -50,10 +50,10 @@ const USAGE = `Keep the candidate memory of the batch being tuned, and the last 
 
 process.chdir(resolve(dirname(fileURLToPath(import.meta.url)), '../../../..'));
 
-const ROOT = '.finetune/memory';
+const ROOT = 'finetune/memory';
 const POINTER = `${ROOT}/last-good.json`;
 const CANDIDATE = `${ROOT}/candidate.json`;
-const RUNS = '.finetune/runs';
+const RUNS = 'finetune/runs';
 const RUN_NAME = /^batch(\d{2})-(nomem|mem)-run(\d+)$/;
 // Older graphs are kept to roll back to; beyond this many they are only disk.
 const KEEP = 3;

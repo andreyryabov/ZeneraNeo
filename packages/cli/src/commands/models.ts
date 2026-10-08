@@ -16,6 +16,9 @@ import { createEmbedder, ModelRegistry } from '@zenera/neo';
 
 import { parse } from '../args.ts';
 import {
+    byGroup,
+    groupOf,
+    isPartner,
     loadCatalog,
     loadCatalogs,
     matches,
@@ -180,14 +183,34 @@ function freshness(cat: Catalog): string {
 
 const roleMark = (row: CatalogEntry): string => row.roles.join('+');
 
+const maker = (row: CatalogEntry): string =>
+    !row.publisher ? '' : isPartner(row) ? yellow(row.publisher) : green(row.publisher);
+
 function row(entry: CatalogEntry): string[] {
     return [
         cyan(entry.ref),
+        maker(entry),
         dim(roleMark(entry)),
         dim(tokens(entry.contextLength)),
         dim(entry.pricing?.free ? 'free' : ''),
         dim(entry.name ?? ''),
     ];
+}
+
+/** The table, with a heading wherever a reseller's rows change maker. */
+function grouped(entries: readonly CatalogEntry[]): string[] {
+    const lines = table(entries.map(row));
+    const out: string[] = [];
+    let last: string | undefined;
+    entries.forEach((e, i) => {
+        const group = groupOf(e);
+        if (group && group !== last) {
+            out.push(...(out.length > 0 ? [''] : []), bold(group));
+        }
+        last = group;
+        out.push(lines[i]!);
+    });
+    return out;
 }
 
 /**
@@ -294,7 +317,7 @@ const ls: Sub = async (ctx, args) => {
     const all = cats
         .flatMap((c) => c.entries)
         .filter((e) => matches(e, '', { roles }))
-        .sort((a, b) => a.ref.localeCompare(b.ref));
+        .sort(byGroup);
 
     if (ctx.json) {
         json({
@@ -312,9 +335,16 @@ const ls: Sub = async (ctx, args) => {
         note(dim('nothing matched — try: zen models ls --refresh'));
         return;
     }
-    writeAll(table(all.slice(0, limit).map(row)));
+    writeAll(grouped(all.slice(0, limit)));
     if (all.length > limit) {
         note(dim(`${all.length - limit} more — narrow with \`zen models search\`, or pass --all`));
+    }
+    if (all.some(isPartner)) {
+        note(
+            dim(
+                'partner models are billed through Vertex and must be enabled in Model Garden first: https://console.cloud.google.com/vertex-ai/model-garden',
+            ),
+        );
     }
 };
 
@@ -372,7 +402,7 @@ const search: Sub = async (ctx, args) => {
         .sort(
             (a, b) =>
                 Number(b.pricing?.free ?? false) - Number(a.pricing?.free ?? false) ||
-                a.ref.localeCompare(b.ref),
+                byGroup(a, b),
         );
 
     if (ctx.json) {

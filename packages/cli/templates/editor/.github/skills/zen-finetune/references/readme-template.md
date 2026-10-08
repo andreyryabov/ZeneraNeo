@@ -1,5 +1,5 @@
 <!--
-This is the template for .finetune/README.md. It is not generated: the agent
+This is the template for finetune/README.md. It is not generated: the agent
 writes it once, before the first run, and patches it after every step.
 
 Copy it, replace every <angle-bracket> placeholder with the real value, and
@@ -264,5 +264,5 @@ Grade batch 3's first run without memory: check it was not killed for memory,
 then read every trajectory.
 
 ```sh
-.github/skills/zen-finetune/scripts/report.mjs -d .finetune/runs/batch03-nomem-run1/batch oom
+.github/skills/zen-finetune/scripts/report.mjs -d finetune/runs/batch03-nomem-run1/batch oom
 ```

@@ -9,6 +9,8 @@ Reach for one whenever a rule applies only sometimes, or holds a fact that will
 change without the prompt changing.
 
 Ask what the skill must say and when it applies, if I have not already said.
+If it ships a script, or is for an agent that writes or runs code, load the
+`zen-code-python` skill before writing it.
 
 1. Create `agents/skills/<name>/SKILL.md`. That is the only skill layout there
    is - a bare `agents/skills/<name>.md` fails `zen check` - and the folder is

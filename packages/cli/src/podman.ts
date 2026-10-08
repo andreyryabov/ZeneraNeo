@@ -1,8 +1,9 @@
-import { runProcess, SandboxError, type ProcResult } from '@zenera/neo';
+import { pidAlive, runProcess, SandboxError, type ProcResult } from '@zenera/neo';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
 import type { ResolvedBuild } from './image.ts';
+import { isBusy, isProjectDir, Registry, sessionIds, sessionsDir } from './projects.ts';
 import { CliError, confirm, dim, EXIT, isInteractive, note, progress } from './term.ts';
 
 // ---------------------------------------------------------------------------
@@ -65,6 +66,8 @@ export interface PodmanStatus {
     ready: boolean;
     /** what the engine has to hand out: the machine's on macOS and Windows, the host's on Linux */
     capacity?: { memory: number; swap: number; cpus: number };
+    /** containers the engine can still create; a stopped one holds a lock too */
+    freeLocks?: number;
     image?: string;
     imagePresent?: boolean;
 }
@@ -569,6 +572,9 @@ export async function podmanStatus(opts: PodmanOptions = {}): Promise<PodmanStat
                 cpus: Number.isFinite(cpus) ? cpus : 0,
             };
         }
+        // Asked apart from the line above: an engine without the field fails
+        // the whole template, and that must not cost the report its memory.
+        status.freeLocks = await freeLocks(engine, run);
     }
 
     if (opts.image) {
@@ -585,6 +591,93 @@ function safeMachines(stdout: string): Machine[] {
     } catch {
         return [];
     }
+}
+
+/** Containers the engine can still create; undefined when it will not say. */
+export async function freeLocks(engine = 'podman', exec = runProcess): Promise<number | undefined> {
+    const res = await exec(engine, ['info', '--format', '{{.Host.FreeLocks}}'], {
+        timeoutMs: 30_000,
+    }).catch(() => undefined);
+    const free = res?.code === 0 ? res.stdout.trim() : '';
+    return /^\d+$/.test(free) ? Number(free) : undefined;
+}
+
+export interface LockOptions {
+    engine?: string;
+    exec?: typeof runProcess;
+    /** a container that may already exist, and so needs no new lock */
+    reuses?: string;
+    /** session id -> its directory; read from the registry when absent */
+    owners?: ReadonlyMap<string, string>;
+}
+
+/**
+ * Refuses a run the engine cannot hold before anything is spent on it. Every
+ * container takes a lock, stopped ones included, and at zero the failure would
+ * otherwise land on the first shell command — mid-turn, or once per item.
+ */
+export async function assertLocks(need: number, opts: LockOptions = {}): Promise<void> {
+    const engine = opts.engine ?? 'podman';
+    const exec = opts.exec ?? runProcess;
+    const free = await freeLocks(engine, exec);
+    if (free === undefined || free >= need) {
+        return;
+    }
+    if (opts.reuses) {
+        const there = await exec(engine, ['container', 'exists', opts.reuses], {
+            timeoutMs: 30_000,
+        }).catch(() => undefined);
+        if (there?.code === 0) {
+            return;
+        }
+    }
+    const idle = idleContainers(
+        await ownedContainers(engine, exec),
+        opts.owners ?? (await sessionOwners()),
+    ).length;
+    throw new CliError(
+        `the container engine has ${free} locks free and this run needs ${need} — ` +
+            'every container holds one, stopped ones included',
+        EXIT.sandbox,
+        idle > 0
+            ? `zen sandbox clean --idle frees ${idle}`
+            : `every container zen made is in use — \`${engine} ps --all\` shows what holds them`,
+    );
+}
+
+/** Every session on this machine, by id, from the projects the registry knows. */
+export async function sessionOwners(): Promise<Map<string, string>> {
+    const owners = new Map<string, string>();
+    for (const entry of (await Registry.open()).entries) {
+        if (isProjectDir(entry.path)) {
+            for (const id of sessionIds(entry.path)) {
+                owners.set(id, join(sessionsDir(entry.path), id));
+            }
+        }
+    }
+    return owners;
+}
+
+/**
+ * Containers no live process is using: every stopped one, and a running one
+ * whose run exited without tearing it down (a kill, a crash, a closed lid).
+ * A running container that cannot be traced to its owner is left alone.
+ */
+export function idleContainers(
+    containers: readonly OwnedContainer[],
+    owners: ReadonlyMap<string, string>,
+): OwnedContainer[] {
+    return containers.filter((c) => {
+        if (c.state !== 'running') {
+            return true;
+        }
+        const faker = /^faker-(\d+)$/.exec(c.key ?? '');
+        if (faker) {
+            return !pidAlive(Number(faker[1]));
+        }
+        const dir = c.key === undefined ? undefined : owners.get(c.key);
+        return dir !== undefined && !isBusy(dir);
+    });
 }
 
 export interface OwnedContainer {
@@ -607,6 +700,13 @@ interface PsEntry {
 }
 
 /**
+ * `ps --format json` is ~1 kB a container, so the runner's default 64 kB cap cut
+ * the listing at about sixty, the JSON stopped parsing, and every report said
+ * "none" while two thousand sat on the machine.
+ */
+const LISTING_BYTES = 64 * 1024 * 1024;
+
+/**
  * Containers this CLI created, whatever session they belong to, and whether
  * each is up. `--all` is the point: with `persist: true` a session leaves a
  * *stopped* container behind, and a listing that only showed running ones
@@ -623,7 +723,9 @@ export async function ownedContainers(
     if (opts.sizes) {
         args.push('--size');
     }
-    const res = await exec(engine, args, { timeoutMs: 120_000 }).catch(() => undefined);
+    const res = await exec(engine, args, { timeoutMs: 120_000, maxBytes: LISTING_BYTES }).catch(
+        () => undefined,
+    );
     if (!res || res.code !== 0) {
         return [];
     }
@@ -661,8 +763,15 @@ export async function removeContainers(
     if (names.length === 0) {
         return;
     }
-    await exec(engine, ['rm', '--force', '--volumes', ...names], { timeoutMs: 120_000 });
+    // In slices, so two thousand of them get a timeout each slice can meet.
+    for (let i = 0; i < names.length; i += REMOVE_SLICE) {
+        await exec(engine, ['rm', '--force', '--volumes', ...names.slice(i, i + REMOVE_SLICE)], {
+            timeoutMs: 120_000,
+        });
+    }
 }
+
+const REMOVE_SLICE = 100;
 
 // ---------------------------------------------------------------------------
 // Disk

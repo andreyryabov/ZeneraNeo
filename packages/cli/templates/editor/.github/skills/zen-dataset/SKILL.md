@@ -123,7 +123,7 @@ a few sections is `--partial`: only the cases it names are touched. Read the
 dry run before writing - an unexpected `retired` or an id you did not mean to
 change is caught there and nowhere else.
 
-The old `.finetune/dataset.json` (`cases` or `samples`) applies as it stands.
+The old `finetune/dataset.json` (`cases` or `samples`) applies as it stands.
 
 ## When the sources move
 

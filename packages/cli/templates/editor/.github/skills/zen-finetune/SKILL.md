@@ -1,6 +1,6 @@
 ---
 name: zen-finetune
-description: Fine-tune an agent project against a training set, a batch at a time, and every batch twice over — first with NO memory, then WITH the memory it just built. Read the whole training set, in any format, into a classified, complexity-rated dataset with rubrics; choose up to a limit of cases from it evenly by class, rubric and complex cases first. Batch 1 is a smoke test of 3 cases; each batch that goes smoothly doubles the next, up to a maximum, and each is built when it is needed from new cases plus rechecks of earlier ones — difficult ones first, then complex ones. Each batch runs with an empty memory via `zen run batch`; every trajectory is graded with `zen inspect graph`, `node` and `ask` for rubric compliance, llm-call count, fork use, assumptions, what it committed to memory and delegation; the proposals of every case are merged into edits of prompts, skills, house rules and `agents/<topic>-policy-instructions.md` files, and the same cases run again until they pass. Then what the passing run's cases committed is merged with the last good memory into a candidate, every case runs again from its own copy of it, recall and re-commits are graded the same way, the memory policy is tuned until recall makes the work dramatically cheaper without changing a verdict or re-committing what memory already held — and only then does the candidate become the last good memory and the next batch start. Cases that cause the most trouble go on a difficult list and keep coming back until they are fixed or declared stuck. The agent writes `.finetune/README.md` — the plan, a mermaid map of every step, and the progress — before the first run and patches it after every step; `scripts/next.mjs` reads the state off disk so an interrupted session can resume. Load before evaluating an agent project against example queries, before acting on "it gets this wrong", when asked to improve prompts or instructions from evidence rather than taste, when building an eval or regression set out of a specification, when optimising memory use or run cost, or whenever a batch of runs has to be graded rather than merely executed.
+description: Fine-tune an agent project against a training set, a batch at a time, and every batch twice over — first with NO memory, then WITH the memory it just built. Read the whole training set, in any format, into a classified, complexity-rated dataset with rubrics; choose up to a limit of cases from it evenly by class, rubric and complex cases first. Batch 1 is a smoke test of 3 cases; each batch that goes smoothly doubles the next, up to a maximum, and each is built when it is needed from new cases plus rechecks of earlier ones — difficult ones first, then complex ones. Each batch runs with an empty memory via `zen run batch`; every trajectory is graded with `zen inspect graph`, `node` and `ask` for rubric compliance, llm-call count, fork use, assumptions, what it committed to memory and delegation; the proposals of every case are merged into edits of prompts, skills, house rules and `agents/<topic>-policy-instructions.md` files, and the same cases run again until they pass. Then what the passing run's cases committed is merged with the last good memory into a candidate, every case runs again from its own copy of it, recall and re-commits are graded the same way, the memory policy is tuned until recall makes the work dramatically cheaper without changing a verdict or re-committing what memory already held — and only then does the candidate become the last good memory and the next batch start. Cases that cause the most trouble go on a difficult list and keep coming back until they are fixed or declared stuck. The agent writes `finetune/README.md` — the plan, a mermaid map of every step, and the progress — before the first run and patches it after every step; `scripts/next.mjs` reads the state off disk so an interrupted session can resume. Load before evaluating an agent project against example queries, before acting on "it gets this wrong", when asked to improve prompts or instructions from evidence rather than taste, when building an eval or regression set out of a specification, when optimising memory use or run cost, or whenever a batch of runs has to be graded rather than merely executed.
 ---
 
 # Fine-tuning an agent project
@@ -24,9 +24,9 @@ When two words mean one thing, readers assume they mean two.
 | Word                  | Means                                                                                                                 |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | **case**              | one query from the training set, with its rubric if it has one. `zen run batch` calls it an _item_                    |
-| **dataset**           | every case in the training set — `.finetune/dataset.json`. Never cut down. Its size is written **T**                  |
+| **dataset**           | every case in the training set — `finetune/dataset.json`. Never cut down. Its size is written **T**                   |
 | **limit** (N)         | how many cases this tuning uses — equal to T unless the user named a smaller number                                   |
-| **selection**         | those N cases, chosen evenly by class, rubric and complex cases first — `.finetune/selection.json`                    |
+| **selection**         | those N cases, chosen evenly by class, rubric and complex cases first — `finetune/selection.json`                     |
 | **batch**             | the cases worked on together until they pass without memory and then with it. See [What a batch is](#what-a-batch-is) |
 | **batch size**        | how many new cases a batch takes: `minBatch` for batch 1, doubling after each smooth batch, up to `maxBatch`          |
 | **recheck cases** (R) | cases from earlier batches, run again in a later one — difficult ones first, then complex ones                        |
@@ -37,11 +37,11 @@ When two words mean one thing, readers assume they mean two.
 | **passed**            | a run where every case is right AND its review found nothing left to cut                                              |
 | **concurrency** (C)   | cases executing at the same time inside one run — 16 at most, halved on OOM, never below 4                            |
 | **trajectory**        | what one case did in one run — its graph                                                                              |
-| **difficult case**    | a case that caused real trouble — on `.finetune/difficult.json`, retested until `fixed` or `stuck`                    |
+| **difficult case**    | a case that caused real trouble — on `finetune/difficult.json`, retested until `fixed` or `stuck`                     |
 | **candidate memory**  | the last good memory plus what the batch's passing no-memory run committed — `memory.mjs path --candidate`            |
 | **last good memory**  | every passed batch's candidate, in turn — `memory.mjs path`, always whole on disk                                     |
 
-A run lives in `.finetune/runs/batch<NN>-<nomem|mem>-run<N>/` —
+A run lives in `finetune/runs/batch<NN>-<nomem|mem>-run<N>/` —
 `batch03-nomem-run2` is batch 3's second run without memory, `batch03-mem-run1`
 its first run with memory. Inside it, `batch/` is `zen run batch`'s own output
 for that run: the command's name, not this method's.
@@ -57,7 +57,7 @@ flowchart TD
     D[("difficult.json<br/>wrong · regressed · flaky · memory · costly")]
 
     subgraph NM["1. WITHOUT memory: fix the instructions"]
-        F["zen run batch --memory .finetune/empty<br/>every case starts from an EMPTY graph<br/>and writes its own"]
+        F["zen run batch --memory finetune/empty<br/>every case starts from an EMPTY graph<br/>and writes its own"]
         G["grade every case: right? what did it cost?<br/>what did it commit? ask where it went wrong"]
         H{"all right, and nothing<br/>left to cut?"}
         I["merge every case's proposals<br/>edit prompts · skills · rules<br/>then the SAME cases.json again"]
@@ -304,7 +304,7 @@ runs should be able to reuse. So when a no-memory run passes, it becomes a
 ```
 
 That copies the last good memory into a new directory,
-`.finetune/memory/candidate-batch03/`, and folds in what each of that run's
+`finetune/memory/candidate-batch03/`, and folds in what each of that run's
 cases committed with `zen memory merge`. Merge drops what the graph already
 holds, so the same endpoint learned by four cases is one node, and a fact an
 earlier batch already knew is not added twice. The candidate is what every
@@ -319,8 +319,8 @@ When a with-memory run passes, the candidate is kept:
 .github/skills/zen-finetune/scripts/memory.mjs checkpoint batch03-mem-run1
 ```
 
-It renames the candidate to `.finetune/memory/after-batch03/` and only then
-repoints `.finetune/memory/last-good.json` at it. A merge writes its files one
+It renames the candidate to `finetune/memory/after-batch03/` and only then
+repoints `finetune/memory/last-good.json` at it. A merge writes its files one
 after another, so a merge killed half-way can leave a graph whose files
 disagree — but only ever a candidate, never the graph the pointer names. The
 last three graphs are kept to roll back to.
@@ -405,7 +405,7 @@ and the rules that shaped it, are still in front of you.
 |                    | **No-memory runs**                                                                 | **With-memory runs**                                                                        |
 | ------------------ | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | What is tuned      | agent prompts, skills, `agents/instructions.md`, policy files — and what to commit | the memory policy: when to recall, when to trust it, what not to commit again               |
-| Memory at run time | `--memory .finetune/empty` — every case starts empty and **writes its own**        | `--memory "$(memory.mjs path --candidate)"` — every case starts from **its own copy**       |
+| Memory at run time | `--memory finetune/empty` — every case starts empty and **writes its own**         | `--memory "$(memory.mjs path --candidate)"` — every case starts from **its own copy**       |
 | Graded on          | the eight criteria; the trajectory must be right _from nothing_                    | whether recall shortened the trajectory, and what was committed on top of a graph that knew |
 | The win            | correctness — the right work for the right reason — then cost                      | speed and cost — the same verdicts for dramatically fewer tokens and less wall clock        |
 
@@ -465,7 +465,7 @@ finds an exit 137 — halve it, `C = max(4, floor(C / 2))`, write it to
 preflight, no measuring, no raising it back. Out of memory at 4 means the
 machine cannot run the batch — stop and tell the user.
 
-Write them down once, in `.finetune/config.json`, so every script and every
+Write them down once, in `finetune/config.json`, so every script and every
 resumed session agrees:
 
 ```json
@@ -489,7 +489,7 @@ experiment.
 
 ## The README
 
-`.finetune/README.md` is the one page a person opens to understand the tuning.
+`finetune/README.md` is the one page a person opens to understand the tuning.
 **It is written by you, not generated**, and it is written for someone who has
 never seen this project: plain words, real numbers, no jargon that is not in the
 [Words](#words) table.
@@ -543,7 +543,7 @@ the prose could not fix is `failed`, not `done`, and its label says how many.
 
 `next.mjs` checks the README's age: if a run's `batch.json`, `findings.md` or
 `changes.md`, or a memory pointer, is newer than the README, its first line says
-`first: patch .finetune/README.md`. Do that before anything else. A README that is
+`first: patch finetune/README.md`. Do that before anything else. A README that is
 only right at the end is one nobody trusts in the middle, which is the only time
 it is useful.
 
@@ -602,7 +602,7 @@ Preserve the rubric word for word. A paraphrased rubric grades the paraphrase.
 
 ### The shape
 
-Write `.finetune/dataset.json`:
+Write `finetune/dataset.json`:
 
 ```json
 {
@@ -673,7 +673,7 @@ batches; when unsure, rate up.
 ### It is a cache
 
 Extraction is expensive and non-deterministic; re-doing it per tuning would make
-two tunings incomparable. So `.finetune/dataset.json` is written once and read
+two tunings incomparable. So `finetune/dataset.json` is written once and read
 thereafter. Re-extract only when the source changes, and keep existing ids
 stable — an id that moves breaks every earlier run's findings. Commit it. It is
 the project's eval set from then on. When done, report the count per class and
@@ -684,7 +684,7 @@ confirm it matches the source.
 ### Select
 
 ```sh
-.github/skills/zen-finetune/scripts/select.mjs -o .finetune/selection.json
+.github/skills/zen-finetune/scripts/select.mjs -o finetune/selection.json
 ```
 
 | Flag                   | Effect                                                             |
@@ -733,7 +733,7 @@ Now, before anything runs — see [The README](#the-readme).
 
 ```sh
 .github/skills/zen-finetune/scripts/batch.mjs            # progress: used, left, next size, difficult open
-.github/skills/zen-finetune/scripts/batch.mjs next -o .finetune/runs/batch01-nomem-run1/cases.json
+.github/skills/zen-finetune/scripts/batch.mjs next -o finetune/runs/batch01-nomem-run1/cases.json
 ```
 
 | Flag         | Effect                                                        |
@@ -750,13 +750,13 @@ is left after it — put that in the README's batch row. It is built **once**, f
 the first no-memory run; every later run of the batch copies that file.
 
 ```sh
-RUN=.finetune/runs/batch01-nomem-run1
-C=$(node -p 'require("./.finetune/config.json").concurrency')
+RUN=finetune/runs/batch01-nomem-run1
+C=$(node -p 'require("./finetune/config.json").concurrency')
 .github/skills/zen-finetune/scripts/batch.mjs next -o "$RUN/cases.json"
 zen run batch \
     --input "$RUN/cases.json" \
     --batch-dir "$RUN/batch" \
-    --memory .finetune/empty \
+    --memory finetune/empty \
     --concurrency "$C"
 ```
 
@@ -777,7 +777,7 @@ is a live dashboard of the run — open it while it runs.
 What lands:
 
 ```
-.finetune/runs/batch01-nomem-run1/
+finetune/runs/batch01-nomem-run1/
     cases.json                   new + recheck; built once here, copied for every later run
     plan.json                    size, why, which are new, which are rechecks
     batch/
@@ -811,7 +811,7 @@ A case killed at 137 ran out of memory; a case at 124 hit a timeout, which under
 memory pressure is the same fault wearing a different number. Neither produced
 evidence about the prompt. **Do not grade the run, do not change one word of
 instruction on its basis, and do not compare its tokens to anything**. Write
-`## VOID` in its `findings.md`, halve `concurrency` in `.finetune/config.json`
+`## VOID` in its `findings.md`, halve `concurrency` in `finetune/config.json`
 (never below 4), and run a copy of its `cases.json` as the next run. A void run
 does not count toward the run cap. `next.mjs` prints the exact value to set. Out
 of memory at concurrency 4 is the one machine failure that stops the tuning:
@@ -858,7 +858,8 @@ probe call to find out it was wrong.
 | One step of a trajectory                               | `zen inspect node <nN> --dir <trajectory dir>`             |
 
 Then work case by case. Load **zen-inspect** for the mechanics,
-**zen-analyze-run** for how to read one trajectory's decisions, and
+**zen-analyze-run** for how to read one trajectory's decisions,
+**zen-topology** for criteria 4 and 5 below, and
 **zen-inspect-ask** before the first `zen inspect ask` - which node, what to
 rule out first, how to word the question. The audit checklist of
 zen-analyze-run (memory used and saved, delegation, forking, tool use, cost) is
@@ -901,7 +902,7 @@ so one ask at the right node covers the steps before it.
 
 ```sh
 DIR="$(.github/skills/zen-finetune/scripts/report.mjs \
-    -d .finetune/runs/batch01-nomem-run1/batch paths planning-organize-day | cut -f2)"
+    -d finetune/runs/batch01-nomem-run1/batch paths planning-organize-day | cut -f2)"
 zen inspect graph --dir "$DIR"
 zen inspect node n12 n13 --dir "$DIR" --part request --full
 # .tmp/ask/planning-organize-day/n13-paging.md, written with your file tool:
@@ -975,7 +976,8 @@ serial calls with no data dependency between them (missed fork); branches that
 read each other's output (a fork that should have been a sequence); a fork with
 one branch (that is delegation, and should be written as delegation); branches
 that all do the same thing with the same inputs. `branches` in the header and the
-shape of the graph say all of it.
+shape of the graph say all of it. The signature table in **zen-topology** §7 says
+where each fix goes, and a missed fan-out is priced in elapsed time, not tokens.
 
 **5. Delegation.** Did it hand off to the right agent, and did it hand off at
 all? Both failures are common: doing a specialist's job inline because the prompt
@@ -997,7 +999,7 @@ retry the identical call? The `tools` header row finds this in one line.
 
 ### Write it down: findings.md
 
-One file per run, `.finetune/runs/batch01-nomem-run1/findings.md`. It opens
+One file per run, `finetune/runs/batch01-nomem-run1/findings.md`. It opens
 with a **verdict block** — a plain answer to "are we making progress", what was
 changed to get there, and the per-case table that supports it or does not — and
 only then the per-case grading.
@@ -1011,8 +1013,8 @@ prints markdown ready to paste:
 
 ```sh
 .github/skills/zen-finetune/scripts/report.mjs \
-    -d .finetune/runs/batch03-nomem-run2/batch \
-    -p .finetune/runs/batch03-nomem-run1/batch compare
+    -d finetune/runs/batch03-nomem-run2/batch \
+    -p finetune/runs/batch03-nomem-run1/batch compare
 ```
 
 Every column comes from the run itself — tokens from `output.json`, llm calls,
@@ -1025,7 +1027,7 @@ script can read it off a trajectory.
 Above the table it prints a `memory:` line for this run and, when comparing, a
 `prev memory:` line for the other. Paste both. The same numbers mean opposite
 things with and without memory, and `batch.json` records
-`--memory .finetune/empty` as mode `copied` exactly like a with-memory run — so
+`--memory finetune/empty` as mode `copied` exactly like a with-memory run — so
 do not read the mode out of the JSON by eye; `report.mjs` decides it by whether
 the source is a real graph.
 
@@ -1034,8 +1036,8 @@ the source is a real graph.
 
 ## PROGRESS — one case fixed, none broken
 
-memory: NO MEMORY — every case started from an empty graph and wrote its own (.finetune/empty)
-prev memory: NO MEMORY — every case started from an empty graph and wrote its own (.finetune/empty)
+memory: NO MEMORY — every case started from an empty graph and wrote its own (finetune/empty)
+prev memory: NO MEMORY — every case started from an empty graph and wrote its own (finetune/empty)
 
 **Changed since run 1:** one paragraph in `agents/skills/rag_search/SKILL.md`
 (+11 lines) — a question naming two products is two lookups, and the worst
@@ -1279,7 +1281,7 @@ grepping the quote in the request and then in `agents.yaml` and `agents/`.
 | A standing rule every agent must obey         | `agents/instructions.md`                                                     |
 | A standing rule about one capability          | `agents/<topic>-policy-instructions.md` — new file                           |
 | The wrong agent had the tool, or no agent did | not changed — structural: an open problem in the README, reported at the end |
-| The dataset was wrong                         | `.finetune/dataset.json`, before the next run                                |
+| The dataset was wrong                         | `finetune/dataset.json`, before the next run                                 |
 
 New policy files are the usual output of a first batch: `memory-policy-`,
 `fork-policy-`, `tools-policy-`, `files-policy-instructions.md`. They sit beside
@@ -1296,7 +1298,7 @@ genuinely belongs in one — true of every Zenera project, not just this one —
 change the master upstream in the CLI templates, and note it in the run.
 
 Record what changed and why in the run's own `changes.md` —
-`.finetune/runs/batch01-nomem-run1/changes.md` — one entry per edit, each
+`finetune/runs/batch01-nomem-run1/changes.md` — one entry per edit, each
 naming the merged pattern and the proposals behind it. It is what makes the next
 run's difference interpretable, and it is what you read when a number goes
 _down_. `next.mjs` looks for it to tell whether a graded run is waiting to be
@@ -1317,13 +1319,13 @@ Run the **same batch** again as the next run — a copy of its cases file,
 never a rebuild — still with no memory:
 
 ```sh
-RUN=.finetune/runs/batch01-nomem-run2
-mkdir -p "$RUN" && cp .finetune/runs/batch01-nomem-run1/cases.json "$RUN/"
-C=$(node -p 'require("./.finetune/config.json").concurrency')
+RUN=finetune/runs/batch01-nomem-run2
+mkdir -p "$RUN" && cp finetune/runs/batch01-nomem-run1/cases.json "$RUN/"
+C=$(node -p 'require("./finetune/config.json").concurrency')
 zen run batch --input "$RUN/cases.json" \
-    --batch-dir "$RUN/batch" --memory .finetune/empty --concurrency "$C"
+    --batch-dir "$RUN/batch" --memory finetune/empty --concurrency "$C"
 .github/skills/zen-finetune/scripts/report.mjs \
-    -d "$RUN/batch" -p .finetune/runs/batch01-nomem-run1/batch compare
+    -d "$RUN/batch" -p finetune/runs/batch01-nomem-run1/batch compare
 ```
 
 Same cases, same machine, same memory, one thing changed. Read it in this order:
@@ -1406,16 +1408,16 @@ supersede it leaves the next run reading the wrong thing.
 ### Run from the candidate (step 10)
 
 ```sh
-RUN=.finetune/runs/batch01-mem-run1
-mkdir -p "$RUN" && cp .finetune/runs/batch01-nomem-run1/cases.json "$RUN/"
-C=$(node -p 'require("./.finetune/config.json").concurrency')
+RUN=finetune/runs/batch01-mem-run1
+mkdir -p "$RUN" && cp finetune/runs/batch01-nomem-run1/cases.json "$RUN/"
+C=$(node -p 'require("./finetune/config.json").concurrency')
 zen run batch --input "$RUN/cases.json" \
     --batch-dir "$RUN/batch" \
     --memory "$(.github/skills/zen-finetune/scripts/memory.mjs path --candidate)" \
     --concurrency "$C"
 ```
 
-The no-memory run's `--memory .finetune/empty` and this run's
+The no-memory run's `--memory finetune/empty` and this run's
 `--memory "$(memory.mjs path --candidate)"` differ in one thing only: whether
 the directory being copied holds a graph. Same cases, same seed, same machine,
 same flags.
@@ -1452,7 +1454,7 @@ says `WITH MEMORY` — comparing against **the no-memory run that passed the sam
 batch**, and from run 2 on also against the previous with-memory run:
 
 ```sh
-R=.finetune/runs
+R=finetune/runs
 .github/skills/zen-finetune/scripts/report.mjs -d $R/batch01-mem-run1/batch oom
 .github/skills/zen-finetune/scripts/report.mjs -d $R/batch01-mem-run1/batch memory
 .github/skills/zen-finetune/scripts/report.mjs -d $R/batch01-mem-run1/batch recalls
@@ -1569,16 +1571,16 @@ difficult list has open ones; then comes the final check.
 
 When every case in the selection has been used and no difficult case is open,
 run **the whole selection** as one batch — the last good memory, the same flags,
-the same machine — into `.finetune/runs/final-check/`. It is the only run that
+the same machine — into `finetune/runs/final-check/`. It is the only run that
 measures every case under the final prose and the final memory at once: the
 first batches were tuned against prose that later batches changed, and only
 their rechecks have seen it since.
 
 ```sh
-RUN=.finetune/runs/final-check
+RUN=finetune/runs/final-check
 mkdir -p "$RUN"
-cp .finetune/selection.json "$RUN/cases.json"
-C=$(node -p 'require("./.finetune/config.json").concurrency')
+cp finetune/selection.json "$RUN/cases.json"
+C=$(node -p 'require("./finetune/config.json").concurrency')
 zen run batch --input "$RUN/cases.json" --batch-dir "$RUN/batch" \
     --memory "$(.github/skills/zen-finetune/scripts/memory.mjs path)" --concurrency "$C"
 ```
@@ -1598,7 +1600,7 @@ shipped graph.
 ## The state directory
 
 ```
-.finetune/
+finetune/
     dataset.json            every case in the training set; built once, cached, committed
     config.json             limit, minBatch, maxBatch, recheck, concurrency, seed, maxRetries
     selection.json          the cases up to the limit, evenly by class, rubric and complex first
@@ -1643,15 +1645,15 @@ workspaces, and may contain live API responses: ignore them, and the memory
 graphs built from them, and the raw usage ledger. Add to `.gitignore`:
 
 ```
-.finetune/runs/*/batch/
-.finetune/memory/
-.finetune/empty/
-.finetune/usage/
+finetune/runs/*/batch/
+finetune/memory/
+finetune/empty/
+finetune/usage/
 ```
 
 ## The usage report
 
-`.finetune/USAGE.md` says what the tuning has cost in tokens — in total, by
+`finetune/USAGE.md` says what the tuning has cost in tokens — in total, by
 model, by batch, by run, the costliest cases, and the meta
 agent's own spend by stage and session. Three things spend tokens, and only one
 is the project under test: the **project agents** (every case of every run, read
@@ -1660,8 +1662,8 @@ doing the tuning, and the **`zen inspect ask`** calls of the grading.
 
 Nobody writes it by hand: `next.mjs` regenerates it on every call, and a running
 `zen meta` does every five minutes and when it exits. `zen meta`, `zen run`,
-`zen run batch` and `zen inspect ask` append to `.finetune/usage/ledger.jsonl`
-whenever the project has a `.finetune/`. Link it from the README instead of
+`zen run batch` and `zen inspect ask` append to `finetune/usage/ledger.jsonl`
+whenever the project has a `finetune/`. Link it from the README instead of
 copying its numbers; `usage.json` holds the same numbers for a script.
 
 ## Scripts this skill ships
@@ -1673,7 +1675,7 @@ copying its numbers; `usage.json` holds the same numbers for a script.
 | `scripts/report.mjs`    | one run's `batch/` → an index, the concatenated graphs, the trajectory paths, the failures, the OOM check, memory use per case, each case's commits (against the candidate, with memory), recalls and answers, or the comparison against another run |
 | `scripts/difficult.mjs` | the difficult list: `add` / `fix` a case with its reason and run; with no command, the list with `open` / `fixed` / `stuck` and retry counts                                                                                                         |
 | `scripts/memory.mjs`    | `candidate <run>` builds a batch's candidate from a passed no-memory run; `checkpoint <run>` keeps it after a passed with-memory run; `path [--candidate]` names a graph; no command says what built them                                            |
-| `scripts/next.mjs`      | reads `.finetune/` and prints the next step — including when a candidate or checkpoint is missing and when the final check is due — and whether the README has fallen behind; refreshes `USAGE.md` on the way                                        |
+| `scripts/next.mjs`      | reads `finetune/` and prints the next step — including when a candidate or checkpoint is missing and when the final check is due — and whether the README has fallen behind; refreshes `USAGE.md` on the way                                         |
 | `scripts/usage.mjs`     | the ledger and every run's `batch.json` → `USAGE.md` and `usage.json`: tokens by who spent them, model, batch, run and stage; `--stdout` prints it instead                                                                                           |
 
 The README template is `references/readme-template.md`.
@@ -1727,7 +1729,7 @@ next one. Change them upstream, in the CLI's `templates/editor/.github/skills/`.
     own.** Every case in the training set goes into `dataset.json`, and every
     case is tuned against unless the user named a smaller limit.
 13. **Patch the README after every step, by hand.** Exactly one `now` node on the
-    map. When `next.mjs` says `first: patch .finetune/README.md`, do that first.
+    map. When `next.mjs` says `first: patch finetune/README.md`, do that first.
 14. **Never edit from one case's proposal.** Merge every case's proposals first;
     a rule needs a pattern, unless the failure was catastrophic.
 15. **Never edit `zen`'s four instruction files.** `zen check --fix` overwrites

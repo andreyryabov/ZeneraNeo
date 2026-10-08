@@ -4,6 +4,7 @@ import {
     isUnfunded,
     ModelRegistry,
     text,
+    vertexRoute,
     type Embedder,
     type Model,
     type ProviderSpec,
@@ -506,6 +507,9 @@ function classifyModel(err: unknown, target: ModelTarget): KeyCheck {
 /** The command that finds something this account can actually use. */
 function instead(target: ModelTarget): string {
     const provider = target.ref.includes(':') ? target.ref.split(':')[0] : undefined;
+    if (provider === 'vertex' && vertexRoute(targetId(target)) !== 'gemini') {
+        return 'enable it for this project in Model Garden: https://console.cloud.google.com/vertex-ai/model-garden';
+    }
     return provider
         ? `zen models ls ${provider}`
         : `zen models pick --${target.kind === 'embedding' ? 'embedding' : 'chat'}`;

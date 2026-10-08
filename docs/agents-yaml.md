@@ -986,10 +986,15 @@ removes it.
 
 A container is per **session**, not per project, so a project used for a week
 accumulates one per session it ran. They are cheap - a stopped container costs
-disk and nothing else, and the writable layer is usually tens of kilobytes,
-because everything worth keeping is already in the two mounts - but they are
-not free, and `zen sandbox disk` shows what they and every project directory
-add up to.
+disk and one of the engine's locks, and the writable layer is usually tens of
+kilobytes, because everything worth keeping is already in the two mounts - but
+they are not free. Podman has 2048 locks by default and every container holds
+one, stopped or not; at zero nothing can be created, and `zen sandbox status`
+says so. `zen run batch` items are sessions nobody resumes, so their containers
+are removed on close whatever `persist:` says. `zen sandbox clean --idle`
+clears the rest without touching live runs - stopped containers, and running
+ones whose run was killed before it could stop them - and `zen sandbox disk`
+shows what they and every project directory add up to.
 
 Changing any field here changes the container's name, so a project that bumps
 its image gets a new container rather than an old one quietly persisting with

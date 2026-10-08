@@ -59,6 +59,7 @@ guess a flag, and do not read them all.
 | What the agents remember, why something was recalled, forgetting    | [memory.md](./references/memory.md)                             |
 | The meta agent: `zen meta run`, stored prompts, its `--json` object | [meta.md](./references/meta.md)                                 |
 | The evaluation dataset: cases, drift, notes, drawing a sample       | [dataset.md](./references/dataset.md) (and `zen-dataset` skill) |
+| Tuning the prose on the dataset: workers, applies, STATUS.md        | [finetune.md](./references/finetune.md)                         |
 | Sharing a project: archives, what travels, importing one safely     | [export.md](./references/export.md)                             |
 | `zen faker` - a mock API from an OpenAPI/Swagger document           | [faker.md](./references/faker.md)                               |
 | `zen rag` - searching an API description, or a pile of markdown     | [rag.md](./references/rag.md)                                   |

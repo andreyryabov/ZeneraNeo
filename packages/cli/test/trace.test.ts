@@ -337,6 +337,47 @@ describe('the diagram', () => {
         expect(head({ workspace: '/p/ws' })).not.toContain('%% memory');
     });
 
+    // A missing commit is absent from the `tools` row, and an analyzer reading
+    // that row rated "memory saved: ok" on a run that saved nothing.
+    it('counts memory use with zeros, and says when nothing was committed', () => {
+        const head = (nodes: TrajectoryNode[]): string =>
+            traceMermaid(state(nodes), { memory: '/p/memory' }).split('flowchart TD')[0] as string;
+        const recall = node({
+            type: 'memory_recall',
+            query: { text: 'go' },
+            seeds: ['m1'],
+            nodes: [{ id: 'm1', kind: 'fact', score: 0.6 }],
+            edges: [],
+            content: payload('<memory-recollection>'),
+        });
+
+        const unsaved = head([recall, ...call('w', 'write_file', 'path=a.py'), ...trunk()]);
+        expect(unsaved).toContain(
+            '%%           recall 1 (1 nodes) · search 0 · grep 0 · load 0 · commit 0 (0 nodes, 0 files)',
+        );
+        expect(unsaved).toContain('nothing committed after 1 workspace file writes');
+
+        const saved = head([
+            recall,
+            ...call('w', 'write_file', 'path=a.py'),
+            node({
+                type: 'memory_op',
+                op: 'commit',
+                opId: 'o1',
+                nodes: [
+                    { id: 'm2', kind: 'file', revision: 1 },
+                    { id: 'm3', kind: 'task', revision: 1 },
+                ],
+                edges: [],
+                files: 1,
+            }),
+        ]);
+        expect(saved).toContain('commit 1 (2 nodes, 1 files)');
+        expect(saved).not.toContain('nothing committed');
+
+        expect(traceMermaid(state(trunk())).split('flowchart TD')[0]).not.toContain('recall');
+    });
+
     // A run that thought and a run that did not are otherwise identical here:
     // the trajectory records reasoning tokens and the diagram used to drop
     // them, leaving "is thinking on?" unanswerable from the run itself.

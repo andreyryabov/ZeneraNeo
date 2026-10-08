@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // @ts-check
 //
-// Say what to do next in the fine-tuning, read off .finetune/.
+// Say what to do next in the fine-tuning, read off finetune/.
 //
 // This is how an interrupted session finds its place. Everything it reads is on
 // disk - the dataset, the config, the selection, the README, the difficult list,
@@ -25,7 +25,7 @@
 // The number of batches is not fixed: the tuning goes on while the selection has
 // unused cases or the difficult list has open ones.
 //
-// When .finetune/README.md is older than the newest thing a run wrote, it says
+// When finetune/README.md is older than the newest thing a run wrote, it says
 // so first: the README is written by hand and is only useful if it is current.
 //
 // Run directories are `batch<NN>-<nomem|mem>-run<N>`; anything else is ignored.
@@ -42,21 +42,21 @@ process.chdir(resolve(dirname(fileURLToPath(import.meta.url)), '../../../..'));
 
 for (const arg of process.argv.slice(2)) {
     if (arg === '-h' || arg === '--help') {
-        console.log(`Say what to do next in the fine-tuning, read off .finetune/.\n\n  ${NAME}`);
+        console.log(`Say what to do next in the fine-tuning, read off finetune/.\n\n  ${NAME}`);
         process.exit(0);
     }
     console.error(`${NAME}: unknown argument ${arg}`);
     process.exit(2);
 }
 
-const DATASET = '.finetune/dataset.json';
-const CONFIG = '.finetune/config.json';
-const SELECTION = '.finetune/selection.json';
-const README = '.finetune/README.md';
-const DIFFICULT = '.finetune/difficult.json';
-const LAST_GOOD = '.finetune/memory/last-good.json';
-const CANDIDATE = '.finetune/memory/candidate.json';
-const RUNS = '.finetune/runs';
+const DATASET = 'finetune/dataset.json';
+const CONFIG = 'finetune/config.json';
+const SELECTION = 'finetune/selection.json';
+const README = 'finetune/README.md';
+const DIFFICULT = 'finetune/difficult.json';
+const LAST_GOOD = 'finetune/memory/last-good.json';
+const CANDIDATE = 'finetune/memory/candidate.json';
+const RUNS = 'finetune/runs';
 const FINAL = `${RUNS}/final-check`;
 const SCRIPTS = '.github/skills/zen-finetune/scripts';
 const MAX_RUNS = 4;
@@ -130,7 +130,7 @@ const runDir = (batch, kind, run) => `${RUNS}/batch${pad(batch)}-${kind}-run${ru
 /** @param {'nomem' | 'mem'} kind */
 const memoryFlag = (kind) =>
     kind === 'nomem'
-        ? '--memory .finetune/empty'
+        ? '--memory finetune/empty'
         : `--memory "$(${SCRIPTS}/memory.mjs path --candidate)"`;
 /** @param {number} batch @param {'nomem' | 'mem'} kind @param {number} run @param {number} [c] */
 const runIt = (batch, kind, run, c = concurrency) => {

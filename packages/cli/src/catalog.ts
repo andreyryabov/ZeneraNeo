@@ -17,7 +17,7 @@
 // the vendor's own word.
 // ---------------------------------------------------------------------------
 
-import { ModelRegistry } from '@zenera/neo';
+import { ModelRegistry, vertexEndpoint } from '@zenera/neo';
 
 import { Cache, cacheKey } from './cache.ts';
 import { PROVIDERS, type KeyCheck, type Provider } from './keys.ts';
@@ -50,6 +50,8 @@ export interface CatalogEntry {
     pricing?: { prompt?: string; completion?: string; free?: boolean };
     /** ISO date the model was published, when known */
     created?: string;
+    /** vertex only: who makes it - `google`, or the partner Vertex resells */
+    publisher?: string;
     source: 'live' | 'curated';
 }
 
@@ -71,7 +73,7 @@ export const CATALOG_TTL_MS = 24 * 60 * 60 * 1000;
 export const CATALOG_KIND = 'catalog';
 
 /** Bumped when the stored shape changes, which makes every old entry a miss. */
-const CATALOG_VERSION = 1;
+const CATALOG_VERSION = 2;
 
 interface CacheFile {
     provider: Provider;
@@ -111,9 +113,17 @@ export const CURATED: Record<
         { id: 'gemini-embedding-2', roles: ['embedding'] },
     ],
     vertex: [
-        { id: 'gemini-3.5-flash-lite', roles: ['chat'], contextLength: 1_048_576 },
-        { id: 'gemini-3.8-flash', roles: ['chat'], contextLength: 1_048_576 },
-        { id: 'gemini-embedding-2', roles: ['embedding'] },
+        {
+            id: 'gemini-3.5-flash-lite',
+            roles: ['chat'],
+            contextLength: 1_048_576,
+            publisher: 'google',
+        },
+        { id: 'gemini-3.8-flash', roles: ['chat'], contextLength: 1_048_576, publisher: 'google' },
+        { id: 'gemini-embedding-2', roles: ['embedding'], publisher: 'google' },
+        // Open-weight models are served but not listed by Model Garden, so these are the only record.
+        { id: 'qwen/qwen3-235b-a22b-instruct-2507-maas', roles: ['chat'], publisher: 'qwen' },
+        { id: 'openai/gpt-oss-120b-maas', roles: ['chat'], publisher: 'openai' },
     ],
     openrouter: [
         { id: 'openai/gpt-5.6-luna', roles: ['chat'], contextLength: 1_050_000 },
@@ -337,6 +347,7 @@ async function fromGenAI(client: unknown, provider: Provider): Promise<CatalogEn
                 description: model.description,
                 contextLength: model.inputTokenLimit,
                 maxOutputTokens: model.outputTokenLimit,
+                publisher: provider === 'vertex' ? 'google' : undefined,
             }),
         );
     }
@@ -435,16 +446,59 @@ async function fromRouter(client: unknown, provider: Provider): Promise<CatalogE
 }
 
 /**
+ * Partner models on Vertex. The GenAI listing holds Google's alone, so each
+ * partner's Model Garden listing is asked as well - only for publishers whose
+ * models the runtime can call: Claude at `rawPredict`, the rest at the
+ * OpenAI-compatible endpoint as `publisher/model`.
+ */
+const VERTEX_PARTNERS = ['anthropic', 'xai'] as const;
+
+export async function fromVertexPartners(): Promise<CatalogEntry[]> {
+    const at = vertexEndpoint();
+    const token = await at.token();
+    const lists = await Promise.all(
+        VERTEX_PARTNERS.map(async (publisher) => {
+            const res = await fetch(
+                `https://aiplatform.googleapis.com/v1beta1/publishers/${publisher}/models?pageSize=200`,
+                {
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        'x-goog-user-project': at.project,
+                    },
+                },
+            );
+            if (!res.ok) {
+                return [];
+            }
+            const body = (await res.json()) as { publisherModels?: { name?: string }[] };
+            return (body.publisherModels ?? [])
+                .map((m) => bareId(m.name ?? ''))
+                .filter((id) => id && !/embed|ocr/.test(id))
+                .map((id) =>
+                    entry('vertex', {
+                        id: publisher === 'anthropic' ? id : `${publisher}/${id}`,
+                        roles: ['chat'],
+                        publisher,
+                    }),
+                );
+        }),
+    );
+    return lists.flat();
+}
+
+/**
  * Asks one provider what it serves. Throws whatever the SDK throws.
  *
  * `client` is a seam, not a feature: the four adapters are the part most likely
  * to break when a vendor reshapes a payload, and they are untestable if the
  * only way to reach them is a credential and a network. It mirrors
  * `ProviderSpec.client`, which exists in the library for the same reason.
+ * `partners` is the same seam for Vertex's second listing.
  */
 export async function fetchCatalog(
     provider: Provider,
     client: unknown = new ModelRegistry().client(provider),
+    partners: () => Promise<CatalogEntry[]> = fromVertexPartners,
 ): Promise<CatalogEntry[]> {
     switch (provider) {
         case 'openai':
@@ -452,8 +506,20 @@ export async function fetchCatalog(
         case 'anthropic':
             return enrich(provider, await fromAnthropic(client, provider));
         case 'google':
-        case 'vertex':
             return enrich(provider, await fromGenAI(client, provider));
+        case 'vertex': {
+            // A partner listing that fails must not cost the Gemini one.
+            const [google, others] = await Promise.all([
+                fromGenAI(client, provider),
+                partners().catch(() => [] as CatalogEntry[]),
+            ]);
+            const live = [...google, ...others];
+            const seen = new Set(live.map((r) => r.id));
+            const unlisted = curated(provider).filter(
+                (r) => r.publisher !== 'google' && !seen.has(r.id),
+            );
+            return enrich(provider, [...live, ...unlisted]);
+        }
         case 'openrouter':
             return enrich(provider, await fromRouter(client, provider));
     }
@@ -636,3 +702,31 @@ export function matches(row: CatalogEntry, query: string, filters: Filters = {})
 
 /** The providers a search covers when none was named. */
 export const catalogProviders = (): readonly Provider[] => PROVIDERS;
+
+// ---------------------------------------------------------------------------
+// Grouping
+// ---------------------------------------------------------------------------
+
+/** Resold on Vertex rather than made by Google. */
+export const isPartner = (e: CatalogEntry): boolean =>
+    e.publisher !== undefined && e.publisher !== 'google';
+
+/** Provider, then Google's own models, then each partner's together. */
+export function byGroup(a: CatalogEntry, b: CatalogEntry): number {
+    return (
+        a.provider.localeCompare(b.provider) ||
+        Number(isPartner(a)) - Number(isPartner(b)) ||
+        (a.publisher ?? '').localeCompare(b.publisher ?? '') ||
+        a.id.localeCompare(b.id)
+    );
+}
+
+/** The heading a row is listed under, when its provider resells other makers' models. */
+export function groupOf(e: CatalogEntry): string | undefined {
+    if (!e.publisher) {
+        return undefined;
+    }
+    return isPartner(e)
+        ? `${e.provider} · partner · ${e.publisher}`
+        : `${e.provider} · Google (Gemini, Gemma, Imagen, Veo)`;
+}

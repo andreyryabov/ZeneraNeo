@@ -3,12 +3,16 @@ description: Analyze one recorded run of this project - its health, what it wast
 ---
 
 Load the **zen-analyze-run** skill and follow it to analyze one run of this
-project. Everything about how to analyze it is in the skill.
+project. Everything about how to analyze it is in the skill. If `agents.yaml`
+has a `memory:` key anywhere (`grep -n 'memory:' agents.yaml`), load the
+**zen-memory** skill with it, before you read the run: the memory areas of the
+audit cannot be graded without it.
 
 ## Which run
 
 The last line of this prompt may name the run - a run directory or a run id.
-If it does, use it.
+If it does, use it. Words after it like `case=<id> ... feedback=<file>` mean
+the tuning loop sent you: follow section 7 of the skill and write that file.
 
 If it does not, list this project's most recent runs, newest first:
 

@@ -83,6 +83,33 @@ export const DATASET_HELP = [
     '  --graded-in <run>, --source <glob>, --anchor <glob>, --grep <text> (--regex, --case-sensitive)',
 ];
 
+export const DATASET_SUMMARY =
+    'The cases the project is evaluated on: read from sources, revised, sampled.';
+
+/** The page `zen meta dataset --help` prints. */
+export const DATASET_DETAILS = [
+    'Verbs:',
+    ...DATASET_HELP.slice(1),
+    '',
+    'Sampling (sample): --by <class,complexity,tag,source,rubric,verdict|none> groups the',
+    '  cases (default class), --order <rubric,complexity,verdict,rev,id> ranks inside a',
+    '  group (default rubric,complexity), --weight <group>=<w> gives a group more turns,',
+    '  -n <count>, --seed <n>. A larger -n keeps every case a smaller one chose.',
+    '',
+    'Output (sample, export): --format ids|batch|cases|json, -o <file>. batch is',
+    '  zen run batch input and never holds a rubric.',
+    '',
+    'Every write needs --why and is a new revision; only a change to input, rubric',
+    'or expected restarts a case. Only this command writes dataset/. Build or refresh',
+    'it from its sources with: zen meta run /dataset',
+    '',
+    'Examples:',
+    '  zen meta dataset',
+    '  zen meta dataset drift',
+    '  zen meta dataset sample --rubric yes -n 12 --format batch -o cases.json',
+    '  zen meta dataset log plan-day',
+];
+
 interface Flags {
     project?: string;
     why?: string;

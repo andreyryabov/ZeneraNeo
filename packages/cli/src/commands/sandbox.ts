@@ -10,9 +10,11 @@ import { resolveBuild, type ResolvedBuild } from '../image.ts';
 import {
     engineDisk,
     ensurePodmanReady,
+    idleContainers,
     ownedContainers,
     podmanStatus,
     removeContainers,
+    sessionOwners,
     type EngineDisk,
     type OwnedContainer,
     type PodmanStatus,
@@ -29,6 +31,7 @@ import {
     ago,
     bold,
     bytes,
+    count,
     dim,
     green,
     json,
@@ -50,9 +53,14 @@ const INDENT = ' '.repeat(11);
 /** `agents.yaml` states memory in MiB; `bytes` prints bytes. */
 const MIB = 1024 * 1024;
 
+/** Below this many free locks, `status` says so: a batch can spend that in minutes. */
+const FEW_LOCKS = 256;
+
 interface Flags {
     project?: string;
     image?: string;
+    stopped?: boolean;
+    idle?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -78,6 +86,8 @@ export const sandbox: Command = {
         '',
         '  --project <name|dir>   Which project the image and containers belong to.',
         '  --image <ref>          Use this image instead of the project\u2019s.',
+        '  --idle                 With clean: only what no live run is using — stopped ones,',
+        '                         and running ones whose run was killed before it cleaned up.',
         '',
         'Without --project this is the project you are standing in, and standing',
         'nowhere is an answer: `status` then reports the engine and every container',
@@ -92,6 +102,8 @@ export const sandbox: Command = {
             {
                 project: { type: 'string' },
                 image: { type: 'string' },
+                stopped: { type: 'boolean' },
+                idle: { type: 'boolean' },
             },
             USAGE,
         );
@@ -125,7 +137,7 @@ export const sandbox: Command = {
                 }
                 return up(image, build, true, ctx.json, true);
             case 'clean':
-                return clean(ctx.json);
+                return clean(ctx.json, Boolean(values.idle || values.stopped));
             case 'disk':
                 return disk(ctx.json);
         }
@@ -185,6 +197,7 @@ async function status(
     // a report about one project must not list another's — or the faker's,
     // which wears the same label and belongs to no project at all.
     const containers = project ? ofProject(project.dir, all) : all;
+    const idle = all.length > 0 ? idleContainers(all, await sessionOwners()) : [];
 
     if (asJson) {
         json({
@@ -194,6 +207,7 @@ async function status(
             limits: project?.limits ?? null,
             fits: fits(found.capacity?.memory, project?.limits?.memory) ?? null,
             containers,
+            idle: idle.map((c) => c.name),
         });
         return;
     }
@@ -226,7 +240,8 @@ async function status(
     if (build) {
         write(`${bold('dockerfile')} ${dim(build.dockerfile)}`);
     }
-    writeAll(containerLines(containers, project?.name));
+    writeAll(lockLines(found.freeLocks, idle.length));
+    writeAll(containerLines(containers, idle, project?.name, all.length));
 
     if (!found.installed || !found.ready) {
         note('');
@@ -314,6 +329,23 @@ function ofProject(dir: string, containers: readonly OwnedContainer[]): OwnedCon
 }
 
 /**
+ * Every container the engine holds takes one of its locks, stopped or not, and
+ * at zero nothing can be created — for any project. Said only when it is close.
+ */
+function lockLines(free: number | undefined, idle: number): string[] {
+    if (free === undefined || free >= FEW_LOCKS) {
+        return [];
+    }
+    const left = free === 0 ? red('none free') : yellow(`${free} free`);
+    return [
+        `${bold('locks')}      ${left} ${dim('· one per container, stopped ones included')}`,
+        ...(idle > 0
+            ? [`${INDENT}${dim(`${idle} no live run is using — zen sandbox clean --idle`)}`]
+            : []),
+    ];
+}
+
+/**
  * One per line rather than one long line, because there is normally more than
  * one and the interesting part — how old, and whether anything is still up —
  * is at the end of a name too long to scan.
@@ -323,23 +355,38 @@ function ofProject(dir: string, containers: readonly OwnedContainer[]): OwnedCon
  * stopped ones behind. `scope` names the project these belong to, and saying
  * so is half the answer — the other half is that there are more elsewhere.
  */
-function containerLines(containers: readonly OwnedContainer[], scope?: string): string[] {
+function containerLines(
+    containers: readonly OwnedContainer[],
+    idle: readonly OwnedContainer[],
+    scope?: string,
+    total = containers.length,
+): string[] {
     const tail = scope
         ? `one per session in ${scope}, kept by \`persist: true\` — all of them: zen sandbox disk`
         : 'one per session, kept by `persist: true` — see: zen sandbox disk';
+    const elsewhere = total > containers.length ? ` · ${total} on the machine` : '';
     if (containers.length === 0) {
-        return [`${bold('containers')} ${dim(scope ? `none in ${scope}` : 'none')}`];
+        return [`${bold('containers')} ${dim(scope ? `none in ${scope}${elsewhere}` : 'none')}`];
     }
+    // Running, but the run that started it is gone: nothing will ever stop it.
+    const orphans = new Set(idle.filter((c) => c.state === 'running').map((c) => c.name));
     const running = containers.filter((c) => c.state === 'running').length;
+    const lost = containers.filter((c) => orphans.has(c.name)).length;
     const head = `${bold('containers')} ${containers.length} ${dim(
-        running ? `· ${running} running` : '· none running',
+        (running ? `· ${running} running` : '· none running') +
+            (lost ? `, ${lost} of them orphaned` : '') +
+            elsewhere,
     )}`;
     const rows = containers
         .slice(0, LISTED)
         .map((c) => [
             INDENT.slice(2),
             c.name,
-            c.state === 'running' ? green('running') : dim(c.state),
+            orphans.has(c.name)
+                ? yellow('orphaned')
+                : c.state === 'running'
+                  ? green('running')
+                  : dim(c.state),
             dim(ago(c.createdAt)),
         ]);
     const rest = containers.length - LISTED;
@@ -348,6 +395,9 @@ function containerLines(containers: readonly OwnedContainer[], scope?: string): 
         ...table(rows),
         ...(rest > 0 ? [`${INDENT}${dim(`+${rest} more`)}`] : []),
         `${INDENT}${dim(tail)}`,
+        ...(lost
+            ? [`${INDENT}${dim('orphaned: its run was killed — zen sandbox clean --idle')}`]
+            : []),
     ];
 }
 
@@ -366,8 +416,9 @@ async function up(
     write(`${green('ready')}${image ? ` ${dim(image)}` : ''}`);
 }
 
-async function clean(asJson: boolean): Promise<void> {
-    const containers = await ownedContainers(undefined, undefined, { sizes: true });
+async function clean(asJson: boolean, idle: boolean): Promise<void> {
+    const owned = await ownedContainers(undefined, undefined, { sizes: true });
+    const containers = idle ? idleContainers(owned, await sessionOwners()) : owned;
     const names = containers.map((c) => c.name);
     const freed = containers.reduce((n, c) => n + (c.size ?? 0), 0);
     await removeContainers(names);
@@ -430,10 +481,30 @@ async function disk(asJson: boolean): Promise<void> {
     }
     writeAll(projectRows(projects, loose));
 
-    if (usage && usage.images.reclaimable > 0) {
+    const idle = idleContainers(containers, await sessionOwners());
+    const live = containers.length - idle.length;
+    const sessions = projects.reduce((n, p) => n + p.files, 0);
+    const hints = [
+        ...(idle.length > 0
+            ? [`zen sandbox clean --idle  ${count(idle.length, 'container')} no live run is using`]
+            : []),
+        ...(live > 0
+            ? [`zen sandbox clean         also the ${live} in use, cutting off whatever runs there`]
+            : []),
+        ...(usage && usage.images.reclaimable > 0
+            ? [`podman image prune -a     ${bytes(usage.images.reclaimable)} of unused images`]
+            : []),
+        // The ON DISK column is the bulk of the report and no command above touches it.
+        ...(sessions > 0
+            ? [
+                  `${bytes(sessions)} ON DISK is project directories on this host, not the engine: ` +
+                      'removing containers frees none of it',
+              ]
+            : []),
+    ];
+    if (hints.length > 0) {
         write('');
-        write(dim(`zen sandbox clean       every container above`));
-        write(dim(`podman image prune -a   ${bytes(usage.images.reclaimable)} of unused images`));
+        writeAll(hints.map((h) => dim(h)));
     }
 }
 
@@ -507,13 +578,18 @@ function projectRows(projects: readonly ProjectDisk[], loose: readonly OwnedCont
         // Containers whose session directory is gone, and faker's, which are
         // labelled the same way and belong to no project at all.
         const size = loose.reduce((n, c) => n + (c.size ?? 0), 0);
+        const fakers = loose.filter((c) => c.key?.startsWith('faker-')).length;
         rows.push([
             dim('(unclaimed)'),
             dim('—'),
             dim('—'),
             dim(String(loose.length)),
             dim(bytes(size)),
-            dim('no session owns these'),
+            dim(
+                fakers === loose.length
+                    ? `zen faker ${fakers === 1 ? 'server' : 'servers'}, no project`
+                    : 'no session owns these',
+            ),
         ]);
     }
     const total = (pick: (p: ProjectDisk) => number): number =>

@@ -47,7 +47,9 @@ visible in `agents.yaml` and that `zen check` does not report.** Before
 reviewing or changing a project, list the capabilities it has turned on and load
 the editor skill for each one - `zen-memory` for a `memory:` block,
 `zen-sandbox` for sandbox configuration or shell tools, `zen-rag-schema` or
-`zen-rag-docs` for an index, `zen-sandbox-capacity` before any `zen run batch`
+`zen-rag-docs` for an index, `zen-code-python` for an agent that writes or runs
+code, `zen-topology` for `handoffs:` or `fork:` on any agent,
+`zen-sandbox-capacity` before any `zen run batch`
 (except under `zen-finetune`, which sets its own concurrency),
 `zen-cli` always. A capability that is already
 configured and already passing `zen check` is exactly the case that looks
@@ -63,6 +65,14 @@ init` or `zen open`, with no diff to show for it. The skill is what says which
 three those are, where a project's own rules on the same subjects go instead,
 how `requires:` conditions a document, and what filename order decides. None of
 that is visible in the file being edited.
+
+**Load `zen-code-python` before writing, editing or reviewing any prompt, skill
+or house rule for an agent that writes or runs code** - any agent holding
+`sandbox:*` or `run_command` - and before shipping a script inside a skill.
+Code an agent writes must be a reusable tool, so that memory can keep it and the
+next similar question runs it instead of writing it again. The skill holds the
+coding rules and decides where they go: a section of a dedicated code agent's
+system prompt, or a coding skill for generic agents that sometimes run code.
 
 First determine whether the target project uses RAG: a `zen rag` command in an
 agent prompt or skill, RAG tools supplied by its host, or a documentation or
@@ -1431,108 +1441,23 @@ multi-agent instinct suggests.
 
 ### 6.3 Handoffs
 
-- `description:` on the target agent is what the model reads when deciding.
-  Write it as a routing condition: _"Applies the written peril policies to a
-  claim and explains the outcome."_ - not _"The adjuster agent."_
-- Handoffs are bare name strings; there is no per-edge configuration.
-- Self-handoff is a load error.
-- **Every handoff must be returnable.** For every `A → B` there must be a path
-  from `B` back to `A`. Indirect counts - `B → C → A` is a way home - so the
-  rule is that every handoff edge lies on a cycle. `zen check` warns
-  (`handoff.one-way`) on any edge that does not.
-- Handoff collapses history by policy: the receiving agent sees a selection, not
-  the full transcript. Do not assume it saw a detail three turns back; if it
-  matters, put it in the handoff.
-
-**Why the return edge is not optional.** A handoff is a one-way door: control
-moves and stays moved. Nothing hands it back, so an agent reached by a dead-end
-edge owns the conversation for the rest of the session - the next question,
-whatever it is about, is answered by the specialist the router sent the user to.
-The drawn architecture holds for one turn and then quietly stops being the
-architecture.
-
-**Forks are the exception, and the alternative.** A branch runs, answers, and
-control returns to the agent that forked it; the return is the mechanism, not an
-edge anyone has to declare. So there are two shapes and they are not
-interchangeable:
-
-- The other agent should **own the conversation from here** → `handoffs:`, and
-  something on the far side has to lead back.
-- This agent needs **an answer and then carries on** → `fork:`. Never a handoff:
-  a handoff spends the conversation to get the answer. One branch is enough -
-  a fork of one is exactly "ask the specialist and continue".
-
-But the return is **condensed**: `A → fork → B` rejoins as one tool result
-holding B's answer, so A never sees the steps B took - no tool calls, no files
-read, no intermediate reasoning. That is what makes fanning out cheap, and it is
-what to design around: whatever A will need must be _in_ the answer, so say so in
-B's prompt. Work whose value is the trace rather than the conclusion does not
-survive a fork.
+`handoffs: [name, ...]` on an agent gives it one `transfer_to_<name>` tool per
+entry, described by the target's `description:`. Control moves to the target
+and **stays moved** - the target sees the whole transcript and answers every
+later turn until it hands off itself - so every edge needs a path back, and
+`zen check` warns `handoff.one-way` on one that has none.
 
 ### 6.4 Forking (fan-out / join)
 
-Forking is **opt-in per agent**. Without the key the agent is never offered the
-`fork` tool and cannot split, however obviously parallel the work looks:
+`fork:` on an agent - `true`, or `{ agents, maxBranches }` - gives it the `fork`
+tool: N branches, run at once, rejoin as one tool result holding each branch's
+answer. One branch is delegation; several are a fan-out. Without the key the
+agent cannot split, however obviously parallel the work looks.
 
-```yaml
-agents:
-    - name: trunk
-      fork: true # unrestricted: any agent, any number of branches
-
-    - name: sweep
-      fork:
-          agents: [prober] # every branch runs the specialist
-          maxBranches: 6
-```
-
-| Field         | Default              | Meaning                               |
-| ------------- | -------------------- | ------------------------------------- |
-| `agents`      | every declared agent | Which agents a branch may run         |
-| `maxBranches` | unlimited            | Cap on branches per call; minimum `1` |
-
-The **model** decides the split: it names N branches, each with self-contained
-instructions. They run truly concurrently and rejoin as **one tool call and one
-tool result** in the parent's history - so N branches cost the parent
-O(N × summary), not O(N × full history).
-
-Rules worth knowing before you write the key:
-
-- `agents:` **may include the forking agent itself** - unlike `handoffs:`, that
-  is not an error, and one role fanned out over ten items is the common shape.
-  The list reaches the model as an `enum`, so a name outside it cannot even be
-  decoded.
-- A fork of **one** branch is delegation, and it is valid: one assignment run
-  elsewhere, its conclusion returned, its transcript left out of this
-  conversation. Use it when another agent suits the job better, or when the job
-  would fill the caller's context with material it has no use for afterwards.
-- **Branches cannot talk to each other.** If branch B needs branch A's answer,
-  it is a sequence, not a fork - keep it in one conversation.
-- Nesting is capped by the run's `maxForkDepth` (2 by default), so a branch may
-  fork again but not without bound.
-- Fork vs handoff: a handoff is _one_ conversation changing owner; a fork is the
-  _same_ question asked N times at once and merged. **A fork returns; a handoff
-  does not** - which is why a handoff needs a return path (§6.3) and a fork
-  needs nothing.
-
-Choose `context:` deliberately - the model sets it per call, so say in the
-agent's prompt which one this work wants:
-
-- `inherit` - branch gets the full prefix. For work that depends on the case.
-- `compact` - prefix minus tool calls, tool results and recalls: _what was
-  decided_, not the raw noise. **The default for wide fan-outs.**
-- `none` - system prompt plus instructions only. Cheapest; for independent
-  lookups.
-
-Declaring `fork:` only makes the tool available. What a fork costs and what
-survives the join is in `agents/fork-instructions.md`, which carries
-`requires: [fork]` and so reaches exactly the agents holding the key. That file
-is `zen`'s, not yours - `zen check --fix` replaces it, editing it or carrying an
-older copy is reported as `rules.stale`, and deleting it leaves your forking
-agents with the tool schema alone (`fork.uninstructed`). What is
-left to you is _when_, in the terms of this domain - _"When the request covers
-more than one region, fork one branch per region and merge their findings"_ - or
-a weaker model will work through the list serially and never call it. Project
-policy on forking goes in a topic file of your own beside it.
+**Load `zen-topology` before adding or changing either key, and before writing
+a prompt line that says when to delegate.** It holds the key reference, hand-off
+versus fork, which `context` a branch should start from, what each choice costs
+in tokens, prompt cache and time, and how a recorded run shows each mistake.
 
 ### 6.5 Termination
 
@@ -1970,7 +1895,7 @@ Before finishing any change here:
 - [ ] Each `agents/<topic>-instructions.md` is about one capability, and is true
       of every agent it reaches - `requires:` if it is about one of them
 - [ ] If any agent has file tools, `agents/files-instructions.md` is present - §3.6
-- [ ] If any agent has `fork:`, `agents/fork-instructions.md` is present - §6.4
+- [ ] If any agent has `fork:`, `agents/fork-instructions.md` is present - zen-topology §8
 - [ ] No `rules.stale`: the four files that are `zen`'s rather than yours say
       what this version of the runtime does, and `zen check --fix` replaces them
 - [ ] Any change to an `agents/*instructions.md` was made with the
@@ -2005,6 +1930,9 @@ candidates; these are the judgements to make about each one)**
 - [ ] Catalog >~30 entries → `discovery: search`
 - [ ] A skill that ships a script writes its `/skills/<name>/...` path, the agent
       holds `sandbox:*`, and the sandbox image already has the interpreter
+- [ ] Every agent that writes or runs code has the `zen-code-python` rules -
+      in its prompt if it is the dedicated code agent, as a skill otherwise -
+      and nothing else restates or softens them - §0.1
 - [ ] A skill whose procedure needs particular tools, an index or a mounted file
       opens by naming them and says what to do without them - rather than naming
       the agents allowed to load it, which `agents.yaml` already decides - §0.1
@@ -2086,10 +2014,10 @@ candidates; these are the judgements to make about each one)**
 | Answers instead of routing                    | Router prompt prohibition; check `handoffs:`                        |
 | Routes to the wrong specialist                | The target agents' `description:` fields                            |
 | Gets stuck in the agent it routed to          | The target needs a handoff back - §6.3                              |
-| Loses a detail after a handoff                | Say it in the handoff; check the collapse policy                    |
+| Loses a detail after a handoff                | The target sees the whole transcript; its prompt must say to use it |
 | Works through N independent items serially    | `fork:` on that agent, and a prompt line - §6.4                     |
 | Forks when the steps actually depend          | Prompt line: branches cannot see each other                         |
-| Forks a sequence, or loses a branch's working | `agents/fork-instructions.md` is missing or empty - §6.4            |
+| Forks a sequence, or loses a branch's working | `agents/fork-instructions.md` is missing or empty - zen-topology §8 |
 | Edits files blindly or breaks patches         | `agents/files-instructions.md` is missing or empty - §3.6           |
 | Slow and expensive on trivial cases           | Demote that agent's model tier / reasoning effort                   |
 | Fails only on genuinely hard cases            | Promote that agent's tier, or split the hard path out               |

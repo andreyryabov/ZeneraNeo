@@ -107,6 +107,10 @@ export function reason(err: unknown): string {
         }
         at = e.cause;
     }
+    const hint = (err as { hint?: unknown } | undefined)?.hint;
+    if (typeof hint === 'string' && hint) {
+        parts.push(hint);
+    }
     return parts.join(' — ') || String(err);
 }
 

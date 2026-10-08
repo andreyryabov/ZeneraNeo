@@ -425,3 +425,154 @@ describe('a looping page token', () => {
         expect(log.at(-1)).toContain('cut a cycling page token');
     });
 });
+
+// ---------------------------------------------------------------------------
+// The container, not the generator
+//
+// A podman failure says nothing about the code it was asked to run. Feeding it
+// to the model as a fault rewrote working generators until the limit, and the
+// log read like the generator was broken.
+// ---------------------------------------------------------------------------
+
+describe('a container engine that cannot run anything', () => {
+    let root: string;
+    let live: Listening;
+    let base: string;
+    let log: string[];
+    let asked: number;
+
+    const GONE = 'Error: no container with name or ID "zn-faker-1-abc" found: no such container';
+
+    const boot = async (engine: Runner): Promise<void> => {
+        const box = new Box({ root, image: 'stub', exec: engine });
+        const checks = new Checks();
+        const cacheDir = join(root, 'store');
+        const operations = await loadSpec(join(here, 'specs', 'petstore.yaml'));
+        const store = new Store(FAKER_KIND, { dir: cacheDir });
+        for (const operation of operations) {
+            store.put(operation.key, { source: '# fine', meta: { model: 'stub' } });
+        }
+        const counting: Model = {
+            id: 'stub',
+            generate: () => {
+                asked += 1;
+                return Promise.resolve({ text: '# generator', toolCalls: [] });
+            },
+        };
+        live = await listen(
+            {
+                router: new Router(operations),
+                checks,
+                box,
+                cache: new Cache({ box, checks, model: counting, cacheDir }),
+                onRequest: (line) => log.push(line),
+            },
+            '127.0.0.1',
+            0,
+        );
+        base = `http://127.0.0.1:${live.port}`;
+    };
+
+    /** Every exec fails the way podman does; starting the container succeeds. */
+    const failing =
+        (stderr: string, code = 125): Runner =>
+        (_bin, args) =>
+            Promise.resolve({
+                code: args[0] === 'exec' ? code : 0,
+                stdout: args[0] === 'container' ? 'running' : '',
+                stderr: args[0] === 'exec' ? stderr : '',
+                truncated: false,
+                timedOut: false,
+            });
+
+    beforeEach(() => {
+        root = mkdtempSync(join(tmpdir(), 'faker-'));
+        log = [];
+        asked = 0;
+    });
+
+    afterEach(async () => {
+        await live?.close();
+        rmSync(root, { recursive: true, force: true });
+    });
+
+    it('answers 503 with the reason and a fix, and never asks the model', async () => {
+        await boot(failing(GONE));
+        const res = await fetch(`${base}/users/1`);
+        expect(res.status).toBe(503);
+        const body = (await res.json()) as Record<string, string>;
+        expect(body.error).toContain('no such container');
+        expect(body.error).toContain('not a fault in the generator');
+        expect(body.hint).toContain('zen sandbox clean');
+        expect(asked).toBe(0);
+        expect(log.join('\n')).toContain('[SANDBOX_UNAVAILABLE]');
+        expect(log.join('\n')).toContain('fix:');
+        expect(log.join('\n')).not.toContain('[REGENERATING]');
+    });
+
+    it('keeps answering 503 rather than spending the regeneration limit', async () => {
+        await boot(failing(GONE));
+        for (let i = 0; i < 5; i++) {
+            expect((await fetch(`${base}/users/1`)).status).toBe(503);
+        }
+        expect(asked).toBe(0);
+    });
+
+    it('names a stale mount when the file is missing inside the container', async () => {
+        await boot(
+            failing(
+                "python3: can't open file '/workspace/generators/x/gen.py': [Errno 2] No such file or directory",
+                2,
+            ),
+        );
+        const body = (await (await fetch(`${base}/users/1`)).json()) as Record<string, string>;
+        expect(body.hint).toContain('bind mount is stale');
+        expect(asked).toBe(0);
+    });
+
+    it('still regenerates a generator that genuinely crashed', async () => {
+        await boot(failing('Traceback (most recent call last):\nValueError: nope', 1));
+        await fetch(`${base}/users/1`);
+        expect(asked).toBeGreaterThan(0);
+        expect(log.join('\n')).toContain('ValueError: nope');
+    });
+});
+
+describe('one container per server', () => {
+    it('is named after its process, and sweeps only the containers of dead ones', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'faker-'));
+        const calls: string[][] = [];
+        const engine: Runner = (_bin, args) => {
+            calls.push([...args]);
+            const stdout =
+                args[0] === 'ps'
+                    ? [
+                          `zn-faker-${process.pid}-0123456789`,
+                          // pid 1 is always alive; 999999 is past macOS's pid max
+                          'zn-faker-1-aaaaaaaaaa',
+                          'zn-faker-999999-bbbbbbbbbb',
+                          'zn-faker-cccccccccc',
+                      ].join('\n')
+                    : '';
+            return Promise.resolve({
+                code: 0,
+                stdout,
+                stderr: '',
+                truncated: false,
+                timedOut: false,
+            });
+        };
+        try {
+            const box = new Box({ root, image: 'stub', exec: engine });
+            expect(box.sandbox.name).toMatch(new RegExp(`^zn-faker-${process.pid}-[0-9a-f]+$`));
+            await box.fresh();
+            const rm = calls.find((c) => c[0] === 'rm')!;
+            expect(rm).toContain(box.sandbox.name);
+            expect(rm).toContain('zn-faker-999999-bbbbbbbbbb');
+            expect(rm).not.toContain('zn-faker-1-aaaaaaaaaa');
+            expect(rm).not.toContain('zn-faker-cccccccccc');
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+});

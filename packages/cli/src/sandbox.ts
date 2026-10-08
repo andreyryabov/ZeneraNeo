@@ -12,7 +12,7 @@ import { mkdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { resolveBuild, type ResolvedBuild } from './image.ts';
 import { credentials } from './keys.ts';
-import { ensurePodmanReady } from './podman.ts';
+import { assertLocks, ensurePodmanReady } from './podman.ts';
 import type { SessionPaths } from './session.ts';
 import { warn } from './term.ts';
 
@@ -118,6 +118,8 @@ export interface SandboxInputs {
      * promise it does not keep.
      */
     env?: readonly string[];
+    /** `false` overrides every `persist:` in the config, the agents' included */
+    persist?: boolean;
 }
 
 export function buildSandbox(opts: SandboxInputs): SandboxSetup {
@@ -127,6 +129,7 @@ export function buildSandbox(opts: SandboxInputs): SandboxSetup {
         ...(opts.config.sandbox ?? {}),
         ...((opts.image ?? build?.tag) ? { image: opts.image ?? build?.tag } : {}),
         ...(opts.keys === false ? { keys: false } : {}),
+        ...(opts.persist === false ? { persist: false } : {}),
     };
     const home = join(opts.session.data, 'sandbox', 'home');
 
@@ -146,6 +149,9 @@ export function buildSandbox(opts: SandboxInputs): SandboxSetup {
     for (const agent of opts.config.agents) {
         if (agent.sandbox) {
             const merged = merge(base, agent.sandbox);
+            if (opts.persist === false) {
+                merged.persist = false;
+            }
             // An agent that opts out gets neither the variables nor the mount,
             // but the mount is on the pool and cannot be taken back per agent —
             // so the variable is what actually decides, and without it the file
@@ -279,6 +285,8 @@ export async function preflight(setup: SandboxSetup, yes?: boolean): Promise<voi
         memory: setup.spec.memory,
         yes,
     });
+    // A resumed session restarts its own stopped container, which needs no lock.
+    await assertLocks(1, { reuses: setup.pool.for().name });
     READY.add(setup.image);
 }
 

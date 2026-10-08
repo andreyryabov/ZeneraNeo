@@ -544,6 +544,16 @@ Vertex additionally lists the whole Model Garden. Those rows carry no
 model ids, and asking one a question fails in a way no error message explains.
 They are dropped.
 
+Partner models are the exception, because the runtime can call them: a
+`vertex` provider routes on the id - Google's models through the GenAI API,
+`claude-*` through Anthropic's format at `rawPredict`, and any `publisher/model`
+through Vertex's OpenAI-compatible endpoint. The GenAI listing holds Google's
+alone, so Anthropic's and xAI's Model Garden listings are asked as well, and
+open-weight models, which Model Garden serves but does not list, come from the
+built-in table. Every Vertex row carries its `publisher`; `ls` puts Google's
+first and heads each partner's group, since a partner model is billed
+differently and has to be enabled for the project before it answers.
+
 **The cache is the shared store's `catalog` kind (§4.2), one day old at most,**
 `0644` because it is public data and someone will want to look at it. The order
 when it is cold is: fresh cache, the provider, a _stale_ cache, then a short
@@ -944,6 +954,35 @@ bookkeeping a model half-does is worse than none.
 
 It is routed before the meta agent's own flags are parsed, so it owns its
 flags, and it never touches the keyring, the editor tree or copilot.
+
+#### Tuning - `zen meta finetune`
+
+N workers each take a case and train it to the end with one plain sequential
+function ([meta/finetune/train.ts](packages/cli/src/meta/finetune/train.ts)):
+tries without memory - `zen run`, then `/analyze` - until the analysis says
+`done`, then tries with the memory the passing run wrote, the same way. A try
+that is not done parks its case until an apply has taken its feedback; a parked
+case holds no worker, so the next case starts in its place, and when woken it
+takes the next free worker ahead of any new case.
+
+- **The model is used only where judgement is.** `/analyze` grades a try and
+  writes `feedback.json`; `/finetune-apply` turns a batch of requests into
+  edits. Choosing cases, queueing, versioning and reporting are code.
+- **Applies are batched and fenced.** One fires when `-M` cases are parked, or
+  once nothing is running and no case is left to start; no run starts while it is pending and runs in
+  flight finish first, so no run ever reads half-edited prose. `zen check` must
+  pass or the edit is undone. Every apply records a new system version - a
+  hash and a copy of `agents.yaml` and `agents/` - and a `diff.patch`.
+- **Resuming is calling `train` again.** Each step writes its result into the
+  try's folder and is skipped when it is there; an applied request is recorded
+  by id. No state machine and no event replay: the folders are the state.
+- **One analyze session per case**, created with `--session-id` and continued
+  with `--resume`, so each analysis remembers the case's earlier tries.
+- **Reports are code, not agent prose.** `STATUS.md` and each case's
+  `FEEDBACK.md` are regenerated from disk on every step; their diagrams carry
+  only ids, numbers and fixed words, so nothing a model wrote can break them.
+  A try's metrics are read from its run's `state.json` and kept in `run.json`;
+  time is the gap between node stamps in one lane, as in report.html.
 
 ## 7.7. Reading a run - `zen inspect`
 

@@ -29,11 +29,11 @@ const NAME = 'select.mjs';
 
 const USAGE = `Choose the cases this tuning will use: up to the limit, out of the whole dataset.
 
-  ${NAME} -o .finetune/selection.json         the limit from config.json
-  ${NAME} -n 40 -o .finetune/selection.json   forty, evenly by class
+  ${NAME} -o finetune/selection.json         the limit from config.json
+  ${NAME} -n 40 -o finetune/selection.json   forty, evenly by class
   ${NAME} -n 12 --class planning              twelve out of one class, to stdout
 
-  -d <file>           dataset; default .finetune/dataset.json
+  -d <file>           dataset; default finetune/dataset.json
   -n, --limit <n>     how many cases; default config.json "limit", else all
   -o <file>           where to write; default stdout
   --class <name>      one class only
@@ -41,7 +41,7 @@ const USAGE = `Choose the cases this tuning will use: up to the limit, out of th
   --rubric-only       only cases that have a rubric
   --seed <n>          default config.json "seed", else 1`;
 
-const CONFIG = '.finetune/config.json';
+const CONFIG = 'finetune/config.json';
 const LEVELS = ['complex', 'medium', 'simple'];
 
 process.stdout.on('error', (err) => {
@@ -62,7 +62,7 @@ function die(msg, code = 2) {
 // Arguments
 // ---------------------------------------------------------------------------
 
-let dataset = '.finetune/dataset.json';
+let dataset = 'finetune/dataset.json';
 /** @type {number | undefined} */
 let limit;
 let klass = '';

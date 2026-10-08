@@ -26,7 +26,7 @@ import {
 import { createModel } from '@zenera/neo';
 import { rmSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
-import { GENERATORS } from './box.ts';
+import { CONTAINER_PREFIX, GENERATORS } from './box.ts';
 import { FAKER_KIND, type GeneratorMeta } from './cache.ts';
 import { reason } from './generate.ts';
 import { formatDumpPath } from './logger.ts';
@@ -326,7 +326,7 @@ async function cache(args: readonly string[], ctx: Context): Promise<void> {
         // The container is named after its configuration, so a stale one would
         // otherwise sit there stopped forever with nothing pointing at it.
         // `zn-<key>-<digest>` is the shape, and this one's key is `faker`.
-        const mine = (await ownedContainers()).filter((c) => c.name.startsWith('zn-faker-'));
+        const mine = (await ownedContainers()).filter((c) => c.name.startsWith(CONTAINER_PREFIX));
         if (mine.length > 0) {
             await removeContainers(mine.map((c) => c.name));
         }

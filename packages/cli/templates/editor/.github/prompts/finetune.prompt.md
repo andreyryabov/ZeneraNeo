@@ -8,8 +8,8 @@ the house rules under `agents/` - and the evidence is the trajectories the
 queries produce.
 
 **Load the `zen-finetune` skill before anything else**, and load `zen-inspect`,
-`zen-analyze-run` and `zen-inspect-ask` before you grade, and `zen-instructions`
-before you write a policy file. This prompt is the order of the work; the skill
+`zen-analyze-run`, `zen-topology` and `zen-inspect-ask` before you grade, and
+`zen-instructions` before you write a policy file. This prompt is the order of the work; the skill
 is how each step is done, and it holds the rules that are easy to get wrong. If
 loading a skill fails, read `.github/skills/<name>/SKILL.md` with your file tool
 before going on - never carry on without it.
@@ -30,7 +30,7 @@ command:
 
 This prompt is **reentrant**. Tuning is long and gets interrupted - a run dies, a
 session ends, I stop you mid-batch. Every step leaves its result on disk under
-`.finetune/`, so a second invocation does not start over: it reads that state,
+`finetune/`, so a second invocation does not start over: it reads that state,
 works out where the work stopped, says so, and carries on from there unless I
 tell you otherwise.
 
@@ -42,9 +42,9 @@ reports to me. Two words for one thing is how a reader loses the thread.
 | Word                 | Means                                                                                        |
 | -------------------- | -------------------------------------------------------------------------------------------- |
 | **case**             | one query from the training set, with its rubric if it has one                               |
-| **dataset**          | every case in the training set, `.finetune/dataset.json` - never cut down                    |
+| **dataset**          | every case in the training set, `finetune/dataset.json` - never cut down                     |
 | **limit**            | how many cases this tuning uses - the whole dataset, unless I gave a smaller number          |
-| **selection**        | those cases, evenly by class, rubric and complex first, `.finetune/selection.json`           |
+| **selection**        | those cases, evenly by class, rubric and complex first, `finetune/selection.json`            |
 | **batch**            | the cases worked on together until they pass without memory and then with it                 |
 | **batch size**       | how many new cases a batch takes - 3 for batch 1, doubling after each smooth batch, to a max |
 | **recheck cases**    | cases from earlier batches, run again - difficult ones first, then complex ones              |
@@ -55,11 +55,11 @@ reports to me. Two words for one thing is how a reader loses the thread.
 | **passed**           | a run where every case is right AND its review found nothing left to cut                     |
 | **concurrency**      | how many cases execute at the same time inside a run - 16 at most, halved on OOM             |
 | **trajectory**       | what one case did in one run - its graph                                                     |
-| **difficult case**   | a case that caused real trouble - listed in `.finetune/difficult.json`, retested until fixed |
+| **difficult case**   | a case that caused real trouble - listed in `finetune/difficult.json`, retested until fixed  |
 | **candidate memory** | the last good memory plus what the batch's passing no-memory run committed                   |
 | **last good memory** | every passed batch's candidate, in turn; always whole on disk                                |
 
-Run directories are `.finetune/runs/batch<NN>-<nomem|mem>-run<N>/` -
+Run directories are `finetune/runs/batch<NN>-<nomem|mem>-run<N>/` -
 `batch03-nomem-run2` is batch 3's second run without memory, `batch03-mem-run1`
 its first with memory. Each holds a `batch/` folder: that is `zen run batch`'s
 own output for that run, named by the command, not by this method.
@@ -176,7 +176,7 @@ no-memory runs fix it.
 
 ## The README
 
-`.finetune/README.md` is the page I read to know what is going on. **You write
+`finetune/README.md` is the page I read to know what is going on. **You write
 it**, by hand, for a person who has never seen this project - not a log dump.
 Start from `.github/skills/zen-finetune/references/readme-template.md`.
 
@@ -207,17 +207,17 @@ Do this every time this prompt runs, including the first:
 .github/skills/zen-finetune/scripts/memory.mjs     # the candidate and the last good memory
 ```
 
-`next.mjs` reads the whole `.finetune/` tree and prints the next step. Do not
+`next.mjs` reads the whole `finetune/` tree and prints the next step. Do not
 re-derive the state from an `ls`. Map what it says onto this prompt:
 
 | What `next.mjs` says                                             | Go to                                                                             |
 | ---------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `first: patch .finetune/README.md ...`                           | patch the README, then act on the next line                                       |
+| `first: patch finetune/README.md ...`                            | patch the README, then act on the next line                                       |
 | `note: limit N of T cases ...`                                   | unless I asked for a cut: section 2, raise the limit and re-select, then carry on |
-| `build .finetune/dataset.json ...`                               | section 0, then 1                                                                 |
-| `write .finetune/config.json ...`                                | section 2                                                                         |
+| `build finetune/dataset.json ...`                                | section 0, then 1                                                                 |
+| `write finetune/config.json ...`                                 | section 2                                                                         |
 | `choose the cases: select.mjs ...`                               | section 2                                                                         |
-| `write .finetune/README.md: the plan ...`                        | section 2, the README step                                                        |
+| `write finetune/README.md: the plan ...`                         | section 2, the README step                                                        |
 | `build batch 1: batch.mjs next ...`                              | section 3                                                                         |
 | `... not run yet - zen run batch ...`                            | run exactly that, then section 4 (no memory) or 7 (with memory)                   |
 | `... the run never finished ...`                                 | the run is **void** - see below, then re-run                                      |
@@ -250,17 +250,17 @@ was already applied. Two things `next.mjs` cannot see, so check them by hand:
   fails every case identically and looks like a catastrophic regression.
 
 A run whose `batch/` never got a `batch.json` produced no evidence. Move it aside
-rather than grading or deleting it - `mv .finetune/runs/<run>/batch
-.finetune/runs/<run>/batch.partial` - and re-run from the same `cases.json`.
+rather than grading or deleting it - `mv finetune/runs/<run>/batch
+finetune/runs/<run>/batch.partial` - and re-run from the same `cases.json`.
 
 A run `report.mjs oom` calls void (any exit 137) is out of memory. Write
-`## VOID` in its `findings.md`, halve `concurrency` in `.finetune/config.json` -
+`## VOID` in its `findings.md`, halve `concurrency` in `finetune/config.json` -
 never below 4 - and run a copy of its `cases.json` as the next run. A void run is
 not graded and does not count toward the run cap. Void at concurrency 4 means
 the machine cannot run the batch: stop and tell me.
 
 Resuming never re-selects and never rebuilds a batch. `minBatch`, `maxBatch`,
-`recheck` and `seed` in `.finetune/config.json` are frozen once batch 1 has run.
+`recheck` and `seed` in `finetune/config.json` are frozen once batch 1 has run.
 Every later run of a batch - no memory or with memory - re-uses **its first
 run's `cases.json`, copied** - never rebuilt, because the rechecks depend on the
 difficult list, which moves. `findings.md`, `changes.md`, `difficult.json` and
@@ -303,7 +303,7 @@ against without, re-commits, what changed, what is left - patch the README, and
 build the next batch straight away. Never end your turn with "proposed next
 step" or "ready to proceed upon your confirmation"; take the step.
 
-`.finetune/USAGE.md` is the token bill - project agents, you, and every
+`finetune/USAGE.md` is the token bill - project agents, you, and every
 `zen inspect ask` - by model, batch, run and stage. `next.mjs` rewrites
 it; never edit it, and link it rather than copying its numbers.
 
@@ -326,7 +326,7 @@ A project that does not load fails every case for one reason. Do not start until
 
 ## 1. Dataset - all of it
 
-Build `.finetune/dataset.json` if it is not there, and read it if it is. **Read
+Build `finetune/dataset.json` if it is not there, and read it if it is. **Read
 the whole training set and write every case into it** - no limit, no sampling,
 no "the first twenty". The dataset is the record of what the project is meant to
 handle; the limit is applied later, when cases are selected, and only there.
@@ -341,7 +341,7 @@ re-extractions. Report the count per class when you are done.
 
 **Settings.** You now know the dataset size. Set the limit, propose the batch
 sizes, recheck and concurrency, say what each costs, and write them to
-`.finetune/config.json` - every script reads its defaults from there:
+`finetune/config.json` - every script reads its defaults from there:
 
 ```json
 {
@@ -377,7 +377,7 @@ sizes, recheck and concurrency, say what each costs, and write them to
 **Selection.** Choose the cases:
 
 ```sh
-.github/skills/zen-finetune/scripts/select.mjs -o .finetune/selection.json
+.github/skills/zen-finetune/scripts/select.mjs -o finetune/selection.json
 ```
 
 It takes the limit from the **whole** dataset, evenly by class - one case from
@@ -387,20 +387,20 @@ first small batches hold the hard, graded cases. It prints chosen-versus-availab
 per class; report that table to me. A class with fewer cases than its share gives
 all it has.
 
-**README.** Write `.finetune/README.md` now, before anything runs - see "The
+**README.** Write `finetune/README.md` now, before anything runs - see "The
 README" above.
 
 ## 3. Build a batch, run it without memory (step 1)
 
 ```sh
-RUN=.finetune/runs/batch01-nomem-run1
-C=$(node -p 'require("./.finetune/config.json").concurrency')
+RUN=finetune/runs/batch01-nomem-run1
+C=$(node -p 'require("./finetune/config.json").concurrency')
 .github/skills/zen-finetune/scripts/batch.mjs next -o "$RUN/cases.json"
 zen run batch --input "$RUN/cases.json" \
-    --batch-dir "$RUN/batch" --memory .finetune/empty --concurrency "$C"
+    --batch-dir "$RUN/batch" --memory finetune/empty --concurrency "$C"
 ```
 
-`--concurrency` is always the value in `.finetune/config.json` - read it fresh
+`--concurrency` is always the value in `finetune/config.json` - read it fresh
 for every run, since an out-of-memory run halves it.
 
 `batch.mjs next` prints the size and why, which cases are new and which are
@@ -412,7 +412,7 @@ Batch 1 is a smoke test. If its cases crash - the project, the sandbox, a key -
 that is not the prose: fix it and run the three again before grading anything.
 
 Every no-memory run has no memory. A graph with content lets a run succeed by
-recall instead of by instruction. `.finetune/empty` is never created - naming a
+recall instead of by instruction. `finetune/empty` is never created - naming a
 directory that does not exist is what gives each case an empty memory.
 
 Never hand-write a `cases.json`, and never re-select mid-way. Build a batch once,
@@ -573,12 +573,12 @@ An edit is a guess until the same cases have run against it. Run the same batch
 again as the next run - a copy of its cases, new prose, still no memory:
 
 ```sh
-PREV=.finetune/runs/batch01-nomem-run1
-RUN=.finetune/runs/batch01-nomem-run2
-mkdir -p "$RUN" && cp .finetune/runs/batch01-nomem-run1/cases.json "$RUN/cases.json"
-C=$(node -p 'require("./.finetune/config.json").concurrency')
+PREV=finetune/runs/batch01-nomem-run1
+RUN=finetune/runs/batch01-nomem-run2
+mkdir -p "$RUN" && cp finetune/runs/batch01-nomem-run1/cases.json "$RUN/cases.json"
+C=$(node -p 'require("./finetune/config.json").concurrency')
 zen run batch --input "$RUN/cases.json" \
-    --batch-dir "$RUN/batch" --memory .finetune/empty --concurrency "$C"
+    --batch-dir "$RUN/batch" --memory finetune/empty --concurrency "$C"
 .github/skills/zen-finetune/scripts/report.mjs -d "$RUN/batch" -p "$PREV/batch" compare
 ```
 
@@ -628,9 +628,9 @@ reaches another case or the candidate:
 
 ```sh
 M=.github/skills/zen-finetune/scripts/memory.mjs
-RUN=.finetune/runs/batch01-mem-run1
-mkdir -p "$RUN" && cp .finetune/runs/batch01-nomem-run1/cases.json "$RUN/cases.json"
-C=$(node -p 'require("./.finetune/config.json").concurrency')
+RUN=finetune/runs/batch01-mem-run1
+mkdir -p "$RUN" && cp finetune/runs/batch01-nomem-run1/cases.json "$RUN/cases.json"
+C=$(node -p 'require("./finetune/config.json").concurrency')
 zen run batch --input "$RUN/cases.json" \
     --batch-dir "$RUN/batch" --memory "$($M path --candidate)" --concurrency "$C"
 ```
@@ -711,7 +711,7 @@ this one went smoothly.
 
 When every case in the selection has been used and no difficult case is open -
 `next.mjs` says so - run the whole selection as one run - the last good memory,
-the same flags, the same machine - into `.finetune/runs/final-check/`. It is the
+the same flags, the same machine - into `finetune/runs/final-check/`. It is the
 only run that measures every case under the final prose and the final memory at
 once. Grade it, and
 write `findings.md` with the heading `VERIFIED` if no verdict regressed and the
@@ -739,6 +739,6 @@ Commit `dataset.json`, `config.json`, `selection.json`, `difficult.json`,
 `README.md`, `USAGE.md`, `usage.json`, every `cases.json`, `plan.json`, `findings.md` and `changes.md` - they are the
 eval history, and they are what a resumed session reads to find its place. Write
 each as its step ends rather than at the end of the batch, so an interruption
-never costs more than the step it lands in. Add `.finetune/runs/*/batch/`,
-`.finetune/memory/`, `.finetune/empty/` and `.finetune/usage/` to `.gitignore` - `batch/` folders are
+never costs more than the step it lands in. Add `finetune/runs/*/batch/`,
+`finetune/memory/`, `finetune/empty/` and `finetune/usage/` to `.gitignore` - `batch/` folders are
 large and may hold live API responses, and the memory graphs are built from them.

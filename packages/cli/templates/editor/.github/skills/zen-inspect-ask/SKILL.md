@@ -58,7 +58,7 @@ made the choice, not the one where the consequence showed up.
 | never searched memory           | issued the first tool call of the task (usually the first `llm` after `user input`) |
 | ran independent work in series  | issued the **first** of the sequential calls - it already had the whole plan        |
 | never loaded / followed a skill | chose the substitute action (the `python -c`, the hand-rolled grep)                 |
-| handed off too early            | carries `calls handoff`                                                             |
+| handed off too early            | carries `calls transfer_to_<name>`                                                  |
 | gave up / answered too early    | the last `llm` before `final output`                                                |
 | repeated a failed call          | the one right after the first `ERROR` result                                        |
 

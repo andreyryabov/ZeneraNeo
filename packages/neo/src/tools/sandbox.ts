@@ -469,7 +469,13 @@ export class Sandbox {
             this.#created = true;
             return;
         }
-        await this.#must(this.#createArgs(), `could not create container ${this.name}`);
+        const made = await this.#podman(this.#createArgs());
+        if (made.code !== 0) {
+            throw new SandboxError(
+                `could not create container ${this.name}: ${message(made)}`,
+                LOCKS.test(made.stderr) ? locksHint(this.spec.engine) : undefined,
+            );
+        }
         this.#created = true;
     }
 
@@ -554,11 +560,18 @@ export class Sandbox {
         const timeoutMs = this.#timeout(opts.timeout);
         const startedAt = Date.now();
 
-        const res = await this.#run(
-            this.spec.engine,
-            ['exec', '--interactive', '--workdir', cwd, this.name, '/bin/sh', '-s'],
-            { input: command, timeoutMs, signal: opts.signal },
-        );
+        const once = (): Promise<ProcResult> =>
+            this.#run(
+                this.spec.engine,
+                ['exec', '--interactive', '--workdir', cwd, this.name, '/bin/sh', '-s'],
+                { input: command, timeoutMs, signal: opts.signal },
+            );
+        let res = await once();
+        if (gone(res)) {
+            // podman refused before running anything, so the retry cannot run the command twice.
+            await this.#revive(res);
+            res = await once();
+        }
 
         return {
             exit_code: res.code,
@@ -812,6 +825,21 @@ export class Sandbox {
         return this.#run(this.spec.engine, args, { timeoutMs: 120_000 });
     }
 
+    /** The container stopped or vanished under us (machine slept, restarted, or someone removed it). */
+    async #revive(res: ProcResult): Promise<void> {
+        this.#ready = undefined;
+        try {
+            await this.start();
+        } catch (err) {
+            throw new SandboxError(
+                `the sandbox container ${this.name} stopped (${message(res)}) and could not be restarted: ` +
+                    (err instanceof Error ? err.message : String(err)),
+                `the ${this.spec.engine} machine may have stopped or restarted — check \`${this.spec.engine} machine list\`, ` +
+                    `start it with \`${this.spec.engine} machine start\`, then retry`,
+            );
+        }
+    }
+
     async #must(args: readonly string[], what: string): Promise<ProcResult> {
         const res = await this.#podman(args);
         if (res.code !== 0) {
@@ -827,6 +855,32 @@ function mount(m: SandboxMount): string {
 
 function message(res: ProcResult): string {
     return (res.stderr.trim() || res.stdout.trim() || `exit ${res.code}`).split('\n')[0];
+}
+
+/** podman's words for "every lock is taken": `allocating lock … exceeded num_locks (2048)`. */
+const LOCKS = /exceeded num_locks|allocating lock/i;
+
+/**
+ * A stopped container holds a lock as surely as a running one, and a
+ * persisted sandbox is stopped, never removed — so they pile up one per
+ * session until the engine can create nothing at all, for anyone.
+ */
+function locksHint(engine: string): string {
+    return (
+        `the ${engine} engine has no locks left: every container it holds, stopped ones ` +
+        `included, takes one. Remove the stopped sandbox containers with ` +
+        `\`${engine} container prune --force --filter label=zenera=1\`, then retry`
+    );
+}
+
+/** podman's own exit code for "could not exec at all", with the two reasons that mean the container is not there to exec in. */
+function gone(res: ProcResult): boolean {
+    return (
+        res.code === 125 &&
+        /can only create exec sessions on running containers|container state improper|no such container/i.test(
+            res.stderr,
+        )
+    );
 }
 
 /** Only ever applied to paths this module derived, never to a model's text. */

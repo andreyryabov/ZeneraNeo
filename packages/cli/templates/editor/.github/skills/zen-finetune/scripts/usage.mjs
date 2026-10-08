@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // @ts-check
 //
-// What the tuning has cost, in tokens: .finetune/USAGE.md and .finetune/usage.json.
+// What the tuning has cost, in tokens: finetune/USAGE.md and finetune/usage.json.
 //
 // Three things spend tokens during a tuning, and only one of them is the
 // project under test:
@@ -12,9 +12,9 @@
 //                    from the spans `zen meta` records as it runs
 //   inspect ask      every `zen inspect ask` the grading made - one row each
 //
-// The ledger is .finetune/usage/ledger.jsonl. `zen meta`, `zen run`, `zen run
+// The ledger is finetune/usage/ledger.jsonl. `zen meta`, `zen run`, `zen run
 // batch` and `zen inspect ask` append to it whenever the project has a
-// .finetune/; nothing here writes to it.
+// finetune/; nothing here writes to it.
 //
 // A meta agent call is put on the stage it happened in, by time: while a run
 // executes it is "waiting" on that run, after it until the next run starts it is
@@ -40,7 +40,7 @@ import { fileURLToPath } from 'node:url';
 
 const NAME = 'usage.mjs';
 
-const USAGE = `What the tuning has cost, in tokens: .finetune/USAGE.md and .finetune/usage.json.
+const USAGE = `What the tuning has cost, in tokens: finetune/USAGE.md and finetune/usage.json.
 
   ${NAME}             write both, and print one summary line
   ${NAME} -q          write both, print nothing
@@ -54,10 +54,10 @@ process.stdout.on('error', (err) => {
 
 process.chdir(resolve(dirname(fileURLToPath(import.meta.url)), '../../../..'));
 
-const RUNS = '.finetune/runs';
-const LEDGER = '.finetune/usage/ledger.jsonl';
-const REPORT = '.finetune/USAGE.md';
-const DATA = '.finetune/usage.json';
+const RUNS = 'finetune/runs';
+const LEDGER = 'finetune/usage/ledger.jsonl';
+const REPORT = 'finetune/USAGE.md';
+const DATA = 'finetune/usage.json';
 const RUN_NAME = /^batch(\d{2})-(nomem|mem)-run(\d+)$/;
 const FINAL = 'final-check';
 const COSTLIEST = 10;
@@ -79,8 +79,8 @@ for (const arg of process.argv.slice(2)) {
     }
 }
 
-if (!existsSync('.finetune')) {
-    console.error(`${NAME}: no .finetune/ - nothing is being tuned here`);
+if (!existsSync('finetune')) {
+    console.error(`${NAME}: no finetune/ - nothing is being tuned here`);
     process.exit(2);
 }
 
@@ -287,7 +287,7 @@ const since = ledger.length > 0 ? ledger.map((r) => String(r.ts)).sort()[0] : un
 
 /** The finetune run a batch directory belongs to. @param {string | undefined} dir */
 function runOfBatchDir(dir) {
-    const m = /\.finetune\/runs\/([^/]+)\/batch\/?$/.exec(dir ?? '');
+    const m = /\finetune\/runs\/([^/]+)\/batch\/?$/.exec(dir ?? '');
     return m && byName.has(m[1]) ? m[1] : undefined;
 }
 

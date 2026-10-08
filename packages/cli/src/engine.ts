@@ -73,6 +73,11 @@ export interface EngineOptions {
      * complaint is a worse report than one.
      */
     quiet?: boolean;
+    /**
+     * The session will never be resumed, so its containers are removed on close
+     * whatever `persist:` says. A stopped one would only hold an engine lock.
+     */
+    disposable?: boolean;
 }
 
 export interface Engine {
@@ -153,6 +158,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
             keys: opts.keys,
             env: env?.names,
             mounts,
+            ...(opts.disposable ? { persist: false } : {}),
         });
         const workspaceOptions = {
             root: workspace,

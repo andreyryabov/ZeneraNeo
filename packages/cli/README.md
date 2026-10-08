@@ -499,6 +499,7 @@ zen sandbox pull                      # pull or build this project's image only
 zen sandbox status --project my-app   # inspect a named project from anywhere
 zen sandbox disk                      # storage used by the engine and known projects
 zen sandbox clean                     # remove containers created by zen
+zen sandbox clean --idle              # only what no live run is using
 ```
 
 `status`, `up` and `pull` use the project in the current directory, or accept
@@ -726,6 +727,23 @@ read from, and a journal of what changed and what was found. Only
 `zen meta dataset` writes it; `/dataset` re-reads just the sections that
 changed, and a case whose question or rubric changed is listed as restarted.
 See the `zen-dataset` skill a project carries in `.github/skills/`.
+
+### Tuning on it
+
+```sh
+zen meta finetune start -N 4                 # 4 cases at a time; resumes if stopped
+zen meta finetune                            # where it stands
+zen meta finetune stop                       # finish the steps in flight, then stop
+zen meta finetune session plan-day           # resume that case's analyze session
+```
+
+Each case is run without memory and analyzed until it is right and lean, then
+run with the memory it wrote until that is cheaper. Improvement requests are
+applied in batches between runs, and every apply is a new, diffable version of
+the prose. Follow it in `finetune/STATUS.md`, whose summary shows whether the
+fixes and the memory are making runs cheaper; each case has its own
+`finetune/cases/<id>/FEEDBACK.md` with its latest analysis and the metrics of
+every try.
 
 ## Credentials
 

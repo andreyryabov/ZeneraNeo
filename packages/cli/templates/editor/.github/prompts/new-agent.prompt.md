@@ -18,7 +18,9 @@ If none holds, propose the smaller change instead - a skill, a prompt line, a
 tool grant - and stop. Adding an agent to solve a prompt problem is the failure
 mode this project cares most about.
 
-If it is warranted:
+If it is warranted, load the `zen-topology` skill now - it decides whether the
+new agent is reached by a hand-off or by a fork. If it will write or run code,
+load the `zen-code-python` skill too before writing its prompt.
 
 1. Pick a name matching `^[a-z0-9]+(?:[-_][a-z0-9]+)*$`. It reaches the model as
    `transfer_to_<name>`, so the name is part of the routing surface.

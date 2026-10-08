@@ -20,8 +20,8 @@ already decided, and do not go further while `zen check` fails - nothing below
 matters until it passes.
 
 **Then list the capabilities this project turns on** — a `memory:` block, a
-`zen rag` index, a sandbox, a `SPECIFICATION.md` — and load the editor skill
-for each before judging it. The obligations live in the skill, not in
+`zen rag` index, a sandbox, an agent that writes code (`zen-code-python`), a
+`SPECIFICATION.md` — and load the editor skill for each before judging it. The obligations live in the skill, not in
 `agents.yaml`, and `zen check` reports none of them. A capability that is
 already configured and already passing is exactly the case that looks finished
 and is not.
@@ -57,7 +57,8 @@ Everything that follows is what no tool can see:
 - **Sandbox.** `persist: true` unless a throwaway rootfs is wanted on purpose.
   What the work always needs is in the image, not installed by a prompt on every
   run.
-- **Control flow.** Whichever this project uses. A handoff moves the
+- **Control flow.** Whichever this project uses - load the `zen-topology` skill
+  first when `agents.yaml` has `handoffs:` or `fork:`. A handoff moves the
   conversation and must have a path back; a fork returns by itself and condenses
   to one result, so whatever the caller needs must be in the branch's answer.
   Wanting one lookup and spending the conversation on it is a fork, not a
