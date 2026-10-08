@@ -97,22 +97,48 @@ function header(s: Snapshot, theme: Theme): Line[] {
     ];
 }
 
-/** Narrow terminals lose the model, then the last action - never the tokens. */
-const nowCells = (r: NowRow, width: number): string =>
-    [
-        fit(r.who, 9),
-        fit(r.what, 26),
-        fit(r.step, 8),
-        fit(since(r.sinceMs), 7),
-        fit(r.act?.calls ? short(r.act.input + r.act.output) : '', 6),
-        fit(r.act?.model ?? '', width >= 110 ? 22 : 16),
-        r.act?.last ?? '',
-    ].join(' ');
+const STAGE_HUE: Record<Theme['appearance'], Record<'run' | 'analyze' | 'apply', string>> = {
+    dark: { run: 'green', analyze: 'magentaBright', apply: 'blueBright' },
+    light: { run: 'green', analyze: 'magenta', apply: 'blue' },
+};
 
-/** time, action, case, result, took, tokens: the result takes what the others leave. */
-const logCells = (cells: [string, string, string, string, string], width: number): string => {
-    const [action, where, result, took, tokens] = cells;
-    return `${fit(action, 18)} ${fit(where, 31)} ${fit(result, Math.max(10, width - 75))} ${fit(took, 7)} ${tokens}`;
+/** One hue per stage in every section: run/ran, analyze/analyzed, apply/applied. */
+function hue(word: string, theme: Theme): string | undefined {
+    const stage = /^(run|ran)\b/.test(word)
+        ? 'run'
+        : word.startsWith('analy')
+          ? 'analyze'
+          : word.startsWith('appl')
+            ? 'apply'
+            : undefined;
+    return stage && STAGE_HUE[theme.appearance][stage];
+}
+
+/** worker, task, action, elapsed, tokens, model, latest - split around the action cell. */
+function nowCells(cells: string[], width: number): [string, string, string] {
+    const [who = '', what = '', step = '', elapsed = '', tokens = '', model = '', last = ''] =
+        cells;
+    return [
+        `${fit(who, 9)} ${fit(what, 26)} `,
+        fit(step, 8),
+        ` ${fit(elapsed, 7)} ${fit(tokens, 6)} ${fit(model, width >= 110 ? 22 : 16)} ${last}`,
+    ];
+}
+
+const nowRow = (r: NowRow): string[] => [
+    r.who,
+    r.what,
+    r.step,
+    since(r.sinceMs),
+    r.act?.calls ? short(r.act.input + r.act.output) : '',
+    r.act?.model ?? '',
+    r.act?.last ?? '',
+];
+
+/** case, result, took, tokens after the action: the result takes what the others leave. */
+const logCells = (cells: [string, string, string, string], width: number): string => {
+    const [where, result, took, tokens] = cells;
+    return `${fit(where, 31)} ${fit(result, Math.max(10, width - 75))} ${fit(took, 7)} ${tokens}`;
 };
 
 /** The overview: under way, tokens, log - as many log rows as the height leaves. */
@@ -126,14 +152,20 @@ export function mainLines(
     const quiet = theme.chrome.color;
     const out: Line[] = [...header(s, theme)];
     if (s.now.length > 0) {
-        out.push([], [{ text: 'Now', bold: true }]);
+        out.push([], [{ text: 'In progress', bold: true }]);
+        out.push([
+            {
+                text: `  ${nowCells(['worker', 'task', 'action', 'elapsed', 'tokens', 'model', 'latest'], width).join('')}`,
+                color: quiet,
+            },
+        ]);
         s.now.forEach((r, i) => {
+            const [before, step, after] = nowCells(nowRow(r), width);
             out.push([
-                {
-                    text: nowCells(r, width),
-                    color: i === selected ? theme.accent : undefined,
-                    bold: i === selected,
-                },
+                i === selected ? { text: '> ', color: theme.accent, bold: true } : { text: '  ' },
+                { text: before },
+                { text: step, color: hue(r.step, theme) },
+                { text: after },
             ]);
         });
     }
@@ -147,8 +179,9 @@ export function mainLines(
         ]);
         for (const r of s.tokens) {
             out.push([
+                { text: fit(r.stage, 8), color: hue(r.stage, theme) },
                 {
-                    text: `${fit(r.stage, 8)} ${fit(r.model, 26)} ${String(r.calls).padStart(6)} ${short(r.input).padStart(7)} ${short(r.output).padStart(7)}`,
+                    text: ` ${fit(r.model, 26)} ${String(r.calls).padStart(6)} ${short(r.input).padStart(7)} ${short(r.output).padStart(7)}`,
                 },
             ]);
         }
@@ -172,24 +205,19 @@ export function mainLines(
         out.push([], [{ text: 'Log', bold: true }]);
         out.push([
             {
-                text: `${fit('time', 8)} ${logCells(['action', 'case', 'result', 'took', 'tokens'], width)}`,
+                text: `${fit('time', 8)} ${fit('action', 18)} ${logCells(['case', 'result', 'took', 'tokens'], width)}`,
                 color: quiet,
             },
         ]);
         for (const r of s.log.slice(0, room)) {
             out.push([
                 { text: `${clock(r.at)} `, color: quiet },
+                { text: fit(r.action, 18), color: hue(r.action, theme) },
                 {
-                    text: logCells(
-                        [
-                            r.action,
-                            r.case,
-                            r.result,
-                            seconds(r.took),
-                            r.tokens ? short(r.tokens) : '',
-                        ],
+                    text: ` ${logCells(
+                        [r.case, r.result, seconds(r.took), r.tokens ? short(r.tokens) : ''],
                         width,
-                    ),
+                    )}`,
                 },
             ]);
         }

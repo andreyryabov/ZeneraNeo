@@ -124,8 +124,11 @@ describe('the live view', () => {
         expect(lines[1]).toContain('5 of 10 done · 4 completed · 1 difficult');
         expect(lines[1]).not.toContain('failed');
         expect(
+            lines.some((l) => /^ {2}worker +task +action +elapsed +tokens +model +latest/.test(l)),
+        ).toBe(true);
+        expect(
             lines.some((l) =>
-                /^worker 1 +a1 · no memory try 2 +run +12s +2k +gemini-a +run_command pytest -q/.test(
+                /^> worker 1 +a1 · no memory try 2 +run +12s +2k +gemini-a +run_command pytest -q/.test(
                     l,
                 ),
             ),
@@ -137,9 +140,9 @@ describe('the live view', () => {
         expect(lines.at(-1)).toContain('enter follow');
     });
 
-    it('drops the Now section when nothing runs, and says so while stopping', () => {
+    it('drops the In progress section when nothing runs, and says so while stopping', () => {
         const lines = text(mainLines(snap({ now: [], state: 'stopping' }), 0, 120, 30, theme));
-        expect(lines).not.toContain('Now');
+        expect(lines).not.toContain('In progress');
         expect(lines.at(-1)).toContain('stopping');
     });
 
