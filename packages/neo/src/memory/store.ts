@@ -174,7 +174,11 @@ export class MemoryStore {
                 'nothing this run learns can be kept — point it at a memory of its own',
             );
         }
-        await atomic(join(this.dir, GRAPH_FILE), JSON.stringify(this.graph.export()));
+        // Indented so a committed memory diffs per node rather than as one line.
+        await atomic(
+            join(this.dir, GRAPH_FILE),
+            `${JSON.stringify(this.graph.export(), null, 2)}\n`,
+        );
 
         const vectors = this.#vectors;
         if (vectors) {
@@ -185,7 +189,7 @@ export class MemoryStore {
             );
             await atomic(
                 join(this.dir, VECTOR_IDS_FILE),
-                JSON.stringify({ dims: vectors.dims, ids: vectors.ids }),
+                `${JSON.stringify({ dims: vectors.dims, ids: vectors.ids }, null, 2)}\n`,
             );
         }
 
