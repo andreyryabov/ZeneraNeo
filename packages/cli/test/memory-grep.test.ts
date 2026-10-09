@@ -234,4 +234,23 @@ describe('zen memory grep', () => {
             holder.release();
         }
     });
+
+    // A merged copy lives inside the project tree; standing in it must not
+    // silently export the project's own memory instead.
+    it('reads the memory directory it is run from, without --dir', async () => {
+        await memory([node('A'), node('B')]);
+        const lines: string[] = [];
+        const write = vi
+            .spyOn(process.stdout, 'write')
+            .mockImplementation((chunk: string | Uint8Array) => {
+                lines.push(String(chunk));
+                return true;
+            });
+        try {
+            await command.run({ args: ['export', join(root, 'x.html')], json: true, cwd: dir });
+        } finally {
+            write.mockRestore();
+        }
+        expect(JSON.parse(lines.join(''))).toMatchObject({ from: dir, nodes: 2 });
+    });
 });
