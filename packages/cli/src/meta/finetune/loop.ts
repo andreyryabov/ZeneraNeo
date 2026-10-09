@@ -5,7 +5,7 @@ import { CliError, EXIT } from '../host.ts';
 import { StepError } from './failure.ts';
 import { recover } from './journal.ts';
 import { publish } from './live.ts';
-import { begun, nextCase, resultOf } from './sampler.ts';
+import { nextCase, resultOf } from './sampler.ts';
 import { markFailed, SandboxDown, train, VoidRun } from './train.ts';
 import { Stopped, type Seat, type Tuning } from './tuning.ts';
 
@@ -77,9 +77,6 @@ async function dispatch(t: Tuning): Promise<void> {
             break;
         }
         const seat: Seat = { case: c };
-        if (!begun(t, c)) {
-            t.begun++;
-        }
         t.claimed.add(c.id);
         t.tried.add(c.id);
         const before = resultOf(t, c);

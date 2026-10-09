@@ -24,7 +24,8 @@ export type EventBody =
       }
     | { type: 'tool'; phase: 'start'; id: string; name: string; subject: string }
     | { type: 'tool'; phase: 'end'; id: string; name: string; ok: boolean; ms?: number }
-    | { type: 'say'; text: string };
+    | { type: 'say'; text: string }
+    | { type: 'think'; text: string };
 
 export type EventLine = EventBody & { t: string };
 
@@ -34,6 +35,16 @@ const clip = (text: string): string => {
     const one = text.replace(/\s+/g, ' ').trim();
     return one.length > MAX_TEXT ? `${one.slice(0, MAX_TEXT - 1)}…` : one;
 };
+
+/** A thought summary's last `**heading**`, else its first sentence. */
+export function heading(thinking: string): string {
+    const bold = [...thinking.matchAll(/\*\*([^*\n]+)\*\*/g)].at(-1)?.[1];
+    if (bold) {
+        return clip(bold);
+    }
+    const one = clip(thinking);
+    return one.match(/^.+?[.!?](?=\s|$)/)?.[0] ?? one;
+}
 
 /** A line that cannot be written is dropped: watching a run must not break it. */
 export function eventLog(path: string): (body: EventBody) => void {
@@ -53,11 +64,14 @@ export function agentEventLog(path: string): (event: AgentEvent) => void {
     // Keyed by branch, since a fork has several model calls open at once.
     const began = new Map<string, number>();
     const said = new Map<string, string>();
+    const thought = new Map<string, string>();
     return (event) => {
         const key = event.branch?.name ?? '';
         if (!isCheckpoint(event)) {
             if (event.type === 'text_delta') {
                 said.set(key, (said.get(key) ?? '') + event.delta);
+            } else if (event.type === 'thinking_delta') {
+                thought.set(key, (thought.get(key) ?? '') + event.delta);
             }
             return;
         }
@@ -65,6 +79,7 @@ export function agentEventLog(path: string): (event: AgentEvent) => void {
             case 'before_llm_call':
                 began.set(key, Date.now());
                 said.delete(key);
+                thought.delete(key);
                 break;
             case 'after_llm_call': {
                 const u = event.node.usage;
@@ -78,6 +93,11 @@ export function agentEventLog(path: string): (event: AgentEvent) => void {
                     reasoning: u.reasoningTokens ?? 0,
                     ...(at !== undefined ? { ms: Date.now() - at } : {}),
                 });
+                const thinking = thought.get(key)?.trim();
+                thought.delete(key);
+                if (thinking) {
+                    write({ type: 'think', text: heading(thinking) });
+                }
                 const text = said.get(key)?.trim();
                 said.delete(key);
                 if (text) {

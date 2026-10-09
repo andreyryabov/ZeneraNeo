@@ -131,15 +131,15 @@ whole. `memory_search` finds ids; it does not return contents.
 A remembered file appears at `/memory/<id>.<ext>`. Open it or run it, but arrive
 at that path through `memory_load`, never by looking around in the directory.
 
-**Never read the store directly.** `/memory` holds `graph.json`, `vectors.f32`,
-`vectors.json` and `manifest.json` - its internal format. Do not open, list,
-grep, `cat` or `find` them, and do not point a shell command at that directory:
+**Never read the store directly.** The only paths under `/memory` you may touch
+are the ones a `memory_*` tool handed you. Everything else there is the store's
+internal state, not a source: do not open, list, grep, `cat` or `find` it, and
+do not point a shell command at that directory:
 
-- `graph.json` is every node ever committed, as one line;
 - a raw read bypasses the audience mask and serves **superseded** nodes -
   corrections that were withdrawn - as if they were current;
 - it records no use, so the ranking that decides what gets recalled next decays;
-- another run may be writing, and the manifest is written last.
+- another run may be writing, so what is there may be half a commit.
 
 **`memory_grep` is that search, done properly.** It reads every node exactly -
 the text, the metadata and the bytes of remembered files - and hands back the

@@ -1,4 +1,6 @@
 import { Box, render, Text, useInput, useWindowSize } from 'ink';
+import { spawn } from 'node:child_process';
+import { join } from 'node:path';
 import React, { useEffect, useState } from 'react';
 import type { EventLine, Theme } from '../host.ts';
 import { resolveTheme } from '../host.ts';
@@ -55,8 +57,21 @@ function keysFor(s: Snapshot, following: boolean): string {
         return s.state;
     }
     return following
-        ? 'esc back · s stop · ctrl-c stop, twice kills'
-        : 'up/down choose · enter follow · s stop · ctrl-c stop, twice kills';
+        ? 'esc back · o open STATUS.html · s stop · ctrl-c stop, twice kills'
+        : 'up/down choose · enter follow · o open STATUS.html · s stop · ctrl-c stop, twice kills';
+}
+
+/** The platform opener, without a shell, so the path stays one argument. */
+function openInBrowser(file: string): void {
+    const command =
+        process.platform === 'darwin'
+            ? 'open'
+            : process.platform === 'win32'
+              ? 'explorer'
+              : 'xdg-open';
+    spawn(command, [file], { stdio: 'ignore', detached: true })
+        .on('error', () => {})
+        .unref();
 }
 
 function header(s: Snapshot, theme: Theme): Line[] {
@@ -248,6 +263,12 @@ function activity(e: EventLine, theme: Theme): Line {
                   ];
         case 'say':
             return [at, { text: 'says   ', color: theme.accent }, { text: e.text }];
+        case 'think':
+            return [
+                at,
+                { text: 'thinks ', color: theme.accent },
+                { text: e.text, color: theme.chrome.color },
+            ];
     }
 }
 
@@ -307,6 +328,10 @@ function Live({
     useInput((input, key) => {
         if ((key.ctrl && input === 'c') || input === 's') {
             interrupt();
+            return;
+        }
+        if (input === 'o') {
+            openInBrowser(join(t.dir, 'STATUS.html'));
             return;
         }
         if (follow) {

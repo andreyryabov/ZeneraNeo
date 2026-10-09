@@ -27,7 +27,7 @@ import {
     type SkippedFile,
 } from '@zenera/neo';
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { parse } from '../args.ts';
@@ -127,6 +127,7 @@ export const memory: Command = {
         '',
         '  --project <name|dir>   Which project. Defaults to the one you are in.',
         '  --dir <dir>            Read this memory directory instead of the project’s.',
+        '                         Run from inside a memory directory, that one is the default.',
         '  --kind <name>          Only this kind of node.',
         '  --audience <name>      Only nodes committed under this label.',
         '  --files                Only nodes that remember a file.',
@@ -299,6 +300,11 @@ async function open(
     opts: { create?: boolean; lock?: boolean } = {},
 ): Promise<Opened> {
     const { create = false, lock = true } = opts;
+    // Standing inside a memory (a merged or batch copy) means that memory, not
+    // the project's own one a few directories up.
+    if (!at && !want && isMemoryDir(cwd)) {
+        at = cwd;
+    }
     if (at) {
         const dir = resolve(cwd, at);
         if (!create && !existsSync(join(dir, 'manifest.json'))) {
@@ -327,6 +333,19 @@ async function open(
         project: project.name,
         at: { root: project.dir, config },
     };
+}
+
+/** A rag index also has a manifest and a graph.json; only a memory's manifest counts nodes and edges. */
+function isMemoryDir(dir: string): boolean {
+    if (!existsSync(join(dir, 'graph.json'))) {
+        return false;
+    }
+    try {
+        const m = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'));
+        return typeof m?.nodes === 'number' && typeof m?.edges === 'number';
+    } catch {
+        return false;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -958,11 +977,17 @@ async function write_(
     await writeFile(target, renderMemoryHtml(report), 'utf8');
 
     if (asJson) {
-        json({ path: target, nodes: report.nodes.length, edges: report.edges.length });
+        json({
+            path: target,
+            from: o.dir,
+            nodes: report.nodes.length,
+            edges: report.edges.length,
+        });
     } else {
         note(
             `${green('wrote')} ${target} ${dim(
-                `· ${count(report.nodes.length, 'node')}, ${count(report.edges.length, 'edge')}`,
+                `· ${count(report.nodes.length, 'node')}, ${count(report.edges.length, 'edge')}` +
+                    ` · from ${o.dir}`,
             )}`,
         );
     }
