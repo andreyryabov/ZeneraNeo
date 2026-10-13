@@ -228,10 +228,11 @@ export function snapshot(t: Tuning): Snapshot {
     }
     const q = t.improvements;
     if (q.current?.dir) {
+        const gate = q.current.step === 'check' || q.current.step === 'guard';
         now.push({
             key: 'apply',
             who: 'applier',
-            step: 'apply',
+            step: gate ? q.current.step! : 'apply',
             what:
                 q.current.kind === 'consolidate'
                     ? `consolidate ${basename(q.current.dir)}`
@@ -240,6 +241,21 @@ export function snapshot(t: Tuning): Snapshot {
             stage: 'apply',
             act: watch(join(q.current.dir, 'apply.events.jsonl')),
         });
+        for (const g of q.current.guard ?? []) {
+            if (g.step !== 'run' && g.step !== 'analyze') {
+                continue;
+            }
+            now.push({
+                key: `guard-${g.case}`,
+                who: 'guard',
+                step: g.step,
+                what: g.try > 1 ? `try ${g.try} · ${g.case}` : g.case,
+                sinceMs: clock - g.since,
+                // Guard tokens are the apply's cost, as USAGE.md counts them.
+                stage: 'apply',
+                act: watch(join(g.dir, g.step === 'run' ? 'events.jsonl' : 'analyze.events.jsonl')),
+            });
+        }
     } else if (q.current) {
         now.push({
             key: 'apply',

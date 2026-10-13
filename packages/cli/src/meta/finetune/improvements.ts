@@ -4,7 +4,7 @@ import { basename, join } from 'node:path';
 import { type Cost, costChanges, limits, measure, overLimits } from './cost.ts';
 import { errorIn, sizeOf } from './failure.ts';
 import type { Feedback, Improvement } from './feedback.ts';
-import { guard, type GuardResult } from './guard.ts';
+import { guard, type GuardResult, type GuardSeat } from './guard.ts';
 import { patchFiles, writeApply } from './report.ts';
 import type { Run } from './train.ts';
 import { readJson, type Seat, Stopped, type Tuning } from './tuning.ts';
@@ -97,6 +97,9 @@ export class Improvements {
               dir?: string;
               requests?: number;
               kind?: 'consolidate';
+              /** which gate the edit is at; absent while it waits for runs */
+              step?: 'edit' | 'check' | 'guard';
+              guard?: GuardSeat[];
           }
         | undefined;
     /** applies started in this process */
@@ -590,7 +593,13 @@ export class Improvements {
         await this.#writeBudget(dir, before, kind);
         const bound = limits(await this.baseline(), t.config);
         const unchanged = { before: before.total, after: before.total };
+        const at = (step: 'edit' | 'check' | 'guard'): void => {
+            if (this.current) {
+                Object.assign(this.current, { step, guard: undefined });
+            }
+        };
         for (let attempt = 1; ; attempt++) {
+            at('edit');
             const session = randomUUID();
             writeFileSync(join(dir, 'session'), `${session}\n`);
             const applyLog = join(dir, 'apply.log');
@@ -615,6 +624,7 @@ export class Improvements {
                 join(dir, attempt === 1 ? 'apply.json' : `apply-${attempt}.json`),
                 res.stdout,
             );
+            at('check');
             const check = await t.zen(['check', '--no-models', '--no-sandbox'], checkLog);
             if (res.code !== 0 || check.code !== 0) {
                 const e =
@@ -667,6 +677,7 @@ export class Improvements {
             }
             const patch = join(dir, 'diff.patch');
             writeFileSync(patch, t.system.diff(from, to));
+            at('guard');
             const broken = (await guard(t, dir, attempt, exclude, patch)).filter((r) => r.broken);
             if (broken.length > 0) {
                 writeFileSync(join(dir, 'guard.md'), guardReport(attempt, broken));

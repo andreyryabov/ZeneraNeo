@@ -1190,6 +1190,32 @@ describe('what an apply may cost', () => {
         expect(page).toMatch(/\| \[b1\]\([^)]+\) \| .*wrong.*right.* \| no \|/);
     });
 
+    it('shows each guard case on the status page and in the live view while it runs', async () => {
+        await dataset(['a1', 'b1']);
+        let page = '';
+        let live: { now: object[] } | undefined;
+        const fake = fakeZen((c, _p, _a, applies, guard) => {
+            if (guard && !page) {
+                page = readFileSync(join(root, 'finetune', 'STATUS.md'), 'utf8');
+                setTimeout(() => {
+                    live = JSON.parse(readFileSync(join(root, 'finetune', 'live.json'), 'utf8'));
+                }, 1500);
+                return { done: true, slow: 2500 };
+            }
+            return { done: c === 'b1' || applies > 0 };
+        });
+        await start(fake.zen, '-N', '2', '-M', '2');
+        expect(page).toContain('subgraph GUARD');
+        expect(page).toMatch(/G1\("`\*\*b1\*\*\nrunning \S+ · try 1 of 2`"\)/);
+        expect(page).toContain('**Checking the edit (guard)**');
+        expect(live?.now).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ key: 'apply', step: 'guard' }),
+                expect.objectContaining({ key: 'guard-b1', who: 'guard', step: 'run', what: 'b1' }),
+            ]),
+        );
+    }, 15_000);
+
     it('offers a deferred improvement to every later apply, until one takes it', async () => {
         await dataset(['a1']);
         const fake = fakeZen((_c, _p, _a, applies) => ({ done: applies > 1 }));

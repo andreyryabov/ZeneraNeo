@@ -13,7 +13,7 @@ import { safe } from '../host.ts';
 import { DatasetStore } from './dataset/store.ts';
 import { type Case, DATASET_DIR } from './dataset/types.ts';
 import { type Feedback, feedbackId, type Phase, readFeedback } from './feedback.ts';
-import type { GuardResult } from './guard.ts';
+import { GUARD_TRIES, type GuardResult, type GuardSeat } from './guard.ts';
 import type { AppliedFile, Decisions, Deferred } from './improvements.ts';
 import { resultOf, selection } from './sampler.ts';
 import type { Run } from './train.ts';
@@ -1130,6 +1130,20 @@ const STEP_WORD: Record<Worker['step'], string> = {
     parked: 'parked',
 };
 
+const GUARD_WORD: Record<GuardSeat['step'], string> = {
+    run: 'running',
+    analyze: 'grading',
+    passed: 'passed',
+    broken: 'broken',
+};
+
+const GUARD_PAINT: Record<GuardSeat['step'], string> = {
+    run: 'run',
+    analyze: 'analyze',
+    passed: 'done',
+    broken: 'bad',
+};
+
 // Edges end on the box, so it keeps LR; the invisible chain keeps the slots in order.
 const inOrder = (prefix: string, n: number): string[] =>
     n > 1
@@ -1167,6 +1181,14 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
     const merged = m.merges().filter((x) => x.ok);
     const running = t.workers.filter((w) => w.case && w.step === 'run').length;
     const grading = t.workers.filter((w) => w.case && w.step === 'analyze').length;
+    const seats = q.applying ? (q.current?.guard ?? []) : [];
+    const unsettled = seats.filter((g) => g.step === 'run' || g.step === 'analyze').length;
+    const gate =
+        q.current?.step === 'guard'
+            ? `guard · ${unsettled} of ${seats.length} still going`
+            : q.current?.step === 'check'
+              ? 'zen check'
+              : '';
     const paint: Record<string, string[]> = {};
     const fill = (id: string, cls: string): void => {
         (paint[cls] ??= []).push(id);
@@ -1217,7 +1239,7 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
     const applier = applying
         ? q.runs > 0
             ? `waiting for ${plural(q.runs, 'run')} to finish`
-            : `${plural(q.inApply.length, 'case')} · ${took}`
+            : [`${plural(q.inApply.length, 'case')} · ${took}`, gate].filter(Boolean).join('\n')
         : consolidating && q.pending.length > 0
           ? 'waits for the tidy-up'
           : `idle${last ? ` · last ${last.name}` : ''}`;
@@ -1250,7 +1272,7 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
         const tidy = consolidating
             ? q.runs > 0
                 ? `waiting for ${plural(q.runs, 'run')} to finish`
-                : `${q.current?.name ?? ''} · ${took}`
+                : [`${q.current?.name ?? ''} · ${took}`, gate].filter(Boolean).join('\n')
             : left === 0
               ? 'due now'
               : `next after ${plural(left, 'more apply', 'more applies')}`;
@@ -1265,6 +1287,26 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
         }
     }
     click('S', t.system.snapshotDir(t.system.version()), 'this version of the instructions');
+    if (seats.length > 0) {
+        out.push(
+            `        ${consolidating ? 'N' : 'P'} -.->|"${lines('rerun cases', 'that passed')}"| GUARD`,
+            `        subgraph GUARD["guard · does the edit break a case that passed?"]`,
+            '            direction LR',
+        );
+        seats.forEach((g, i) => {
+            const id = `G${i + 1}`;
+            const done = g.step === 'passed' || g.step === 'broken';
+            out.push(
+                `            ${id}("${lines(
+                    `**${safe(g.case, 36)}**`,
+                    `${GUARD_WORD[g.step]}${done ? '' : ` ${since(Date.now() - g.since)}`} · try ${g.try} of ${GUARD_TRIES}`,
+                )}")`,
+            );
+            fill(id, GUARD_PAINT[g.step]);
+            click(id, g.dir, 'this try: run, analysis, logs');
+        });
+        out.push(...inOrder('G', seats.length).map((l) => `    ${l}`), '        end');
+    }
 
     const kept = waiting.slice(0, 6).map((s) => safe(s.case, 32));
     if (waiting.length > 6) {
@@ -1312,6 +1354,12 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
             q.runs > 0
                 ? `- **About to write fixes into the instructions** (orange): waiting for the ${plural(q.runs, 'run')} in progress to finish, so none of them reads half-edited instructions. No new case starts meanwhile.`
                 : `- **Writing fixes into the instructions** (orange) for ${plural(q.inApply.length, 'case')} - running for ${took}. No case starts until it is done; then those cases run again on the new version.`,
+        );
+    }
+    if (seats.length > 0) {
+        const passed = seats.filter((g) => g.step === 'passed').length;
+        now.push(
+            `- **Checking the edit (guard)**: ${plural(seats.length, 'case')} that passed before run again on the new instructions, all at once - ${unsettled} still going, ${passed} passed. A case that fails ${GUARD_TRIES} tries in a row undoes the edit.`,
         );
     }
     if (running + grading > 0) {
