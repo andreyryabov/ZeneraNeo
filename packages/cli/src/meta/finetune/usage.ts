@@ -110,6 +110,8 @@ export interface RunMetrics {
     branches: number;
     compactions: number;
     handoffs: number;
+    /** skills loaded, preloads included, in the order first loaded */
+    skills: string[];
     /** the first error a sandbox tool got from the container engine, not from a command */
     sandbox?: string;
 }
@@ -154,6 +156,7 @@ export function runMetrics(runDir: string): RunMetrics | undefined {
         branches: 0,
         compactions: 0,
         handoffs: 0,
+        skills: [],
     };
     const seen = new Set<string>();
     const count = (o: Record<string, unknown>, ms: number): void => {
@@ -205,6 +208,14 @@ export function runMetrics(runDir: string): RunMetrics | undefined {
                 return;
             case 'handoff':
                 m.handoffs++;
+                return;
+            case 'load_skills':
+                for (const s of Array.isArray(o.skills) ? o.skills : []) {
+                    const name = (s as { name?: unknown } | null)?.name;
+                    if (typeof name === 'string' && !m.skills.includes(name)) {
+                        m.skills.push(name);
+                    }
+                }
                 return;
         }
     };
@@ -282,6 +293,33 @@ export function envelopesIn(dir: string, stem: string): ByModel | undefined {
     }
     const parts = names.map((n) => envelopeTokens(join(dir, n))).filter((p) => !!p);
     return parts.length > 0 ? mergeModels(...parts) : undefined;
+}
+
+/** An apply's own envelopes, and the runs and analyses of its guard: `guard/<attempt>/<case>/<try>/`. */
+export function applyTokens(dir: string): ByModel | undefined {
+    const parts: (ByModel | undefined)[] = [envelopesIn(dir, 'apply')];
+    const under = (d: string): string[] => {
+        try {
+            return readdirSync(d, { withFileTypes: true })
+                .filter((e) => e.isDirectory())
+                .map((e) => join(d, e.name));
+        } catch {
+            return [];
+        }
+    };
+    for (const tryDir of under(join(dir, 'guard')).flatMap(under).flatMap(under)) {
+        parts.push(envelopesIn(tryDir, 'analyze'));
+        try {
+            const run = JSON.parse(readFileSync(join(tryDir, 'run.json'), 'utf8')) as {
+                tokens?: ByModel;
+            };
+            parts.push(run.tokens);
+        } catch {
+            // A void run wrote none.
+        }
+    }
+    const found = parts.filter((p) => !!p);
+    return found.length > 0 ? mergeModels(...found) : undefined;
 }
 
 /** 1234 → 1.2k, 2184341 → 2.2M. */

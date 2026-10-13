@@ -396,7 +396,8 @@ file or prompt, or say the change belongs upstream in zen.
 ## 7. Feedback for the tuning loop
 
 `zen meta finetune` runs you with words after the run directory:
-`case=<id> rev=<n> phase=nomem|mem attempt=<n> feedback=<file>`. When they are
+`case=<id> rev=<n> phase=nomem|mem attempt=<n> feedback=<file>`, and at times
+`missed-skills=<names>` or `guard=<patch>`. When they are
 there, the run is one try of that dataset case, and besides the report you
 **write `<file>`** - the loop reads it, not your report. Without them, skip this
 section.
@@ -412,9 +413,22 @@ section.
    are not, and whether it cost more or less.
 3. **With memory** (`phase=mem`), the question is cheaper, not just right: did
    it recall before researching, did recall replace work the try without memory
-   did, did it commit anything memory already held. Improvements in this phase
-   are to the memory policy only.
-4. **Write the file**, nothing else in it:
+   did, did it commit anything memory already held. An improvement about what
+   to commit, when to recall or what to trust from memory goes to the memory
+   policy; anything else names the file that owns the behaviour, as in a run
+   without memory.
+4. **`missed-skills=<a,b>`** in the words: an earlier fix moved a procedure
+   into those skills for this case, and this run never loaded them. Find the
+   step the skill covers and say why it was not loaded - its description did
+   not match the request, or the prompt line pointing at it was not reached.
+   The improvement is `kind: skill-description` on that skill's
+   `description:` or that pointer line - not more prose elsewhere.
+5. **`guard=<patch>`** in the words: this run is a check that an apply did not
+   break a case that passed before; the patch is that apply's diff. Grade the
+   rubric as usual. Propose an improvement only when a line the patch added
+   caused a failure: then it is the hunk to narrow or revert, quoted, and
+   nothing else.
+6. **Write the file**, nothing else in it:
 
 ```json
 {
@@ -425,7 +439,7 @@ section.
     "improvements": [
         {
             "id": "i1",
-            "kind": "prompt | skill | house-rule | policy | memory-policy | tool-description | agents-yaml | specification",
+            "kind": "prompt | skill | skill-description | house-rule | policy | memory-policy | tool-description | agents-yaml | specification",
             "file": "agents/prompts/default.md",
             "change": "The sentence to add, narrow or delete, quoted - a rule, never this case's answer.",
             "why": "What it caused, with node ids.",
@@ -459,9 +473,19 @@ section.
   aside and runs the try again, and a file that says `void` without `infra` is
   refused.
 - `done` is `true` only when the verdict is `right`, every rubric line passes,
-  and you found nothing left worth changing. `done: false` on a `right` or
-  `wrong` verdict needs at least one improvement: without one the next try runs
-  on the same prose and learns nothing.
+  and you found nothing left worth changing. A `right` run with every rubric
+  line passing is `done: true` unless a cost finding would save **at least 2
+  LLM calls or a quarter of the run's tokens**, with the node ids that show
+  it. A smaller saving goes in the report, not in `improvements`: every rule
+  is read by every later call, so a rule that saves one call costs more than
+  it saves.
+- `done: false` on a `right` or `wrong` verdict needs at least one
+  improvement: without one the next try runs on the same prose and learns
+  nothing.
+- An improvement is for a **class** of requests. One that only makes sense
+  for this case's data is not an improvement - what a case needs to know about
+  its own data is memory's job. A procedure only some kinds of request need
+  is a skill (`kind: skill`), not a sentence in a prompt every request reads.
 - Your **Improvements** in the report and `improvements` here are the same list.
 - Never edit `agents/` or any other file of the project yourself: the loop
   applies every case's improvements together, and undoes an edit made here.

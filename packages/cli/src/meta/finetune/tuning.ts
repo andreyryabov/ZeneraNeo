@@ -44,6 +44,18 @@ export interface Config {
     /** merge the submitted memories after this many more arrive */
     mergeEvery: number;
     seed: number;
+    /** completed cases run again after each apply, to catch what it broke */
+    guard: number;
+    /** bytes one apply may add to what the agents always read */
+    budget: number;
+    /** percent over the start past which an apply may add nothing */
+    maxGrowth: number;
+    /** a consolidation after this many applies; 0 never */
+    consolidateEvery: number;
+    /** bytes one on-demand skill may hold */
+    skillCap: number;
+    /** skills one agent may see */
+    maxSkills: number;
     classes?: string[];
     ids?: string[];
     rubric?: boolean;
@@ -57,6 +69,12 @@ export const DEFAULTS: Config = {
     memTries: 3,
     mergeEvery: 3,
     seed: 1,
+    guard: 3,
+    budget: 1500,
+    maxGrowth: 50,
+    consolidateEvery: 5,
+    skillCap: 12_000,
+    maxSkills: 10,
 };
 
 export type Step = 'idle' | 'run' | 'analyze' | 'parked';

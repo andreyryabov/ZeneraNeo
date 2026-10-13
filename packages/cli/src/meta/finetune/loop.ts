@@ -40,6 +40,7 @@ export async function runLoop(t: Tuning): Promise<void> {
     try {
         await recover(t);
         const start = t.system.record('start');
+        await t.improvements.baseline();
         t.event({ what: 'started', detail: `system v${start.v}, ${t.workers.length} workers` });
         publish(t);
         const applier = t.improvements.loop();

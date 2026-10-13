@@ -232,7 +232,10 @@ export function snapshot(t: Tuning): Snapshot {
             key: 'apply',
             who: 'applier',
             step: 'apply',
-            what: `apply ${basename(q.current.dir)} · ${q.current.requests} request(s)`,
+            what:
+                q.current.kind === 'consolidate'
+                    ? `consolidate ${basename(q.current.dir)}`
+                    : `apply ${basename(q.current.dir)} · ${q.current.requests} request(s)`,
             sinceMs: clock - q.current.since,
             stage: 'apply',
             act: watch(join(q.current.dir, 'apply.events.jsonl')),
@@ -242,7 +245,7 @@ export function snapshot(t: Tuning): Snapshot {
             key: 'apply',
             who: 'applier',
             step: 'waiting',
-            what: `${q.pending.length} request(s), ${q.runs} run(s) to finish first`,
+            what: `${q.current.kind === 'consolidate' ? 'consolidation' : `${q.pending.length} request(s)`}, ${q.runs} run(s) to finish first`,
             sinceMs: clock - q.current.since,
         });
     }

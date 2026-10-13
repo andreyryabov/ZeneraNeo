@@ -13,11 +13,13 @@ import { safe } from '../host.ts';
 import { DatasetStore } from './dataset/store.ts';
 import { type Case, DATASET_DIR } from './dataset/types.ts';
 import { type Feedback, feedbackId, type Phase, readFeedback } from './feedback.ts';
-import type { AppliedFile } from './improvements.ts';
+import type { GuardResult } from './guard.ts';
+import type { AppliedFile, Decisions, Deferred } from './improvements.ts';
 import { resultOf, selection } from './sampler.ts';
 import type { Run } from './train.ts';
 import { readJson, type Tuning, type Worker } from './tuning.ts';
 import {
+    applyTokens,
     type ByModel,
     type ByStage,
     envelopesIn,
@@ -48,8 +50,6 @@ export interface Attempt {
     run?: Run;
     feedback?: Feedback;
 }
-
-type Decisions = Record<string, Record<string, { decision?: string; note?: string }>>;
 
 const PHASE_WORD: Record<Phase, string> = { nomem: 'no memory', mem: 'with memory' };
 
@@ -110,11 +110,7 @@ export function attemptsOf(t: Tuning, c: Case): Attempt[] {
 }
 
 function decisions(t: Tuning): Decisions {
-    const all: Decisions = {};
-    for (const a of t.improvements.applies()) {
-        Object.assign(all, readJson<Decisions>(join(a.dir, 'decisions.json')) ?? {});
-    }
-    return all;
+    return t.improvements.decisions();
 }
 
 /** A run's tokens per model: recorded at the run, or read from its trajectory. */
@@ -546,6 +542,12 @@ export function writeFeedback(t: Tuning, c: Case): void {
         if (f.summary) {
             say(`> ${cell(f.summary)}`, '');
         }
+        if (latest.run?.missedSkills?.length) {
+            say(
+                `Never loaded the skill(s) an apply made for it: ${latest.run.missedSkills.map((s) => `\`${s}\``).join(', ')}.`,
+                '',
+            );
+        }
         const id = feedbackId(c.id, latest.phase, latest.attempt, t.round(c));
         const improvements = f.improvements ?? [];
         if (improvements.length > 0) {
@@ -708,12 +710,16 @@ export function writeApply(t: Tuning, dir: string): void {
         : '';
     const files = patchFiles(patch);
     const improvements = inputs.reduce((n, f) => n + f.improvements.length, 0);
+    const consolidation =
+        applied?.kind === 'consolidate' || existsSync(join(dir, 'consolidate.json'));
     const status = failed
         ? 'failed - the project was put back as it was'
         : applied
-          ? applied.skipped
-              ? 'nothing to change'
-              : 'applied'
+          ? applied.discarded
+              ? `undone - ${applied.discarded}`
+              : applied.skipped
+                ? 'nothing to change'
+                : 'applied'
           : 'in progress';
     const started =
         applied?.startedAt ??
@@ -735,15 +741,21 @@ export function writeApply(t: Tuning, dir: string): void {
     }
 
     const out: string[] = [
-        `# Apply ${name}${applied ? ` - v${applied.from} → v${applied.to}` : ''}`,
+        `# ${consolidation ? 'Consolidation' : 'Apply'} ${name}${applied && !applied.discarded ? ` - v${applied.from} → v${applied.to}` : ''}`,
         '',
         link('← status', here, join(t.dir, 'STATUS.md')),
         '',
         '| Status | Started | Finished | Took | Requests | Improvements | Files changed | Retried |',
         '| --- | --- | --- | --- | --- | --- | --- | --- |',
-        `| ${status} | ${when(started)} | ${when(finished)} | ${took} | ${inputs.length} | ${improvements} | ${files.length} | ${retried ? 'yes - the first attempt failed zen check' : 'no'} |`,
+        `| ${cell(status)} | ${when(started)} | ${when(finished)} | ${took} | ${inputs.length} | ${improvements} | ${files.length} | ${retried ? 'yes - the first attempt was undone' : 'no'} |`,
         '',
     ];
+    if (consolidation) {
+        out.push(
+            'A consolidation answers no request: it may only shrink what the agents read, and change no rule.',
+            '',
+        );
+    }
     if (failed) {
         out.push(`> ${cell(failed.error)}`, '');
     }
@@ -753,16 +765,24 @@ export function writeApply(t: Tuning, dir: string): void {
             '',
         );
     }
-    out.push(
-        '## Decisions',
-        '',
-        '| Applied | Merged | Rejected | Structural | Undecided |',
-        '| --- | --- | --- | --- | --- |',
-        `| ${tally.applied ?? 0} | ${tally.merged ?? 0} | ${tally.rejected ?? 0} | ${tally.structural ?? 0} | ${tally.undecided ?? 0} |`,
-        '',
-        '## Requests',
-        '',
-    );
+    if (!consolidation) {
+        const deferred = readJson<Deferred[]>(join(dir, 'deferred.json')) ?? [];
+        out.push(
+            '## Decisions',
+            '',
+            '| Applied | Merged | Rejected | Deferred | Structural | Undecided |',
+            '| --- | --- | --- | --- | --- | --- |',
+            `| ${tally.applied ?? 0} | ${tally.merged ?? 0} | ${tally.rejected ?? 0} | ${tally.deferred ?? 0} | ${tally.structural ?? 0} | ${tally.undecided ?? 0} |`,
+            '',
+        );
+        if (deferred.length > 0) {
+            out.push(
+                `${deferred.length} improvement(s) held back by earlier applies were offered again: ${link('deferred.json', here, join(dir, 'deferred.json'))}.`,
+                '',
+            );
+        }
+        out.push('## Requests', '');
+    }
     inputs.forEach((f, n) => {
         const tryDir = f.file
             ? dirname(f.file)
@@ -845,20 +865,16 @@ export function writeApply(t: Tuning, dir: string): void {
     const check = join(dir, 'check.log');
     if (existsSync(check)) {
         const tail = readFileSync(check, 'utf8').trimEnd().split('\n').slice(-40).join('\n');
-        const verdict = failed
-            ? 'failed on both attempts'
-            : retried
-              ? 'failed once; the edit was undone and the second attempt passed'
-              : applied
-                ? 'passed'
-                : 'running';
+        const verdict = failed ? 'failed on both attempts' : applied ? 'passed' : 'running';
         const tick = fence(tail);
         out.push(verdict, '', `${tick}text`, tail || '(no output)', tick, '');
     } else {
         out.push(applied?.skipped ? '_Not run: nothing was changed._' : '_Not run yet._', '');
     }
 
-    if (applied) {
+    out.push(...gates(t, dir, applied));
+
+    if (applied && !consolidation) {
         out.push(
             '## Cases sent back to run',
             '',
@@ -870,6 +886,60 @@ export function writeApply(t: Tuning, dir: string): void {
         );
     }
     atomic(applyPath(dir), `${out.join('\n')}\n`);
+}
+
+/** The budget and the guard: what the edit cost every later call, and whether it broke a case that passed. */
+function gates(t: Tuning, dir: string, applied: AppliedFile | undefined): string[] {
+    const out: string[] = [];
+    const budget = readJson<{
+        total: number;
+        start: { total: number };
+        budget: number;
+        ceiling: number;
+    }>(join(dir, 'budget.json'));
+    if (budget) {
+        out.push(
+            '## The prose',
+            '',
+            'What every call reads, in bytes, summed over the agents: house rules, prompt, preloaded skills, skill index lines.',
+            '',
+            '| At the start | Before | After | Budget | Ceiling |',
+            '| --- | --- | --- | --- | --- |',
+            `| ${budget.start.total} | ${budget.total} | ${applied?.bytes?.after ?? '-'} | +${budget.budget} | ${budget.ceiling} |`,
+            '',
+        );
+        const over = join(dir, 'budget.md');
+        if (existsSync(over)) {
+            out.push(readFileSync(over, 'utf8').trim().replace(/^#/gm, '###'), '');
+        }
+    }
+    const guarded = readJson<GuardResult[]>(join(dir, 'guard.json'));
+    if (guarded?.length) {
+        out.push(
+            '## The guard',
+            '',
+            'Cases that passed before, run again on the edit. A case is broken only when both tries fail.',
+            '',
+            '| Case | Tries | Broken |',
+            '| --- | --- | --- |',
+            ...guarded.map(
+                (g) =>
+                    `| ${link(g.case, dir, feedbackPath(t, { id: g.case }))} | ${g.tries
+                        .map((x) =>
+                            existsSync(join(x.dir, 'analysis.md'))
+                                ? link(x.verdict, dir, join(x.dir, 'analysis.md'))
+                                : x.verdict,
+                        )
+                        .join(', ')} | ${g.broken ? 'yes' : 'no'} |`,
+            ),
+            '',
+        );
+    }
+    const broke = join(dir, 'guard.md');
+    if (existsSync(broke)) {
+        out.push(readFileSync(broke, 'utf8').trim().replace(/^#/gm, '###'), '');
+    }
+    return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -917,324 +987,371 @@ function memorySection(t: Tuning, here: string): string[] {
 // STATUS.md - the whole tuning
 // ---------------------------------------------------------------------------
 
-const STEP_CLASS: Record<Worker['step'], string> = {
-    idle: 'idle',
-    run: 'run',
-    analyze: 'analyze',
-    parked: 'parked',
-};
-
-// One diagram per worker: the path its case takes through both phases, with
-// the step it is on now filled in.
 function idleWord(t: Tuning): string {
     if (t.improvements.applying) {
-        return 'idle - no run starts during an apply';
+        return t.improvements.current?.kind === 'consolidate'
+            ? 'idle - no run starts during a consolidation'
+            : 'idle - no run starts during an apply';
     }
     return t.drained ? 'idle - no case left to start' : 'idle';
 }
 
-function workerDiagram(t: Tuning, w: Worker): string[] {
-    if (!w.case) {
-        return [
-            '```mermaid',
-            'flowchart LR',
-            `    w["worker ${w.slot} · ${idleWord(t)} · ${since(Date.now() - w.since)}"]`,
-            '    classDef idle fill:#6e7781,color:#fff',
-            '    class w idle',
-            '```',
-        ];
-    }
-    const phase = w.phase ?? 'nomem';
-    const p = phase === 'mem' ? 'm' : 'n';
-    const current = `${p}${w.step === 'analyze' ? 'a' : w.step === 'parked' ? 'p' : 'r'}`;
-    const q = t.improvements;
-    const tries = phase === 'mem' ? t.config.memTries : t.config.tries;
-    const extra = (id: string): string => {
-        if (id !== current) {
-            return '';
-        }
-        const now = ` · try ${w.attempt} of ${tries} · ${since(Date.now() - w.since)}`;
-        return w.step === 'parked'
-            ? `${now} · queue ${q.pending.length} of ${t.config.applyAt}${q.applying ? ' · applying' : ''}`
-            : now;
+const DIAGRAM_HEAD = [
+    '```mermaid',
+    '---',
+    'config:',
+    // Only the base theme takes theme variables.
+    '  theme: base',
+    '  flowchart:',
+    '    wrappingWidth: 480',
+    '  themeVariables:',
+    "    lineColor: '#8c959f'",
+    "    edgeLabelBackground: '#ffffff'",
+    '---',
+];
+
+// One palette for every diagram: solid fills for what is moving now, tints for the rest.
+const PALETTE = [
+    '    classDef case fill:#ffffff,stroke:#57606a,color:#24292f',
+    '    classDef idle fill:#f6f8fa,stroke:#d0d7de,color:#8c959f',
+    '    classDef run fill:#0969da,stroke:#0550ae,color:#ffffff',
+    '    classDef analyze fill:#8250df,stroke:#6639ba,color:#ffffff',
+    '    classDef off fill:#ffffff,stroke:#d0d7de,color:#57606a',
+    '    classDef busy fill:#e16f24,stroke:#bc4c00,color:#ffffff',
+    '    classDef full fill:#fff8c5,stroke:#d4a72c,color:#4d2d00',
+    '    classDef empty fill:#ffffff,stroke:#d0d7de,stroke-dasharray:4 3,color:#8c959f',
+    '    classDef kept fill:#d8f3f1,stroke:#1b7c83,color:#0b3d40',
+    '    classDef done fill:#dafbe1,stroke:#1a7f37,color:#116329',
+    '    classDef bad fill:#ffebe9,stroke:#cf222e,color:#a40e26',
+    '    classDef warn fill:#fff1e5,stroke:#e16f24,color:#953800',
+    '    classDef store fill:#ddf4ff,stroke:#54aeff,color:#0a3069',
+    '    classDef hub fill:#eaeef2,stroke:#8c959f,color:#24292f',
+];
+
+/** `click` lines for a diagram: only to an anchor or to a file that exists, relative to the page. */
+function clickable(t: Tuning): {
+    clicks: string[];
+    click: (id: string, to: string | undefined, tip: string) => void;
+} {
+    const clicks: string[] = [];
+    return {
+        clicks,
+        click: (id, to, tip) => {
+            if (to && (to.startsWith('#') || existsSync(to))) {
+                const url = to.startsWith('#')
+                    ? to
+                    : encodeURI(relative(t.dir, to).split(sep).join('/'));
+                clicks.push(`    click ${id} href "${url}" "${tip}"`);
+            }
+        },
     };
-    const node = (id: string, text: string): string => `    ${id}["${text}${extra(id)}"]`;
-    const out = [
-        '```mermaid',
-        'flowchart LR',
-        node('nr', 'no memory run'),
-        node('na', 'no memory analyze'),
-        node('np', 'no memory parked'),
-        node('mr', 'with memory run'),
-        node('ma', 'with memory analyze'),
-        node('mp', 'with memory parked'),
-        '    cd["completed"]',
-        '    df["difficult"]',
-        '    nr --> na',
-        '    na -->|"passed"| mr',
-        '    na -->|"failed, tries left"| np',
-        '    np -->|"applied"| nr',
-        '    na -->|"no tries left"| df',
-        '    mr --> ma',
-        '    ma -->|"cheaper"| cd',
-        '    ma -->|"failed, tries left"| mp',
-        '    mp -->|"applied"| mr',
-        '    ma -->|"no tries left"| df',
-        '    classDef run fill:#0969da,color:#fff',
-        '    classDef analyze fill:#8250df,color:#fff',
-        '    classDef parked fill:#9a6700,color:#fff',
-        '    classDef past fill:#d0d7de,color:#24292f',
-        '    classDef done fill:#1a7f37,color:#fff',
-        '    classDef bad fill:#cf222e,color:#fff',
-        '    class cd done',
-        '    class df bad',
-    ];
-    if (phase === 'mem') {
-        out.push('    class nr,na,np past');
-    }
-    out.push(`    class ${current} ${STEP_CLASS[w.step]}`, '```');
-    return out;
 }
 
-function overviewDiagram(counts: Record<string, number>): string[] {
+// Where every case is now: each step of its path, with how many cases are on it.
+function pathDiagram(t: Tuning, counts: Record<string, number>): string[] {
+    const q = t.improvements;
+    const at = (phase: Phase) => {
+        const mine = t.workers.filter((w) => w.case && (w.phase ?? 'nomem') === phase);
+        return {
+            run: mine.filter((w) => w.step !== 'analyze').length,
+            grade: mine.filter((w) => w.step === 'analyze').length,
+            wait: [...q.pending, ...q.inApply].filter((f) => f.phase === phase).length,
+        };
+    };
+    const nomem = at('nomem');
+    const mem = at('mem');
+    const paint: Record<string, string[]> = {};
+    const step = (id: string, text: string, n: number, cls: string): string => {
+        (paint[n > 0 ? cls : 'off'] ??= []).push(id);
+        return `${id}("${text} · ${n}")`;
+    };
+    const { clicks, click } = clickable(t);
+    const queue = anchor(`Improvement queue - ${q.pending.length} of ${t.config.applyAt} parked`);
+    click('NS', join(t.root, DATASET_DIR), 'the dataset');
+    click('NW', queue, 'the cases waiting for a fix');
+    click('MW', queue, 'the cases waiting for a fix');
+    click('CD', '#cases', 'every case');
+    if (counts.difficult > 0) {
+        click('DF', '#difficult-cases', 'the difficult cases');
+    }
+    if (counts.failed > 0) {
+        click('FL', '#failed-cases', 'the failed cases');
+    }
     return [
-        '```mermaid',
-        'flowchart LR',
-        `    Q["queued · ${counts.queued}"] --> N["no memory · ${counts.nomem}"]`,
-        `    N --> M["with memory · ${counts.mem}"]`,
-        `    M --> C["completed · ${counts.completed}"]`,
-        `    N --> D["difficult · ${counts.difficult}"]`,
-        '    M --> D',
-        `    Q -.-> S["stopped · ${counts.stopped}"]`,
-        ...(counts.failed ? [`    N -.-> F["failed · ${counts.failed}"]`, '    M -.-> F'] : []),
-        '    classDef done fill:#1a7f37,color:#fff',
-        '    classDef bad fill:#cf222e,color:#fff',
-        '    classDef live fill:#0969da,color:#fff',
-        '    classDef broke fill:#9a6700,color:#fff',
-        '    class C done',
-        '    class D bad',
-        '    class N,M live',
-        ...(counts.failed ? ['    class F broke'] : []),
+        'Where every case is right now. A case goes through two rounds, first **without memory**, then **with memory**. In each round it is run, then graded; a case that failed waits for a fix to the instructions and runs again.',
+        '',
+        ...DIAGRAM_HEAD,
+        // Edges end on the round boxes, never inside them, so each round keeps its own row.
+        'flowchart TB',
+        `    NS[("not started · ${counts.queued}")]`,
+        '    subgraph NOMEM["1 · without memory"]',
+        '        direction LR',
+        `        ${step('NR', 'running', nomem.run, 'run')} --> ${step('NA', 'grading', nomem.grade, 'analyze')}`,
+        `        NA -->|"failed, tries left"| ${step('NW', 'waiting for a fix', nomem.wait, 'full')}`,
+        '        NW -->|"fixed"| NR',
+        '    end',
+        '    subgraph MEM["2 · with memory"]',
+        '        direction LR',
+        `        ${step('MR', 'running', mem.run, 'run')} --> ${step('MA', 'grading', mem.grade, 'analyze')}`,
+        `        MA -->|"failed, tries left"| ${step('MW', 'waiting for a fix', mem.wait, 'full')}`,
+        '        MW -->|"fixed"| MR',
+        '    end',
+        '    NS --> NOMEM',
+        '    NOMEM -->|"passed"| MEM',
+        `    MEM -->|"passed"| CD("completed · ${counts.completed}")`,
+        `    NOMEM -->|"out of tries"| DF("difficult · ${counts.difficult}")`,
+        '    MEM -->|"out of tries"| DF',
+        ...(counts.stopped > 0
+            ? [`    ST("stopped part-way · ${counts.stopped}") -.->|"next start"| NOMEM`]
+            : []),
+        ...(counts.failed > 0
+            ? [
+                  `    NOMEM -.->|"sandbox or provider broke"| FL("${lines(`failed · ${counts.failed}`, 'resumes at the next start')}")`,
+              ]
+            : []),
+        ...clicks,
+        ...PALETTE,
+        ...Object.entries(paint).map(([cls, ids]) => `    class ${ids.join(',')} ${cls}`),
+        '    class NS store',
+        '    class CD done',
+        '    class DF bad',
+        ...(counts.stopped > 0 ? ['    class ST idle'] : []),
+        ...(counts.failed > 0 ? ['    class FL warn'] : []),
+        '    style NOMEM fill:#ffffff,stroke:#d0d7de',
+        '    style MEM fill:#ffffff,stroke:#d0d7de',
         '```',
     ];
 }
 
-const LANE: Record<Worker['step'], string> = {
-    idle: 'fill:#f6f8fa,stroke:#d0d7de',
-    parked: 'fill:#f6f8fa,stroke:#d0d7de',
-    run: 'fill:#ddf4ff,stroke:#0969da,stroke-width:2px',
-    analyze: 'fill:#fbefff,stroke:#8250df,stroke-width:2px',
+const STEP_WORD: Record<Worker['step'], string> = {
+    idle: 'idle',
+    run: 'running',
+    analyze: 'grading',
+    parked: 'parked',
 };
 
-// A subgraph linked from outside drops its own direction; invisible links keep the slots in order.
+// Edges end on the box, so it keeps LR; the invisible chain keeps the slots in order.
 const inOrder = (prefix: string, n: number): string[] =>
     n > 1
         ? [`        ${Array.from({ length: n }, (_, i) => `${prefix}${i + 1}`).join(' ~~~ ')}`]
         : [];
 
 // A markdown label: real newlines, since some previews swallow `<br/>` before Mermaid sees it.
-const lines = (...parts: string[]): string => `\`${parts.join('\n')}\``;
+const lines = (...parts: string[]): string => `\`${parts.filter(Boolean).join('\n')}\``;
 
-// The whole machine right now: every worker, the queue filling toward an apply, the merge.
-// Each node links to what it is working on.
+// The page's own heading ids, so a box can link to the section listing it in full.
+const anchor = (heading: string): string =>
+    `#${heading
+        .trim()
+        .toLowerCase()
+        .replace(/[^\w\s-]/g, '')
+        .replace(/\s/g, '-')}`;
+
+const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
+
+// The whole machine right now: plain words first, then one box per moving part.
+// Each box links to what it is working on, or to the section that lists it.
 function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
     const q = t.improvements;
     const m = t.memories;
-    const lit: Record<string, string[]> = {
-        case: [],
-        run: [],
-        analyze: [],
-        off: [],
-        full: [],
-        empty: [],
-        busy: [],
-        kept: [],
+    const { applyAt, mergeEvery, consolidateEvery: every } = t.config;
+    const isConsolidation = (a: { dir: string; applied?: AppliedFile }): boolean =>
+        a.applied?.kind === 'consolidate' || existsSync(join(a.dir, 'consolidate.json'));
+    const all = q.applies();
+    const last = all.filter((a) => !isConsolidation(a)).at(-1);
+    const lastConsolidation = all.filter(isConsolidation).at(-1);
+    const consolidating = q.applying && q.current?.kind === 'consolidate';
+    const applying = q.applying && !consolidating;
+    const took = q.current ? since(Date.now() - q.current.since) : '';
+    const waiting = m.unmerged();
+    const merged = m.merges().filter((x) => x.ok);
+    const running = t.workers.filter((w) => w.case && w.step === 'run').length;
+    const grading = t.workers.filter((w) => w.case && w.step === 'analyze').length;
+    const paint: Record<string, string[]> = {};
+    const fill = (id: string, cls: string): void => {
+        (paint[cls] ??= []).push(id);
     };
-    const clicks: string[] = [];
-    const click = (id: string, to: string | undefined, tip: string): void => {
-        if (to && (to.startsWith('#') || existsSync(to))) {
-            const url = to.startsWith('#')
-                ? to
-                : encodeURI(relative(t.dir, to).split(sep).join('/'));
-            clicks.push(`    click ${id} href "${url}" "${tip}"`);
-        }
-    };
+    const { clicks, click } = clickable(t);
     const out = [
-        '```mermaid',
-        '---',
-        'config:',
-        '  flowchart:',
-        '    wrappingWidth: 480',
-        '---',
+        ...DIAGRAM_HEAD,
         'flowchart TB',
-        `    DS[("dataset · ${counts.queued} queued")] --> D["${lines('dispatcher', 'seats a case on a free worker', 'woken cases first')}"]`,
+        `    DS[("${lines('**cases**', `${counts.queued} not started`)}")]`,
+        `    DS -->|"next case"| WORKERS`,
         `    subgraph WORKERS["workers · ${t.busy()} of ${t.workers.length} busy"]`,
         '        direction LR',
     ];
     click('DS', join(t.root, DATASET_DIR), 'the dataset');
-    click('D', join(t.dir, 'events.jsonl'), 'every step, in order');
-    const lanes: string[] = [];
+    const paused = consolidating
+        ? 'paused · tidy-up'
+        : applying
+          ? 'paused · fixes'
+          : t.drained
+            ? 'nothing left to start'
+            : 'idle';
     for (const w of t.workers) {
-        const n = w.slot;
-        const step = w.case ? w.step : 'idle';
-        let label = idleWord(t);
-        if (w.case) {
-            const tries = w.phase === 'mem' ? t.config.memTries : t.config.tries;
-            label =
-                w.attempt === undefined
-                    ? lines(`**${safe(w.case.id, 48)}**`, 'starting')
-                    : lines(
-                          `**${safe(w.case.id, 48)}**`,
-                          `${PHASE_WORD[w.phase ?? 'nomem']} · try ${w.attempt} of ${tries} · ${step} ${since(Date.now() - w.since)}`,
-                      );
-            click(`C${n}`, feedbackPath(t, w.case), 'the case: rubric, tries, decisions');
-            if (w.attempt !== undefined) {
-                const dir = t.attemptDir(w.case, w.phase ?? 'nomem', w.attempt);
-                const run = readJson<Run>(join(dir, 'run.json'));
-                if (run) {
-                    click(`R${n}`, run.report ?? run.dir, 'the run report');
-                } else {
-                    click(`R${n}`, join(dir, 'run.log'), 'the run log, live');
-                }
-                if (existsSync(join(dir, 'analysis.md'))) {
-                    click(`A${n}`, join(dir, 'analysis.md'), 'the analysis');
-                } else {
-                    click(`A${n}`, join(dir, 'analyze.log'), 'the analysis log, live');
-                }
-            }
+        const id = `W${w.slot}`;
+        if (!w.case) {
+            out.push(`        ${id}("${lines(`**worker ${w.slot}**`, paused)}")`);
+            fill(id, 'idle');
+            continue;
         }
+        const tries = w.phase === 'mem' ? t.config.memTries : t.config.tries;
+        const started = w.attempt !== undefined;
         out.push(
-            `        subgraph W${n}["worker ${n}"]`,
-            '            direction TB',
-            `            C${n}["${label}"] --> R${n}["run"] --> A${n}["analyze"]`,
-            '        end',
+            `        ${id}("${lines(
+                `**worker ${w.slot}** · ${started ? `${STEP_WORD[w.step]} ${since(Date.now() - w.since)}` : 'starting'}`,
+                safe(w.case.id, 36),
+                started ? `${PHASE_WORD[w.phase ?? 'nomem']} · try ${w.attempt} of ${tries}` : '',
+            )}")`,
         );
-        lit[w.case ? 'case' : 'empty'].push(`C${n}`);
-        lit[step === 'run' ? 'run' : 'off'].push(`R${n}`);
-        lit[step === 'analyze' ? 'analyze' : 'off'].push(`A${n}`);
-        lanes.push(`    style W${n} ${LANE[step]}`);
+        fill(id, w.step === 'run' ? 'run' : w.step === 'analyze' ? 'analyze' : 'case');
+        click(id, feedbackPath(t, w.case), 'the case: rubric, tries, decisions');
     }
-    // Edges go to the box, not its nodes, so it keeps LR and the chain puts the lanes in slot order.
+
+    const queued = q.pending
+        .slice(0, 8)
+        .map((f) => `${safe(f.case, 32)} · ${plural(f.improvements.length, 'fix', 'fixes')}`);
+    if (q.pending.length > 8) {
+        queued.push(`and ${q.pending.length - 8} more`);
+    }
+    const applier = applying
+        ? q.runs > 0
+            ? `waiting for ${plural(q.runs, 'run')} to finish`
+            : `${plural(q.inApply.length, 'case')} · ${took}`
+        : consolidating && q.pending.length > 0
+          ? 'waits for the tidy-up'
+          : `idle${last ? ` · last ${last.name}` : ''}`;
     out.push(
         ...inOrder('W', t.workers.length),
         '    end',
-        '    D --> WORKERS',
-        // Not a diamond: an edge to a box ends at the node's bounding box, short of a diamond's sides.
-        '    WORKERS --> V(["feedback done?"])',
+        '    WORKERS --> V(["graded"])',
         `    V -.->|"${lines('passed without memory:', 'again with memory')}"| WORKERS`,
-        `    V -->|"${lines('failed, tries left:', 'park, free the worker')}"| Q`,
-        `    V -->|"no tries left"| X["difficult · ${counts.difficult}"]`,
-        `    V -->|"passed with memory"| CD["completed · ${counts.completed}"]`,
-        `    subgraph Q["improvement queue · ${q.pending.length} of ${t.config.applyAt}"]`,
-        '        direction LR',
+        `    V -->|"out of tries"| X("difficult · ${counts.difficult}")`,
+        `    V -->|"failed, tries left"| Q`,
+        `    V -->|"passed with memory"| CD`,
+        '    subgraph LEARN["fixing the instructions"]',
+        `        Q("${lines(`**waiting for a fix · ${q.pending.length} of ${applyAt}**`, ...(queued.length ? queued : ['empty']))}")`,
+        `        Q -->|"${lines(`${applyAt} waiting, or`, 'nothing else to run')}"| P("${lines('**apply fixes**', 'an agent edits the instructions,', 'then those cases run again', applier)}")`,
+        `        P -->|"new version"| S[("${lines(`**instructions · v${t.system.version()}**`, 'every new run reads these')}")]`,
     );
-    click('X', '#difficult-cases', 'the difficult cases');
-    click('CD', '#cases', 'every case');
-    const slots = Math.max(t.config.applyAt, q.pending.length);
-    for (let i = 0; i < slots; i++) {
-        const f = q.pending[i];
+    fill('Q', q.pending.length > 0 ? 'full' : 'empty');
+    fill('P', applying ? 'busy' : 'off');
+    click(
+        'Q',
+        anchor(`Improvement queue - ${q.pending.length} of ${applyAt} parked`),
+        'every case waiting, with what it asks for',
+    );
+    const applied = applying && q.current?.dir ? q.current.dir : last?.dir;
+    if (applied) {
+        click('P', applyPath(applied), applying ? 'this apply' : 'the last apply');
+    }
+    if (every > 0) {
+        const left = Math.max(0, every - q.sinceConsolidation());
+        const tidy = consolidating
+            ? q.runs > 0
+                ? `waiting for ${plural(q.runs, 'run')} to finish`
+                : `${q.current?.name ?? ''} · ${took}`
+            : left === 0
+              ? 'due now'
+              : `next after ${plural(left, 'more apply', 'more applies')}`;
         out.push(
-            f
-                ? `        Q${i + 1}["${lines(`**${safe(f.case, 40)}**`, `${PHASE_WORD[f.phase]} try ${f.attempt} · ${f.improvements.length} improvement(s)`)}"]`
-                : `        Q${i + 1}["empty"]`,
+            `        P -->|"every ${plural(every, 'apply', 'applies')}"| N("${lines('**tidy up**', 'shorter instructions, no new rules', tidy)}")`,
+            '        N -->|"new version"| S',
         );
-        lit[f ? 'full' : 'empty'].push(`Q${i + 1}`);
-        if (f) {
-            const dir = t.attemptDir({ id: f.case, rev: f.caseRev }, f.phase, f.attempt);
-            click(`Q${i + 1}`, join(dir, 'analysis.md'), 'the analysis asking for these');
+        fill('N', consolidating ? 'busy' : 'off');
+        const shown = consolidating && q.current?.dir ? q.current.dir : lastConsolidation?.dir;
+        if (shown) {
+            click('N', applyPath(shown), consolidating ? 'this tidy-up' : 'the last tidy-up');
         }
     }
-    out.push(...inOrder('Q', slots));
+    click('S', t.system.snapshotDir(t.system.version()), 'this version of the instructions');
 
-    const last = q.applies().at(-1);
-    const applier = !q.applying
-        ? `idle${last ? ` · last ${last.name}` : ''}`
-        : q.inApply.length > 0
-          ? `applying ${q.inApply.length} request(s) · no run starts`
-          : 'waiting for runs · no run starts';
+    const kept = waiting.slice(0, 6).map((s) => safe(s.case, 32));
+    if (waiting.length > 6) {
+        kept.push(`and ${waiting.length - 6} more`);
+    }
     out.push(
         '    end',
-        // AP's own nodes link outside, so Mermaid cannot end an edge on the AP box itself.
-        '    Q -->|"full, or nothing left to start"| P1',
-        `    subgraph AP["applier · ${applier}"]`,
-        `        P1["wait for runs in flight · ${q.runs}"] --> P2["${lines('meta run /finetune-apply', 'then zen check')}"]`,
-        `        P2 --> P3["${lines('applied.json', 'wake the batch')}"]`,
+        '    subgraph KEEP["keeping memory"]',
+        `        CD("completed · ${counts.completed}") -->|"keep its memory"| M("${lines(`**memory to merge · ${waiting.length} of ${mergeEvery}**`, ...(kept.length ? kept : ['empty']))}")`,
+        `        M -->|"${lines(`${mergeEvery} waiting, or`, 'the tuning ends')}"| MG[("${lines('**merged memory**', plural(merged.length, 'graph'))}")]`,
         '    end',
-        `    P2 -->|"writes the next version"| S[("${lines(`system prose · v${t.system.version()}`, 'read by every new run')}")]`,
-        '    P3 -->|"wake"| D',
     );
-    const active = !q.applying ? undefined : q.runs > 0 ? 'P1' : 'P2';
-    for (const p of ['P1', 'P2', 'P3']) {
-        lit[p === active ? 'busy' : 'off'].push(p);
+    fill('M', waiting.length > 0 ? 'kept' : 'empty');
+    if (m.submissions().length > 0 || m.merges().length > 0) {
+        click('M', '#memory', 'every kept memory and merge');
     }
-    if (last) {
-        click('P2', applyPath(last.dir), q.applying ? 'this apply' : 'the last apply');
-        click('P3', join(last.dir, 'diff.patch'), 'what the last apply changed');
-    }
-    click('S', t.system.snapshotDir(t.system.version()), 'this version of the prose');
-
-    const waiting = m.unmerged();
-    const kept = Math.max(t.config.mergeEvery, waiting.length);
-    out.push(
-        '    CD -->|"keep its memory"| M',
-        `    subgraph M["memory to merge · ${waiting.length} of ${t.config.mergeEvery}"]`,
-        '        direction LR',
-    );
-    for (let i = 0; i < kept; i++) {
-        const s = waiting[i];
-        out.push(`        K${i + 1}["${s ? safe(s.case, 40) : 'empty'}"]`);
-        lit[s ? 'kept' : 'empty'].push(`K${i + 1}`);
-        if (s) {
-            click(`K${i + 1}`, s.dir, 'the kept memory');
-        }
-    }
-    const merged = m.merges().filter((x) => x.ok);
     click('MG', merged.at(-1)?.dir, 'the latest merged graph');
+    if (counts.difficult > 0) {
+        click('X', '#difficult-cases', 'the difficult cases');
+    }
+    click('CD', '#cases', 'every case');
     out.push(
-        ...inOrder('K', kept),
-        '    end',
-        `    M -->|"full, or tuning ends"| MG[("merged graphs · ${merged.length}")]`,
         ...clicks,
-        '    classDef case fill:#ffffff,stroke:#57606a,color:#24292f',
-        '    classDef run fill:#0969da,stroke:#0550ae,color:#ffffff',
-        '    classDef analyze fill:#8250df,stroke:#6639ba,color:#ffffff',
-        '    classDef off fill:#ffffff,stroke:#d0d7de,color:#8c959f',
-        '    classDef full fill:#d4a72c,stroke:#9a6700,color:#ffffff',
-        '    classDef empty fill:#ffffff,stroke:#d0d7de,stroke-dasharray:4 3,color:#8c959f',
-        '    classDef busy fill:#e16f24,stroke:#bc4c00,color:#ffffff',
-        '    classDef kept fill:#1b7c83,stroke:#136061,color:#ffffff',
-        '    classDef done fill:#1a7f37,stroke:#116329,color:#ffffff',
-        '    classDef bad fill:#cf222e,stroke:#a40e26,color:#ffffff',
-        '    classDef store fill:#ddf4ff,stroke:#54aeff,color:#0a3069',
-        '    classDef hub fill:#eaeef2,stroke:#57606a,color:#24292f',
-        ...Object.entries(lit)
-            .filter(([, ids]) => ids.length > 0)
-            .map(([cls, ids]) => `    class ${ids.join(',')} ${cls}`),
+        ...PALETTE,
+        ...Object.entries(paint).map(([cls, ids]) => `    class ${ids.join(',')} ${cls}`),
         '    class CD done',
         '    class X bad',
         '    class DS,S,MG store',
-        '    class D,V hub',
-        '    style WORKERS fill:#ffffff,stroke:#8c959f',
-        ...lanes,
-        `    style Q fill:#fff8c5,stroke:#d4a72c${q.pending.length >= t.config.applyAt ? ',stroke-width:3px' : ''}`,
-        `    style AP ${q.applying ? 'fill:#fff1e5,stroke:#e16f24,stroke-width:3px' : 'fill:#f6f8fa,stroke:#d0d7de'}`,
-        '    style M fill:#e6f6f5,stroke:#1b7c83',
+        '    class V hub',
+        '    style WORKERS fill:#ffffff,stroke:#d0d7de',
+        '    style LEARN fill:#fffdf5,stroke:#e6d9a8',
+        '    style KEEP fill:#f5fbfa,stroke:#a8d8d3',
+        ...(q.pending.length >= applyAt ? ['    style Q stroke-width:3px'] : []),
         '```',
     );
-    const running = lit.run.length;
-    const analyzing = lit.analyze.length;
-    const now = [
-        running > 0 && `- **Blue** - ${running} worker(s) running a case`,
-        analyzing > 0 && `- **Purple** - ${analyzing} worker(s) analyzing the run just finished`,
-        q.applying &&
-            '- **Orange** - fixes are being applied to the agent instructions; no new run starts until that is done',
-        q.pending.length > 0 &&
-            `- **Yellow** - ${q.pending.length} failed case(s) waiting for fixes; they are applied when ${t.config.applyAt} wait, or when no other case can run`,
-        waiting.length > 0 &&
-            `- **Teal** - memory from ${waiting.length} passed case(s) waiting to be merged; merged when ${t.config.mergeEvery} wait`,
-    ].filter((x): x is string => typeof x === 'string');
+
+    const now: string[] = [];
+    const workers = t.workers.length;
+    if (consolidating) {
+        now.push(
+            `- **Tidying up the instructions** (orange) - ${q.runs > 0 ? `starts once the ${plural(q.runs, 'run')} in progress finish` : `running for ${took}`}. It merges repeated rules and cuts what is not needed; it adds no new rule. No case starts until it is done${t.busy() === 0 ? `, so all ${workers} workers are paused` : ''}.`,
+        );
+    } else if (applying) {
+        now.push(
+            q.runs > 0
+                ? `- **About to write fixes into the instructions** (orange): waiting for the ${plural(q.runs, 'run')} in progress to finish, so none of them reads half-edited instructions. No new case starts meanwhile.`
+                : `- **Writing fixes into the instructions** (orange) for ${plural(q.inApply.length, 'case')} - running for ${took}. No case starts until it is done; then those cases run again on the new version.`,
+        );
+    }
+    if (running + grading > 0) {
+        const doing = [
+            running > 0 ? `${running} running a case (blue)` : '',
+            grading > 0 ? `${grading} grading a finished run (purple)` : '',
+        ].filter(Boolean);
+        now.push(`- **${t.busy()} of ${workers} workers busy**: ${doing.join(', ')}.`);
+    }
+    if (q.pending.length > 0) {
+        now.push(
+            `- **${plural(q.pending.length, 'case')} waiting for a fix** (yellow). ${consolidating ? 'After the tidy-up, their' : 'Their'} fixes are written once ${applyAt} are waiting, or when nothing else is left to run${applying ? ' - in the round after this one' : ''}.`,
+        );
+    }
+    if (counts.queued > 0) {
+        now.push(`- **${plural(counts.queued, 'case')} not started yet.**`);
+    }
+    if (waiting.length > 0) {
+        now.push(
+            `- **${plural(waiting.length, 'finished case')} with memory to merge** (teal); memories are merged ${mergeEvery} at a time.`,
+        );
+    }
     return [
-        ...(now.length > 0 ? ['Now:', '', ...now] : ['Nothing is in progress right now.']),
+        ...(now.length > 0 ? ['**Right now**', '', ...now] : ['Nothing is running right now.']),
+        '',
+        '<details>',
+        '<summary>How this works</summary>',
+        '',
+        `1. A worker takes a case and runs the agents on it **without memory**; then another agent grades the run against the case's rubric.`,
+        `2. **Failed:** the grader suggests fixes to the agents' instructions. The case waits for a fix (yellow) and its worker takes another case.`,
+        `3. Once ${applyAt} cases are waiting, or nothing else is left to run, one agent writes their fixes into the instructions - an **apply** (orange). No case starts while the instructions change; afterwards the waiting cases run again on the new version.`,
+        ...(every > 0
+            ? [
+                  `4. Every ${plural(every, 'apply', 'applies')}, the instructions are **tidied up** - a consolidation: repeated rules are merged and clutter is cut, and no rule is added.`,
+              ]
+            : []),
+        `${every > 0 ? 5 : 4}. **Passed:** the case runs again **with memory**. When that passes too, the case is completed and its memory is kept; kept memories are merged ${mergeEvery} at a time (teal).`,
+        `${every > 0 ? 6 : 5}. A case still failing after ${plural(t.config.tries, 'try', 'tries')} without memory, or ${t.config.memTries} with, is marked **difficult**.`,
+        '',
+        '</details>',
         '',
         'Click a box to open it.',
         '',
@@ -1426,7 +1543,7 @@ export function writeStatus(t: Tuning): void {
         ...summarySection(spent, tuning, memory),
         '## Overview',
         '',
-        ...overviewDiagram(counts),
+        ...pathDiagram(t, counts),
         '',
         '## System',
         '',
@@ -1434,13 +1551,6 @@ export function writeStatus(t: Tuning): void {
         '',
         '## Workers',
         '',
-        ...t.workers.flatMap((w) => [
-            `### Worker ${w.slot}${w.case ? ` - ${link(w.case.id, here, feedbackPath(t, w.case))}` : ''}`,
-            '',
-            ...workerDiagram(t, w),
-            '',
-            ...(w.case ? tokenTable(caseTokens(t, w.case)) : []),
-        ]),
         '| Worker | Case | Class | Phase | Try | Step | Since | Run | Analysis | Session |',
         '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
     ];
@@ -1460,11 +1570,24 @@ export function writeStatus(t: Tuning): void {
             `| ${w.slot} | ${link(w.case.id, here, feedbackPath(t, w.case))} | ${cell(w.case.class)} | ${PHASE_WORD[w.phase ?? 'nomem']} | ${w.attempt} / ${w.phase === 'mem' ? t.config.memTries : t.config.tries} | ${w.step} | ${since(Date.now() - w.since)} | ${run ? `${link('run', here, run.dir)}${run.report ? ` · ${link('report', here, run.report)}` : ''}` : '-'} | ${existsSync(join(dir, 'analysis.md')) ? link('analysis', here, join(dir, 'analysis.md')) : '-'} | ${session ? `\`zen meta resume ${basename(t.root)} ${session}\`` : '-'} |`,
         );
     }
+    for (const w of t.workers) {
+        const by = w.case ? tokenTable(caseTokens(t, w.case)) : [];
+        if (w.case && by.length > 0) {
+            out.push(
+                '',
+                `### Worker ${w.slot} - ${link(w.case.id, here, feedbackPath(t, w.case))}`,
+                '',
+                ...by,
+            );
+        }
+    }
 
     out.push('', `## Improvement queue - ${q.pending.length} of ${t.config.applyAt} parked`, '');
     out.push(
         q.applying
-            ? 'Applying now: no new run starts until it is done.'
+            ? q.current?.kind === 'consolidate'
+                ? 'Consolidating now: no new run starts until it is done.'
+                : 'Applying now: no new run starts until it is done.'
             : `A parked case gives its worker back, so another case runs meanwhile. The next apply comes when ${Math.max(0, t.config.applyAt - q.pending.length)} more park, or once nothing is running and no case is left to start; woken cases take a worker before new ones.`,
         '',
     );
@@ -1486,10 +1609,10 @@ export function writeStatus(t: Tuning): void {
         out.push(
             '## Applies',
             '',
-            'Each apply links to its own page: every request, every decision, every file changed and why.',
+            'Each apply links to its own page: every request, every decision, every file changed and why. Prose is the change in what every call reads, in bytes, summed over the agents.',
             '',
-            '| Apply | Versions | At | Requests | Applied | Merged | Rejected | Structural | Files changed | Tokens | Details |',
-            '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+            '| Apply | Versions | At | Requests | Applied | Merged | Rejected | Deferred | Structural | Prose | Files changed | Tokens | Details |',
+            '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
         );
         for (const a of [...applies].reverse()) {
             const d = readJson<Decisions>(join(a.dir, 'decisions.json')) ?? {};
@@ -1512,15 +1635,29 @@ export function writeStatus(t: Tuning): void {
                     ? link('decisions', here, join(a.dir, 'decisions.json'))
                     : '',
             ].filter(Boolean);
+            const versions = a.applied
+                ? a.applied.discarded
+                    ? `undone at v${a.applied.from}`
+                    : `v${a.applied.from} → v${a.applied.to}`
+                : existsSync(join(a.dir, 'failed.json'))
+                  ? 'failed'
+                  : 'in progress';
+            const prose = a.applied?.bytes
+                ? `${a.applied.bytes.after - a.applied.bytes.before > 0 ? '+' : ''}${a.applied.bytes.after - a.applied.bytes.before}`
+                : '-';
+            const what =
+                a.applied?.kind === 'consolidate' || existsSync(join(a.dir, 'consolidate.json'))
+                    ? `${link(a.name, here, applyPath(a.dir))} consolidation`
+                    : link(a.name, here, applyPath(a.dir));
             out.push(
-                `| ${link(a.name, here, applyPath(a.dir))} | ${a.applied ? `v${a.applied.from} → v${a.applied.to}` : existsSync(join(a.dir, 'failed.json')) ? 'failed' : 'in progress'} | ${a.applied?.at.slice(11, 16) ?? '-'} | ${a.inputs?.length ?? 0} | ${tally.applied ?? 0} | ${tally.merged ?? 0} | ${tally.rejected ?? 0} | ${tally.structural ?? 0} | ${files} | ${inOut(envelopesIn(a.dir, 'apply'))} | ${details.join(' · ') || (a.applied?.skipped ? 'nothing to change' : '-')} |`,
+                `| ${what} | ${versions} | ${a.applied?.at.slice(11, 16) ?? '-'} | ${a.inputs?.length ?? 0} | ${tally.applied ?? 0} | ${tally.merged ?? 0} | ${tally.rejected ?? 0} | ${tally.deferred ?? 0} | ${tally.structural ?? 0} | ${prose} | ${files} | ${inOut(applyTokens(a.dir))} | ${details.join(' · ') || (a.applied?.skipped ? 'nothing to change' : '-')} |`,
             );
         }
         out.push('');
     }
 
     const allStages = mergeStages(everything, {
-        apply: mergeModels(...applies.map((a) => envelopesIn(a.dir, 'apply'))),
+        apply: mergeModels(...applies.map((a) => applyTokens(a.dir))),
     });
     t.progress = { counts, total: cases.length, spent: allStages };
     const tokenRows = tokenTable(allStages);

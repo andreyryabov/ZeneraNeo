@@ -9,13 +9,15 @@ import {
     realpathSync,
     renameSync,
     rmSync,
+    statSync,
     writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { remember } from '../src/meta/finetune/children.ts';
 import { runFinetune } from '../src/meta/finetune/command.ts';
+import { measure, overLimits } from '../src/meta/finetune/cost.ts';
 import { runDataset } from '../src/meta/finetune/dataset/command.ts';
 import { readFeedback } from '../src/meta/finetune/feedback.ts';
 import { Journal } from '../src/meta/finetune/journal.ts';
@@ -85,6 +87,8 @@ interface Verdict {
     infra?: string;
     /** `zen meta run` started this session instead, as when the meta model changed */
     newSession?: string;
+    /** skills the run loads */
+    loads?: string[];
 }
 
 /** What `zen meta run --json` reports about itself. */
@@ -101,15 +105,24 @@ const META_ENVELOPE = {
 
 /**
  * A stand-in for the `zen` binary. `decide` says how each try's analysis comes
- * out, given the case, phase, attempt and how many applies have happened.
+ * out, given the case, phase, attempt, how many applies have happened, and
+ * whether the try is an apply's guard.
  */
-function fakeZen(decide: (c: string, phase: string, attempt: number, applies: number) => Verdict) {
+function fakeZen(
+    decide: (c: string, phase: string, attempt: number, applies: number, guard: boolean) => Verdict,
+) {
     const calls: string[][] = [];
     let runs = 0;
     let applies = 0;
     let failChecks = 0;
     let applyMs = 0;
+    let applyText = (n: number) => `- rule ${n}\n`;
+    let decision = (_request: string, _improvement: string, _apply: number): object => ({
+        decision: 'applied',
+        note: 'agents/instructions.md',
+    });
     let editDuringAnalyze = false;
+    let consolidate = () => {};
     const zen: Zen = async (args, log) => {
         calls.push(args);
         if (args[0] === 'run') {
@@ -149,6 +162,16 @@ function fakeZen(decide: (c: string, phase: string, attempt: number, applies: nu
                 join(dir, 'state.json'),
                 JSON.stringify({
                     trajectory: [
+                        ...(v.loads
+                            ? [
+                                  {
+                                      id: 'ls',
+                                      ts: at(1),
+                                      type: 'load_skills',
+                                      skills: v.loads.map((name) => ({ name })),
+                                  },
+                              ]
+                            : []),
                         call('c1', 'gemini-a', 2),
                         ...(v.sandbox
                             ? [
@@ -208,7 +231,7 @@ function fakeZen(decide: (c: string, phase: string, attempt: number, applies: nu
         }
         if (args[0] === 'meta' && args.includes('/finetune-apply')) {
             const dir = args.at(-1)!;
-            appendFileSync(join(root, 'agents', 'instructions.md'), `- rule ${++applies}\n`);
+            appendFileSync(join(root, 'agents', 'instructions.md'), applyText(++applies));
             if (applyMs) {
                 await new Promise((r) => setTimeout(r, applyMs));
             }
@@ -223,10 +246,7 @@ function fakeZen(decide: (c: string, phase: string, attempt: number, applies: nu
                         inputs.map((f) => [
                             f.id,
                             Object.fromEntries(
-                                f.improvements.map((i) => [
-                                    i.id,
-                                    { decision: 'applied', note: 'agents/instructions.md' },
-                                ]),
+                                f.improvements.map((i) => [i.id, decision(f.id, i.id, applies)]),
                             ),
                         ]),
                     ),
@@ -235,10 +255,20 @@ function fakeZen(decide: (c: string, phase: string, attempt: number, applies: nu
             writeFileSync(join(dir, 'changes.md'), '# changes\n');
             return { code: 0, stdout: JSON.stringify(META_ENVELOPE) };
         }
+        if (args[0] === 'meta' && args.includes('/finetune-consolidate')) {
+            consolidate();
+            return { code: 0, stdout: JSON.stringify(META_ENVELOPE) };
+        }
         if (args[0] === 'meta' && args.includes('/analyze')) {
             const word = (k: string) =>
                 args.find((a) => a.startsWith(`${k}=`))!.slice(k.length + 1);
-            const v = decide(word('case'), word('phase'), Number(word('attempt')), applies);
+            const v = decide(
+                word('case'),
+                word('phase'),
+                Number(word('attempt')),
+                applies,
+                args.some((a) => a.startsWith('guard=')),
+            );
             if (v.slowAnalyze) {
                 await new Promise((r) => setTimeout(r, v.slowAnalyze));
             }
@@ -317,6 +347,15 @@ function fakeZen(decide: (c: string, phase: string, attempt: number, applies: nu
         slowApply(ms: number) {
             applyMs = ms;
         },
+        applyWrites(text: (n: number) => string) {
+            applyText = text;
+        },
+        decides(fn: (request: string, improvement: string, apply: number) => object) {
+            decision = fn;
+        },
+        consolidates(fn: () => void) {
+            consolidate = fn;
+        },
         editDuringAnalyze() {
             editDuringAnalyze = true;
         },
@@ -325,12 +364,13 @@ function fakeZen(decide: (c: string, phase: string, attempt: number, applies: nu
 
 function decideFor(
     args: string[],
-    decide: (c: string, phase: string, attempt: number, applies: number) => Verdict,
+    decide: (c: string, phase: string, attempt: number, applies: number, guard: boolean) => Verdict,
     applies: number,
     id: string,
 ): Verdict {
-    const m = /(\d{2})-(nomem|mem)/.exec(args[args.indexOf('--input') + 1])!;
-    return decide(id, m[2], Number(m[1]), applies);
+    const input = args[args.indexOf('--input') + 1];
+    const m = /(\d{2})-(nomem|mem)/.exec(input)!;
+    return decide(id, m[2], Number(m[1]), applies, input.includes('/guard/'));
 }
 
 async function start(zen: Zen, ...flags: string[]): Promise<void> {
@@ -897,7 +937,7 @@ describe('zen meta finetune', () => {
             c === 'b1' ? { done: true, slowAnalyze: 150 } : { done: applies > 0 },
         );
         fake.slowApply(400);
-        await start(fake.zen, '-N', '2', '-M', '1');
+        await start(fake.zen, '-N', '2', '-M', '1', '--force');
         expect(readFileSync(join(root, 'agents', 'instructions.md'), 'utf8')).toContain('- rule 1');
         const events = readFileSync(join(root, 'finetune', 'events.jsonl'), 'utf8');
         expect(events).not.toContain('analyze edited the system');
@@ -960,8 +1000,8 @@ describe('zen meta finetune', () => {
         expect(status).toContain('## Workers');
         expect(status).toContain('## Applies');
         const diagrams = status.match(/```mermaid[\s\S]*?```/g) ?? [];
-        // The overview, the system, then one per worker.
-        expect(diagrams).toHaveLength(2 + 2);
+        // Where the cases are, and the system.
+        expect(diagrams).toHaveLength(2);
         expect(diagrams.join('\n')).not.toContain('misses it');
         expect(status).not.toMatch(/misses it \| badly/);
         expect(readdirSync(join(root, 'finetune', 'cases'))).toEqual(['a1', 'b1']);
@@ -1028,6 +1068,222 @@ describe('zen meta finetune', () => {
         expect(status).toContain('| LLM calls | 6 | 4 | -33% | better |');
         expect(status).toContain('| Tool errors | 2 | 0 | -100% | better |');
         expect(status).toMatch(/\| -33% tokens · -50% time \|/);
+    });
+});
+
+describe('what an apply may cost', () => {
+    const appliesDir = () => join(root, 'finetune', 'applies');
+    const appliedOf = (n: string) =>
+        JSON.parse(readFileSync(join(appliesDir(), n, 'applied.json'), 'utf8'));
+    const rules = () => readFileSync(join(root, 'agents', 'instructions.md'), 'utf8');
+
+    it('counts preloaded skills and index lines on every call, skill bodies apart', async () => {
+        writeFileSync(
+            join(root, 'agents.yaml'),
+            'agents:\n  - name: default\n  - name: writer\n    skills:\n      discovery: index\n      preload: [style]\n',
+        );
+        mkdirSync(join(root, 'agents', 'prompts'), { recursive: true });
+        writeFileSync(join(root, 'agents', 'prompts', 'default.md'), 'p'.repeat(100));
+        const skill = (name: string, body: string) => {
+            mkdirSync(join(root, 'agents', 'skills', name), { recursive: true });
+            writeFileSync(
+                join(root, 'agents', 'skills', name, 'SKILL.md'),
+                `---\nname: ${name}\ndescription: when ${name}\n---\n${body}\n`,
+            );
+            return statSync(join(root, 'agents', 'skills', name, 'SKILL.md')).size;
+        };
+        const style = skill('style', 's'.repeat(50));
+        const planning = skill('planning', 'q'.repeat(40));
+        const index = Buffer.byteLength('- planning: when planning\n- style: when style\n');
+        const before = await measure(root);
+        expect(before.alwaysRead).toEqual({
+            default: 8 + 100 + index,
+            writer: 8 + style + index,
+        });
+        expect(before.skills).toEqual({ planning, style });
+        expect(before.visible).toEqual({ default: 2, writer: 2 });
+
+        // A procedure moved out of the prompt into a skill no one preloads: every call reads less.
+        writeFileSync(join(root, 'agents', 'prompts', 'default.md'), 'p'.repeat(10));
+        skill('planning', 'q'.repeat(130));
+        const after = await measure(root);
+        expect(after.total).toBe(before.total - 90);
+        const l = { budget: 0, ceiling: before.total, skillCap: 1000, maxSkills: 10 };
+        expect(overLimits(before, after, l, false)).toEqual([]);
+        expect(overLimits(before, after, l, true)).toEqual([]);
+        expect(overLimits(after, before, l, true)[0]).toMatch(/may only shrink/);
+        expect(overLimits(before, after, { ...l, skillCap: 100 }, false)[0]).toMatch(
+            /skill planning holds \d+ bytes, over the cap of 100/,
+        );
+    });
+
+    it('no longer takes -M from -N, and refuses -M 1 without --force', async () => {
+        await dataset(['a1']);
+        const fake = fakeZen(() => ({ done: true }));
+        await expect(start(fake.zen, '-M', '1')).rejects.toThrow(/-M 1/);
+        const loop = join(root, 'finetune', 'loop.json');
+        mkdirSync(dirname(loop), { recursive: true });
+        writeFileSync(loop, JSON.stringify({ applyAt: 1 }));
+        await start(fake.zen, '-N', '1');
+        expect(JSON.parse(readFileSync(loop, 'utf8'))).toMatchObject({ workers: 1, applyAt: 2 });
+    });
+
+    it('undoes an apply that grows the prose past its budget, and carries on', async () => {
+        await dataset(['a1']);
+        const fake = fakeZen(() => ({ done: false }));
+        fake.applyWrites((n) => `${'x'.repeat(2000)} ${n}\n`);
+        await start(fake.zen, '-N', '1', '--tries', '2');
+        expect(fake.applies).toBe(2);
+        expect(rules()).toBe('# Rules\n');
+        expect(appliedOf('001')).toMatchObject({
+            from: 1,
+            to: 1,
+            discarded: expect.stringContaining('over the budget of 1500'),
+        });
+        expect(result('a1')).toMatchObject({ state: 'difficult', reason: 'wrong' });
+        const page = readFileSync(join(appliesDir(), '001', 'APPLY.md'), 'utf8');
+        expect(page).toContain('undone - over the limits');
+        expect(page).toContain('## The prose');
+    });
+
+    it('undoes an apply that breaks a case which passed before, twice in a row', async () => {
+        await dataset(['a1', 'b1']);
+        const fake = fakeZen((c, _p, _a, applies, guard) =>
+            guard ? { done: false } : { done: c === 'b1' || applies > 0 },
+        );
+        await start(fake.zen, '-N', '2', '-M', '2');
+        expect(fake.applies).toBe(2);
+        expect(rules()).toBe('# Rules\n');
+        expect(appliedOf('001').discarded).toMatch(/broke b1/);
+        expect(
+            JSON.parse(readFileSync(join(appliesDir(), '001', 'guard.json'), 'utf8')),
+        ).toMatchObject([{ case: 'b1', broken: true }]);
+        expect(
+            existsSync(join(appliesDir(), '001', 'guard', 'a2', 'b1', '02-nomem', 'feedback.json')),
+        ).toBe(true);
+        expect(readFileSync(join(appliesDir(), '001', 'guard.md'), 'utf8')).toContain('## b1');
+        const analyze = fake.calls.find((a) => a.some((x) => x.startsWith('guard=')))!;
+        expect(analyze.find((x) => x.startsWith('guard='))).toMatch(/applies\/001\/diff\.patch$/);
+        expect(analyze).toContain('attempt=1');
+        // The case runs its next try on the prose it had.
+        const second = JSON.parse(
+            readFileSync(
+                join(root, 'finetune', 'cases', 'a1', 'r1', '02-nomem', 'run.json'),
+                'utf8',
+            ),
+        );
+        expect(second.system).toBe(1);
+        expect(runsOf(fake.calls, 'b1')).toHaveLength(2);
+    });
+
+    it('keeps an apply when a guard case fails once and passes the second time', async () => {
+        await dataset(['a1', 'b1']);
+        const fake = fakeZen((c, _p, attempt, applies, guard) =>
+            guard ? { done: attempt > 1 } : { done: c === 'b1' || applies > 0 },
+        );
+        await start(fake.zen, '-N', '2', '-M', '2');
+        expect(fake.applies).toBe(1);
+        expect(rules()).toContain('- rule 1');
+        expect(appliedOf('001').discarded).toBeUndefined();
+        const page = readFileSync(join(appliesDir(), '001', 'APPLY.md'), 'utf8');
+        expect(page).toContain('## The guard');
+        expect(page).toMatch(/\| \[b1\]\([^)]+\) \| .*wrong.*right.* \| no \|/);
+    });
+
+    it('offers a deferred improvement to every later apply, until one takes it', async () => {
+        await dataset(['a1']);
+        const fake = fakeZen((_c, _p, _a, applies) => ({ done: applies > 1 }));
+        fake.decides((_r, _i, apply) =>
+            apply === 1 ? { decision: 'deferred', note: 'one case' } : { decision: 'applied' },
+        );
+        await start(fake.zen, '-N', '1');
+        const deferred = (n: string) =>
+            JSON.parse(readFileSync(join(appliesDir(), n, 'deferred.json'), 'utf8'));
+        expect(deferred('001')).toEqual([]);
+        expect(deferred('002')).toMatchObject([
+            {
+                request: 'a1@nomem-1',
+                case: 'a1',
+                apply: '001',
+                improvement: { id: 'i1', change: 'say it 1' },
+            },
+        ]);
+        expect(result('a1')).toMatchObject({ state: 'completed' });
+    });
+
+    it('marks a case difficult when all an apply could say of it is structural', async () => {
+        await dataset(['a1']);
+        const fake = fakeZen(() => ({ done: false }));
+        fake.decides(() => ({ decision: 'structural', note: 'needs a tool in agents.yaml' }));
+        await start(fake.zen, '-N', '1');
+        expect(result('a1')).toMatchObject({
+            state: 'difficult',
+            reason: 'structural: needs a tool in agents.yaml',
+        });
+        expect(runsOf(fake.calls, 'a1')).toHaveLength(1);
+    });
+
+    it('tells the analysis when a case never loaded the skill an apply made for it', async () => {
+        await dataset(['a1', 'b1']);
+        const fake = fakeZen((c, phase, attempt) => ({
+            done: phase === 'mem' || attempt > 1,
+            ...(c === 'b1' ? { loads: ['planning'] } : {}),
+        }));
+        fake.decides(() => ({
+            decision: 'applied',
+            disposition: 'extract to skill',
+            skill: 'planning',
+        }));
+        await start(fake.zen, '-N', '2', '-M', '2', '--guard', '0');
+        const run = (id: string) =>
+            JSON.parse(
+                readFileSync(
+                    join(root, 'finetune', 'cases', id, 'r1', '02-nomem', 'run.json'),
+                    'utf8',
+                ),
+            );
+        expect(run('a1').missedSkills).toEqual(['planning']);
+        expect(run('b1').missedSkills).toBeUndefined();
+        const analyze = (id: string) =>
+            fake.calls.find(
+                (a) =>
+                    a.includes('/analyze') && a.includes(`case=${id}`) && a.includes('attempt=2'),
+            )!;
+        expect(analyze('a1')).toContain('missed-skills=planning');
+        expect(analyze('b1').some((x) => x.startsWith('missed-skills='))).toBe(false);
+    });
+
+    it('consolidates after K applies, and undoes a consolidation that did not shrink anything', async () => {
+        await dataset(['a1']);
+        const fake = fakeZen((_c, _p, _a, applies) => ({ done: applies > 0 }));
+        await start(fake.zen, '-N', '1', '--consolidate-every', '1');
+        expect(fake.calls.filter((a) => a.includes('/finetune-consolidate'))).toHaveLength(2);
+        expect(appliedOf('002')).toMatchObject({
+            kind: 'consolidate',
+            ids: [],
+            discarded: expect.stringContaining('nothing shrank'),
+        });
+        const growth = JSON.parse(readFileSync(join(appliesDir(), '002', 'growth.json'), 'utf8'));
+        expect(growth).toContainEqual(
+            expect.objectContaining({ file: 'agents/instructions.md', applies: ['001'] }),
+        );
+        expect(rules()).toContain('- rule 1');
+        expect(result('a1')).toMatchObject({ state: 'completed' });
+        expect(readFileSync(join(appliesDir(), '002', 'APPLY.md'), 'utf8')).toContain(
+            '# Consolidation 002',
+        );
+    });
+
+    it('keeps a consolidation that shrinks the prose', async () => {
+        await dataset(['a1']);
+        const fake = fakeZen((_c, _p, _a, applies) => ({ done: applies > 0 }));
+        fake.consolidates(() => writeFileSync(join(root, 'agents', 'instructions.md'), '# R\n'));
+        await start(fake.zen, '-N', '1', '--consolidate-every', '1');
+        expect(appliedOf('002')).toMatchObject({ kind: 'consolidate', from: 2, to: 3 });
+        expect(appliedOf('002').discarded).toBeUndefined();
+        expect(rules()).toBe('# R\n');
+        const status = readFileSync(join(root, 'finetune', 'STATUS.md'), 'utf8');
+        expect(status).toMatch(/\[002\]\(<applies\/002\/APPLY\.md>\) consolidation \| v2 → v3 \|/);
     });
 });
 

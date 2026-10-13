@@ -41,3 +41,4 @@ export { formatInline, formatMarkdown } from '../tui/markdown.ts';
 export { resolveTheme, type Theme } from '../tui/theme.ts';
 export { boxWidth } from '../tui/wrap.ts';
 export { META_PROMPT_ENV, META_SESSION_ENV } from '../usage.ts';
+export { validateProject, type Report as ProjectReport } from '../validate.ts';

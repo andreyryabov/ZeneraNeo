@@ -19,7 +19,7 @@ import { batchInput } from './dataset/export.ts';
 import { DatasetStore } from './dataset/store.ts';
 import type { Case } from './dataset/types.ts';
 import { errorIn, sizeOf, StepError } from './failure.ts';
-import { type Feedback, type Phase, readFeedback } from './feedback.ts';
+import { type Feedback, feedbackId, type Phase, readFeedback } from './feedback.ts';
 import { caseTokens, writeFeedback } from './report.ts';
 import type { Result } from './sampler.ts';
 import { readJson, type Seat, type Tuning } from './tuning.ts';
@@ -50,7 +50,10 @@ export async function train(t: Tuning, s: Seat, c: Case): Promise<void> {
             break;
         }
         if (attempt < t.config.tries) {
-            await t.improvements.apply(feedback, s);
+            const { structural } = await t.improvements.apply(feedback, s);
+            if (structural) {
+                return markDifficult(t, c, 'nomem', `structural: ${structural}`);
+            }
         }
     }
     if (!passed) {
@@ -66,7 +69,10 @@ export async function train(t: Tuning, s: Seat, c: Case): Promise<void> {
             break;
         }
         if (attempt < t.config.memTries) {
-            await t.improvements.apply(feedback, s);
+            const { structural } = await t.improvements.apply(feedback, s);
+            if (structural) {
+                return markDifficult(t, c, 'mem', `structural: ${structural}`);
+            }
         }
     }
     if (!cheaper) {
@@ -138,6 +144,8 @@ export interface Run {
     tokens?: ByModel;
     metrics?: RunMetrics;
     durationMs?: number;
+    /** skills an apply made for this case that the run never loaded */
+    missedSkills?: string[];
 }
 
 export class VoidRun extends StepError {}
@@ -166,9 +174,14 @@ async function zenRun(
         t.at(s, phase, attempt, 'run');
         t.improvements.runs++;
         const began = Date.now();
+        // The skills the apply after the last try made for this case: this run should load them.
+        const expect =
+            attempt > 1
+                ? t.improvements.skillsFor(feedbackId(c.id, phase, attempt - 1, t.round(c)))
+                : [];
         try {
             const why = await t.journal.step({ kind: 'run', dir }, () =>
-                runOnce(t, c, dir, memory),
+                runOnce(t, c, dir, memory, expect),
             );
             const ran = why ? undefined : readJson<Run>(file);
             t.ended(s, {
@@ -188,11 +201,12 @@ async function zenRun(
 }
 
 /** One `zen run`. Writes run.json, or says why the run was void. */
-async function runOnce(
+export async function runOnce(
     t: Tuning,
     c: Case,
     dir: string,
     memory?: string,
+    expect: string[] = [],
 ): Promise<string | undefined> {
     mkdirSync(dir, { recursive: true });
     const mem = join(dir, 'memory');
@@ -274,6 +288,7 @@ async function runOnce(
     if (metrics?.sandbox) {
         throw new SandboxDown(metrics.sandbox, join(runDir, 'graph.mmd'));
     }
+    const missed = expect.filter((name) => !metrics?.skills.includes(name));
     const run: Run = {
         dir: runDir,
         memory: mem,
@@ -286,6 +301,7 @@ async function runOnce(
         ...(meta?.usage ? { usage: meta.usage } : {}),
         ...(metrics ? { tokens: tokensOf(metrics), metrics } : {}),
         ...(meta?.durationMs !== undefined ? { durationMs: meta.durationMs } : {}),
+        ...(missed.length > 0 ? { missedSkills: missed } : {}),
     };
     writeFileSync(join(dir, 'run.json'), `${JSON.stringify(run, null, 2)}\n`);
     return undefined;
@@ -388,6 +404,7 @@ async function analyzeOnce(
             `phase=${phase}`,
             `attempt=${attempt}`,
             `feedback=${file}`,
+            ...(run.missedSkills?.length ? [`missed-skills=${run.missedSkills.join(',')}`] : []),
         ],
         log,
     );
@@ -446,7 +463,7 @@ function sessionIn(stdout: string): string | undefined {
 }
 
 /** The meta agent's answer is the human report: kept as analysis.md beside the feedback. A retry keeps its own envelope, so its tokens are counted too. */
-function keepAnalysis(dir: string, stdout: string, replace = true): void {
+export function keepAnalysis(dir: string, stdout: string, replace = true): void {
     let envelope: { answerFile?: string } | undefined;
     try {
         envelope = JSON.parse(stdout) as { answerFile?: string };

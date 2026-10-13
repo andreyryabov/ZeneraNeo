@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { type Cost, costChanges, limits, measure, overLimits } from './cost.ts';
 import { errorIn, sizeOf } from './failure.ts';
-import type { Feedback } from './feedback.ts';
-import { writeApply } from './report.ts';
+import type { Feedback, Improvement } from './feedback.ts';
+import { guard, type GuardResult } from './guard.ts';
+import { patchFiles, writeApply } from './report.ts';
+import type { Run } from './train.ts';
 import { readJson, type Seat, Stopped, type Tuning } from './tuning.ts';
-import { envelopesIn, spent } from './usage.ts';
+import { applyTokens, spent } from './usage.ts';
 
 // ---------------------------------------------------------------------------
 // The improvement queue
@@ -27,9 +30,53 @@ export interface AppliedFile {
     at: string;
     startedAt?: string;
     skipped?: boolean;
+    /** why the edit was undone: over budget, or it broke a case that passed */
+    discarded?: string;
+    /** a consolidation: no requests, may only shrink the prose */
+    kind?: 'consolidate';
+    /** what the agents always read, before and after */
+    bytes?: { before: number; after: number };
+}
+
+export interface Decision {
+    decision?: string;
+    note?: string;
+    disposition?: string;
+    /** the skill the improvement created or changed */
+    skill?: string;
+}
+
+export type Decisions = Record<string, Record<string, Decision>>;
+
+export interface Deferred {
+    request: string;
+    case: string;
+    apply: string;
+    improvement: Improvement;
+    note?: string;
 }
 
 const pad = (n: number): string => String(n).padStart(3, '0');
+
+const kept = (d: Decision | undefined): boolean =>
+    d?.decision === 'applied' || d?.decision === 'merged';
+
+function guardReport(attempt: number, broken: GuardResult[]): string {
+    const out = [`# Attempt ${attempt} was undone: it broke cases that passed before`, ''];
+    for (const b of broken) {
+        out.push(`## ${b.case}`, '');
+        for (const x of b.tries) {
+            out.push(
+                `- ${basename(x.dir)}: ${x.verdict}${x.summary ? ` - ${x.summary}` : ''} - ${join(x.dir, 'analysis.md')}`,
+            );
+        }
+        out.push('');
+    }
+    out.push(
+        'Read each analysis: it names the line of the edit that did it. Narrow or drop that rule.',
+    );
+    return `${out.join('\n')}\n`;
+}
 
 export class Improvements {
     readonly #t: Tuning;
@@ -43,7 +90,15 @@ export class Improvements {
     runs = 0;
     applying = false;
     /** the apply under way; `name` once it has a folder, before that it waits for runs */
-    current: { since: number; name?: string; dir?: string; requests?: number } | undefined;
+    current:
+        | {
+              since: number;
+              name?: string;
+              dir?: string;
+              requests?: number;
+              kind?: 'consolidate';
+          }
+        | undefined;
     /** applies started in this process */
     started = 0;
     /** applies finished in this process - an analysis spanning one may see edits */
@@ -83,10 +138,98 @@ export class Improvements {
         return this.#applied.has(id);
     }
 
-    /** Parks until an apply has taken this feedback, the worker free meanwhile. Taken already - after a restart - returns at once. */
-    async apply(feedback: Feedback, s: Seat): Promise<void> {
+    /**
+     * Every apply's decisions, later ones over earlier, per improvement. An edit
+     * that was undone kept nothing, so what it applied or merged reads `discarded`.
+     */
+    decisions(): Decisions {
+        const all: Decisions = {};
+        for (const a of this.applies()) {
+            const undone = a.applied?.discarded;
+            for (const [id, byImprovement] of Object.entries(
+                readJson<Decisions>(join(a.dir, 'decisions.json')) ?? {},
+            )) {
+                for (const [i, d] of Object.entries(byImprovement ?? {})) {
+                    (all[id] ??= {})[i] =
+                        undone && kept(d)
+                            ? {
+                                  ...d,
+                                  decision: 'discarded',
+                                  note: `${d.note ?? ''} - undone: ${undone}`.trim(),
+                              }
+                            : d;
+                }
+            }
+        }
+        return all;
+    }
+
+    /** Improvements held back for want of a second case, and not taken up since. */
+    deferred(): Deferred[] {
+        const open = new Map<string, Deferred>();
+        for (const a of this.applies()) {
+            const inputs = new Map((a.inputs ?? []).map((f) => [f.id, f]));
+            const undone = Boolean(a.applied?.discarded);
+            for (const [id, byImprovement] of Object.entries(
+                readJson<Decisions>(join(a.dir, 'decisions.json')) ?? {},
+            )) {
+                for (const [i, d] of Object.entries(byImprovement ?? {})) {
+                    const key = `${id} ${i}`;
+                    if (d?.decision === 'deferred') {
+                        const improvement =
+                            inputs.get(id)?.improvements.find((x) => x.id === i) ??
+                            open.get(key)?.improvement;
+                        if (improvement) {
+                            open.set(key, {
+                                request: id,
+                                case:
+                                    inputs.get(id)?.case ?? open.get(key)?.case ?? id.split('@')[0],
+                                apply: a.name,
+                                improvement,
+                                ...(d.note ? { note: d.note } : {}),
+                            });
+                        }
+                    } else if (!undone) {
+                        open.delete(key);
+                    }
+                }
+            }
+        }
+        return [...open.values()];
+    }
+
+    /** The skills an apply made or changed for this request: the case's next run should load them. */
+    skillsFor(id: string): string[] {
+        const mine = this.decisions()[id] ?? {};
+        return [
+            ...new Set(
+                Object.values(mine)
+                    .filter((d) => kept(d) && d.skill)
+                    .map((d) => d.skill!),
+            ),
+        ];
+    }
+
+    /** Nothing of this request was applied, merged or deferred, and some of it is structural: prose cannot fix it. */
+    #structural(id: string): string | undefined {
+        const mine = Object.values(this.decisions()[id] ?? {});
+        const structural = mine.filter((d) => d.decision === 'structural');
+        if (
+            structural.length === 0 ||
+            mine.some((d) => kept(d) || d.decision === 'deferred' || d.decision === 'discarded')
+        ) {
+            return undefined;
+        }
+        return structural.map((d) => d.note || 'structural').join('; ');
+    }
+
+    /**
+     * Parks until an apply has taken this feedback, the worker free meanwhile. Taken already - after a restart - returns at once.
+     * `structural` when the apply found nothing prose can fix.
+     */
+    async apply(feedback: Feedback, s: Seat): Promise<{ structural?: string }> {
         if (this.#applied.has(feedback.id)) {
-            return;
+            return this.#outcome(feedback.id);
         }
         if (!this.pending.some((f) => f.id === feedback.id)) {
             this.pending.push(feedback);
@@ -111,7 +254,17 @@ export class Improvements {
         } finally {
             this.parked--;
         }
+        const outcome = this.#outcome(feedback.id);
+        if (outcome.structural) {
+            return outcome;
+        }
         await this.#t.seat(s, true);
+        return outcome;
+    }
+
+    #outcome(id: string): { structural?: string } {
+        const structural = this.#structural(id);
+        return structural ? { structural } : {};
     }
 
     /** Before a run starts: wait out an apply, or stop. */
@@ -125,9 +278,23 @@ export class Improvements {
 
     /** The applier: runs until the tuning is finished. */
     async loop(): Promise<void> {
+        let due = this.#consolidationDue();
         while (!this.#t.finished) {
             await this.#t.tick();
-            if (this.#t.stopping || this.pending.length === 0) {
+            if (this.#t.stopping) {
+                continue;
+            }
+            if (due) {
+                due = false;
+                try {
+                    await this.#consolidateNow();
+                } catch (err) {
+                    this.#t.fatal = err as Error;
+                    this.#t.stop(`consolidation failed: ${(err as Error).message}`);
+                }
+                continue;
+            }
+            if (this.pending.length === 0) {
                 continue;
             }
             if (
@@ -138,11 +305,49 @@ export class Improvements {
             }
             try {
                 await this.#applyNow();
+                due = this.#consolidationDue();
             } catch (err) {
                 this.#t.fatal = err as Error;
                 this.#t.stop(`apply failed: ${(err as Error).message}`);
             }
         }
+    }
+
+    /** `consolidateEvery` applies that changed the prose since the last consolidation, whatever came of it. */
+    #consolidationDue(): boolean {
+        const every = this.#t.config.consolidateEvery;
+        return every > 0 && this.sinceConsolidation() >= every;
+    }
+
+    /** Applies that changed the prose since the last consolidation. */
+    sinceConsolidation(): number {
+        let since = 0;
+        for (const a of this.applies()) {
+            if (a.applied?.kind === 'consolidate') {
+                since = 0;
+            } else if (a.applied && !a.applied.discarded && a.applied.to !== a.applied.from) {
+                since++;
+            }
+        }
+        return since;
+    }
+
+    /** What the agents read when the tuning began - its first version, even for a tuning begun before this was kept. */
+    async baseline(): Promise<Cost> {
+        const file = join(this.#t.dir, 'baseline.json');
+        const saved = readJson<{ cost: Cost }>(file)?.cost;
+        if (saved) {
+            return saved;
+        }
+        const first = this.#t.system.rows()[0];
+        const at = first ? this.#t.system.snapshotDir(first.v) : undefined;
+        const cost = await measure(at && existsSync(at) ? at : this.#t.root);
+        mkdirSync(this.#t.dir, { recursive: true });
+        writeFileSync(
+            file,
+            `${JSON.stringify({ at: new Date().toISOString(), version: first?.v ?? 0, cost }, null, 2)}\n`,
+        );
+        return cost;
     }
 
     async #applyNow(): Promise<void> {
@@ -177,20 +382,25 @@ export class Improvements {
         writeFileSync(
             join(dir, 'inputs.json'),
             `${JSON.stringify(
-                batch.map((f) => ({
-                    ...f,
-                    file: join(
-                        t.attemptDir({ id: f.case, rev: f.caseRev }, f.phase, f.attempt),
-                        'feedback.json',
-                    ),
-                })),
+                batch.map((f) => {
+                    const at = t.attemptDir({ id: f.case, rev: f.caseRev }, f.phase, f.attempt);
+                    const missed = readJson<Run>(join(at, 'run.json'))?.missedSkills;
+                    return {
+                        ...f,
+                        file: join(at, 'feedback.json'),
+                        ...(missed?.length ? { missedSkills: missed } : {}),
+                    };
+                }),
                 null,
                 2,
             )}\n`,
         );
+        writeFileSync(join(dir, 'deferred.json'), `${JSON.stringify(this.deferred(), null, 2)}\n`);
         const total = batch.reduce((n, f) => n + f.improvements.length, 0);
         this.current = { since: Date.now(), name, dir, requests: batch.length };
         let to = from;
+        let discarded: string | undefined;
+        let bytes: AppliedFile['bytes'];
         if (total > 0) {
             t.event({
                 what: 'apply',
@@ -198,7 +408,18 @@ export class Improvements {
             });
             writeApply(t, dir);
             try {
-                await this.#edit(dir, from);
+                const done = await this.#edit(
+                    dir,
+                    from,
+                    'apply',
+                    new Set(batch.map((f) => f.case)),
+                );
+                bytes = done.bytes;
+                if ('discarded' in done) {
+                    discarded = done.discarded;
+                } else {
+                    to = done.to;
+                }
             } catch (err) {
                 writeFileSync(
                     join(dir, 'failed.json'),
@@ -206,10 +427,6 @@ export class Improvements {
                 );
                 writeApply(t, dir);
                 throw err;
-            }
-            to = t.system.record('apply', name).v;
-            if (to !== from) {
-                writeFileSync(join(dir, 'diff.patch'), t.system.diff(from, to));
             }
         }
         const applied: AppliedFile = {
@@ -219,6 +436,8 @@ export class Improvements {
             at: new Date().toISOString(),
             startedAt,
             ...(total === 0 ? { skipped: true } : {}),
+            ...(discarded ? { discarded } : {}),
+            ...(bytes ? { bytes } : {}),
         };
         writeFileSync(join(dir, 'applied.json'), `${JSON.stringify(applied, null, 2)}\n`);
         writeApply(t, dir);
@@ -228,17 +447,149 @@ export class Improvements {
         this.count++;
         this.current = undefined;
         t.event({
-            what: 'applied',
-            detail: `${name}: v${from} -> v${to}, see applies/${name}/APPLY.md`,
-            result: total === 0 ? 'nothing to change' : `v${from} → v${to}`,
+            what: discarded ? 'apply undone' : 'applied',
+            detail: `${name}: ${discarded ? `undone - ${discarded}` : `v${from} -> v${to}`}, see applies/${name}/APPLY.md`,
+            result: total === 0 ? 'nothing to change' : discarded ? 'undone' : `v${from} → v${to}`,
             took: Date.now() - Date.parse(startedAt),
-            tokens: spent(envelopesIn(dir, 'apply')),
+            tokens: spent(applyTokens(dir)),
         });
     }
 
-    /** The meta agent edits; `zen check` must pass, or the edit is undone and tried once more. */
-    async #edit(dir: string, from: number): Promise<void> {
+    async #consolidateNow(): Promise<void> {
         const t = this.#t;
+        this.applying = true;
+        this.current = { since: Date.now(), kind: 'consolidate' };
+        this.started++;
+        t.event({ what: 'consolidation waiting', detail: `${this.runs} run(s) to finish` });
+        try {
+            while (this.runs > 0) {
+                await t.tick();
+            }
+            const name = pad(Math.max(0, ...this.#names().map(Number)) + 1);
+            const dir = join(this.dir, name);
+            const from = t.system.record('external').v;
+            await t.journal.step({ kind: 'apply', dir, from }, () =>
+                this.#consolidate(name, dir, from),
+            );
+        } finally {
+            this.applying = false;
+            this.current = undefined;
+        }
+    }
+
+    /** May only shrink the prose. Never stops the tuning: an edit that fails a gate is undone. */
+    async #consolidate(name: string, dir: string, from: number): Promise<void> {
+        const t = this.#t;
+        const startedAt = new Date().toISOString();
+        mkdirSync(dir, { recursive: true });
+        // Written first, so the page knows what this is while it runs.
+        writeFileSync(join(dir, 'consolidate.json'), `${JSON.stringify({ startedAt })}\n`);
+        this.current = { since: Date.now(), name, dir, requests: 0, kind: 'consolidate' };
+        t.event({ what: 'consolidate', detail: `${name}: shrink the prose, change no rule` });
+        writeApply(t, dir);
+        let to = from;
+        let discarded: string | undefined;
+        let bytes: AppliedFile['bytes'];
+        try {
+            const done = await this.#edit(dir, from, 'consolidate', new Set());
+            bytes = done.bytes;
+            if ('discarded' in done) {
+                discarded = done.discarded;
+            } else {
+                to = done.to;
+            }
+        } catch (err) {
+            discarded = (err as Error).message;
+        }
+        const applied: AppliedFile = {
+            ids: [],
+            from,
+            to,
+            at: new Date().toISOString(),
+            startedAt,
+            kind: 'consolidate',
+            ...(discarded ? { discarded } : {}),
+            ...(bytes ? { bytes } : {}),
+        };
+        writeFileSync(join(dir, 'applied.json'), `${JSON.stringify(applied, null, 2)}\n`);
+        writeApply(t, dir);
+        this.count++;
+        this.current = undefined;
+        t.event({
+            what: discarded ? 'consolidation undone' : 'consolidated',
+            detail: `${name}: ${discarded ? `undone - ${discarded}` : `v${from} -> v${to}`}, see applies/${name}/APPLY.md`,
+            result: discarded ? 'undone' : `v${from} → v${to}`,
+            took: Date.now() - Date.parse(startedAt),
+            tokens: spent(applyTokens(dir)),
+        });
+    }
+
+    /** What an apply or a consolidation is handed about the prose: sizes, limits, and which files grew. */
+    async #writeBudget(dir: string, now: Cost, kind: 'apply' | 'consolidate'): Promise<void> {
+        const start = await this.baseline();
+        const { files: _, ...rest } = now;
+        writeFileSync(
+            join(dir, 'budget.json'),
+            `${JSON.stringify(
+                {
+                    ...rest,
+                    start: { total: start.total, alwaysRead: start.alwaysRead },
+                    ...limits(start, this.#t.config),
+                },
+                null,
+                2,
+            )}\n`,
+        );
+        if (kind !== 'consolidate') {
+            return;
+        }
+        const touched = new Map<string, string[]>();
+        let since = 0;
+        const applies = this.applies();
+        applies.forEach((a, i) => {
+            if (a.applied?.kind === 'consolidate') {
+                since = i + 1;
+            }
+        });
+        for (const a of applies.slice(since)) {
+            if (!a.applied || a.applied.discarded || !existsSync(join(a.dir, 'diff.patch'))) {
+                continue;
+            }
+            for (const f of patchFiles(readFileSync(join(a.dir, 'diff.patch'), 'utf8'))) {
+                touched.set(f.file, [...(touched.get(f.file) ?? []), a.name]);
+            }
+        }
+        const growth = Object.keys(now.files)
+            .map((file) => ({
+                file,
+                start: start.files[file] ?? 0,
+                now: now.files[file],
+                applies: touched.get(file) ?? [],
+            }))
+            .sort((a, b) => b.now - b.start - (a.now - a.start));
+        writeFileSync(join(dir, 'growth.json'), `${JSON.stringify(growth, null, 2)}\n`);
+    }
+
+    /**
+     * The meta agent edits, then three gates: `zen check`, the budget, and the
+     * guard. A failed gate undoes the edit and the agent tries once more, told
+     * why. `zen check` failing twice is fatal - the agent cannot leave the
+     * project loadable; the budget or the guard failing twice only undoes it.
+     */
+    async #edit(
+        dir: string,
+        from: number,
+        kind: 'apply' | 'consolidate',
+        exclude: Set<string>,
+    ): Promise<
+        ({ to: number } | { discarded: string }) & { bytes: { before: number; after: number } }
+    > {
+        const t = this.#t;
+        const name = basename(dir);
+        const before = await measure(t.root);
+        await this.#writeBudget(dir, before, kind);
+        const bound = limits(await this.baseline(), t.config);
+        const unchanged = { before: before.total, after: before.total };
         for (let attempt = 1; ; attempt++) {
             const session = randomUUID();
             writeFileSync(join(dir, 'session'), `${session}\n`);
@@ -255,7 +606,7 @@ export class Improvements {
                     session,
                     '--events',
                     join(dir, 'apply.events.jsonl'),
-                    '/finetune-apply',
+                    kind === 'apply' ? '/finetune-apply' : '/finetune-consolidate',
                     dir,
                 ],
                 applyLog,
@@ -265,24 +616,71 @@ export class Improvements {
                 res.stdout,
             );
             const check = await t.zen(['check', '--no-models', '--no-sandbox'], checkLog);
-            if (res.code === 0 && check.code === 0) {
-                return;
+            if (res.code !== 0 || check.code !== 0) {
+                const e =
+                    res.code !== 0
+                        ? errorIn(applyLog, offset.apply)
+                        : errorIn(checkLog, offset.check);
+                t.error(
+                    `${kind} ${name}${attempt > 1 ? ` try ${attempt}` : ''}`,
+                    `${res.code !== 0 ? `the ${kind} failed` : `zen check failed after the ${kind}`}${e.message ? `: ${e.message}` : ''}`,
+                    e.log,
+                );
+                t.system.restore(from);
+                if (attempt === 2) {
+                    throw new Error(`${kind} ${dir} left the project broken twice - see check.log`);
+                }
+                t.event({
+                    what: 'apply retry',
+                    detail: res.code !== 0 ? `the ${kind} failed` : 'zen check failed',
+                });
+                continue;
             }
-            const e =
-                res.code !== 0 ? errorIn(applyLog, offset.apply) : errorIn(checkLog, offset.check);
-            t.error(
-                `apply ${basename(dir)}${attempt > 1 ? ` try ${attempt}` : ''}`,
-                `${res.code !== 0 ? 'the apply failed' : 'zen check failed after the apply'}${e.message ? `: ${e.message}` : ''}`,
-                e.log,
-            );
-            t.system.restore(from);
-            if (attempt === 2) {
-                throw new Error(`apply ${dir} left the project broken twice - see check.log`);
+
+            const after = await measure(t.root);
+            const over = overLimits(before, after, bound, kind === 'consolidate');
+            if (over.length > 0) {
+                writeFileSync(
+                    join(dir, 'budget.md'),
+                    [
+                        `# Attempt ${attempt} was undone: over the limits`,
+                        '',
+                        ...over.map((o) => `- ${o}`),
+                        '',
+                        '## What moved',
+                        '',
+                        ...costChanges(before, after),
+                        '',
+                    ].join('\n'),
+                );
+                t.system.restore(from);
+                if (attempt === 2) {
+                    return { discarded: `over the limits: ${over[0]}`, bytes: unchanged };
+                }
+                t.event({ what: 'apply retry', detail: `over the limits: ${over[0]}` });
+                continue;
             }
-            t.event({
-                what: 'apply retry',
-                detail: res.code !== 0 ? 'the apply failed' : 'zen check failed',
-            });
+
+            const to = t.system.record('apply', name).v;
+            if (to === from) {
+                return { to, bytes: unchanged };
+            }
+            const patch = join(dir, 'diff.patch');
+            writeFileSync(patch, t.system.diff(from, to));
+            const broken = (await guard(t, dir, attempt, exclude, patch)).filter((r) => r.broken);
+            if (broken.length > 0) {
+                writeFileSync(join(dir, 'guard.md'), guardReport(attempt, broken));
+                t.system.restore(from);
+                t.system.drop(name);
+                rmSync(patch, { force: true });
+                const why = `broke ${broken.map((b) => b.case).join(', ')}, which passed before`;
+                if (attempt === 2) {
+                    return { discarded: why, bytes: unchanged };
+                }
+                t.event({ what: 'apply retry', detail: why });
+                continue;
+            }
+            return { to, bytes: { before: before.total, after: after.total } };
         }
     }
 

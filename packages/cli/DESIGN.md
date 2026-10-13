@@ -973,6 +973,20 @@ takes the next free worker ahead of any new case.
   flight finish first, so no run ever reads half-edited prose. `zen check` must
   pass or the edit is undone. Every apply records a new system version - a
   hash and a copy of `agents.yaml` and `agents/` - and a `diff.patch`.
+- **Prose has a price, and an apply pays it.** Left alone the loop is an
+  optimiser with no regulariser and no holdout: each failing case buys a
+  sentence, the sentence fixes that case, and every later call reads it. One
+  run grew three files from 27 KB to 97 KB over 96 applies. So an apply passes
+  gates ([meta/finetune/cost.ts](packages/cli/src/meta/finetune/cost.ts),
+  [guard.ts](packages/cli/src/meta/finetune/guard.ts)) or is undone: what every
+  call reads - house rules, prompts, preloaded skills, the skill index - may
+  grow by a fixed budget, and by nothing past a ceiling over the start; a few
+  completed cases run again on the edit, and one that fails twice broke it.
+  Skill bodies are counted apart, because they are paid only once loaded:
+  moving a procedure from a prompt into a skill is then a saving the budget
+  sees. A rule needs two cases (one is deferred until a second asks), a case
+  whose only findings are structural stops, and every few applies a
+  consolidation may only shrink the prose.
 - **Resuming is calling `train` again.** Each step writes its result into the
   try's folder and is skipped when it is there; an applied request is recorded
   by id. No state machine and no event replay: the folders are the state.
