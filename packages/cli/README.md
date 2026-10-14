@@ -563,6 +563,7 @@ The commands to run next are printed for you to read and type.
 | `run`     | Runs the project - the TUI on a terminal, a single answer otherwise. |
 | `meta`    | Runs the meta agent over the project - the one that edits it.        |
 | `inspect` | Opens or rebuilds a run's `report.html`.                             |
+| `view`    | Shows a folder in the browser, redrawn live as its files change.     |
 | `memory`  | What the agents remember - size, listing, one node, or a whole page. |
 | `check`   | Validates the project and every file it names, and asks the models.  |
 | `export`  | Writes the project to a shareable zip archive.                       |
@@ -743,6 +744,7 @@ See the `zen-dataset` skill a project carries in `.github/skills/`.
 zen meta finetune start -N 4                 # 4 cases at a time; resumes if stopped
 zen meta finetune                            # where it stands
 zen meta finetune stop                       # finish the steps in flight, then stop
+zen meta finetune serve                      # the pages live in a browser, while it is stopped
 zen meta finetune session plan-day           # resume that case's analyze session
 ```
 
@@ -752,7 +754,8 @@ applied in batches between runs, and every apply is a new, diffable version of
 the prose. Follow it in `finetune/STATUS.md`, whose summary shows whether the
 fixes and the memory are making runs cheaper; each case has its own
 `finetune/cases/<id>/FEEDBACK.md` with its latest analysis and the metrics of
-every try.
+every try. `start` prints a local address that shows those pages in a browser,
+with their diagrams drawn, updated in place as the tuning writes them.
 
 ## Credentials
 

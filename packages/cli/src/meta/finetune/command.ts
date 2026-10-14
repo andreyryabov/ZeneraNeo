@@ -33,18 +33,20 @@ import {
     Tuning,
     type Zen,
 } from './tuning.ts';
+import { liveView, startView, type Viewing } from './view.ts';
 
 // ---------------------------------------------------------------------------
 // zen meta finetune
 // ---------------------------------------------------------------------------
 
-export const FINETUNE_USAGE = 'zen meta finetune <start|status|stop|retry|session> [options]';
+export const FINETUNE_USAGE = 'zen meta finetune <start|status|stop|serve|retry|session> [options]';
 
 export const FINETUNE_HELP = [
     'Tuning:',
     '  zen meta finetune start [options]         train every case: run, analyze, apply, run again',
     '  zen meta finetune [status]                where it stands; the detail is finetune/STATUS.md',
     '  zen meta finetune stop                    finish the steps in flight, then stop',
+    '  zen meta finetune serve                   the tuning live in a browser, while it is not running',
     '  zen meta finetune retry --difficult       give difficult cases another round, then start',
     "  zen meta finetune session <case>          resume that case's analyze session",
     '',
@@ -66,6 +68,8 @@ export const FINETUNE_DETAILS = [
     '  start                  Train every case: run, analyze, apply, run again. Resumes.',
     '  status                 Where it stands (the default). The detail: finetune/STATUS.md',
     '  stop                   Let the steps in flight finish, then stop the running tuning.',
+    '  serve                  Show the tuning live in a browser until Ctrl-C. start does this',
+    '                         itself, and prints the address; serve is for when it is not running.',
     '  retry [ids...]         Another round for difficult cases: --difficult takes them all,',
     '                         ids and globs add to it, --class narrows. Run them with start.',
     "  session <case>         Print the command that resumes that case's analyze session.",
@@ -227,6 +231,8 @@ export async function runFinetune(
             return status(ctx, project);
         case 'stop':
             return stop(project);
+        case 'serve':
+            return serve(ctx, project);
         case 'retry':
             return retryCases(ctx, project, values, rest);
         case 'session':
@@ -234,7 +240,7 @@ export async function runFinetune(
         default:
             throw usageError(
                 `unknown finetune verb: ${verb}`,
-                'one of: start, status, stop, retry, session',
+                'one of: start, status, stop, serve, retry, session',
             );
     }
 }
@@ -397,11 +403,15 @@ async function start(
     note(
         `${bold('tuning')} ${project.name} · ${config.workers} workers · apply at ${config.applyAt}`,
     );
-    note(dim(`follow it: file://${join(t.dir, 'STATUS.html')}`));
+    const viewing = options.zen ? undefined : await viewOf(project.dir);
+    const url = viewing?.url ?? liveView(project.dir);
+    if (url) {
+        note(dim(`follow it: ${url}`));
+    }
     let close: (() => void) | undefined;
     if (!ctx.json && !values.plain && !options.zen && process.stderr.isTTY && process.stdin.isTTY) {
         const { watch } = await import('./tui.tsx');
-        close = await watch(t, onInterrupt);
+        close = await watch(t, onInterrupt, url);
         drawing = true;
     }
     try {
@@ -409,6 +419,7 @@ async function start(
     } finally {
         close?.();
         process.off('SIGINT', onInterrupt);
+        await viewing?.close();
     }
     if (!ctx.json) {
         await status(ctx, project);
@@ -439,12 +450,13 @@ function status(ctx: FinetuneContext, project: { dir: string; name: string }): v
     }
     const holder = liveHolder(join(dir, 'loop.lock'));
     const c = counts(project.dir);
+    const url = liveView(project.dir);
     if (ctx.json) {
         return json({
             running: Boolean(holder),
             ...c,
             status: join(dir, 'STATUS.md'),
-            html: join(dir, 'STATUS.html'),
+            ...(url ? { url } : {}),
         });
     }
     write(
@@ -470,10 +482,52 @@ function status(ctx: FinetuneContext, project: { dir: string; name: string }): v
     if (existsSync(join(dir, 'STATUS.md'))) {
         note(
             dim(
-                `the detail: ${cyan(join(dir, 'STATUS.md'))} · ${cyan(`file://${join(dir, 'STATUS.html')}`)}`,
+                `the detail: ${cyan(join(dir, 'STATUS.md'))} · ${url ? cyan(url) : `live in a browser: ${cyan(`zen meta ${project.name} finetune serve`)}`}`,
             ),
         );
     }
+}
+
+/** The live view for a tuning, or a note saying why there is none - it never stops one. */
+async function viewOf(projectDir: string): Promise<Viewing | undefined> {
+    if (liveView(projectDir)) {
+        return undefined;
+    }
+    try {
+        return await startView(projectDir);
+    } catch (err) {
+        note(yellow(`no live view: ${err instanceof Error ? err.message : String(err)}`));
+        return undefined;
+    }
+}
+
+async function serve(ctx: FinetuneContext, project: { dir: string; name: string }): Promise<void> {
+    const live = liveView(project.dir);
+    if (live) {
+        if (ctx.json) {
+            return json({ url: live, served: false });
+        }
+        write(live);
+        note(dim('already served by another zen process'));
+        return;
+    }
+    const viewing = await startView(project.dir);
+    if (ctx.json) {
+        json({ url: viewing.url, served: true });
+    } else {
+        write(viewing.url);
+        note(dim('serving the tuning · Ctrl-C stops it'));
+    }
+    await new Promise<void>((settle) => {
+        const done = (): void => {
+            process.off('SIGINT', done);
+            process.off('SIGTERM', done);
+            settle();
+        };
+        process.once('SIGINT', done);
+        process.once('SIGTERM', done);
+    });
+    await viewing.close();
 }
 
 function stop(project: { dir: string }): void {

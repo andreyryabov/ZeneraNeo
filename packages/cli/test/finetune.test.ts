@@ -21,7 +21,6 @@ import { measure, overLimits } from '../src/meta/finetune/cost.ts';
 import { runDataset } from '../src/meta/finetune/dataset/command.ts';
 import { readFeedback } from '../src/meta/finetune/feedback.ts';
 import { Journal } from '../src/meta/finetune/journal.ts';
-import { markdownPage } from '../src/meta/finetune/report.ts';
 import { SystemVersions } from '../src/meta/finetune/system.ts';
 import { FAILURES_IN_A_ROW, type Zen } from '../src/meta/finetune/tuning.ts';
 import { runMetrics } from '../src/meta/finetune/usage.ts';
@@ -587,9 +586,7 @@ describe('zen meta finetune', () => {
         const page = readFileSync(join(root, 'finetune', 'cases', 'a1', 'FEEDBACK.md'), 'utf8');
         expect(page).toContain('## History');
         expect(page).toContain('**Run** - fine.');
-        const html = readFileSync(join(root, 'finetune', 'cases', 'a1', 'FEEDBACK.html'), 'utf8');
-        expect(html).toContain('## History');
-        expect(html).not.toContain('http-equiv="refresh"');
+        expect(existsSync(join(root, 'finetune', 'cases', 'a1', 'FEEDBACK.html'))).toBe(false);
 
         const apply = readFileSync(join(root, 'finetune', 'applies', '001', 'APPLY.md'), 'utf8');
         expect(apply).toContain('# Apply 001 - v1 → v2');
@@ -1010,16 +1007,10 @@ describe('zen meta finetune', () => {
         expect(status).not.toMatch(/misses it \| badly/);
         expect(readdirSync(join(root, 'finetune', 'cases'))).toEqual(['a1', 'b1']);
 
-        const html = readFileSync(join(root, 'finetune', 'STATUS.html'), 'utf8');
-        expect(html).toContain('## Workers');
-        expect(html).toContain('```mermaid');
-    });
-
-    it('keeps model text in STATUS.html inert', () => {
-        const html = markdownPage('t', '| </script><img src=x onerror=alert(1)> |\n', false);
-        expect(html.match(/<\/script>/g)).toHaveLength(2);
-        expect(html).not.toContain('<img');
-        expect(html).not.toContain('http-equiv="refresh"');
+        // The browser view is served live by `start`; no HTML copy is written, and no
+        // server is started for a fake zen.
+        expect(existsSync(join(root, 'finetune', 'STATUS.html'))).toBe(false);
+        expect(existsSync(join(root, 'finetune', 'view.json'))).toBe(false);
     });
 
     it('reports tokens per stage and model, for the tuning and for each case', async () => {

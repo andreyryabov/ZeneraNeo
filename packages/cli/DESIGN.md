@@ -120,24 +120,25 @@ two.
 
 ## 4. Commands
 
-| Command   | Does                                                                       |
-| --------- | -------------------------------------------------------------------------- |
-| `init`    | Creates a project here, or in `<dir>`, and registers it.                   |
-| `list`    | Every known project: sessions, last run, whether one is live.              |
-| `open`    | Opens a project in your editor.                                            |
-| `key`     | The credential store (§6).                                                 |
-| `models`  | What this machine can use: list, search, test, pick (§6.5).                |
-| `run`     | Runs the project - the TUI on a terminal, one shot otherwise (§7).         |
-| `meta`    | Runs the meta agent over the project, on the keyring (§7.6).               |
-| `inspect` | Reads a run: `report.html`, or the graph a model reads (§7.7).             |
-| `memory`  | The memory graph from outside the agents (§10).                            |
-| `check`   | Reports on the project in full: files, wiring, credentials, models (§9.2). |
-|           | `--fix` rewrites the files a project copies but does not own (§9.3).       |
-| `export`  | Writes the project to a shareable zip archive (§11).                       |
-| `import`  | Unpacks one, registers it, and runs nothing in it (§11).                   |
-| `sandbox` | Checks and prepares the container command-line tools run in (§9).          |
-| `cache`   | What work has been kept, and getting rid of it (§4.2).                     |
-| `version` | CLI, library and Node versions.                                            |
+| Command   | Does                                                                          |
+| --------- | ----------------------------------------------------------------------------- |
+| `init`    | Creates a project here, or in `<dir>`, and registers it.                      |
+| `list`    | Every known project: sessions, last run, whether one is live.                 |
+| `open`    | Opens a project in your editor.                                               |
+| `key`     | The credential store (§6).                                                    |
+| `models`  | What this machine can use: list, search, test, pick (§6.5).                   |
+| `run`     | Runs the project - the TUI on a terminal, one shot otherwise (§7).            |
+| `meta`    | Runs the meta agent over the project, on the keyring (§7.6).                  |
+| `inspect` | Reads a run: `report.html`, or the graph a model reads (§7.7).                |
+| `view`    | Serves a folder to the browser, redrawn as its files change (`@zenera/view`). |
+| `memory`  | The memory graph from outside the agents (§10).                               |
+| `check`   | Reports on the project in full: files, wiring, credentials, models (§9.2).    |
+|           | `--fix` rewrites the files a project copies but does not own (§9.3).          |
+| `export`  | Writes the project to a shareable zip archive (§11).                          |
+| `import`  | Unpacks one, registers it, and runs nothing in it (§11).                      |
+| `sandbox` | Checks and prepares the container command-line tools run in (§9).             |
+| `cache`   | What work has been kept, and getting rid of it (§4.2).                        |
+| `version` | CLI, library and Node versions.                                               |
 
 And, when the package providing it is installed:
 
@@ -1002,6 +1003,9 @@ takes the next free worker ahead of any new case.
 - **Reports are code, not agent prose.** `STATUS.md` and each case's
   `FEEDBACK.md` are regenerated from disk on every step; their diagrams carry
   only ids, numbers and fixed words, so nothing a model wrote can break them.
+  There is no HTML copy: `start` (and `serve`, when no tuning runs) serves the
+  project with `@zenera/view`, which renders each `.md` in the browser and
+  pushes it again when it changes. `finetune/view.json` holds the address.
   A try's metrics are read from its run's `state.json` and kept in `run.json`;
   time is the gap between node stamps in one lane, as in report.html.
 

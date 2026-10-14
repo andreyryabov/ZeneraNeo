@@ -1,0 +1,10 @@
+{
+    "extends": "../../tsconfig.base.json",
+    "compilerOptions": {
+        "rootDir": "src",
+        "outDir": "dist"
+    },
+    // The browser half is bundled by scripts/bundle.mjs, not emitted by tsc.
+    "include": ["src/**/*.ts"],
+    "exclude": ["src/client"]
+}

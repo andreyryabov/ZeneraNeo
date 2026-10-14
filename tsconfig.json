@@ -11,6 +11,8 @@
         // so the setting has to be here as well as in packages/cli.
         "jsx": "react-jsx",
         "jsxImportSource": "react",
+        // packages/view/src/client runs in a browser. The emitting programs stay DOM-free.
+        "lib": ["ES2024", "DOM", "DOM.Iterable"],
         "types": ["node", "react"]
     },
     "include": [

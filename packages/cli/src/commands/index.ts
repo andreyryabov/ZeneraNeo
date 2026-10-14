@@ -15,6 +15,7 @@ import { open } from './open.ts';
 import { run } from './run.ts';
 import { sandbox } from './sandbox.ts';
 import { version } from './version.ts';
+import { view } from './view.ts';
 
 /**
  * Insertion order is the order help prints in, and it is deliberate: the four
@@ -35,6 +36,7 @@ export const COMMANDS: Record<string, Command> = {
     models,
     check,
     inspect,
+    view,
     export: pack,
     import: unpack,
     memory,

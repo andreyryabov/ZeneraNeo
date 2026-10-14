@@ -1,6 +1,5 @@
 import { Box, render, Text, useInput, useWindowSize } from 'ink';
 import { spawn } from 'node:child_process';
-import { join } from 'node:path';
 import React, { useEffect, useState } from 'react';
 import type { EventLine, Theme } from '../host.ts';
 import { resolveTheme } from '../host.ts';
@@ -49,27 +48,28 @@ function footer(width: number, keys: string, theme: Theme): Line[] {
     ];
 }
 
-function keysFor(s: Snapshot, following: boolean): string {
+function keysFor(s: Snapshot, following: boolean, url: string | undefined): string {
     if (s.state === 'stopping') {
         return 'stopping: the steps under way finish first · ctrl-c again kills them';
     }
     if (s.state !== 'running') {
         return s.state;
     }
+    const open = url ? 'o open in browser · ' : '';
     return following
-        ? 'esc back · o open STATUS.html · s stop · ctrl-c stop, twice kills'
-        : 'up/down choose · enter follow · o open STATUS.html · s stop · ctrl-c stop, twice kills';
+        ? `esc back · ${open}s stop · ctrl-c stop, twice kills`
+        : `up/down choose · enter follow · ${open}s stop · ctrl-c stop, twice kills`;
 }
 
-/** The platform opener, without a shell, so the path stays one argument. */
-function openInBrowser(file: string): void {
+/** The platform opener, without a shell, so the address stays one argument. */
+function openInBrowser(url: string): void {
     const command =
         process.platform === 'darwin'
             ? 'open'
             : process.platform === 'win32'
               ? 'explorer'
               : 'xdg-open';
-    spawn(command, [file], { stdio: 'ignore', detached: true })
+    spawn(command, [url], { stdio: 'ignore', detached: true })
         .on('error', () => {})
         .unref();
 }
@@ -163,6 +163,7 @@ export function mainLines(
     width: number,
     height: number,
     theme: Theme,
+    url?: string,
 ): Line[] {
     const quiet = theme.chrome.color;
     const out: Line[] = [...header(s, theme)];
@@ -237,7 +238,7 @@ export function mainLines(
             ]);
         }
     }
-    return [...out, ...footer(width, keysFor(s, false), theme)];
+    return [...out, ...footer(width, keysFor(s, false, url), theme)];
 }
 
 function activity(e: EventLine, theme: Theme): Line {
@@ -279,6 +280,7 @@ export function followLines(
     width: number,
     height: number,
     theme: Theme,
+    url?: string,
 ): Line[] {
     const r = s.now.find((x) => x.key === key);
     const out: Line[] = [];
@@ -301,17 +303,19 @@ export function followLines(
             out.push(activity(e, theme));
         }
     }
-    return [...out, ...footer(width, keysFor(s, true), theme)];
+    return [...out, ...footer(width, keysFor(s, true, url), theme)];
 }
 
 function Live({
     t,
     theme,
     interrupt,
+    url,
 }: {
     t: Tuning;
     theme: Theme;
     interrupt: () => void;
+    url: string | undefined;
 }): React.JSX.Element {
     const [snap, setSnap] = useState<Snapshot | undefined>();
     const [selected, setSelected] = useState(0);
@@ -331,7 +335,9 @@ function Live({
             return;
         }
         if (input === 'o') {
-            openInBrowser(join(t.dir, 'STATUS.html'));
+            if (url) {
+                openInBrowser(url);
+            }
             return;
         }
         if (follow) {
@@ -353,8 +359,8 @@ function Live({
     }
     const height = Math.max(8, rows - 1);
     const all = follow
-        ? followLines(snap, follow, columns, height, theme)
-        : mainLines(snap, at, columns, height, theme);
+        ? followLines(snap, follow, columns, height, theme, url)
+        : mainLines(snap, at, columns, height, theme, url);
     // Too short a terminal loses rows from the middle, never the keys at the bottom.
     const lines = all.length > height ? [...all.slice(0, height - 2), ...all.slice(-2)] : all;
     return (
@@ -375,9 +381,9 @@ function Live({
 }
 
 /** Draws the tuning until the returned function is called. */
-export async function watch(t: Tuning, interrupt: () => void): Promise<() => void> {
+export async function watch(t: Tuning, interrupt: () => void, url?: string): Promise<() => void> {
     const theme = await resolveTheme();
-    const instance = render(<Live t={t} theme={theme} interrupt={interrupt} />, {
+    const instance = render(<Live t={t} theme={theme} interrupt={interrupt} url={url} />, {
         stdout: process.stderr,
         exitOnCtrlC: false,
     });

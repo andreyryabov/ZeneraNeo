@@ -2,6 +2,7 @@
     "files": [],
     "references": [
         { "path": "packages/neo" },
+        { "path": "packages/view" },
         { "path": "packages/cli" },
         { "path": "packages/faker" },
         { "path": "packages/rag" }

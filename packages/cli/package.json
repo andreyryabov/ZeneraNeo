@@ -53,6 +53,7 @@
         "@inkjs/ui": "^2.0.0",
         "@openrouter/sdk": "^1.2.80",
         "@zenera/neo": "^1.1.25",
+        "@zenera/view": "^1.1.25",
         "google-auth-library": "^10.0.0",
         "ink": "^7.1.1",
         "openai": "^6.0.0",
