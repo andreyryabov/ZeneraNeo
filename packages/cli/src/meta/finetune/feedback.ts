@@ -43,6 +43,9 @@ export interface Feedback {
     dir?: string;
 }
 
+/** A summary's first paragraph - the verdict, for a table cell or a one-line note. */
+export const lead = (summary: string): string => summary.trim().split(/\n\s*\n/)[0] ?? '';
+
 // Round 1 keeps the bare form, so the ids applies already took still match.
 export const feedbackId = (caseId: string, phase: Phase, attempt: number, round = 1): string =>
     `${caseId}${round > 1 ? `#${round}` : ''}@${phase}-${attempt}`;

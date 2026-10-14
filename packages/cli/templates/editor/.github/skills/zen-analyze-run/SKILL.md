@@ -438,7 +438,7 @@ section.
     "verdict": "right",
     "rubric": { "r1": "pass", "r2": "fail" },
     "done": false,
-    "summary": "One sentence: what is wrong or wasteful now, or why it is done.",
+    "summary": "The agent answered right: ...\n\nIt took the long way: ...\n\nMemory: ...",
     "improvements": [
         {
             "id": "i1",
@@ -451,6 +451,24 @@ section.
     ]
 }
 ```
+
+- `summary` is the story of the run in markdown, for a person who never opens
+  the graph - short paragraphs, `\n\n` between them in the JSON string. In this
+  order:
+    1. **Was the answer right?** The first paragraph, one or two sentences - the
+       tables of the report show only this one. If wrong, what went wrong, in
+       terms of the task: what it missed, misread or made up.
+    2. **Was it the short way?** How it got there, and where it went the long
+       way round - what it did twice, in series, or by hand.
+    3. **Memory.** Did it look before working, did what it found help, and did
+       it keep what the next run will need. Skip this paragraph when no agent
+       has memory.
+    4. **What would make it better**, in one or two sentences, in plain words.
+
+    Plain language, not the trace: no node ids, memory node names, tool call
+    arguments, file paths or JSON keys - say "it searched the docs three times
+    for the same thing", not "n14, n18, n22: `zen rag search`". The details
+    belong in the report and `improvements`.
 
 - `verdict` is `right`, `wrong` or `void` (the run says nothing about the prose:
   it crashed, was killed by the machine, or the infrastructure under it failed).

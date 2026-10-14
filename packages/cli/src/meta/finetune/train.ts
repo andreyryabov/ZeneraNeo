@@ -19,7 +19,7 @@ import { batchInput } from './dataset/export.ts';
 import { DatasetStore } from './dataset/store.ts';
 import type { Case } from './dataset/types.ts';
 import { errorIn, sizeOf, StepError } from './failure.ts';
-import { type Feedback, feedbackId, type Phase, readFeedback } from './feedback.ts';
+import { type Feedback, feedbackId, lead, type Phase, readFeedback } from './feedback.ts';
 import { caseTokens, writeFeedback } from './report.ts';
 import type { Result } from './sampler.ts';
 import { readJson, type Seat, type Tuning } from './tuning.ts';
@@ -491,7 +491,7 @@ function note(t: Tuning, c: Case, f: Feedback, run: Run, session: string): void 
         run: run.dir,
         verdict: f.verdict,
         ...(Object.keys(rubric).length > 0 ? { rubric } : {}),
-        text: f.verdict === 'void' ? `void: ${f.infra}` : f.summary || f.verdict,
+        text: f.verdict === 'void' ? `void: ${f.infra}` : lead(f.summary) || f.verdict,
         by: { session, prompt: 'analyze', host: hostname() },
     });
 }

@@ -12,7 +12,7 @@ import { basename, dirname, join, relative, sep } from 'node:path';
 import { safe } from '../host.ts';
 import { DatasetStore } from './dataset/store.ts';
 import { type Case, DATASET_DIR } from './dataset/types.ts';
-import { type Feedback, feedbackId, type Phase, readFeedback } from './feedback.ts';
+import { type Feedback, feedbackId, lead, type Phase, readFeedback } from './feedback.ts';
 import type { AppliedFile, Decisions, Deferred } from './improvements.ts';
 import { type Recheck, RECHECK_TRIES } from './recheck.ts';
 import { resultOf, selection } from './sampler.ts';
@@ -65,6 +65,14 @@ export const cell = (text: string | number | undefined): string =>
         .replace(/\s*\n\s*/g, ' ')
         .replace(/\|/g, '\\|')
         .trim() || '-';
+
+/** Markdown as a blockquote, paragraphs kept. */
+const quote = (text: string): string =>
+    text
+        .trim()
+        .split('\n')
+        .map((l) => (l.trim() ? `> ${l}` : '>'))
+        .join('\n');
 
 /** A link from `from` (a directory) to `to`, safe for spaces. */
 const link = (label: string, from: string, to: string): string =>
@@ -540,7 +548,7 @@ export function writeFeedback(t: Tuning, c: Case): void {
             '',
         );
         if (f.summary) {
-            say(`> ${cell(f.summary)}`, '');
+            say(quote(f.summary), '');
         }
         if (latest.run?.missedSkills?.length) {
             say(
@@ -806,7 +814,7 @@ export function writeApply(t: Tuning, dir: string): void {
             '',
         );
         if (f.summary) {
-            out.push(`> ${cell(f.summary)}`, '');
+            out.push(quote(f.summary), '');
         }
         if (f.improvements.length === 0) {
             out.push('No improvements asked for.', '');
@@ -1534,7 +1542,7 @@ export function writeStatus(t: Tuning): void {
         );
         if (r?.state === 'difficult') {
             difficult.push(
-                `| ${link(c.id, here, feedbackPath(t, c))} | ${PHASE_WORD[r.phase]} | ${cell(r.reason)} | ${r.phase === 'nomem' ? nomem.length : mem.length} | ${stamp(r.at)} | ${cell(last?.feedback?.summary)} | ${lastRun(attempts.at(-1))} |`,
+                `| ${link(c.id, here, feedbackPath(t, c))} | ${PHASE_WORD[r.phase]} | ${cell(r.reason)} | ${r.phase === 'nomem' ? nomem.length : mem.length} | ${stamp(r.at)} | ${cell(lead(last?.feedback?.summary ?? ''))} | ${lastRun(attempts.at(-1))} |`,
             );
         }
         if (r?.state === 'failed') {
@@ -1620,7 +1628,7 @@ export function writeStatus(t: Tuning): void {
         );
         for (const f of q.pending) {
             out.push(
-                `| ${cell(f.id)} | ${link(f.case, here, feedbackPath(t, { id: f.case }))} | ${PHASE_WORD[f.phase]} | ${f.attempt} | ${f.improvements.length} | ${cell(f.summary)} |`,
+                `| ${cell(f.id)} | ${link(f.case, here, feedbackPath(t, { id: f.case }))} | ${PHASE_WORD[f.phase]} | ${f.attempt} | ${f.improvements.length} | ${cell(lead(f.summary))} |`,
             );
         }
         out.push('');
