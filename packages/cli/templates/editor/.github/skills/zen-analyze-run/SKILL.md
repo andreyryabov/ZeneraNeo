@@ -38,24 +38,26 @@ read whichever run is newest, and that changes under you.
   asks. With no specification, the request itself is the only standard - say
   so in the report.
 
-## 2. Load the skills
+## 2. Load the skills - in one response
 
-Before reading anything, load:
+Every response you spend on a single load re-sends the whole context, so the
+loads go out together. Two steps, before reading anything:
 
-- **zen-inspect** - the graph format, `node`, `--part`, and the diagnosis table
-- **zen-inspect-ask** - how to choose the node and word the question for `ask`
-- **zen-cli** - the commands and their `--json` shapes
-
-Then run `grep -n 'memory:' agents.yaml`. If it prints anything, load
-**zen-memory** now, before step 3 - not later, and not "if needed". What
-"used correctly" and "saved correctly" mean is in that skill and in
-`agents/memory-instructions.md`, not in this one, and an analysis that skipped
-it has rated a run that saved nothing as `ok`.
-
-Then run `grep -nE 'handoffs:|fork:' agents.yaml`. If it prints anything, load
-**zen-topology** now. It is what the Delegation and Forking areas of §4 are
-graded against: what each shape carries, what it costs in tokens, cache and
-time, and the table of graph signatures in its §7.
+1. Run `grep -nE 'memory:|handoffs:|fork:' agents.yaml`.
+2. In the next response, call `skill` once per name below - **all of them in
+   that same response**, side by side. Never one skill per response.
+    - **zen-inspect** - the graph format, `node`, `--part`, and the diagnosis
+      table
+    - **zen-inspect-ask** - how to choose the node and word the question for
+      `ask`
+    - **zen-cli** - the commands and their `--json` shapes
+    - **zen-memory** - when the grep printed a `memory:` line. What "used
+      correctly" and "saved correctly" mean is there and in
+      `agents/memory-instructions.md`, not here; an analysis that skipped it
+      has rated a run that saved nothing as `ok`.
+    - **zen-topology** - when the grep printed a `handoffs:` or `fork:` line.
+      The Delegation and Forking areas of §4 are graded against it: what each
+      shape carries, what it costs, and the table of graph signatures in its §7.
 
 Load **zen-instructions** before you say where a proposed rule should live.
 
@@ -397,7 +399,7 @@ file or prompt, or say the change belongs upstream in zen.
 
 `zen meta finetune` runs you with words after the run directory:
 `case=<id> rev=<n> phase=nomem|mem attempt=<n> feedback=<file>`, and at times
-`missed-skills=<names>` or `guard=<patch>`. When they are
+`missed-skills=<names>` or `recheck=<patch>`. When they are
 there, the run is one try of that dataset case, and besides the report you
 **write `<file>`** - the loop reads it, not your report. Without them, skip this
 section.
@@ -423,11 +425,12 @@ section.
    not match the request, or the prompt line pointing at it was not reached.
    The improvement is `kind: skill-description` on that skill's
    `description:` or that pointer line - not more prose elsewhere.
-5. **`guard=<patch>`** in the words: this run is a check that an apply did not
-   break a case that passed before; the patch is that apply's diff. Grade the
-   rubric as usual. Propose an improvement only when a line the patch added
-   caused a failure: then it is the hunk to narrow or revert, quoted, and
-   nothing else.
+5. **`recheck=<patch>`** in the words: the case passed before, and this run
+   checks it on the prose an apply has since changed; the patch is that
+   apply's diff. Grade the rubric as usual. If it fails, the next apply
+   repairs it from your improvements: when a line the patch added or changed
+   caused the failure, the improvement is that hunk - quoted - to narrow or
+   revert, and nothing else; otherwise propose as for any other run.
 6. **Write the file**, nothing else in it:
 
 ```json

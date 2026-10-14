@@ -100,33 +100,19 @@ export function limits(start: Cost, c: Config): Limits {
     };
 }
 
-const bodies = (c: Cost): number => Object.values(c.skills).reduce((n, b) => n + b, 0);
-
 /** Every limit an edit broke, said so the next attempt can act on it; empty when none. */
-export function overLimits(before: Cost, after: Cost, l: Limits, shrink: boolean): string[] {
+export function overLimits(before: Cost, after: Cost, l: Limits): string[] {
     const out: string[] = [];
     const grew = after.total - before.total;
-    if (shrink) {
-        if (grew > 0) {
-            out.push(
-                `what the agents always read grew by ${grew} bytes (${before.total} -> ${after.total}); a consolidation may only shrink it`,
-            );
-        } else if (grew === 0 && bodies(after) >= bodies(before)) {
-            out.push(
-                `nothing shrank: the agents always read ${after.total} bytes and the skills hold ${bodies(after)}, as before`,
-            );
-        }
-    } else {
-        if (grew > l.budget) {
-            out.push(
-                `what the agents always read grew by ${grew} bytes (${before.total} -> ${after.total}), over the budget of ${l.budget}`,
-            );
-        }
-        if (grew > 0 && after.total > l.ceiling) {
-            out.push(
-                `what the agents always read is ${after.total} bytes, over the ceiling of ${l.ceiling}: past it an apply may add nothing - cut, move or extract to make room`,
-            );
-        }
+    if (grew > l.budget) {
+        out.push(
+            `what the agents always read grew by ${grew} bytes (${before.total} -> ${after.total}), over the budget of ${l.budget}`,
+        );
+    }
+    if (grew > 0 && after.total > l.ceiling) {
+        out.push(
+            `what the agents always read is ${after.total} bytes, over the ceiling of ${l.ceiling}: past it an apply may add nothing - cut, move or extract to make room`,
+        );
     }
     for (const [name, bytes] of Object.entries(after.skills)) {
         if (bytes > l.skillCap && bytes > (before.skills[name] ?? 0)) {

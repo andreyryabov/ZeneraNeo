@@ -977,16 +977,23 @@ takes the next free worker ahead of any new case.
   optimiser with no regulariser and no holdout: each failing case buys a
   sentence, the sentence fixes that case, and every later call reads it. One
   run grew three files from 27 KB to 97 KB over 96 applies. So an apply passes
-  gates ([meta/finetune/cost.ts](packages/cli/src/meta/finetune/cost.ts),
-  [guard.ts](packages/cli/src/meta/finetune/guard.ts)) or is undone: what every
-  call reads - house rules, prompts, preloaded skills, the skill index - may
-  grow by a fixed budget, and by nothing past a ceiling over the start; a few
-  completed cases run again on the edit, and one that fails twice broke it.
-  Skill bodies are counted apart, because they are paid only once loaded:
-  moving a procedure from a prompt into a skill is then a saving the budget
-  sees. A rule needs two cases (one is deferred until a second asks), a case
-  whose only findings are structural stops, and every few applies a
-  consolidation may only shrink the prose.
+  gates ([meta/finetune/cost.ts](packages/cli/src/meta/finetune/cost.ts)) or is
+  undone: what every call reads - house rules, prompts, preloaded skills, the
+  skill index - may grow by a fixed budget, and by nothing past a ceiling over
+  the start. Skill bodies are counted apart, because they are paid only once
+  loaded: moving a procedure from a prompt into a skill is then a saving the
+  budget sees. A rule needs two cases (one is deferred until a second asks), a
+  case whose only findings are structural stops, and every apply tidies up the
+  files it touched - a separate shrink-only consolidation every few applies
+  failed at that size and paused every worker while it ran.
+- **Regressions are repaired forward, not undone.** After each apply a few
+  completed cases run again on it
+  ([meta/finetune/recheck.ts](packages/cli/src/meta/finetune/recheck.ts)) - as
+  ordinary work on a worker, so nothing waits. One that fails both tries sends
+  its feedback to the next apply like any parked case. The guard this replaced
+  ran the same cases inside the apply, with every worker idle, and undid the
+  whole edit for one broken case; a later apply stacked on top made undoing
+  costlier than repairing.
 - **Resuming is calling `train` again.** Each step writes its result into the
   try's folder and is skipped when it is there; an applied request is recorded
   by id. No state machine and no event replay: the folders are the state.
@@ -1384,6 +1391,35 @@ means nothing, and blocks freed inside the machine are not handed back until
 something trims them. `machine inspect` no longer carries the path, so the
 documented default location is checked and the line is simply absent when the
 file is not there.
+
+### 9.5 Where the memory and cpu go
+
+`zen sandbox top` exists because the question people arrive with - "Virtual
+Machine Service for vfkit is using 15 GB, is that my sandboxes?" - has three
+answers that disagree, and each is true for its own layer:
+
+- **This computer.** Off Linux one process holds the whole machine. On macOS
+  `ps` reports its RSS, which is small because macOS compresses or swaps idle
+  pages, while Activity Monitor reports its _footprint_, which counts those
+  pages too and is the number people see. `footprint -f bytes` gives the exact
+  figure without root. It grows with anything the machine has ever touched.
+- **The machine.** Linux's own split, from `podman info`: in use (total minus
+  available), cache (available minus free, handed back on demand) and free.
+  What macOS counts beyond in-use plus cache is shown as _held, unused_: freed
+  inside, never returned, and given back only by a machine restart.
+- **The containers.** `podman stats` with the raw `ContainerStats` template
+  rather than the formatted columns, so cpu is computed from the change in
+  `CPUNano` over `SystemNano` between two readings - podman's own percentage
+  without a previous reading is a lifetime average. Every running container
+  is listed, not only zen's: they all share the machine.
+
+One layout serves the live screen and the one-shot report, as lines of styled
+spans, so `--once` prints what the screen showed. The screen is drawn only for
+a person at a terminal; `--json`, `--once` or a pipe print once, after two
+readings a second apart. Every figure carries a short note on what it means
+(`--brief` drops them), and the report ends with what to do: orphaned
+containers to clean, a machine near full or a container near its cap, and the
+restart that returns held memory.
 
 ## 10. Memory - `zen memory`
 

@@ -27,11 +27,13 @@ import {
     Registry,
     sessionIds,
 } from '../projects.ts';
+import { layout, ResourceSampler, type Line, type Tone } from '../resources.ts';
 import {
     ago,
     bold,
     bytes,
     count,
+    cyan,
     dim,
     green,
     json,
@@ -44,7 +46,13 @@ import {
     yellow,
 } from '../term.ts';
 
-const USAGE = 'zen sandbox [status|up|pull|clean|disk] [options]';
+const USAGE = 'zen sandbox [status|top|up|pull|clean|disk] [options]';
+const SUBCOMMANDS = ['status', 'top', 'up', 'pull', 'clean', 'disk'];
+
+/** `top` refreshes this often unless told otherwise. */
+const DEFAULT_INTERVAL_S = 2;
+/** A one-shot report still needs two readings for a cpu figure. */
+const ONCE_INTERVAL_MS = 1000;
 
 /** Enough to see the pattern; the rest are a number. */
 const LISTED = 6;
@@ -61,6 +69,10 @@ interface Flags {
     image?: string;
     stopped?: boolean;
     idle?: boolean;
+    once?: boolean;
+    interval?: string;
+    brief?: boolean;
+    theme?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -79,6 +91,8 @@ export const sandbox: Command = {
     banner: { head: 'Zenera', accent: 'Sandbox', subtitle: 'Container Isolation', hue: 'azure' },
     details: [
         '  status                 What is installed, running and pulled. Changes nothing.',
+        '  top                    Memory and cpu, live: this computer, the machine, each',
+        '                         container — with a note on what every figure means.',
         '  up                     Install if asked, start the machine, pull or build the image.',
         '  pull                   Just the image: pulled, or built from the project\u2019s Dockerfile.',
         '  clean                  Remove every container this CLI created.',
@@ -88,6 +102,10 @@ export const sandbox: Command = {
         '  --image <ref>          Use this image instead of the project\u2019s.',
         '  --idle                 With clean: only what no live run is using — stopped ones,',
         '                         and running ones whose run was killed before it cleaned up.',
+        '  --once                 With top: measure once and print, no live screen. Also',
+        '                         what happens with --json or when output is not a terminal.',
+        '  --interval <seconds>   With top: how often the live screen refreshes (default 2).',
+        '  --brief                With top: the figures without the notes explaining them.',
         '',
         'Without --project this is the project you are standing in, and standing',
         'nowhere is an answer: `status` then reports the engine and every container',
@@ -104,12 +122,16 @@ export const sandbox: Command = {
                 image: { type: 'string' },
                 stopped: { type: 'boolean' },
                 idle: { type: 'boolean' },
+                once: { type: 'boolean' },
+                interval: { type: 'string' },
+                brief: { type: 'boolean' },
+                theme: { type: 'string' },
             },
             USAGE,
         );
 
         const what = positionals[0] ?? 'status';
-        if (!['status', 'up', 'pull', 'clean', 'disk'].includes(what)) {
+        if (!SUBCOMMANDS.includes(what)) {
             throw usageError(`unknown subcommand: ${what}`, USAGE);
         }
         if (positionals.length > 1) {
@@ -136,6 +158,8 @@ export const sandbox: Command = {
                     );
                 }
                 return up(image, build, true, ctx.json, true);
+            case 'top':
+                return top(values, ctx.json);
             case 'clean':
                 return clean(ctx.json, Boolean(values.idle || values.stopped));
             case 'disk':
@@ -246,7 +270,69 @@ async function status(
     if (!found.installed || !found.ready) {
         note('');
         note(dim('run `zen sandbox up` to fix what can be fixed.'));
+    } else {
+        note('');
+        note(dim('memory and cpu, live: zen sandbox top'));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Memory and cpu
+//
+// A live screen when a person is watching, one report when not: the same
+// layout either way, so what a script reads is what the screen showed.
+// ---------------------------------------------------------------------------
+
+async function top(values: Flags, asJson: boolean): Promise<void> {
+    const interval = values.interval === undefined ? DEFAULT_INTERVAL_S : Number(values.interval);
+    if (!Number.isFinite(interval) || interval < 0.5 || interval > 3600) {
+        throw usageError(
+            `--interval must be a number of seconds from 0.5 to 3600, not ${values.interval}`,
+            USAGE,
+        );
+    }
+    const sampler = new ResourceSampler();
+    const live =
+        !asJson && !values.once && Boolean(process.stdout.isTTY) && Boolean(process.stdin.isTTY);
+    if (live) {
+        const { watch } = await import('../tui/sandbox.tsx');
+        await watch({
+            sampler,
+            intervalMs: interval * 1000,
+            explain: !values.brief,
+            theme: values.theme,
+        });
+        return;
+    }
+
+    // The first reading has nothing to compare against, so its cpu figures are
+    // lifetime averages; the second one is over a second of real time.
+    await sampler.next();
+    await new Promise((done) => setTimeout(done, ONCE_INTERVAL_MS));
+    const view = await sampler.next();
+    if (asJson) {
+        json(view);
+        return;
+    }
+    const width = process.stdout.columns || Number(process.env.COLUMNS) || 100;
+    writeAll(
+        layout(view, { width, explain: !values.brief, sort: 'memory', wrapNotes: true }).map(ansi),
+    );
+}
+
+const PAINT: Record<Tone, (s: string) => string> = {
+    plain: (s) => s,
+    strong: bold,
+    heading: (s) => bold(cyan(s)),
+    dim,
+    good: green,
+    warn: yellow,
+    bad: red,
+    accent: cyan,
+};
+
+function ansi(line: Line): string {
+    return line.map((s) => PAINT[s.tone ?? 'plain'](s.text)).join('');
 }
 
 /**

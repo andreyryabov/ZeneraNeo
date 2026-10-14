@@ -215,12 +215,12 @@ export function snapshot(t: Tuning): Snapshot {
         if (!w.case || (w.step !== 'run' && w.step !== 'analyze')) {
             continue;
         }
-        const dir = t.attemptDir(w.case, w.phase ?? 'nomem', w.attempt ?? 1);
+        const dir = t.workDir({ ...w, case: w.case });
         now.push({
             key: `w${w.slot}`,
             who: `worker ${w.slot}`,
             step: w.step,
-            what: `${w.case.id} · ${PHASE_WORD[w.phase ?? 'nomem']} try ${w.attempt ?? 1}`,
+            what: `${w.case.id} · ${w.recheck ? 'recheck' : PHASE_WORD[w.phase ?? 'nomem']} try ${w.attempt ?? 1}`,
             sinceMs: clock - w.since,
             stage: w.step,
             act: watch(join(dir, w.step === 'run' ? 'events.jsonl' : 'analyze.events.jsonl')),
@@ -228,40 +228,21 @@ export function snapshot(t: Tuning): Snapshot {
     }
     const q = t.improvements;
     if (q.current?.dir) {
-        const gate = q.current.step === 'check' || q.current.step === 'guard';
         now.push({
             key: 'apply',
             who: 'applier',
-            step: gate ? q.current.step! : 'apply',
-            what:
-                q.current.kind === 'consolidate'
-                    ? `consolidate ${basename(q.current.dir)}`
-                    : `apply ${basename(q.current.dir)} · ${q.current.requests} request(s)`,
+            step: q.current.step === 'check' ? 'check' : 'apply',
+            what: `apply ${basename(q.current.dir)} · ${q.current.requests} request(s)`,
             sinceMs: clock - q.current.since,
             stage: 'apply',
             act: watch(join(q.current.dir, 'apply.events.jsonl')),
         });
-        for (const g of q.current.guard ?? []) {
-            if (g.step !== 'run' && g.step !== 'analyze') {
-                continue;
-            }
-            now.push({
-                key: `guard-${g.case}`,
-                who: 'guard',
-                step: g.step,
-                what: g.try > 1 ? `try ${g.try} · ${g.case}` : g.case,
-                sinceMs: clock - g.since,
-                // Guard tokens are the apply's cost, as USAGE.md counts them.
-                stage: 'apply',
-                act: watch(join(g.dir, g.step === 'run' ? 'events.jsonl' : 'analyze.events.jsonl')),
-            });
-        }
     } else if (q.current) {
         now.push({
             key: 'apply',
             who: 'applier',
             step: 'waiting',
-            what: `${q.current.kind === 'consolidate' ? 'consolidation' : `${q.pending.length} request(s)`}, ${q.runs} run(s) to finish first`,
+            what: `${q.pending.length} request(s), ${q.runs} run(s) to finish first`,
             sinceMs: clock - q.current.since,
         });
     }

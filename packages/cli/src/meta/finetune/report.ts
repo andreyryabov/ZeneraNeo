@@ -13,8 +13,8 @@ import { safe } from '../host.ts';
 import { DatasetStore } from './dataset/store.ts';
 import { type Case, DATASET_DIR } from './dataset/types.ts';
 import { type Feedback, feedbackId, type Phase, readFeedback } from './feedback.ts';
-import { GUARD_TRIES, type GuardResult, type GuardSeat } from './guard.ts';
 import type { AppliedFile, Decisions, Deferred } from './improvements.ts';
+import { type Recheck, RECHECK_TRIES } from './recheck.ts';
 import { resultOf, selection } from './sampler.ts';
 import type { Run } from './train.ts';
 import { readJson, type Tuning, type Worker } from './tuning.ts';
@@ -800,7 +800,7 @@ export function writeApply(t: Tuning, dir: string): void {
             run?.report ? link('report', here, run.report) : '',
         ].filter(Boolean);
         out.push(
-            `### ${n + 1}. ${f.case} - ${PHASE_WORD[f.phase]}, try ${f.attempt}: ${f.verdict}, rubric ${rubricScore(f)}`,
+            `### ${n + 1}. ${f.case} - ${f.recheck ? `recheck after ${f.recheck}` : PHASE_WORD[f.phase]}, try ${f.attempt}: ${f.verdict}, rubric ${rubricScore(f)}`,
             '',
             `\`${f.id}\` · ${links.join(' · ')}`,
             '',
@@ -878,17 +878,19 @@ export function writeApply(t: Tuning, dir: string): void {
         out.push(
             '## Cases sent back to run',
             '',
-            ...inputs.map(
-                (f) =>
-                    `- ${link(f.case, here, feedbackPath(t, { id: f.case }))} - ${PHASE_WORD[f.phase]}, try ${f.attempt + 1} on v${applied.to}`,
+            ...inputs.map((f) =>
+                f.recheck
+                    ? `- ${link(f.case, here, feedbackPath(t, { id: f.case }))} - regressed after ${f.recheck}; rechecked first on v${applied.to}`
+                    : `- ${link(f.case, here, feedbackPath(t, { id: f.case }))} - ${PHASE_WORD[f.phase]}, try ${f.attempt + 1} on v${applied.to}`,
             ),
             '',
         );
     }
+    out.push(...recheckSection(t, here, (r) => r.apply === name));
     atomic(applyPath(dir), `${out.join('\n')}\n`);
 }
 
-/** The budget and the guard: what the edit cost every later call, and whether it broke a case that passed. */
+/** The budget: what the edit cost every later call. */
 function gates(t: Tuning, dir: string, applied: AppliedFile | undefined): string[] {
     const out: string[] = [];
     const budget = readJson<{
@@ -913,32 +915,54 @@ function gates(t: Tuning, dir: string, applied: AppliedFile | undefined): string
             out.push(readFileSync(over, 'utf8').trim().replace(/^#/gm, '###'), '');
         }
     }
-    const guarded = readJson<GuardResult[]>(join(dir, 'guard.json'));
-    if (guarded?.length) {
+    return out;
+}
+
+const RECHECK_WORD: Record<Recheck['state'], string> = {
+    queued: 'queued',
+    running: 'running',
+    passed: 'passed',
+    regressed: 'regressed',
+    void: 'void',
+};
+
+/** Rechecks, newest first: on an apply's page its own, on STATUS.md the latest. */
+function recheckSection(
+    t: Tuning,
+    here: string,
+    which: (r: Recheck) => boolean,
+    limit = 50,
+): string[] {
+    const all = t.rechecks.all().filter(which);
+    if (all.length === 0) {
+        return [];
+    }
+    const n = (s: Recheck['state']): number => all.filter((r) => r.state === s).length;
+    const out = [
+        '## Rechecks',
+        '',
+        `Cases that passed before, run again without memory on the version an apply made. One that fails both of its ${RECHECK_TRIES} tries has regressed, and its fixes join the improvement queue.`,
+        '',
+        `passed **${n('passed')}** · regressed **${n('regressed')}** · void **${n('void')}** · queued or running **${n('queued') + n('running')}**`,
+        '',
+        '| Apply | Case | State | Tries | Request | Note |',
+        '| --- | --- | --- | --- | --- | --- |',
+    ];
+    for (const r of [...all].reverse().slice(0, limit)) {
+        const tries = t.rechecks
+            .tryDirs(r)
+            .map((d, i) => {
+                const word = r.tries?.[i] ?? 'running';
+                return existsSync(join(d, 'analysis.md'))
+                    ? link(word, here, join(d, 'analysis.md'))
+                    : link(word, here, d);
+            })
+            .join(', ');
         out.push(
-            '## The guard',
-            '',
-            'Cases that passed before, run again on the edit. A case is broken only when both tries fail.',
-            '',
-            '| Case | Tries | Broken |',
-            '| --- | --- | --- |',
-            ...guarded.map(
-                (g) =>
-                    `| ${link(g.case, dir, feedbackPath(t, { id: g.case }))} | ${g.tries
-                        .map((x) =>
-                            existsSync(join(x.dir, 'analysis.md'))
-                                ? link(x.verdict, dir, join(x.dir, 'analysis.md'))
-                                : x.verdict,
-                        )
-                        .join(', ')} | ${g.broken ? 'yes' : 'no'} |`,
-            ),
-            '',
+            `| ${link(r.apply, here, applyPath(join(t.improvements.dir, r.apply)))} | ${link(r.case, here, feedbackPath(t, { id: r.case }))} | ${RECHECK_WORD[r.state]} | ${tries || '-'} | ${cell(r.request)} | ${cell(r.note)} |`,
         );
     }
-    const broke = join(dir, 'guard.md');
-    if (existsSync(broke)) {
-        out.push(readFileSync(broke, 'utf8').trim().replace(/^#/gm, '###'), '');
-    }
+    out.push('');
     return out;
 }
 
@@ -989,9 +1013,7 @@ function memorySection(t: Tuning, here: string): string[] {
 
 function idleWord(t: Tuning): string {
     if (t.improvements.applying) {
-        return t.improvements.current?.kind === 'consolidate'
-            ? 'idle - no run starts during a consolidation'
-            : 'idle - no run starts during an apply';
+        return 'idle - no run starts during an apply';
     }
     return t.drained ? 'idle - no case left to start' : 'idle';
 }
@@ -1130,20 +1152,6 @@ const STEP_WORD: Record<Worker['step'], string> = {
     parked: 'parked',
 };
 
-const GUARD_WORD: Record<GuardSeat['step'], string> = {
-    run: 'running',
-    analyze: 'grading',
-    passed: 'passed',
-    broken: 'broken',
-};
-
-const GUARD_PAINT: Record<GuardSeat['step'], string> = {
-    run: 'run',
-    analyze: 'analyze',
-    passed: 'done',
-    broken: 'bad',
-};
-
 // Edges end on the box, so it keeps LR; the invisible chain keeps the slots in order.
 const inOrder = (prefix: string, n: number): string[] =>
     n > 1
@@ -1168,27 +1176,16 @@ const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n =
 function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
     const q = t.improvements;
     const m = t.memories;
-    const { applyAt, mergeEvery, consolidateEvery: every } = t.config;
-    const isConsolidation = (a: { dir: string; applied?: AppliedFile }): boolean =>
-        a.applied?.kind === 'consolidate' || existsSync(join(a.dir, 'consolidate.json'));
-    const all = q.applies();
-    const last = all.filter((a) => !isConsolidation(a)).at(-1);
-    const lastConsolidation = all.filter(isConsolidation).at(-1);
-    const consolidating = q.applying && q.current?.kind === 'consolidate';
-    const applying = q.applying && !consolidating;
+    const { applyAt, mergeEvery } = t.config;
+    const last = q.applies().at(-1);
+    const applying = q.applying;
     const took = q.current ? since(Date.now() - q.current.since) : '';
     const waiting = m.unmerged();
     const merged = m.merges().filter((x) => x.ok);
     const running = t.workers.filter((w) => w.case && w.step === 'run').length;
     const grading = t.workers.filter((w) => w.case && w.step === 'analyze').length;
-    const seats = q.applying ? (q.current?.guard ?? []) : [];
-    const unsettled = seats.filter((g) => g.step === 'run' || g.step === 'analyze').length;
-    const gate =
-        q.current?.step === 'guard'
-            ? `guard · ${unsettled} of ${seats.length} still going`
-            : q.current?.step === 'check'
-              ? 'zen check'
-              : '';
+    const rechecking = t.workers.filter((w) => w.case && w.recheck).length;
+    const rechecksQueued = t.rechecks.all().filter((r) => r.state === 'queued').length;
     const paint: Record<string, string[]> = {};
     const fill = (id: string, cls: string): void => {
         (paint[cls] ??= []).push(id);
@@ -1203,13 +1200,7 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
         '        direction LR',
     ];
     click('DS', join(t.root, DATASET_DIR), 'the dataset');
-    const paused = consolidating
-        ? 'paused · tidy-up'
-        : applying
-          ? 'paused · fixes'
-          : t.drained
-            ? 'nothing left to start'
-            : 'idle';
+    const paused = applying ? 'paused · fixes' : t.drained ? 'nothing left to start' : 'idle';
     for (const w of t.workers) {
         const id = `W${w.slot}`;
         if (!w.case) {
@@ -1217,17 +1208,28 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
             fill(id, 'idle');
             continue;
         }
-        const tries = w.phase === 'mem' ? t.config.memTries : t.config.tries;
+        const tries = w.recheck
+            ? RECHECK_TRIES
+            : w.phase === 'mem'
+              ? t.config.memTries
+              : t.config.tries;
         const started = w.attempt !== undefined;
+        const what = w.recheck
+            ? `recheck after ${w.recheck.apply}`
+            : PHASE_WORD[w.phase ?? 'nomem'];
         out.push(
             `        ${id}("${lines(
                 `**worker ${w.slot}** · ${started ? `${STEP_WORD[w.step]} ${since(Date.now() - w.since)}` : 'starting'}`,
                 safe(w.case.id, 36),
-                started ? `${PHASE_WORD[w.phase ?? 'nomem']} · try ${w.attempt} of ${tries}` : '',
+                started ? `${what} · try ${w.attempt} of ${tries}` : '',
             )}")`,
         );
         fill(id, w.step === 'run' ? 'run' : w.step === 'analyze' ? 'analyze' : 'case');
-        click(id, feedbackPath(t, w.case), 'the case: rubric, tries, decisions');
+        click(
+            id,
+            w.recheck ? w.recheck.dir : feedbackPath(t, w.case),
+            w.recheck ? 'this recheck try' : 'the case: rubric, tries, decisions',
+        );
     }
 
     const queued = q.pending
@@ -1239,22 +1241,31 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
     const applier = applying
         ? q.runs > 0
             ? `waiting for ${plural(q.runs, 'run')} to finish`
-            : [`${plural(q.inApply.length, 'case')} · ${took}`, gate].filter(Boolean).join('\n')
-        : consolidating && q.pending.length > 0
-          ? 'waits for the tidy-up'
-          : `idle${last ? ` · last ${last.name}` : ''}`;
+            : [
+                  `${plural(q.inApply.length, 'case')} · ${took}`,
+                  q.current?.step === 'check' ? 'zen check' : '',
+              ]
+                  .filter(Boolean)
+                  .join('\n')
+        : `idle${last ? ` · last ${last.name}` : ''}`;
     out.push(
         ...inOrder('W', t.workers.length),
         '    end',
         '    WORKERS --> V(["graded"])',
         `    V -.->|"${lines('passed without memory:', 'again with memory')}"| WORKERS`,
         `    V -->|"out of tries"| X("difficult · ${counts.difficult}")`,
-        `    V -->|"failed, tries left"| Q`,
+        `    V -->|"${lines('failed, tries left,', 'or a recheck failed')}"| Q`,
         `    V -->|"passed with memory"| CD`,
         '    subgraph LEARN["fixing the instructions"]',
         `        Q("${lines(`**waiting for a fix · ${q.pending.length} of ${applyAt}**`, ...(queued.length ? queued : ['empty']))}")`,
-        `        Q -->|"${lines(`${applyAt} waiting, or`, 'nothing else to run')}"| P("${lines('**apply fixes**', 'an agent edits the instructions,', 'then those cases run again', applier)}")`,
+        `        Q -->|"${lines(`${applyAt} waiting, or`, 'nothing else to run')}"| P("${lines('**apply fixes**', 'an agent edits the instructions', 'and tidies what it touched', applier)}")`,
         `        P -->|"new version"| S[("${lines(`**instructions · v${t.system.version()}**`, 'every new run reads these')}")]`,
+        '    end',
+        ...(t.config.recheck > 0
+            ? [
+                  `    S -.->|"${lines(`recheck ${t.config.recheck} cases that passed`, `${rechecksQueued} queued`)}"| WORKERS`,
+              ]
+            : []),
     );
     fill('Q', q.pending.length > 0 ? 'full' : 'empty');
     fill('P', applying ? 'busy' : 'off');
@@ -1267,53 +1278,13 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
     if (applied) {
         click('P', applyPath(applied), applying ? 'this apply' : 'the last apply');
     }
-    if (every > 0) {
-        const left = Math.max(0, every - q.sinceConsolidation());
-        const tidy = consolidating
-            ? q.runs > 0
-                ? `waiting for ${plural(q.runs, 'run')} to finish`
-                : [`${q.current?.name ?? ''} · ${took}`, gate].filter(Boolean).join('\n')
-            : left === 0
-              ? 'due now'
-              : `next after ${plural(left, 'more apply', 'more applies')}`;
-        out.push(
-            `        P -->|"every ${plural(every, 'apply', 'applies')}"| N("${lines('**tidy up**', 'shorter instructions, no new rules', tidy)}")`,
-            '        N -->|"new version"| S',
-        );
-        fill('N', consolidating ? 'busy' : 'off');
-        const shown = consolidating && q.current?.dir ? q.current.dir : lastConsolidation?.dir;
-        if (shown) {
-            click('N', applyPath(shown), consolidating ? 'this tidy-up' : 'the last tidy-up');
-        }
-    }
     click('S', t.system.snapshotDir(t.system.version()), 'this version of the instructions');
-    if (seats.length > 0) {
-        out.push(
-            `        ${consolidating ? 'N' : 'P'} -.->|"${lines('rerun cases', 'that passed')}"| GUARD`,
-            `        subgraph GUARD["guard · does the edit break a case that passed?"]`,
-            '            direction LR',
-        );
-        seats.forEach((g, i) => {
-            const id = `G${i + 1}`;
-            const done = g.step === 'passed' || g.step === 'broken';
-            out.push(
-                `            ${id}("${lines(
-                    `**${safe(g.case, 36)}**`,
-                    `${GUARD_WORD[g.step]}${done ? '' : ` ${since(Date.now() - g.since)}`} · try ${g.try} of ${GUARD_TRIES}`,
-                )}")`,
-            );
-            fill(id, GUARD_PAINT[g.step]);
-            click(id, g.dir, 'this try: run, analysis, logs');
-        });
-        out.push(...inOrder('G', seats.length).map((l) => `    ${l}`), '        end');
-    }
 
     const kept = waiting.slice(0, 6).map((s) => safe(s.case, 32));
     if (waiting.length > 6) {
         kept.push(`and ${waiting.length - 6} more`);
     }
     out.push(
-        '    end',
         '    subgraph KEEP["keeping memory"]',
         `        CD("completed · ${counts.completed}") -->|"keep its memory"| M("${lines(`**memory to merge · ${waiting.length} of ${mergeEvery}**`, ...(kept.length ? kept : ['empty']))}")`,
         `        M -->|"${lines(`${mergeEvery} waiting, or`, 'the tuning ends')}"| MG[("${lines('**merged memory**', plural(merged.length, 'graph'))}")]`,
@@ -1345,21 +1316,11 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
 
     const now: string[] = [];
     const workers = t.workers.length;
-    if (consolidating) {
-        now.push(
-            `- **Tidying up the instructions** (orange) - ${q.runs > 0 ? `starts once the ${plural(q.runs, 'run')} in progress finish` : `running for ${took}`}. It merges repeated rules and cuts what is not needed; it adds no new rule. No case starts until it is done${t.busy() === 0 ? `, so all ${workers} workers are paused` : ''}.`,
-        );
-    } else if (applying) {
+    if (applying) {
         now.push(
             q.runs > 0
                 ? `- **About to write fixes into the instructions** (orange): waiting for the ${plural(q.runs, 'run')} in progress to finish, so none of them reads half-edited instructions. No new case starts meanwhile.`
-                : `- **Writing fixes into the instructions** (orange) for ${plural(q.inApply.length, 'case')} - running for ${took}. No case starts until it is done; then those cases run again on the new version.`,
-        );
-    }
-    if (seats.length > 0) {
-        const passed = seats.filter((g) => g.step === 'passed').length;
-        now.push(
-            `- **Checking the edit (guard)**: ${plural(seats.length, 'case')} that passed before run again on the new instructions, all at once - ${unsettled} still going, ${passed} passed. A case that fails ${GUARD_TRIES} tries in a row undoes the edit.`,
+                : `- **Writing fixes into the instructions** (orange) for ${plural(q.inApply.length, 'case')} - running for ${took}. No case starts until it is done; then those cases run again on the new version, and ${plural(t.config.recheck, 'case')} that passed before are rechecked on it.`,
         );
     }
     if (running + grading > 0) {
@@ -1367,11 +1328,18 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
             running > 0 ? `${running} running a case (blue)` : '',
             grading > 0 ? `${grading} grading a finished run (purple)` : '',
         ].filter(Boolean);
-        now.push(`- **${t.busy()} of ${workers} workers busy**: ${doing.join(', ')}.`);
+        now.push(
+            `- **${t.busy()} of ${workers} workers busy**: ${doing.join(', ')}${rechecking > 0 ? ` - ${rechecking} of them rechecking a case that passed before` : ''}.`,
+        );
+    }
+    if (rechecksQueued > 0) {
+        now.push(
+            `- **${plural(rechecksQueued, 'recheck')} queued**: cases that passed, to run again on the latest instructions before any new case starts.`,
+        );
     }
     if (q.pending.length > 0) {
         now.push(
-            `- **${plural(q.pending.length, 'case')} waiting for a fix** (yellow). ${consolidating ? 'After the tidy-up, their' : 'Their'} fixes are written once ${applyAt} are waiting, or when nothing else is left to run${applying ? ' - in the round after this one' : ''}.`,
+            `- **${plural(q.pending.length, 'case')} waiting for a fix** (yellow). Their fixes are written once ${applyAt} are waiting, or when nothing else is left to run${applying ? ' - in the round after this one' : ''}.`,
         );
     }
     if (counts.queued > 0) {
@@ -1390,14 +1358,14 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
         '',
         `1. A worker takes a case and runs the agents on it **without memory**; then another agent grades the run against the case's rubric.`,
         `2. **Failed:** the grader suggests fixes to the agents' instructions. The case waits for a fix (yellow) and its worker takes another case.`,
-        `3. Once ${applyAt} cases are waiting, or nothing else is left to run, one agent writes their fixes into the instructions - an **apply** (orange). No case starts while the instructions change; afterwards the waiting cases run again on the new version.`,
-        ...(every > 0
+        `3. Once ${applyAt} cases are waiting, or nothing else is left to run, one agent writes their fixes into the instructions - an **apply** (orange) - and tidies up the files it touched: repeated rules merged, contradictions cut. No case starts while the instructions change; afterwards the waiting cases run again on the new version.`,
+        ...(t.config.recheck > 0
             ? [
-                  `4. Every ${plural(every, 'apply', 'applies')}, the instructions are **tidied up** - a consolidation: repeated rules are merged and clutter is cut, and no rule is added.`,
+                  `4. After each apply, ${plural(t.config.recheck, 'case')} that passed before **run again** on the new version, as ordinary work - a recheck. One that fails ${RECHECK_TRIES} tries has regressed: its fixes wait for the next apply like any other.`,
               ]
             : []),
-        `${every > 0 ? 5 : 4}. **Passed:** the case runs again **with memory**. When that passes too, the case is completed and its memory is kept; kept memories are merged ${mergeEvery} at a time (teal).`,
-        `${every > 0 ? 6 : 5}. A case still failing after ${plural(t.config.tries, 'try', 'tries')} without memory, or ${t.config.memTries} with, is marked **difficult**.`,
+        `${t.config.recheck > 0 ? 5 : 4}. **Passed:** the case runs again **with memory**. When that passes too, the case is completed and its memory is kept; kept memories are merged ${mergeEvery} at a time (teal).`,
+        `${t.config.recheck > 0 ? 6 : 5}. A case still failing after ${plural(t.config.tries, 'try', 'tries')} without memory, or ${t.config.memTries} with, is marked **difficult**.`,
         '',
         '</details>',
         '',
@@ -1609,13 +1577,21 @@ export function writeStatus(t: Tuning): void {
             );
             continue;
         }
-        const dir = t.attemptDir(w.case, w.phase ?? 'nomem', w.attempt ?? 1);
+        const dir = t.workDir({ ...w, case: w.case });
         const run = readJson<Run>(join(dir, 'run.json'));
         const session = existsSync(join(t.caseDir(w.case), 'session'))
             ? readFileSync(join(t.caseDir(w.case), 'session'), 'utf8').trim()
             : undefined;
+        const phase = w.recheck
+            ? `recheck after ${w.recheck.apply}`
+            : PHASE_WORD[w.phase ?? 'nomem'];
+        const tries = w.recheck
+            ? RECHECK_TRIES
+            : w.phase === 'mem'
+              ? t.config.memTries
+              : t.config.tries;
         out.push(
-            `| ${w.slot} | ${link(w.case.id, here, feedbackPath(t, w.case))} | ${cell(w.case.class)} | ${PHASE_WORD[w.phase ?? 'nomem']} | ${w.attempt} / ${w.phase === 'mem' ? t.config.memTries : t.config.tries} | ${w.step} | ${since(Date.now() - w.since)} | ${run ? `${link('run', here, run.dir)}${run.report ? ` · ${link('report', here, run.report)}` : ''}` : '-'} | ${existsSync(join(dir, 'analysis.md')) ? link('analysis', here, join(dir, 'analysis.md')) : '-'} | ${session ? `\`zen meta resume ${basename(t.root)} ${session}\`` : '-'} |`,
+            `| ${w.slot} | ${link(w.case.id, here, feedbackPath(t, w.case))} | ${cell(w.case.class)} | ${phase} | ${w.attempt} / ${tries} | ${w.step} | ${since(Date.now() - w.since)} | ${run ? `${link('run', here, run.dir)}${run.report ? ` · ${link('report', here, run.report)}` : ''}` : '-'} | ${existsSync(join(dir, 'analysis.md')) ? link('analysis', here, join(dir, 'analysis.md')) : '-'} | ${session && !w.recheck ? `\`zen meta resume ${basename(t.root)} ${session}\`` : '-'} |`,
         );
     }
     for (const w of t.workers) {
@@ -1633,9 +1609,7 @@ export function writeStatus(t: Tuning): void {
     out.push('', `## Improvement queue - ${q.pending.length} of ${t.config.applyAt} parked`, '');
     out.push(
         q.applying
-            ? q.current?.kind === 'consolidate'
-                ? 'Consolidating now: no new run starts until it is done.'
-                : 'Applying now: no new run starts until it is done.'
+            ? 'Applying now: no new run starts until it is done.'
             : `A parked case gives its worker back, so another case runs meanwhile. The next apply comes when ${Math.max(0, t.config.applyAt - q.pending.length)} more park, or once nothing is running and no case is left to start; woken cases take a worker before new ones.`,
         '',
     );
@@ -1704,7 +1678,8 @@ export function writeStatus(t: Tuning): void {
         out.push('');
     }
 
-    const allStages = mergeStages(everything, {
+    out.push(...recheckSection(t, here, () => true, 30));
+    const allStages = mergeStages(everything, t.rechecks.tokens(), {
         apply: mergeModels(...applies.map((a) => applyTokens(a.dir))),
     });
     t.progress = { counts, total: cases.length, spent: allStages };
@@ -1713,7 +1688,7 @@ export function writeStatus(t: Tuning): void {
         out.push(
             '## Tokens',
             '',
-            'Every try of every case so far, and every apply.',
+            'Every try of every case so far, every recheck, and every apply.',
             '',
             ...tokenRows,
         );

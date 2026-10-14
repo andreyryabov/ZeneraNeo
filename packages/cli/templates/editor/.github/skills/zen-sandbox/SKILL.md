@@ -18,7 +18,7 @@ and no argv length to overflow.
 
 The container engine is **Podman** (rootless by default).
 
-For the CLI subcommands (`zen sandbox status`, `up`, `pull`, `clean`, `disk`)
+For the CLI subcommands (`zen sandbox status`, `top`, `up`, `pull`, `clean`, `disk`)
 and command-line options, see the [zen-cli skill](../zen-cli/SKILL.md) and its
 dedicated reference document [sandbox.md](../zen-cli/references/sandbox.md).
 
@@ -260,6 +260,7 @@ Use the `zen sandbox` commands via terminal to inspect and manage container stat
 
 ```sh
 zen sandbox status          # Check podman version, machine status, and active containers
+zen sandbox top --once      # Memory and cpu of the machine and every running container
 zen sandbox up              # Start VM (macOS) and pull or build the required image
 zen sandbox pull            # Re-pull base image or force build of sandbox/Dockerfile
 zen sandbox clean           # Force remove all zn-* containers created by this CLI

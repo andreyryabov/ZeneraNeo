@@ -18,6 +18,7 @@ import { Improvements } from './improvements.ts';
 import { Journal } from './journal.ts';
 import type { Snapshot } from './live.ts';
 import { Memories } from './memories.ts';
+import { Rechecks } from './recheck.ts';
 import { writeStatus } from './report.ts';
 import { SystemVersions } from './system.ts';
 import type { ByStage } from './usage.ts';
@@ -45,13 +46,11 @@ export interface Config {
     mergeEvery: number;
     seed: number;
     /** completed cases run again after each apply, to catch what it broke */
-    guard: number;
+    recheck: number;
     /** bytes one apply may add to what the agents always read */
     budget: number;
     /** percent over the start past which an apply may add nothing */
     maxGrowth: number;
-    /** a consolidation after this many applies; 0 never */
-    consolidateEvery: number;
     /** bytes one on-demand skill may hold */
     skillCap: number;
     /** skills one agent may see */
@@ -69,10 +68,9 @@ export const DEFAULTS: Config = {
     memTries: 3,
     mergeEvery: 3,
     seed: 1,
-    guard: 3,
+    recheck: 3,
     budget: 1500,
     maxGrowth: 50,
-    consolidateEvery: 5,
     skillCap: 12_000,
     maxSkills: 10,
 };
@@ -86,6 +84,8 @@ export interface Worker {
     attempt?: number;
     step: Step;
     since: number;
+    /** a recheck: the apply whose version it runs on, and the try's folder */
+    recheck?: { apply: string; dir: string };
 }
 
 /** A case in flight. It holds a worker only while it runs or is analyzed; parked, it holds none. */
@@ -145,6 +145,7 @@ export class Tuning {
     readonly system: SystemVersions;
     readonly journal: Journal;
     readonly improvements: Improvements;
+    readonly rechecks: Rechecks;
     readonly memories: Memories;
     stopping = false;
     finished = false;
@@ -180,6 +181,7 @@ export class Tuning {
         this.system = new SystemVersions(root, join(this.dir, 'systems'));
         this.journal = new Journal(join(this.dir, 'journal.jsonl'));
         this.improvements = new Improvements(this);
+        this.rechecks = new Rechecks(this);
         this.memories = new Memories(this);
     }
 
@@ -260,6 +262,11 @@ export class Tuning {
         return join(this.caseDir(c), `${pad(attempt)}-${phase}`);
     }
 
+    /** The folder of the try a worker is on: the case's own, or a recheck's. */
+    workDir(w: Worker & { case: Case }): string {
+        return w.recheck?.dir ?? this.attemptDir(w.case, w.phase ?? 'nomem', w.attempt ?? 1);
+    }
+
     /** What the loop knows of a try, which a feedback file is never trusted for. */
     known(c: { id: string; rev: number }, phase: Phase, attempt: number) {
         const round = this.round(c);
@@ -287,6 +294,7 @@ export class Tuning {
                         case: s.case,
                         phase: undefined,
                         attempt: undefined,
+                        recheck: undefined,
                         step: 'idle',
                         since: Date.now(),
                     });
@@ -312,6 +320,7 @@ export class Tuning {
             case: undefined,
             phase: undefined,
             attempt: undefined,
+            recheck: undefined,
             step: 'idle',
             since: Date.now(),
         });

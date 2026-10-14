@@ -1,6 +1,6 @@
 ---
 name: zen-memory
-description: How agent memory is organised and how to configure it in `agents.yaml` - the `memory:` block, per-agent `access`/`sees`/`writes`/`autoRecall`, the five `memory_*` tools, kinds and relations, how recall ranks and stitches a subgraph, when an agent should reach for `memory_grep` instead of `memory_search`, how to inspect a graph with `zen memory search`/`grep`/`export`, and how to design a memory strategy for a project. Includes the default usage rules every memory-enabled project must carry in `agents/memory-instructions.md` (written and kept current by `zen check --fix`), where a project's own customisations go instead (`agents/memory-policy-instructions.md`, under `requires: [memory]`), what to commit and what never to, how to keep a working file under `/memory` and re-run it later, and how to put memory in front of a `zen rag schema` or `zen rag docs` index so a search that already succeeded once is not paid for again.
+description: Agent memory in Zenera projects - the `memory:` block and per-agent `access`/`sees`/`writes`/`autoRecall`, the five `memory_*` tools (when to use `memory_grep` instead of `memory_search`), kinds, relations and how recall ranks, inspecting a graph with `zen memory`, designing a memory strategy, `agents/memory-instructions.md` vs `agents/memory-policy-instructions.md`, remembering files under `/memory`, and putting memory in front of a `zen rag` index.
 ---
 
 # Memory

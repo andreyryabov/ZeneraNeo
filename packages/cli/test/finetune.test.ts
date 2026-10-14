@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { remember } from '../src/meta/finetune/children.ts';
-import { runFinetune } from '../src/meta/finetune/command.ts';
+import { readConfig, runFinetune } from '../src/meta/finetune/command.ts';
 import { measure, overLimits } from '../src/meta/finetune/cost.ts';
 import { runDataset } from '../src/meta/finetune/dataset/command.ts';
 import { readFeedback } from '../src/meta/finetune/feedback.ts';
@@ -106,10 +106,16 @@ const META_ENVELOPE = {
 /**
  * A stand-in for the `zen` binary. `decide` says how each try's analysis comes
  * out, given the case, phase, attempt, how many applies have happened, and
- * whether the try is an apply's guard.
+ * whether the try is a recheck.
  */
 function fakeZen(
-    decide: (c: string, phase: string, attempt: number, applies: number, guard: boolean) => Verdict,
+    decide: (
+        c: string,
+        phase: string,
+        attempt: number,
+        applies: number,
+        recheck: boolean,
+    ) => Verdict,
 ) {
     const calls: string[][] = [];
     let runs = 0;
@@ -122,7 +128,6 @@ function fakeZen(
         note: 'agents/instructions.md',
     });
     let editDuringAnalyze = false;
-    let consolidate = () => {};
     const zen: Zen = async (args, log) => {
         calls.push(args);
         if (args[0] === 'run') {
@@ -255,10 +260,6 @@ function fakeZen(
             writeFileSync(join(dir, 'changes.md'), '# changes\n');
             return { code: 0, stdout: JSON.stringify(META_ENVELOPE) };
         }
-        if (args[0] === 'meta' && args.includes('/finetune-consolidate')) {
-            consolidate();
-            return { code: 0, stdout: JSON.stringify(META_ENVELOPE) };
-        }
         if (args[0] === 'meta' && args.includes('/analyze')) {
             const word = (k: string) =>
                 args.find((a) => a.startsWith(`${k}=`))!.slice(k.length + 1);
@@ -267,7 +268,7 @@ function fakeZen(
                 word('phase'),
                 Number(word('attempt')),
                 applies,
-                args.some((a) => a.startsWith('guard=')),
+                args.some((a) => a.startsWith('recheck=')),
             );
             if (v.slowAnalyze) {
                 await new Promise((r) => setTimeout(r, v.slowAnalyze));
@@ -353,9 +354,6 @@ function fakeZen(
         decides(fn: (request: string, improvement: string, apply: number) => object) {
             decision = fn;
         },
-        consolidates(fn: () => void) {
-            consolidate = fn;
-        },
         editDuringAnalyze() {
             editDuringAnalyze = true;
         },
@@ -364,13 +362,19 @@ function fakeZen(
 
 function decideFor(
     args: string[],
-    decide: (c: string, phase: string, attempt: number, applies: number, guard: boolean) => Verdict,
+    decide: (
+        c: string,
+        phase: string,
+        attempt: number,
+        applies: number,
+        recheck: boolean,
+    ) => Verdict,
     applies: number,
     id: string,
 ): Verdict {
     const input = args[args.indexOf('--input') + 1];
     const m = /(\d{2})-(nomem|mem)/.exec(input)!;
-    return decide(id, m[2], Number(m[1]), applies, input.includes('/guard/'));
+    return decide(id, m[2], Number(m[1]), applies, input.includes('/rechecks/'));
 }
 
 async function start(zen: Zen, ...flags: string[]): Promise<void> {
@@ -1109,12 +1113,21 @@ describe('what an apply may cost', () => {
         const after = await measure(root);
         expect(after.total).toBe(before.total - 90);
         const l = { budget: 0, ceiling: before.total, skillCap: 1000, maxSkills: 10 };
-        expect(overLimits(before, after, l, false)).toEqual([]);
-        expect(overLimits(before, after, l, true)).toEqual([]);
-        expect(overLimits(after, before, l, true)[0]).toMatch(/may only shrink/);
-        expect(overLimits(before, after, { ...l, skillCap: 100 }, false)[0]).toMatch(
+        expect(overLimits(before, after, l)).toEqual([]);
+        expect(overLimits(after, before, l)[0]).toMatch(/over the budget of 0/);
+        expect(overLimits(before, after, { ...l, skillCap: 100 })[0]).toMatch(
             /skill planning holds \d+ bytes, over the cap of 100/,
         );
+    });
+
+    it('reads a guard setting kept by an older version as --recheck, and drops consolidations', async () => {
+        const loop = join(root, 'finetune', 'loop.json');
+        mkdirSync(dirname(loop), { recursive: true });
+        writeFileSync(loop, JSON.stringify({ guard: 0, consolidateEvery: 5 }));
+        const config = readConfig(root);
+        expect(config.recheck).toBe(0);
+        expect(config).not.toHaveProperty('guard');
+        expect(config).not.toHaveProperty('consolidateEvery');
     });
 
     it('no longer takes -M from -N, and refuses -M 1 without --force', async () => {
@@ -1146,56 +1159,93 @@ describe('what an apply may cost', () => {
         expect(page).toContain('## The prose');
     });
 
-    it('undoes an apply that breaks a case which passed before, twice in a row', async () => {
+    it('sends a case that regressed on a recheck to the next apply, and rechecks it first after', async () => {
         await dataset(['a1', 'b1']);
-        const fake = fakeZen((c, _p, _a, applies, guard) =>
-            guard ? { done: false } : { done: c === 'b1' || applies > 0 },
+        const fake = fakeZen((c, _p, _a, applies, recheck) =>
+            recheck ? { done: applies !== 1 } : { done: c === 'b1' || applies > 0 },
         );
         await start(fake.zen, '-N', '2', '-M', '2');
-        expect(fake.applies).toBe(2);
-        expect(rules()).toBe('# Rules\n');
-        expect(appliedOf('001').discarded).toMatch(/broke b1/);
-        expect(
-            JSON.parse(readFileSync(join(appliesDir(), '001', 'guard.json'), 'utf8')),
-        ).toMatchObject([{ case: 'b1', broken: true }]);
-        expect(
-            existsSync(join(appliesDir(), '001', 'guard', 'a2', 'b1', '02-nomem', 'feedback.json')),
-        ).toBe(true);
-        expect(readFileSync(join(appliesDir(), '001', 'guard.md'), 'utf8')).toContain('## b1');
-        const analyze = fake.calls.find((a) => a.some((x) => x.startsWith('guard=')))!;
-        expect(analyze.find((x) => x.startsWith('guard='))).toMatch(/applies\/001\/diff\.patch$/);
-        expect(analyze).toContain('attempt=1');
-        // The case runs its next try on the prose it had.
-        const second = JSON.parse(
-            readFileSync(
-                join(root, 'finetune', 'cases', 'a1', 'r1', '02-nomem', 'run.json'),
-                'utf8',
-            ),
+        // Nothing is undone: the edit stands and the regression is repaired by the next apply.
+        expect(appliedOf('001').discarded).toBeUndefined();
+        expect(rules()).toContain('- rule 1');
+        const rechecks = JSON.parse(
+            readFileSync(join(root, 'finetune', 'rechecks.json'), 'utf8'),
+        ) as { case: string; apply: string; state: string; request?: string; tries?: string[] }[];
+        expect(rechecks).toContainEqual(
+            expect.objectContaining({
+                case: 'b1',
+                apply: '001',
+                state: 'regressed',
+                request: 'b1@recheck-001',
+                tries: ['wrong', 'wrong'],
+            }),
         );
-        expect(second.system).toBe(1);
+        const inputs = JSON.parse(readFileSync(join(appliesDir(), '002', 'inputs.json'), 'utf8'));
+        expect(inputs).toContainEqual(
+            expect.objectContaining({
+                id: 'b1@recheck-001',
+                recheck: '001',
+                file: join(root, 'finetune', 'rechecks', '001', 'b1', '02-nomem', 'feedback.json'),
+            }),
+        );
+        const after = rechecks.filter((r) => r.apply === '002');
+        expect(after[0]).toMatchObject({ case: 'b1', state: 'passed' });
+        const analyze = fake.calls.find((a) => a.some((x) => x.startsWith('recheck=')))!;
+        expect(analyze.find((x) => x.startsWith('recheck='))).toMatch(/applies\/001\/diff\.patch$/);
+        // A recheck is not one of the case's own tries.
         expect(runsOf(fake.calls, 'b1')).toHaveLength(2);
+        expect(result('b1')).toMatchObject({ state: 'completed' });
+        expect(readFileSync(join(appliesDir(), '002', 'APPLY.md'), 'utf8')).toContain(
+            'regressed after 001; rechecked first on v3',
+        );
     });
 
-    it('keeps an apply when a guard case fails once and passes the second time', async () => {
+    it('ends when a case keeps regressing: past two requests it is only reported', async () => {
         await dataset(['a1', 'b1']);
-        const fake = fakeZen((c, _p, attempt, applies, guard) =>
-            guard ? { done: attempt > 1 } : { done: c === 'b1' || applies > 0 },
+        const fake = fakeZen((c, _p, _a, applies, recheck) =>
+            recheck ? { done: false } : { done: c === 'b1' || applies > 0 },
+        );
+        await start(fake.zen, '-N', '2', '-M', '2');
+        const rechecks = JSON.parse(
+            readFileSync(join(root, 'finetune', 'rechecks.json'), 'utf8'),
+        ) as { case: string; state: string; request?: string; note?: string }[];
+        for (const id of ['a1', 'b1']) {
+            const mine = rechecks.filter((r) => r.case === id);
+            expect(mine.every((r) => r.state === 'regressed')).toBe(true);
+            expect(mine.filter((r) => r.request)).toHaveLength(2);
+            expect(mine.at(-1)?.note).toMatch(/reported, not queued/);
+        }
+    });
+
+    it('counts a recheck that fails once and passes the second time as passed', async () => {
+        await dataset(['a1', 'b1']);
+        const fake = fakeZen((c, _p, attempt, applies, recheck) =>
+            recheck ? { done: attempt > 1 } : { done: c === 'b1' || applies > 0 },
         );
         await start(fake.zen, '-N', '2', '-M', '2');
         expect(fake.applies).toBe(1);
-        expect(rules()).toContain('- rule 1');
-        expect(appliedOf('001').discarded).toBeUndefined();
+        const rechecks = JSON.parse(readFileSync(join(root, 'finetune', 'rechecks.json'), 'utf8'));
+        expect(rechecks).toEqual([
+            expect.objectContaining({
+                case: 'b1',
+                apply: '001',
+                state: 'passed',
+                tries: ['wrong', 'right'],
+            }),
+        ]);
         const page = readFileSync(join(appliesDir(), '001', 'APPLY.md'), 'utf8');
-        expect(page).toContain('## The guard');
-        expect(page).toMatch(/\| \[b1\]\([^)]+\) \| .*wrong.*right.* \| no \|/);
+        expect(page).toContain('## Rechecks');
+        expect(page).toMatch(
+            /\| \[b1\]\([^)]+\) \| passed \| \[wrong\]\([^)]+\), \[right\]\([^)]+\) \|/,
+        );
     });
 
-    it('shows each guard case on the status page and in the live view while it runs', async () => {
+    it('shows a recheck on its worker in the status page and the live view', async () => {
         await dataset(['a1', 'b1']);
         let page = '';
         let live: { now: object[] } | undefined;
-        const fake = fakeZen((c, _p, _a, applies, guard) => {
-            if (guard && !page) {
+        const fake = fakeZen((c, _p, _a, applies, recheck) => {
+            if (recheck && !page) {
                 page = readFileSync(join(root, 'finetune', 'STATUS.md'), 'utf8');
                 setTimeout(() => {
                     live = JSON.parse(readFileSync(join(root, 'finetune', 'live.json'), 'utf8'));
@@ -1205,15 +1255,15 @@ describe('what an apply may cost', () => {
             return { done: c === 'b1' || applies > 0 };
         });
         await start(fake.zen, '-N', '2', '-M', '2');
-        expect(page).toContain('subgraph GUARD');
-        expect(page).toMatch(/G1\("`\*\*b1\*\*\nrunning \S+ · try 1 of 2`"\)/);
-        expect(page).toContain('**Checking the edit (guard)**');
+        expect(page).toMatch(/\*\*worker \d\*\* · running \S+\nb1\nrecheck after 001 · try 1 of 2/);
+        expect(page).toMatch(/S -\.->\|"`recheck 3 cases that passed\n\d queued`"\| WORKERS/);
         expect(live?.now).toEqual(
             expect.arrayContaining([
-                expect.objectContaining({ key: 'apply', step: 'guard' }),
-                expect.objectContaining({ key: 'guard-b1', who: 'guard', step: 'run', what: 'b1' }),
+                expect.objectContaining({ step: 'run', what: 'b1 · recheck try 1' }),
             ]),
         );
+        const status = readFileSync(join(root, 'finetune', 'STATUS.md'), 'utf8');
+        expect(status).toContain('## Rechecks');
     }, 15_000);
 
     it('offers a deferred improvement to every later apply, until one takes it', async () => {
@@ -1260,7 +1310,7 @@ describe('what an apply may cost', () => {
             disposition: 'extract to skill',
             skill: 'planning',
         }));
-        await start(fake.zen, '-N', '2', '-M', '2', '--guard', '0');
+        await start(fake.zen, '-N', '2', '-M', '2', '--recheck', '0');
         const run = (id: string) =>
             JSON.parse(
                 readFileSync(
@@ -1279,37 +1329,16 @@ describe('what an apply may cost', () => {
         expect(analyze('b1').some((x) => x.startsWith('missed-skills='))).toBe(false);
     });
 
-    it('consolidates after K applies, and undoes a consolidation that did not shrink anything', async () => {
+    it('hands every apply the growth of each file, and asks no separate tidy-up', async () => {
         await dataset(['a1']);
         const fake = fakeZen((_c, _p, _a, applies) => ({ done: applies > 0 }));
-        await start(fake.zen, '-N', '1', '--consolidate-every', '1');
-        expect(fake.calls.filter((a) => a.includes('/finetune-consolidate'))).toHaveLength(2);
-        expect(appliedOf('002')).toMatchObject({
-            kind: 'consolidate',
-            ids: [],
-            discarded: expect.stringContaining('nothing shrank'),
-        });
-        const growth = JSON.parse(readFileSync(join(appliesDir(), '002', 'growth.json'), 'utf8'));
+        await start(fake.zen, '-N', '1');
+        const growth = JSON.parse(readFileSync(join(appliesDir(), '001', 'growth.json'), 'utf8'));
         expect(growth).toContainEqual(
-            expect.objectContaining({ file: 'agents/instructions.md', applies: ['001'] }),
+            expect.objectContaining({ file: 'agents/instructions.md', changes: 0, recent: [] }),
         );
-        expect(rules()).toContain('- rule 1');
+        expect(fake.calls.some((a) => a.includes('/finetune-consolidate'))).toBe(false);
         expect(result('a1')).toMatchObject({ state: 'completed' });
-        expect(readFileSync(join(appliesDir(), '002', 'APPLY.md'), 'utf8')).toContain(
-            '# Consolidation 002',
-        );
-    });
-
-    it('keeps a consolidation that shrinks the prose', async () => {
-        await dataset(['a1']);
-        const fake = fakeZen((_c, _p, _a, applies) => ({ done: applies > 0 }));
-        fake.consolidates(() => writeFileSync(join(root, 'agents', 'instructions.md'), '# R\n'));
-        await start(fake.zen, '-N', '1', '--consolidate-every', '1');
-        expect(appliedOf('002')).toMatchObject({ kind: 'consolidate', from: 2, to: 3 });
-        expect(appliedOf('002').discarded).toBeUndefined();
-        expect(rules()).toBe('# R\n');
-        const status = readFileSync(join(root, 'finetune', 'STATUS.md'), 'utf8');
-        expect(status).toMatch(/\[002\]\(<applies\/002\/APPLY\.md>\) consolidation \| v2 → v3 \|/);
     });
 });
 

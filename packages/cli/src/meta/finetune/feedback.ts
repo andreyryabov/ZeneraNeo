@@ -37,6 +37,10 @@ export interface Feedback {
     improvements: Improvement[];
     /** what outside the project made the run void: the sandbox, the network, a provider */
     infra?: string;
+    /** a recheck's: the apply whose version the case failed on, after passing before it */
+    recheck?: string;
+    /** the try's folder, when it is not the case's own attempt folder */
+    dir?: string;
 }
 
 // Round 1 keeps the bare form, so the ids applies already took still match.

@@ -50,8 +50,8 @@ export const FINETUNE_HELP = [
     '',
     '  start: -N <workers> (4), -M <apply at> (4), --tries <n> (4), --mem-tries <n> (3),',
     '  --class <c>, --id <glob>, --rubric yes|no, --limit <n> and --more <n> (this start only);',
-    '  what an apply may do: --guard <n> (3), --budget <bytes> (1500), --max-growth <pct> (50),',
-    '  --skill-cap <bytes> (12000), --max-skills <n> (10), --consolidate-every <k> (5).',
+    '  what an apply may do: --budget <bytes> (1500), --max-growth <pct> (50),',
+    '  --skill-cap <bytes> (12000), --max-skills <n> (10); after it, --recheck <n> (3).',
     '  More - --merge-every, --seed, --force: zen meta finetune --help.',
     '  In a terminal start draws what runs now, the tokens and the log; --plain does not.',
     '  Settings are kept in finetune/loop.json; start again to resume where it stopped.',
@@ -87,16 +87,14 @@ export const FINETUNE_DETAILS = [
     '  --seed <n>             Order of cases inside a class. Default 1.',
     '',
     'What an apply may do (start):',
-    '  --guard <n>            Rerun this many completed cases on each edit; one that fails',
-    '                         both its tries undoes the edit. Default 3, 0 none.',
     '  --budget <bytes>       Most one apply may add to what every call reads. Default 1500.',
     '  --max-growth <pct>     Once that is this much over its size when the tuning began,',
     '                         an apply may add nothing. Default 50.',
     '  --skill-cap <bytes>    Most one skill may hold. Default 12000.',
     '  --max-skills <n>       Most skills one agent may see. Default 10.',
-    '  --consolidate-every <k>',
-    '                         Every k applies, run one that may only shrink the prose.',
-    '                         Default 5, 0 never.',
+    '  --recheck <n>          After each apply, run this many completed cases again on it;',
+    '                         one that fails both tries sends its fixes to the next apply.',
+    '                         Default 3, 0 none.',
     '',
     'Other (start):',
     '  --force                Start past dataset drift, and allow -M 1.',
@@ -118,10 +116,14 @@ export const FINETUNE_DETAILS = [
     '    deferred and offered to every later apply until a second asks.',
     '  - A skill made for a case must be loaded by its next run, or the next apply',
     '    fixes the description.',
-    '  - zen check must pass, the budget hold and the --guard cases still pass, or the',
-    '    edit is undone and tried once more. A second zen check failure stops the',
-    '    tuning; a second budget or guard failure only undoes the apply.',
-    'Every apply is a new version of agents.yaml + agents/.',
+    '  - It tidies up after itself: the files it touched lose their duplicates and',
+    '    contradictions in the same edit.',
+    '  - zen check must pass and the budget hold, or the edit is undone and tried once',
+    '    more. A second zen check failure stops the tuning; a second budget failure only',
+    '    undoes the apply.',
+    'Every apply is a new version of agents.yaml + agents/. Then --recheck completed',
+    'cases run again on it, as ordinary work - nothing waits. One that fails both tries',
+    'has regressed: its fixes join the queue, and the next apply repairs what broke.',
     '',
     'A case is difficult when its tries run out and the analysis still says no, or at',
     'once when all an apply could say of it is structural - a tool, a skill binding,',
@@ -139,7 +141,7 @@ export const FINETUNE_DETAILS = [
     'Examples:',
     '  zen meta finetune start -N 4',
     '  zen meta finetune start --class search --limit 6 -N 2 -M 2',
-    '  zen meta finetune start --limit 4 --guard 0 --consolidate-every 0    # quick, cheap',
+    '  zen meta finetune start --limit 4 --recheck 0    # quick, cheap',
     '  zen meta finetune start --more 4',
     '  zen meta finetune',
     '  zen meta finetune retry --difficult --class merge',
@@ -154,10 +156,9 @@ interface Flags {
     'mem-tries'?: string;
     'merge-every'?: string;
     seed?: string;
-    guard?: string;
+    recheck?: string;
     budget?: string;
     'max-growth'?: string;
-    'consolidate-every'?: string;
     'skill-cap'?: string;
     'max-skills'?: string;
     class?: string[];
@@ -179,10 +180,9 @@ const OPTIONS = {
     'mem-tries': { type: 'string' },
     'merge-every': { type: 'string' },
     seed: { type: 'string' },
-    guard: { type: 'string' },
+    recheck: { type: 'string' },
     budget: { type: 'string' },
     'max-growth': { type: 'string' },
-    'consolidate-every': { type: 'string' },
     'skill-cap': { type: 'string' },
     'max-skills': { type: 'string' },
     class: { type: 'string', multiple: true },
@@ -285,11 +285,17 @@ const configFile = (dir: string): string => join(dir, FINETUNE_DIR, 'loop.json')
 
 export function readConfig(dir: string): Config {
     try {
-        // A limit is for one start; older versions kept it.
-        const { limit: _, ...saved } = JSON.parse(
-            readFileSync(configFile(dir), 'utf8'),
-        ) as Partial<Config>;
-        return { ...DEFAULTS, ...saved };
+        // A limit is for one start; older versions kept it, and had a guard and consolidations.
+        const {
+            limit: _,
+            guard,
+            consolidateEvery: __,
+            ...saved
+        } = JSON.parse(readFileSync(configFile(dir), 'utf8')) as Partial<Config> & {
+            guard?: number;
+            consolidateEvery?: number;
+        };
+        return { ...DEFAULTS, ...(guard !== undefined ? { recheck: guard } : {}), ...saved };
     } catch {
         return { ...DEFAULTS };
     }
@@ -317,11 +323,9 @@ function configFrom(dir: string, v: Flags): Config {
         memTries: whole(v['mem-tries'], '--mem-tries') ?? saved.memTries,
         mergeEvery: whole(v['merge-every'], '--merge-every') ?? saved.mergeEvery,
         seed: whole(v.seed, '--seed', 0) ?? saved.seed,
-        guard: whole(v.guard, '--guard', 0) ?? saved.guard,
+        recheck: whole(v.recheck, '--recheck', 0) ?? saved.recheck,
         budget: whole(v.budget, '--budget', 0) ?? saved.budget,
         maxGrowth: whole(v['max-growth'], '--max-growth', 0) ?? saved.maxGrowth,
-        consolidateEvery:
-            whole(v['consolidate-every'], '--consolidate-every', 0) ?? saved.consolidateEvery,
         skillCap: whole(v['skill-cap'], '--skill-cap') ?? saved.skillCap,
         maxSkills: whole(v['max-skills'], '--max-skills') ?? saved.maxSkills,
         ...(v.class ? { classes: v.class } : {}),

@@ -494,6 +494,8 @@ you want to validate a project's execution environment before a run.
 
 ```sh
 zen sandbox status                    # engine, project image and active containers
+zen sandbox top                       # memory and cpu, live: this computer, the machine, each container
+zen sandbox top --once                # the same, printed once (also with --json or when piped)
 zen sandbox up                        # prepare the execution environment for this project
 zen sandbox pull                      # pull or build this project's image only
 zen sandbox status --project my-app   # inspect a named project from anywhere
@@ -506,6 +508,13 @@ zen sandbox clean --idle              # only what no live run is using
 `--project <name|dir>`. `--image <ref>` selects an image explicitly. `clean` and
 `disk` are machine-wide operations, so use them when you mean to inspect or
 remove resources beyond the current project.
+
+`top` is machine-wide too. Next to every figure it says in a few words what the
+figure means; `--brief` leaves those notes out, `--interval <seconds>` sets how
+often the live screen refreshes. On macOS it answers the usual question - why
+Activity Monitor shows "Virtual Machine Service for vfkit" holding many
+gigabytes - by setting what macOS counts for the machine against what is in use
+inside it, and naming the command that gives the difference back.
 
 ## Sharing a project
 

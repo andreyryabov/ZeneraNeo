@@ -1,5 +1,5 @@
 ---
-description: Apply a batch of improvement requests from the tuning loop to the project's prose - merge them into patterns, edit prompts, skills and policy files, and record what was done with each. Run by `zen meta finetune`; the last line names the apply directory.
+description: Apply a batch of improvement requests from the tuning loop to the project's prose - merge them into patterns, edit prompts, skills and policy files, tidy up every file touched, and record what was done with each. Run by `zen meta finetune`; the last line names the apply directory.
 ---
 
 The tuning loop has collected improvement requests from several cases and
@@ -8,8 +8,9 @@ directory.
 
 Every sentence you add is read by every later call of every agent that loads
 it, so prose has a price even when it fixes the case in front of you. The loop
-measures it: after you finish, an apply that grows the prose past its budget,
-or that breaks a case which passed before, is **undone** - all of it.
+measures it: after you finish, an apply that grows the prose past its budget
+is **undone** - all of it. Then a few cases that passed before run again on
+your edit; one it broke comes back to the next apply as a request.
 
 ## What you are given
 
@@ -19,6 +20,10 @@ or that breaks a case which passed before, is **undone** - all of it.
   and `missedSkills` - skills an earlier apply made for this case that its last
   run never loaded. The analysis behind each is `analysis.md` beside that file -
   read it when an improvement is unclear.
+  A request with `recheck` (id `<case>@recheck-<apply>`) is a **regression**: the
+  case passed before that apply and failed twice on it. Its analysis quotes the
+  hunk of that apply's `diff.patch` that did it. Narrow or revert that rule -
+  never stack an exception under it.
 - `<apply dir>/deferred.json` - improvements earlier applies held back because
   only one case asked for them, with their case and apply. They count as
   evidence below.
@@ -28,14 +33,14 @@ or that breaks a case which passed before, is **undone** - all of it.
   the same at the start of the tuning (`start`), and the limits: `budget` (the
   most this apply may add to the always-read total), `ceiling` (above it, an
   apply may add nothing), `skillCap`, `maxSkills`.
+- `<apply dir>/growth.json` - per file under `agents/`: bytes at the start of
+  the tuning and now, how many applies changed it, and the latest of them.
 - Every earlier `finetune/applies/*/decisions.json` and `changes.md` - what
   was already tried. Do not re-apply a rule an earlier apply added and a later
   run showed did not work; change it instead.
 - From your previous attempt, if it was undone - read these first:
-  `check.log` (it failed `zen check`), `budget.md` (it grew the prose past a
-  limit - this attempt must cut), `guard.md` (it broke a case that passed
-  before - the file names the case and its analysis; narrow or drop the rule
-  that did it).
+  `check.log` (it failed `zen check`) and `budget.md` (it grew the prose past a
+  limit - this attempt must cut).
 
 ## Load the skills
 
@@ -157,11 +162,29 @@ the skill is how you find out whether it is.
 11. **Never edit** `agents.yaml`, `agents/memory-instructions.md`,
     `agents/tools-instructions.md`, `agents/fork-instructions.md` or
     `agents/files-instructions.md`, nor anything outside `agents/`.
-12. **Read it back.** Search again for each obligation's terms, and read each
+12. **Tidy up every file you touched** - the whole file, not only your lines.
+    For each obligation in it, search the files the same agents read, and pick
+    one move:
+    - `merge duplicates` - the same obligation twice for the same audience:
+      keep it in the owner, delete the rest;
+    - `delete contradiction` - two sentences that cannot both be obeyed: keep
+      the one the later `changes.md` chose;
+    - `narrow` - a general rule followed by its exceptions: rewrite the rule so
+      it needs none, delete the exceptions;
+    - `move and delete` - a rule in a file wider than the agents it binds;
+    - `split skill` / `merge skills` - a skill over `skillCap`, two whose
+      descriptions overlap, or an agent over `maxSkills`.
+
+    Never weaken an obligation: what an agent must do stays what it must do.
+    The bytes this frees count against your budget, so a crowded file is where
+    to make room. Then take the largest growth in `growth.json` you did not
+    touch: if it says one thing twice, merge it too.
+
+13. **Read it back.** Search again for each obligation's terms, and read each
     affected agent's prompt in the order it is assembled - house rules first,
     then its prompt. Every remaining copy must have a different audience, or
     go.
-13. **Check**: `zen check --no-models --no-sandbox` must pass when you finish.
+14. **Check**: `zen check --no-models --no-sandbox` must pass when you finish.
 
 ## What to write
 
@@ -200,6 +223,9 @@ the skill is how you find out whether it is.
     skill, the `skills <name>` node before the step it covers.
     ```
 
+    A section for a tidy-up move has **Move**, **Obligation**, **Before**,
+    **After** and **Net** only.
+
     Then a section **Not applied**: every rejected, deferred or structural
     improvement, with why.
 
@@ -236,5 +262,6 @@ the skill is how you find out whether it is.
 skill an improvement created or changed - the loop checks the case's next run
 loads it. The note is one line a person reads in the case's FEEDBACK.md.
 
-Your answer is a short summary: how many rules, which files, the net change in
-bytes, and anything structural the user must decide.
+Your answer is a short summary: how many rules, which files, what the tidy-up
+merged or cut, the net change in bytes, and anything structural the user must
+decide.

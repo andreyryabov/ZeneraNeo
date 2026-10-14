@@ -1,7 +1,7 @@
 # The sandbox - `zen sandbox`
 
 ```
-zen sandbox [status|up|pull|clean|disk] [options]
+zen sandbox [status|top|up|pull|clean|disk] [options]
 ```
 
 Shell commands run in a container over the session workspace, never on the
@@ -9,18 +9,30 @@ host. None of this is required: a run does all of it on its own, the first time
 an agent that can reach a shell is about to start one. These subcommands are for
 doing it deliberately - before a demo, in CI, or when diagnosing.
 
-| Subcommand | What it does                                                   |
-| ---------- | -------------------------------------------------------------- |
-| `status`   | What is installed, running and pulled. Changes nothing         |
-| `up`       | Install if asked, start the machine, pull or build the image   |
-| `pull`     | Just the image: pulled, or built from the project's Dockerfile |
-| `clean`    | Remove every container this CLI created                        |
-| `disk`     | What the engine and every known project occupy                 |
+| Subcommand | What it does                                                        |
+| ---------- | ------------------------------------------------------------------- |
+| `status`   | What is installed, running and pulled. Changes nothing              |
+| `top`      | Memory and cpu: this computer, the machine, every running container |
+| `up`       | Install if asked, start the machine, pull or build the image        |
+| `pull`     | Just the image: pulled, or built from the project's Dockerfile      |
+| `clean`    | Remove every container this CLI created                             |
+| `disk`     | What the engine and every known project occupy                      |
 
-| Flag                    | Meaning                                 |
-| ----------------------- | --------------------------------------- |
-| `--project <name\|dir>` | Which project the image comes from      |
-| `--image <ref>`         | Use this image instead of the project's |
+| Flag                    | Meaning                                                    |
+| ----------------------- | ---------------------------------------------------------- |
+| `--project <name\|dir>` | Which project the image comes from                         |
+| `--image <ref>`         | Use this image instead of the project's                    |
+| `--once`                | `top`: print one report instead of the live screen         |
+| `--interval <seconds>`  | `top`: how often the live screen refreshes (default 2)     |
+| `--brief`               | `top`: the figures without the notes saying what they mean |
+
+`top` draws a live screen only when a person is at a terminal. From an agent,
+a script or with `--json` it measures twice a second apart (cpu needs an
+interval) and prints once, so `zen sandbox top --json` is the form to read:
+`host.vm` is what the machine costs the computer (`footprint` is Activity
+Monitor's figure on macOS), `machine` is Linux's own split into `used`, `cache`
+and `free`, `containers[]` carries `cpu` (percent of one core), `memory`,
+`limit` and `orphaned`, and `hints[]` says what to do about it.
 
 The engine is Podman. On macOS a machine has to exist and be running; `up`
 offers to install and start one, and its size follows the project's `cpus` and

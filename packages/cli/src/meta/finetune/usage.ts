@@ -295,7 +295,7 @@ export function envelopesIn(dir: string, stem: string): ByModel | undefined {
     return parts.length > 0 ? mergeModels(...parts) : undefined;
 }
 
-/** An apply's own envelopes, and the runs and analyses of its guard: `guard/<attempt>/<case>/<try>/`. */
+/** An apply's own envelopes, and - for applies from before rechecks - its guard's runs: `guard/<attempt>/<case>/<try>/`. */
 export function applyTokens(dir: string): ByModel | undefined {
     const parts: (ByModel | undefined)[] = [envelopesIn(dir, 'apply')];
     const under = (d: string): string[] => {
