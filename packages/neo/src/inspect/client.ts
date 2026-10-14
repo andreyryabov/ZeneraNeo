@@ -133,9 +133,83 @@ function block(title, tag) {
 
 function textBlock(title, body, tag) {
   const s = block(title, tag);
-  if (body) s.appendChild(el('pre', 'text', body));
+  if (body) s.appendChild(linkedPre('text', body));
   else s.appendChild(el('div', 'empty', '(empty)'));
   return s;
+}
+
+// --- paths the agent named under a mount, linked to this machine ------------
+
+const MOUNTS = DATA.mounts || [];
+const PATH_STOP = /[\\s<>"'()\\[\\]{}|^\\u0060]/;
+const PATH_TAIL = /[.,;:!?]+$/;
+const PATH_BEFORE = /[\\w\\/.:-]/;
+
+/** The host url a mount path names; null for one that climbs out of its tree. */
+function mountHref(token) {
+  let path = token;
+  let hash = '';
+  if (path.indexOf('file://') === 0) {
+    path = path.slice(7);
+    const cut = path.search(/[?#]/);
+    if (cut >= 0) { hash = encodeURI(path.slice(cut)); path = path.slice(0, cut); }
+    try { path = decodeURIComponent(path); } catch (e) { return null; }
+  }
+  for (const m of MOUNTS) {
+    if (path !== m.at && path.indexOf(m.at + '/') !== 0) continue;
+    const parts = [];
+    for (const seg of path.slice(m.at.length).split('/')) {
+      if (seg === '' || seg === '.') continue;
+      if (seg === '..') return null;
+      parts.push(encodeURIComponent(seg));
+    }
+    return m.href.replace(/\\/$/, '') + (parts.length ? '/' + parts.join('/') : '') + hash;
+  }
+  return null;
+}
+
+/** The first mount path at or after from, bare or as a file url. */
+function nextPath(text, from) {
+  let best = null;
+  for (const m of MOUNTS) {
+    for (let i = text.indexOf(m.at, from); i >= 0; i = text.indexOf(m.at, i + 1)) {
+      const start = i >= 7 && text.slice(i - 7, i) === 'file://' ? i - 7 : i;
+      const before = text.charAt(start - 1);
+      const after = text.charAt(i + m.at.length);
+      if (before && PATH_BEFORE.test(before)) continue;
+      if (/[\\w-]/.test(after) || (after === '.' && /\\w/.test(text.charAt(i + m.at.length + 1)))) continue;
+      let end = i + m.at.length;
+      if (after === '/') while (end < text.length && !PATH_STOP.test(text.charAt(end))) end++;
+      if (!best || start < best.start) best = { start: start, token: text.slice(start, end).replace(PATH_TAIL, '') };
+      break;
+    }
+  }
+  return best;
+}
+
+/** A pre whose text is unchanged, with every mount path in it a link to the file here. */
+function linkedPre(cls, text) {
+  const pre = el('pre', cls);
+  const s = String(text);
+  let from = 0;
+  for (let hit = MOUNTS.length ? nextPath(s, 0) : null; hit; hit = nextPath(s, from)) {
+    const end = hit.start + hit.token.length;
+    const href = mountHref(hit.token);
+    if (href) {
+      if (hit.start > from) pre.appendChild(document.createTextNode(s.slice(from, hit.start)));
+      const a = el('a', 'path', hit.token);
+      a.href = href;
+      a.title = href;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      pre.appendChild(a);
+    } else {
+      pre.appendChild(document.createTextNode(s.slice(from, end)));
+    }
+    from = end;
+  }
+  if (from < s.length) pre.appendChild(document.createTextNode(s.slice(from)));
+  return pre;
 }
 
 // A prompt is assembled from tagged sections — <house_rules src="...">, <role>,
@@ -148,14 +222,14 @@ const TAG_LINE_RE = /^(\\s*)(<\\/?[A-Za-z][A-Za-z0-9._:-]*(?:\\s[^<>]*)?\\/?>)(\
 /** A container where tagged sections (<tag>...</tag>) become collapsible <details> blocks. */
 function taggedPre(text) {
   const s = String(text);
-  if (s.indexOf('<') < 0) return el('pre', 'text', s);
+  if (s.indexOf('<') < 0) return linkedPre('text', s);
   const lines = s.split('\\n');
 
   let hasTag = false;
   for (let i = 0; i < lines.length; i++) {
     if (TAG_LINE_RE.test(lines[i])) { hasTag = true; break; }
   }
-  if (!hasTag) return el('pre', 'text', s);
+  if (!hasTag) return linkedPre('text', s);
 
   const wrap = el('div', 'tagged-pre');
   let plainLines = [];
@@ -165,7 +239,7 @@ function taggedPre(text) {
     const chunk = plainLines.join('\\n');
     plainLines = [];
     if (!chunk.trim()) return;
-    wrap.appendChild(el('pre', 'text', chunk));
+    wrap.appendChild(linkedPre('text', chunk));
   }
 
   let current = null;
@@ -192,10 +266,7 @@ function taggedPre(text) {
     }
     d.appendChild(sum);
 
-    const bodyPre = el('pre', 'xtag-body');
-    if (current.lines.length) {
-      bodyPre.textContent = current.lines.join('\\n');
-    }
+    const bodyPre = linkedPre('xtag-body', current.lines.join('\\n'));
     if (current.closeTag) {
       if (current.lines.length) bodyPre.appendChild(document.createTextNode('\\n'));
       bodyPre.appendChild(el('span', 'xtag end', current.closeTag));
@@ -259,7 +330,7 @@ function foldBlock(title, body) {
   const s = block(title);
   const d = document.createElement('details');
   d.appendChild(el('summary', null, 'show'));
-  d.appendChild(el('pre', null, body));
+  d.appendChild(linkedPre(null, body));
   s.appendChild(d);
   return s;
 }
@@ -550,7 +621,7 @@ function message(m) {
     });
   } else if (typeof m.content === 'string' && m.content) {
     wrap.appendChild(m.role === 'tool'
-      ? el('pre', 'text', pretty(m.content))
+      ? linkedPre('text', pretty(m.content))
       : taggedPre(m.content));
   } else if (!m.toolCalls) {
     wrap.appendChild(el('div', 'empty', '(no content)'));
@@ -559,7 +630,7 @@ function message(m) {
   (m.toolCalls || []).forEach(function (c) {
     const box = el('div', 'call');
     box.appendChild(el('div', 'name', c.name + '(' + c.id + ')'));
-    box.appendChild(el('pre', null, pretty(c.args)));
+    box.appendChild(linkedPre(null, pretty(c.args)));
     wrap.appendChild(box);
   });
   return wrap;

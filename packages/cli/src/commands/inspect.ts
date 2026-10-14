@@ -8,6 +8,7 @@ import {
     projectRegistry,
     readProjectConfig,
     renderReportHtml,
+    SANDBOX_MOUNT,
     text,
     type AgentState,
 } from '@zenera/neo';
@@ -15,6 +16,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { parse } from '../args.ts';
 import { buildDiagnostic, parseRecordedRequest, pickModel } from '../ask.ts';
 import type { Command } from '../command.ts';
@@ -855,7 +857,13 @@ async function pickRun(
 async function rebuild(session: SessionPaths, run: RunPaths, store?: MemoryStore): Promise<void> {
     const state = await readState(run);
     const payloads = new PayloadResolver(new FilePayloadStore({ dir: session.blobs, id: 'file' }));
-    const report = await buildRunReport(state, payloads, { title: run.id, memory: store });
+    const { workspace } = await readRunMeta(run);
+    const report = await buildRunReport(state, payloads, {
+        title: run.id,
+        memory: store,
+        // The run never recorded a `workdir:`, so the default name is the guess.
+        mounts: workspace ? [{ at: SANDBOX_MOUNT, href: pathToFileURL(workspace).href }] : [],
+    });
     await writeFile(run.report, renderReportHtml(report), 'utf8');
 }
 

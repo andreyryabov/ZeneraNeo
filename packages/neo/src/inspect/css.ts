@@ -184,6 +184,7 @@ section.blk.sys { border-left: 3px solid var(--warn); }
 pre { margin: 0; padding: 10px 12px; font: 12px/1.55 var(--mono); white-space: pre-wrap;
   word-break: break-word; overflow-wrap: anywhere; }
 pre.text { white-space: pre-wrap; }
+pre a.path { color: var(--accent); }
 .tagged-pre { margin: 4px 0; }
 .tagged-pre > pre.text { margin: 0; padding: 6px 12px; }
 /* Section tags inside a prompt (<house_rules src="...">, <role>, ...): the only

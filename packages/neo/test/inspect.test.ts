@@ -1,9 +1,15 @@
 import { mkdtempSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CLIENT } from '../src/inspect/client.ts';
-import { buildRunReport, renderReportHtml, renderRunReport } from '../src/inspect/index.ts';
+import {
+    buildRunReport,
+    renderReportHtml,
+    renderRunReport,
+    type RunReport,
+} from '../src/inspect/index.ts';
 import { MemoryStore } from '../src/memory/store.ts';
 import type { Model, ModelRequest, ModelResponse } from '../src/model.ts';
 import { InMemoryPayloadStore } from '../src/payload-stores/in-memory.ts';
@@ -167,6 +173,80 @@ describe('run inspector', () => {
     // it here is the difference between a typo and a blank report.
     it('embeds a client a browser can parse', () => {
         expect(() => new Function('MERMAID_URL', CLIENT)).not.toThrow();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Paths the agent named under a mount
+// ---------------------------------------------------------------------------
+
+describe('workspace paths in the report', () => {
+    const mounts = [{ at: '/workspace', href: 'file:///Users/me/my%20proj' }];
+
+    // Described here because the test program has neither the DOM lib nor jsdom's types.
+    interface Node {
+        textContent: string | null;
+        getAttribute(name: string): string | null;
+        querySelectorAll(selector: string): Iterable<Node>;
+    }
+    const { JSDOM } = createRequire(import.meta.url)('jsdom') as {
+        JSDOM: new (html: string, opts: object) => { window: { eval(code: string): unknown } };
+    };
+
+    /** The client's own `linkedPre`, run in a DOM against a page carrying `mounts`. */
+    function linkedPre(): (cls: string, text: string) => Node {
+        const report = {
+            title: 't',
+            generatedAt: '',
+            state: { runId: 'r', trajectory: [] },
+            blobs: {},
+            truncated: [],
+            media: [],
+            mounts,
+        } as unknown as RunReport;
+        const html = renderReportHtml(report).replace(
+            /<script type="module">[\s\S]*?<\/script>/,
+            '',
+        );
+        const dom = new JSDOM(html, { runScripts: 'outside-only' });
+        const load = dom.window.eval(`(function (MERMAID_URL) {${CLIENT}\nreturn linkedPre;})`) as (
+            url: string,
+        ) => (cls: string, text: string) => Node;
+        return load('');
+    }
+
+    const links = (pre: Node): [string, string][] =>
+        [...pre.querySelectorAll('a')].map((a) => [
+            a.textContent ?? '',
+            a.getAttribute('href') ?? '',
+        ]);
+
+    it('carries the mounts it was given', async () => {
+        const payloads = new PayloadResolver(new InMemoryPayloadStore());
+        const state = { runId: 'r', trajectory: [] } as unknown as AgentState;
+        expect((await buildRunReport(state, payloads, { mounts })).mounts).toEqual(mounts);
+        expect((await buildRunReport(state, payloads)).mounts).toBeUndefined();
+    });
+
+    it('links every spelling of a workspace path and keeps the text as written', () => {
+        const text =
+            'wrote /workspace/out/report.html. Open file:///workspace/a%20b.html#top, ' +
+            'or (/workspace) itself';
+        const pre = linkedPre()('text', text);
+        expect(pre.textContent).toBe(text);
+        expect(links(pre)).toEqual([
+            ['/workspace/out/report.html', 'file:///Users/me/my%20proj/out/report.html'],
+            ['file:///workspace/a%20b.html#top', 'file:///Users/me/my%20proj/a%20b.html#top'],
+            ['/workspace', 'file:///Users/me/my%20proj'],
+        ]);
+    });
+
+    it('links nothing that is not a path in the workspace', () => {
+        const text =
+            '/workspace/../etc/passwd /home/workspace/x /workspaces/y /workspace.bak x/workspace/z';
+        const pre = linkedPre()('text', text);
+        expect(pre.textContent).toBe(text);
+        expect(links(pre)).toEqual([]);
     });
 });
 

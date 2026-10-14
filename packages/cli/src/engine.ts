@@ -24,6 +24,7 @@ import {
 import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { auditModels, describeIssue } from './audit.ts';
 import { loadProjectEnv } from './env.ts';
 import { readJson, writeJson } from './home.ts';
@@ -384,6 +385,7 @@ async function record(
             title: `${engine.name} · ${run.id}`,
             architecture: await engine.runner.describe(),
             memory: engine.runner.services.memory?.store,
+            mounts: [{ at: engine.workspaceMount, href: pathToFileURL(engine.workspace).href }],
         });
         await writeFile(run.report, renderReportHtml(built), 'utf8');
         report = run.report;

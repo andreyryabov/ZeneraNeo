@@ -8,6 +8,7 @@ export {
     MAX_BLOB_BYTES,
     MAX_MEMORY_FILE_BYTES,
     MERMAID_URL,
+    type ReportMount,
     type ReportOptions,
     type RunMemory,
     type RunReport,

@@ -15,6 +15,7 @@ import { History } from '../history.ts';
 import { format } from '../narrate.ts';
 import { display } from '../session.ts';
 import { CliError } from '../term.ts';
+import { hostUrls, hyperlink, hyperlinks, linkBlock, type WorkspaceLink } from './links.ts';
 import { resolveTheme, THEMES, type Kind, type Theme } from './theme.ts';
 import {
     ACTIVITY_ROWS,
@@ -160,6 +161,18 @@ const FRAME_MS = 100;
 const ThemeContext = React.createContext<Theme>(THEMES.dark);
 const useTheme = (): Theme => useContext(ThemeContext);
 
+interface Links {
+    ws: WorkspaceLink;
+    /** the terminal draws OSC 8, so a path keeps its text and links to the host */
+    osc8: boolean;
+}
+
+const LinksContext = React.createContext<Links | undefined>(undefined);
+
+/** Without hyperlinks the only way to reach the file is to print where it is. */
+const shownText = (text: string, links: Links | undefined): string =>
+    links && !links.osc8 ? hostUrls(text, links.ws) : text;
+
 function Row({ line }: { line: Line }): React.ReactElement {
     const theme = useTheme();
     const style = theme.line[line.kind];
@@ -263,6 +276,7 @@ function Call({ line }: { line: Line }): React.ReactElement {
  */
 function Spans({ spans }: { spans: readonly Span[] }): React.ReactElement {
     const theme = useTheme();
+    const links = useContext(LinksContext);
     return (
         <>
             {spans.map((s, i) => (
@@ -273,7 +287,9 @@ function Spans({ spans }: { spans: readonly Span[] }): React.ReactElement {
                     underline={s.href !== undefined && s.href !== ''}
                     {...(s.code ? { color: theme.code.color } : {})}
                 >
-                    {s.text}
+                    {links?.osc8 && s.href?.startsWith('file:')
+                        ? hyperlink(s.href, s.text)
+                        : s.text}
                 </Text>
             ))}
         </>
@@ -388,11 +404,13 @@ function BlockView({
  * answer and boxing each of them turns the transcript into a stack of frames;
  * the box means *this is the answer*, and it only means that if it is rare.
  */
-function Answer({ text, boxed }: { text: string; boxed: boolean }): React.ReactElement {
+function Answer({ text: said, boxed }: { text: string; boxed: boolean }): React.ReactElement {
     const theme = useTheme();
+    const links = useContext(LinksContext);
     const { stdout } = useStdout();
+    const text = shownText(said, links);
     const width = boxWidth(text, stdout?.columns ?? 80);
-    const blocks = blocksOf(text);
+    const blocks = blocksOf(text).map((b) => (links?.osc8 ? linkBlock(b, links.ws) : b));
     const inner = width - (boxed ? 4 : GUTTER);
     const body = blocks.map((block, i) => (
         // Items of one list are one thing; a blank row between them is two
@@ -465,6 +483,10 @@ interface Stats {
 function App({ engine, options, theme }: Props): React.ReactElement {
     const { exit } = useApp();
     const { stdout } = useStdout();
+    const [links] = useState<Links>(() => ({
+        ws: { at: engine.workspaceMount, host: engine.workspace },
+        osc8: hyperlinks(),
+    }));
 
     const [lines, setLines] = useState<Line[]>([]);
     const [live, setLive] = useState('');
@@ -1033,80 +1055,92 @@ function App({ engine, options, theme }: Props): React.ReactElement {
 
     return (
         <ThemeContext.Provider value={theme}>
-            <Box flexDirection="column">
-                {/* `Static` prints once and never repaints, so the banner and
+            <LinksContext.Provider value={links}>
+                <Box flexDirection="column">
+                    {/* `Static` prints once and never repaints, so the banner and
                     finished turns scroll away into real terminal scrollback
                     instead of being redrawn on every keystroke. */}
-                <Static items={[BANNER, ...lines]}>
-                    {(item) =>
-                        isBanner(item) ? (
-                            <Header
-                                key={item.key}
-                                engine={engine}
-                                readOnly={options.readOnly}
-                                started={options.started}
-                            />
-                        ) : (
-                            <Row key={item.key} line={item} />
-                        )
-                    }
-                </Static>
+                    <Static items={[BANNER, ...lines]}>
+                        {(item) =>
+                            isBanner(item) ? (
+                                <Header
+                                    key={item.key}
+                                    engine={engine}
+                                    readOnly={options.readOnly}
+                                    started={options.started}
+                                />
+                            ) : (
+                                <Row key={item.key} line={item} />
+                            )
+                        }
+                    </Static>
 
-                {/* One region, which grows and never shrinks while the turn
+                    {/* One region, which grows and never shrinks while the turn
                     runs. What it holds changes every hundred milliseconds —
                     reasoning grows, settles to a line, a fork opens four boxes
                     — and every one of those used to move the footer. The high
                     mark is held instead, and the content sits at the bottom of
                     it, so the status line stays where it was put and the slack
                     falls between the transcript and the work. */}
-                <Box
-                    flexDirection="column"
-                    justifyContent="flex-end"
-                    height={busy ? grown.current : undefined}
-                    overflow="hidden"
-                >
-                    <Branches boxes={fitted.boxes} spin={spin} frame={frame} columns={columns} />
-
-                    {/* Above the work it decided on, which is the order it
-                        happened in. */}
-                    {streaming && budget.thinking ? (
-                        <Reasoning text={thinking} columns={columns} frame={frame} live={musing} />
-                    ) : null}
-
-                    <Activity rows={fitted.trunk} hidden={fitted.hidden} frame={frame} />
-
-                    {/* The answer as it arrives, in the terminal's own
-                        foreground: it is the text, not a highlight on it. */}
-                    {live ? <Streaming text={live} columns={columns} rows={textRows} /> : null}
-                </Box>
-
-                <Footer
-                    agent={agent}
-                    busy={busy}
-                    spin={spin}
-                    frame={frame}
-                    running={mine}
-                    forked={branches.current.size}
-                    step={step}
-                    model={model}
-                    stats={stats}
-                    inflight={inflight}
-                    reasoning={musing && streaming}
-                />
-
-                {busy ? null : (
-                    <Box>
-                        <Text color={theme.accent}>› </Text>
-                        <TextInput
-                            key={generation}
-                            defaultValue={draft}
-                            placeholder="Ask something… (↑ for history, /help for commands)"
-                            onChange={remember}
-                            onSubmit={submit}
+                    <Box
+                        flexDirection="column"
+                        justifyContent="flex-end"
+                        height={busy ? grown.current : undefined}
+                        overflow="hidden"
+                    >
+                        <Branches
+                            boxes={fitted.boxes}
+                            spin={spin}
+                            frame={frame}
+                            columns={columns}
                         />
+
+                        {/* Above the work it decided on, which is the order it
+                        happened in. */}
+                        {streaming && budget.thinking ? (
+                            <Reasoning
+                                text={thinking}
+                                columns={columns}
+                                frame={frame}
+                                live={musing}
+                            />
+                        ) : null}
+
+                        <Activity rows={fitted.trunk} hidden={fitted.hidden} frame={frame} />
+
+                        {/* The answer as it arrives, in the terminal's own
+                        foreground: it is the text, not a highlight on it. */}
+                        {live ? <Streaming text={live} columns={columns} rows={textRows} /> : null}
                     </Box>
-                )}
-            </Box>
+
+                    <Footer
+                        agent={agent}
+                        busy={busy}
+                        spin={spin}
+                        frame={frame}
+                        running={mine}
+                        forked={branches.current.size}
+                        step={step}
+                        model={model}
+                        stats={stats}
+                        inflight={inflight}
+                        reasoning={musing && streaming}
+                    />
+
+                    {busy ? null : (
+                        <Box>
+                            <Text color={theme.accent}>› </Text>
+                            <TextInput
+                                key={generation}
+                                defaultValue={draft}
+                                placeholder="Ask something… (↑ for history, /help for commands)"
+                                onChange={remember}
+                                onSubmit={submit}
+                            />
+                        </Box>
+                    )}
+                </Box>
+            </LinksContext.Provider>
         </ThemeContext.Provider>
     );
 }
@@ -1635,7 +1669,8 @@ function Reasoning({
     );
 }
 
-function Streaming({ text, columns, rows }: StreamProps): React.ReactElement {
+function Streaming({ text: said, columns, rows }: StreamProps): React.ReactElement {
+    const text = shownText(said, useContext(LinksContext));
     // The same width the finished answer will take, so landing it reflows
     // nothing: what is on screen is what stays there.
     //

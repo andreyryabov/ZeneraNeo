@@ -51,6 +51,15 @@ export interface ReportOptions {
     memory?: MemoryStore;
     /** ceiling on an inlined remembered file; 0 to inline none */
     maxMemoryFileBytes?: number;
+    /** Trees the run named by a mount, so the page can link those paths to this machine. */
+    mounts?: readonly ReportMount[];
+}
+
+export interface ReportMount {
+    /** the name the agent used, e.g. `/workspace` */
+    at: string;
+    /** the `file:` url of the directory behind it */
+    href: string;
 }
 
 /** Everything the page needs, and nothing that needs a store to interpret. */
@@ -80,6 +89,7 @@ export interface RunReport {
      * can have moved on a revision since, or be gone from the graph entirely.
      */
     memory?: RunMemory;
+    mounts?: ReportMount[];
 }
 
 export interface RunMemory {
@@ -139,6 +149,7 @@ export async function buildRunReport(
         media,
         architecture: opts.architecture,
         memory: opts.memory ? await remembered(opts.memory, state, media, opts) : undefined,
+        ...(opts.mounts?.length ? { mounts: [...opts.mounts] } : {}),
     };
 }
 
