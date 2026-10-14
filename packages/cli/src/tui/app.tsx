@@ -15,7 +15,7 @@ import { History } from '../history.ts';
 import { format } from '../narrate.ts';
 import { display } from '../session.ts';
 import { CliError } from '../term.ts';
-import { hostUrls, hyperlink, hyperlinks, linkBlock, type WorkspaceLink } from './links.ts';
+import { hostUrls, hyperlink, hyperlinks, linkBlock, mountsOf, type Mounts } from './links.ts';
 import { resolveTheme, THEMES, type Kind, type Theme } from './theme.ts';
 import {
     ACTIVITY_ROWS,
@@ -162,7 +162,7 @@ const ThemeContext = React.createContext<Theme>(THEMES.dark);
 const useTheme = (): Theme => useContext(ThemeContext);
 
 interface Links {
-    ws: WorkspaceLink;
+    mounts: Mounts;
     /** the terminal draws OSC 8, so a path keeps its text and links to the host */
     osc8: boolean;
 }
@@ -171,7 +171,7 @@ const LinksContext = React.createContext<Links | undefined>(undefined);
 
 /** Without hyperlinks the only way to reach the file is to print where it is. */
 const shownText = (text: string, links: Links | undefined): string =>
-    links && !links.osc8 ? hostUrls(text, links.ws) : text;
+    links && !links.osc8 ? hostUrls(text, links.mounts) : text;
 
 function Row({ line }: { line: Line }): React.ReactElement {
     const theme = useTheme();
@@ -410,7 +410,7 @@ function Answer({ text: said, boxed }: { text: string; boxed: boolean }): React.
     const { stdout } = useStdout();
     const text = shownText(said, links);
     const width = boxWidth(text, stdout?.columns ?? 80);
-    const blocks = blocksOf(text).map((b) => (links?.osc8 ? linkBlock(b, links.ws) : b));
+    const blocks = blocksOf(text).map((b) => (links?.osc8 ? linkBlock(b, links.mounts) : b));
     const inner = width - (boxed ? 4 : GUTTER);
     const body = blocks.map((block, i) => (
         // Items of one list are one thing; a blank row between them is two
@@ -484,7 +484,7 @@ function App({ engine, options, theme }: Props): React.ReactElement {
     const { exit } = useApp();
     const { stdout } = useStdout();
     const [links] = useState<Links>(() => ({
-        ws: { at: engine.workspaceMount, host: engine.workspace },
+        mounts: mountsOf(engine.files),
         osc8: hyperlinks(),
     }));
 

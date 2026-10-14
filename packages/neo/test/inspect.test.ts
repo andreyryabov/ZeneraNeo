@@ -180,8 +180,12 @@ describe('run inspector', () => {
 // Paths the agent named under a mount
 // ---------------------------------------------------------------------------
 
-describe('workspace paths in the report', () => {
-    const mounts = [{ at: '/workspace', href: 'file:///Users/me/my%20proj' }];
+describe('mounted paths in the report', () => {
+    const mounts = [
+        { at: '/workspace', href: 'file:///Users/me/my%20proj' },
+        { at: '/assets', href: 'file:///Users/me/app/assets' },
+        { at: '/skills/report', href: 'file:///Users/me/app/agents/skills/report' },
+    ];
 
     // Described here because the test program has neither the DOM lib nor jsdom's types.
     interface Node {
@@ -247,6 +251,16 @@ describe('workspace paths in the report', () => {
         const pre = linkedPre()('text', text);
         expect(pre.textContent).toBe(text);
         expect(links(pre)).toEqual([]);
+    });
+
+    it('links each tree to its own directory, in the order they appear', () => {
+        const text = 'read /skills/report/SKILL.md and /assets/api.yaml, not /skills/reporter/x';
+        const pre = linkedPre()('text', text);
+        expect(pre.textContent).toBe(text);
+        expect(links(pre)).toEqual([
+            ['/skills/report/SKILL.md', 'file:///Users/me/app/agents/skills/report/SKILL.md'],
+            ['/assets/api.yaml', 'file:///Users/me/app/assets/api.yaml'],
+        ]);
     });
 });
 

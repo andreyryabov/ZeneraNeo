@@ -88,6 +88,8 @@ export interface Engine {
     workspace: string;
     /** where the workspace appears inside the container */
     workspaceMount: string;
+    /** every tree the file tools reach, and the names they reach them by */
+    files: Workspace;
     /** whether the agent was denied every writing tool */
     readOnly: boolean;
     session: SessionPaths;
@@ -224,6 +226,7 @@ export async function open(opts: EngineOptions): Promise<Engine> {
         name: opts.project.name,
         workspace,
         workspaceMount: sandbox.spec.workdir ?? SANDBOX_MOUNT,
+        files,
         readOnly: Boolean(opts.readOnly),
         session: opts.session,
         memory,
@@ -385,7 +388,10 @@ async function record(
             title: `${engine.name} · ${run.id}`,
             architecture: await engine.runner.describe(),
             memory: engine.runner.services.memory?.store,
-            mounts: [{ at: engine.workspaceMount, href: pathToFileURL(engine.workspace).href }],
+            mounts: [
+                { at: engine.workspaceMount, href: pathToFileURL(engine.files.root).href },
+                ...engine.files.mounts.map((m) => ({ at: m.at, href: pathToFileURL(m.host).href })),
+            ],
         });
         await writeFile(run.report, renderReportHtml(built), 'utf8');
         report = run.report;
