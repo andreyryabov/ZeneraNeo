@@ -4,7 +4,9 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import type { ParseArgsConfig } from 'node:util';
 import { parse } from '../args.ts';
+import { matching, projectNames, type Candidate } from '../candidates.ts';
 import type { Command, Context } from '../command.ts';
 import { loadProjectEnv } from '../env.ts';
 import { copilotEventLog } from '../eventlog.ts';
@@ -160,6 +162,32 @@ interface Flags {
     'no-refresh'?: boolean;
 }
 
+/** Kept apart from `run` so that shell completion offers exactly what is parsed. */
+const OPTIONS: NonNullable<ParseArgsConfig['options']> = {
+    project: { type: 'string' },
+    provider: { type: 'string' },
+    model: { type: 'string' },
+    prompt: { type: 'string', short: 'p' },
+    agent: { type: 'string' },
+    effort: { type: 'string' },
+    share: { type: 'string' },
+    events: { type: 'string' },
+    resume: { type: 'string' },
+    continue: { type: 'boolean' },
+    'session-id': { type: 'string' },
+    retries: { type: 'string' },
+    'allow-all': { type: 'boolean' },
+    'allow-tool': { type: 'string' },
+    ask: { type: 'boolean' },
+    'add-dir': { type: 'string', multiple: true },
+    'dry-run': { type: 'boolean' },
+    local: { type: 'boolean' },
+    pick: { type: 'boolean' },
+    clear: { type: 'boolean' },
+    force: { type: 'boolean' },
+    'no-refresh': { type: 'boolean' },
+};
+
 export const meta: Command = {
     summary: 'Run the meta agent over this project, on your own keys.',
     usage: USAGE,
@@ -264,34 +292,7 @@ export const meta: Command = {
             });
             return await run({ args, json: ctx.json, cwd: ctx.cwd }, found);
         }
-        const { values, positionals } = parse<Flags>(
-            ctx.args,
-            {
-                project: { type: 'string' },
-                provider: { type: 'string' },
-                model: { type: 'string' },
-                prompt: { type: 'string', short: 'p' },
-                agent: { type: 'string' },
-                effort: { type: 'string' },
-                share: { type: 'string' },
-                events: { type: 'string' },
-                resume: { type: 'string' },
-                continue: { type: 'boolean' },
-                'session-id': { type: 'string' },
-                retries: { type: 'string' },
-                'allow-all': { type: 'boolean' },
-                'allow-tool': { type: 'string' },
-                ask: { type: 'boolean' },
-                'add-dir': { type: 'string', multiple: true },
-                'dry-run': { type: 'boolean' },
-                local: { type: 'boolean' },
-                pick: { type: 'boolean' },
-                clear: { type: 'boolean' },
-                force: { type: 'boolean' },
-                'no-refresh': { type: 'boolean' },
-            },
-            USAGE,
-        );
+        const { values, positionals } = parse<Flags>(ctx.args, OPTIONS, USAGE);
 
         // `zen meta acme run` is typed at least as often as `zen meta run acme`,
         // and read literally it asks the agent the one-word question "run" —
@@ -443,6 +444,120 @@ async function pickPrompt(ctx: Context, project: Projects.Project): Promise<stri
         'Which prompt?',
         names.map((n) => ({ label: `/${n}`, value: n })),
     );
+}
+
+// ---------------------------------------------------------------------------
+// Completing it
+//
+// `zen meta run acme /<Tab>` is where a terminal can show what an editor's menu
+// shows. It reads the line the way `stored` does — a leading slash is a prompt,
+// a bare word that names a project is the project — and it only ever reads:
+// the editor files are not refreshed for the sake of a Tab.
+// ---------------------------------------------------------------------------
+
+async function findProject(name: string): Promise<Projects.Project | undefined> {
+    try {
+        return await Projects.find(name);
+    } catch {
+        return undefined;
+    }
+}
+
+async function promptsOf(project: Projects.Project | undefined): Promise<Candidate[]> {
+    if (!project) {
+        return [];
+    }
+    const names = await listPrompts(project.dir);
+    return await Promise.all(
+        names.map(async (name) => ({
+            value: `/${name}`,
+            description: (await loadPrompt(project.dir, name).catch(() => undefined))?.description,
+        })),
+    );
+}
+
+/** `args` is what came after `meta`, without the word being completed. */
+export async function completeMeta(
+    args: readonly string[],
+    cur: string,
+    cwd: string,
+): Promise<Candidate[]> {
+    const words: string[] = [];
+    let flagged: string | undefined;
+    let waiting: string | undefined;
+    for (const arg of args) {
+        if (waiting) {
+            if (waiting === 'project') {
+                flagged = arg;
+            }
+            waiting = undefined;
+        } else if (arg.startsWith('--')) {
+            const [flag, value] = arg.slice(2).split(/=(.*)/s);
+            if (value !== undefined) {
+                flagged = flag === 'project' ? value : flagged;
+            } else if (OPTIONS[flag]?.type === 'string') {
+                waiting = flag;
+            }
+        } else if (arg === '-p') {
+            waiting = 'prompt';
+        } else if (!arg.startsWith('-')) {
+            words.push(arg);
+        }
+    }
+
+    // A flag's value is the flag's to name, and most of them are free text or a
+    // path — which is the shell's.
+    if (waiting === 'provider') {
+        return matching(
+            PROVIDERS.map((value) => ({ value })),
+            cur,
+        );
+    }
+    if (waiting === 'project') {
+        return matching(await projectNames(), cur);
+    }
+    if (waiting) {
+        return [];
+    }
+
+    const at = words.findIndex((w) => VERBS.has(w));
+    const named = at === 1 ? words[0] : undefined;
+    const verb = at === 0 || (named && (await findProject(named))) ? words[at] : undefined;
+
+    if (cur.startsWith('-')) {
+        return verb === 'dataset' || verb === 'finetune'
+            ? []
+            : matching(
+                  Object.keys(OPTIONS).map((flag) => ({ value: `--${flag}` })),
+                  cur,
+              );
+    }
+    if (!verb) {
+        const verbs = [...VERBS].map((value) => ({ value }));
+        if (words.length === 0) {
+            return matching([...verbs, ...(await projectNames())], cur);
+        }
+        return words.length === 1 && (await findProject(words[0])) ? matching(verbs, cur) : [];
+    }
+
+    const rest = words.slice(at + 1);
+    if (verb === 'prompts' || verb === 'resume') {
+        return flagged || named || rest.length > 0 ? [] : matching(await projectNames(), cur);
+    }
+    if (verb !== 'run' || rest.some((w) => w.startsWith('/'))) {
+        // Past the prompt's name, what follows is files and words.
+        return [];
+    }
+
+    const given = flagged ?? named ?? rest[0];
+    if (given === undefined) {
+        const here = await Projects.current(cwd).catch(() => undefined);
+        return matching([...(await promptsOf(here)), ...(await projectNames())], cur);
+    }
+    const project = await findProject(given);
+    const fromRest = !flagged && !named;
+    const free = rest.length - (fromRest && project ? 1 : 0);
+    return free > 0 ? [] : matching(await promptsOf(project), cur);
 }
 
 // ---------------------------------------------------------------------------

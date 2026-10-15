@@ -110,6 +110,16 @@ Or without installing anything:
 npx @zenera/cli --help
 ```
 
+Tab completion for zsh, bash and fish - commands, projects, stored prompts - is
+one line in your shell's startup file. `zen` adds it for you, after asking:
+
+```sh
+zen completion --install            # the shell you are in; --yes to skip the question
+zen completion fish --install       # or name one
+```
+
+Or add it yourself: `eval "$(zen completion zsh)"` in `~/.zshrc`.
+
 ## Quickstart
 
 From nothing to a specialized agent system:
@@ -553,24 +563,25 @@ The commands to run next are printed for you to read and type.
 
 ## Commands
 
-| Command   | Does                                                                 |
-| --------- | -------------------------------------------------------------------- |
-| `init`    | Creates a project here, or in `<dir>`, and registers it.             |
-| `list`    | Every known project: sessions, last run, whether one is live.        |
-| `open`    | Opens a project in your editor.                                      |
-| `key`     | The credential keyring - add, check, switch, remove.                 |
-| `models`  | What this machine can use - list, search, test, pick.                |
-| `run`     | Runs the project - the TUI on a terminal, a single answer otherwise. |
-| `meta`    | Runs the meta agent over the project - the one that edits it.        |
-| `inspect` | Opens or rebuilds a run's `report.html`.                             |
-| `view`    | Shows a folder in the browser, redrawn live as its files change.     |
-| `memory`  | What the agents remember - size, listing, one node, or a whole page. |
-| `check`   | Validates the project and every file it names, and asks the models.  |
-| `export`  | Writes the project to a shareable zip archive.                       |
-| `import`  | Unpacks one, registers it, and runs nothing in it.                   |
-| `sandbox` | Checks and prepares the container that command-line tools run in.    |
-| `cache`   | What work has been kept, and getting rid of it.                      |
-| `version` | CLI, library and Node versions.                                      |
+| Command      | Does                                                                 |
+| ------------ | -------------------------------------------------------------------- |
+| `init`       | Creates a project here, or in `<dir>`, and registers it.             |
+| `list`       | Every known project: sessions, last run, whether one is live.        |
+| `open`       | Opens a project in your editor.                                      |
+| `key`        | The credential keyring - add, check, switch, remove.                 |
+| `models`     | What this machine can use - list, search, test, pick.                |
+| `run`        | Runs the project - the TUI on a terminal, a single answer otherwise. |
+| `meta`       | Runs the meta agent over the project - the one that edits it.        |
+| `inspect`    | Opens or rebuilds a run's `report.html`.                             |
+| `view`       | Shows a folder in the browser, redrawn live as its files change.     |
+| `memory`     | What the agents remember - size, listing, one node, or a whole page. |
+| `check`      | Validates the project and every file it names, and asks the models.  |
+| `export`     | Writes the project to a shareable zip archive.                       |
+| `import`     | Unpacks one, registers it, and runs nothing in it.                   |
+| `sandbox`    | Checks and prepares the container that command-line tools run in.    |
+| `cache`      | What work has been kept, and getting rid of it.                      |
+| `completion` | Tab completion for zsh, bash and fish - printed, or installed.       |
+| `version`    | CLI, library and Node versions.                                      |
 
 ### Commands from other packages
 

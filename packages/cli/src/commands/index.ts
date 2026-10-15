@@ -2,6 +2,7 @@ import type { BannerText } from '../banner.ts';
 import type { Command } from '../command.ts';
 import { cache } from './cache.ts';
 import { check } from './check.ts';
+import { completion } from './completion.ts';
 import { pack } from './export.ts';
 import { unpack } from './import.ts';
 import { init } from './init.ts';
@@ -42,6 +43,7 @@ export const COMMANDS: Record<string, Command> = {
     memory,
     sandbox,
     cache,
+    completion,
     version,
 };
 
