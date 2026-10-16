@@ -43,8 +43,41 @@ export function parse<T>(args: readonly string[], options: Options, usage: strin
         });
         return { values: values as T, positionals };
     } catch (err) {
-        throw usageError((err as Error).message, usage);
+        throw usageError(parseError(err), usage);
     }
+}
+
+/**
+ * `parseArgs` speaks in its own voice — capitalised, single-quoted, and for an
+ * unknown option a sentence about positionals that ends on an unbalanced quote.
+ * Every other usage error here is lower case and double-quotes what was typed,
+ * so this puts its four messages into that form. Only the wording is matched,
+ * never relied on: an error that does not match is passed through with its
+ * first letter lowered, so a newer Node can lose polish but never information.
+ */
+export function parseError(err: unknown): string {
+    const message = err instanceof Error ? err.message : String(err);
+    const code = (err as { code?: unknown } | null)?.code;
+    const quoted = (re: RegExp): string | undefined => message.match(re)?.[1];
+
+    if (code === 'ERR_PARSE_ARGS_UNKNOWN_OPTION') {
+        const option = quoted(/^Unknown option '([^']+)'/);
+        if (option) return `unknown option "${option}"`;
+    }
+    if (code === 'ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL') {
+        const arg = quoted(/^Unexpected argument '([^']*)'/);
+        if (arg !== undefined) return `unexpected argument "${arg}"`;
+    }
+    if (code === 'ERR_PARSE_ARGS_INVALID_OPTION_VALUE') {
+        // The long spelling is the one help prints, so it is the one named:
+        // `-n, --name <value>` becomes `--name`.
+        const option = quoted(/^Option '(?:-\w, )?(-{1,2}[^' ]+)/);
+        if (option && /argument missing$/.test(message)) return `option "${option}" needs a value`;
+        if (option && /does not take an argument$/.test(message)) {
+            return `option "${option}" does not take a value`;
+        }
+    }
+    return message.replace(/^./, (c) => c.toLowerCase());
 }
 
 /** Exactly one positional, or none. More than one is a mistake worth naming. */

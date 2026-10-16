@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { extract, invokedAs, split } from './args.ts';
+import { extract, invokedAs, parseError, split } from './args.ts';
 import { NEO_BANNER, printBanner } from './banner.ts';
 import { ALIASES, COMMANDS, EXTERNAL } from './commands/index.ts';
 import { cliManifest, versionOf } from './commands/version.ts';
@@ -63,7 +63,7 @@ async function main(argv: readonly string[]): Promise<number> {
             allowPositionals: false,
         }).values;
     } catch (e) {
-        fail((e as Error).message, `run ${bold(`${NAME} --help`)} for the options`);
+        fail(parseError(e), `run ${bold(`${NAME} --help`)} for the options`);
         return EXIT.usage;
     }
 

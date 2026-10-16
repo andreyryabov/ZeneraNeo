@@ -17,8 +17,9 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { parseArgs } from 'node:util';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { extract, split } from '../src/args.ts';
+import { extract, parse, parseError, split } from '../src/args.ts';
 import { auditModels } from '../src/audit.ts';
 import { bannerLines, NEO_BANNER } from '../src/banner.ts';
 import { Cache, cacheKey } from '../src/cache.ts';
@@ -169,6 +170,64 @@ describe('splitting the command line', () => {
     it('leaves everything after -- alone', () => {
         const { rest } = extract(['--', '--json', '--help']);
         expect(rest).toEqual(['--json', '--help']);
+    });
+});
+
+describe('wording a mistake on the command line', () => {
+    /** The real error `parseArgs` throws, so a change in Node's wording fails here first. */
+    const thrown = (args: string[], options = {}, allowPositionals = true): unknown => {
+        try {
+            parseArgs({ args, options, strict: true, allowPositionals });
+        } catch (err) {
+            return err;
+        }
+        throw new Error(`parseArgs accepted ${args.join(' ')}`);
+    };
+
+    it('names an unknown option in the voice of the other usage errors', () => {
+        expect(parseError(thrown(['--bogus']))).toBe('unknown option "--bogus"');
+        expect(parseError(thrown(['-x']))).toBe('unknown option "-x"');
+    });
+
+    it('drops the advice about positionals, and the quote it leaves open', () => {
+        const message = parseError(thrown(['--verison']));
+        expect(message).not.toMatch(/positional|'/);
+    });
+
+    it('says which option wanted a value, by its long name', () => {
+        const name = { name: { type: 'string', short: 'n' } } as const;
+        expect(parseError(thrown(['--name'], name))).toBe('option "--name" needs a value');
+        expect(parseError(thrown(['-n'], name))).toBe('option "--name" needs a value');
+        const force = { force: { type: 'boolean' } } as const;
+        expect(parseError(thrown(['--force=1'], force))).toBe(
+            'option "--force" does not take a value',
+        );
+    });
+
+    it('names a positional nobody asked for', () => {
+        expect(parseError(thrown(['stray'], {}, false))).toBe('unexpected argument "stray"');
+    });
+
+    it('passes through anything it does not recognise, lowered but whole', () => {
+        const odd = Object.assign(new Error('Something new from Node'), {
+            code: 'ERR_PARSE_ARGS_UNKNOWN_OPTION',
+        });
+        expect(parseError(odd)).toBe('something new from Node');
+        expect(parseError(new Error('Plain failure'))).toBe('plain failure');
+    });
+
+    it('is still a usage error: exit code 2, with the usage line as its hint', () => {
+        const usage = 'zen init [dir] [--name <name>]';
+        let caught: unknown;
+        try {
+            parse(['--bogus'], { name: { type: 'string' } }, usage);
+        } catch (err) {
+            caught = err;
+        }
+        expect(caught).toBeInstanceOf(CliError);
+        expect((caught as CliError).code).toBe(EXIT.usage);
+        expect((caught as CliError).message).toBe('unknown option "--bogus"');
+        expect((caught as CliError).hint).toBe(usage);
     });
 });
 
