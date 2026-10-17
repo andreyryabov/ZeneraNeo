@@ -63,8 +63,8 @@
     },
     "dependencies": {
         "graphology": "^0.26.0",
-        "yaml": "^2.9.0",
-        "zod": "^4.4.3"
+        "yaml": "^2.9.1",
+        "zod": "^4.6.7"
     },
     "peerDependencies": {
         "@anthropic-ai/sdk": "^0.120.0",
@@ -88,8 +88,8 @@
     },
     "devDependencies": {
         "@anthropic-ai/sdk": "^0.120.0",
-        "@google/genai": "^2.18.0",
-        "@openrouter/sdk": "^1.2.80",
+        "@google/genai": "^2.30.0",
+        "@openrouter/sdk": "^1.4.25",
         "openai": "^6.0.0"
     }
 }
