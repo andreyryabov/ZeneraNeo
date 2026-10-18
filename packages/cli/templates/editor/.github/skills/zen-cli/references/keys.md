@@ -1,7 +1,7 @@
 # Credentials - `zen key`
 
 ```
-zen key <ls|add|use|check|rm|show|env> [ref] [options]
+zen key <ls|add|use|mode|check|rm|show|env> [ref] [options]
 ```
 
 Alias: `keys`.
@@ -20,6 +20,7 @@ keys; one of them is active.
 | `zen key ls [--check]`            | Everything stored, and its state        |
 | `zen key add <provider>[/name]`   | Read a key from stdin, or ask for it    |
 | `zen key use <provider>/<name>`   | Choose which one a run uses             |
+| `zen key mode [direct\|bifrost]`  | Call vendors directly, or via a gateway |
 | `zen key check [provider[/name]]` | Ask the provider whether it still works |
 | `zen key rm <provider>/<name>`    | Forget one                              |
 | `zen key show <ref> [--reveal]`   | Masked by default                       |
@@ -49,8 +50,32 @@ echo-off prompt and from nowhere else.
 | `vertex`     | `VERTEX_API_KEY`                 | secret | an express-mode key from GCP        |
 | `openrouter` | `OPENROUTER_API_KEY`             | secret | openrouter.ai/settings/keys         |
 | `exa`        | `EXA_API_KEY`                    | secret | dashboard.exa.ai/api-keys           |
+| `bifrost`    | `BIFROST_API_KEY`                | secret | a virtual key from your Bifrost     |
 
-`exa` is a service the tools call, not a model provider.
+`exa` is a service the tools call, not a model provider. `bifrost` is a
+gateway: see below.
+
+### Gateway mode - every model through Bifrost
+
+```
+zen key add bifrost --url https://bifrost.example.com   # the virtual key, prompted
+zen key mode bifrost                                   # from now on, every run
+zen key mode direct                                    # back to vendor keys
+```
+
+In `bifrost` mode a run exports `BIFROST_API_KEY` and `BIFROST_BASE_URL` and
+**withholds every vendor key**. The runtime then sends every model and every
+embedding through the gateway, each in its own vendor's protocol, and
+`agents.yaml` does not change: `vertex:gemini-3.5-flash` reaches
+`<url>/genai` as `vertex/gemini-3.5-flash`, `anthropic:*` reaches
+`<url>/anthropic`, `openai:*` and `openrouter:*` reach `<url>/openai`.
+Declared providers are rerouted too. `zen check` then reports
+`BIFROST_API_KEY`, not the vendor variables, as the credential in use.
+
+The switch is `BIFROST_BASE_URL` itself, so exporting it in a shell or a `.env`
+turns gateway mode on without the keyring. In this mode `zen models` lists only
+what the gateway serves - see `models.md`. The full guide is
+[docs/gateway.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/gateway.md).
 
 ### Vertex takes either shape
 

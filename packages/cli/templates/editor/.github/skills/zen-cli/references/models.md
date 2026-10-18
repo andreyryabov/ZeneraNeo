@@ -40,6 +40,19 @@ it was - `--json` carries `source` per model and `origin` per provider.
 
 `zen models` on its own does **not** go to the network. `ls` and `search` do.
 
+### In gateway mode
+
+After `zen key mode bifrost`, every listing is **what the gateway serves**,
+not what the vendors do: one `GET <url>/v1/models`, split by its
+`<upstream>/<id>` names back into refs (`vertex/gemini-3.5-flash` lists as
+`vertex:gemini-3.5-flash`). Upstreams no zen provider names (bedrock, groq, ...)
+are left out, and there is no built-in fallback list. Each command says so on
+stderr with a `⇄ bifrost mode` line, `browse` carries the same badge on every
+screen, and `--json` adds a `gateway` field. `zen models` then does go to the
+network, since one request covers every provider; `test` asks through the
+gateway too. The full guide is
+[docs/gateway.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/gateway.md).
+
 ## Testing a model
 
 ```

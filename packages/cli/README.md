@@ -1025,6 +1025,26 @@ clear where a working provider actually comes from.
 
 </details>
 
+<details>
+<summary><strong>Every model through a Bifrost gateway</strong></summary>
+
+With one virtual key in place of every vendor key:
+
+```sh
+zen key add bifrost --url https://bifrost.example.com
+zen key mode bifrost            # every run goes through the gateway
+zen key mode direct             # back to the vendor keys
+```
+
+`agents.yaml` does not change. Each model keeps its own vendor's protocol and
+is sent to the gateway's matching endpoint - `vertex:gemini-3.5-flash` reaches
+`/genai` as `vertex/gemini-3.5-flash` - so thinking and cache accounting
+survive the trip. The whole story - variables, the sandbox, `zen models`, known
+limits - is in
+[docs/gateway.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/gateway.md).
+
+</details>
+
 ## Cache - work you have already paid for
 
 Embedding a paragraph, parsing a document, asking a provider what it serves: all
@@ -1074,6 +1094,8 @@ terminal:
     - making an API description searchable and mockable.
 - [docs/memory.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/memory.md)
     - what agents keep between sessions.
+- [docs/gateway.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/gateway.md)
+    - every model through a Bifrost gateway, with one virtual key.
 
 ## License
 

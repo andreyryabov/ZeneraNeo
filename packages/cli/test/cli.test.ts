@@ -19,7 +19,7 @@ import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { extract, split } from '../src/args.ts';
-import { auditModels } from '../src/audit.ts';
+import { auditModels, credentialFor } from '../src/audit.ts';
 import { bannerLines, NEO_BANNER } from '../src/banner.ts';
 import { Cache, cacheKey } from '../src/cache.ts';
 import {
@@ -31,6 +31,7 @@ import {
     fetchCatalog,
     groupOf,
     loadCatalog,
+    loadCatalogs,
     matches,
     perMillion,
     type CatalogEntry,
@@ -48,13 +49,13 @@ import {
     credentials,
     envNames,
     envOf,
+    KeyStore,
     mask,
     parseRef,
     type KeyEntry,
-    type KeyStore,
     type Provider,
 } from '../src/keys.ts';
-import { classify, probeChat, probeModels } from '../src/liveness.ts';
+import { classify, probe, probeChat, probeModels } from '../src/liveness.ts';
 import {
     absorb,
     answerBox,
@@ -389,6 +390,152 @@ describe('keys', () => {
         it('allows a well-formed region it does not know, and says so', () => {
             expect(checkRegion('us-cental1')).toBe(false);
             expect(checkRegion('mars-west1')).toBe(false);
+        });
+    });
+
+    // One virtual key in place of every vendor's, switched on by a mode rather
+    // than by holding the key: a laptop can keep both and choose.
+    describe('a gateway key', () => {
+        const kept = { ...process.env };
+        let home: string;
+        beforeEach(() => {
+            home = mkdtempSync(join(tmpdir(), 'zen-gateway-'));
+            process.env.ZENERA_HOME = home;
+            for (const name of Object.keys(process.env)) {
+                if (/_API_KEY$|^BIFROST_|^GOOGLE_APPLICATION_CREDENTIALS$/.test(name)) {
+                    delete process.env[name];
+                }
+            }
+        });
+        afterEach(() => {
+            process.env = { ...kept };
+            rmSync(home, { recursive: true, force: true });
+        });
+
+        const stocked = async (): Promise<KeyStore> => {
+            const store = await KeyStore.open();
+            store.add('openai', 'default', 'sk-openai');
+            store.add('exa', 'default', 'exa-key');
+            store.add('bifrost', 'default', 'sk-bf-1', { url: 'https://gw.example' });
+            return store;
+        };
+
+        it('is held but not exported while the keyring is direct', async () => {
+            const store = await stocked();
+            expect(store.mode).toBe('direct');
+            expect(store.environment()).toEqual({
+                OPENAI_API_KEY: 'sk-openai',
+                EXA_API_KEY: 'exa-key',
+            });
+        });
+
+        it('replaces every vendor key in its own mode, and leaves the services', async () => {
+            const store = await stocked();
+            store.setMode('bifrost');
+            expect(store.environment()).toEqual({
+                EXA_API_KEY: 'exa-key',
+                BIFROST_API_KEY: 'sk-bf-1',
+                BIFROST_BASE_URL: 'https://gw.example',
+            });
+        });
+
+        it('exports the url even when the shell already supplies the key', async () => {
+            const store = await stocked();
+            store.setMode('bifrost');
+            process.env.BIFROST_API_KEY = 'sk-bf-shell';
+            expect(store.environment()).toMatchObject({ BIFROST_BASE_URL: 'https://gw.example' });
+            expect(store.environment()).not.toHaveProperty('BIFROST_API_KEY');
+        });
+
+        it('refuses a mode with no gateway behind it', async () => {
+            const store = await KeyStore.open();
+            expect(() => store.setMode('bifrost')).toThrow(/no Bifrost key/);
+        });
+
+        it('survives a save', async () => {
+            const store = await stocked();
+            store.setMode('bifrost');
+            store.save();
+            expect((await KeyStore.open()).mode).toBe('bifrost');
+        });
+
+        it('makes a keyring with no vendor key usable', () => {
+            const empty = { active: () => undefined } as unknown as KeyStore;
+            expect(() => assertUsable(empty)).toThrow(/no credentials/);
+            process.env.BIFROST_BASE_URL = 'https://gw.example';
+            expect(() => assertUsable(empty)).not.toThrow();
+        });
+
+        it('names the gateway key, not the vendor one, in the audit', () => {
+            expect(
+                credentialFor({
+                    provider: 'vertex',
+                    kind: 'vertex',
+                    apiKeyEnv: 'BIFROST_API_KEY',
+                    satisfied: false,
+                    keyOptional: false,
+                    gateway: 'bifrost',
+                }),
+            ).toEqual({ env: 'BIFROST_API_KEY', present: false });
+        });
+
+        describe('when checked', () => {
+            let server: Server;
+            let url: string;
+            let answer: { status: number; body: unknown };
+            let seen: Record<string, string | string[] | undefined>;
+            beforeEach(async () => {
+                server = createServer((req, res) => {
+                    seen = { path: req.url, ...req.headers };
+                    res.writeHead(answer.status, { 'content-type': 'application/json' });
+                    res.end(JSON.stringify(answer.body));
+                });
+                await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+                url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+            });
+            afterEach(() => new Promise<void>((done) => server.close(() => done())));
+
+            const check = async () => {
+                const store = await KeyStore.open();
+                return probe(store, store.add('bifrost', 'default', 'sk-bf-1', { url }));
+            };
+
+            it('asks the model listing, with the key in both headers', async () => {
+                answer = { status: 200, body: { data: [] } };
+                expect((await check()).state).toBe('live');
+                expect(seen).toMatchObject({
+                    path: '/v1/models',
+                    authorization: 'Bearer sk-bf-1',
+                    'x-bf-vk': 'sk-bf-1',
+                });
+            });
+
+            it('calls a refused key dead', async () => {
+                answer = {
+                    status: 401,
+                    body: {
+                        type: 'virtual_key_required',
+                        status_code: 401,
+                        error: { message: 'virtual key is required' },
+                    },
+                };
+                expect(await check()).toMatchObject({
+                    state: 'dead',
+                    detail: '401 virtual key is required',
+                });
+            });
+
+            it('calls a spent budget blocked, which a new key would not fix', async () => {
+                answer = {
+                    status: 402,
+                    body: {
+                        type: 'budget_exceeded',
+                        status_code: 402,
+                        error: { message: 'Budget exceeded' },
+                    },
+                };
+                expect(await check()).toMatchObject({ state: 'blocked', fix: /budget/ });
+            });
         });
     });
 });
@@ -3166,6 +3313,85 @@ describe('where a listing comes from', () => {
         });
         const cat = await loadCatalog('openrouter', { offline: true });
         expect(cat.origin).toBe('curated');
+    });
+});
+
+// In a gateway mode a run reaches only what the gateway serves, so that is the
+// whole catalog — split back into the providers a ref can name.
+describe('listing through a gateway', () => {
+    const kept = { ...process.env };
+    let root: string;
+    let server: Server;
+    let answer: { status: number; body: unknown };
+    let asked = 0;
+    let seen: Record<string, string | string[] | undefined> = {};
+
+    beforeEach(async () => {
+        root = mkdtempSync(join(tmpdir(), 'zen-gw-catalog-'));
+        process.env.ZENERA_HOME = root;
+        asked = 0;
+        server = createServer((req, res) => {
+            asked++;
+            seen = { path: req.url, ...req.headers };
+            res.writeHead(answer.status, { 'content-type': 'application/json' });
+            res.end(JSON.stringify(answer.body));
+        });
+        await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+        // A fresh port per test is also a fresh listing: the process memo is keyed by url.
+        process.env.BIFROST_BASE_URL = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+        process.env.BIFROST_API_KEY = 'sk-bf-1';
+    });
+    afterEach(async () => {
+        process.env = { ...kept };
+        await new Promise<void>((done) => server.close(() => done()));
+        rmSync(root, { recursive: true, force: true });
+    });
+
+    const LISTING = {
+        data: [
+            { id: 'vertex/gemini-3.5-flash', created: 1_760_000_000, context_length: 1_048_576 },
+            { id: 'vertex/claude-sonnet-5' },
+            { id: 'gemini/gemini-embedding-2' },
+            { id: 'openai/gpt-5.6-luna' },
+            { id: 'groq/llama-4' },
+        ],
+    };
+
+    it('splits one listing by provider, and asks once for all of them', async () => {
+        answer = { status: 200, body: LISTING };
+        const [vertex, google, openai, anthropic] = await loadCatalogs([
+            'vertex',
+            'google',
+            'openai',
+            'anthropic',
+        ]);
+
+        expect(asked).toBe(1);
+        expect(seen).toMatchObject({ path: '/v1/models', 'x-bf-vk': 'sk-bf-1' });
+        expect(vertex!.entries.map((e) => [e.ref, e.publisher])).toEqual([
+            ['vertex:gemini-3.5-flash', 'google'],
+            ['vertex:claude-sonnet-5', 'anthropic'],
+        ]);
+        expect(vertex!.via).toMatchObject({ name: 'bifrost' });
+        expect(google!.entries).toMatchObject([
+            { ref: 'google:gemini-embedding-2', roles: ['embedding'] },
+        ]);
+        expect(openai!.entries.map((e) => e.ref)).toEqual(['openai:gpt-5.6-luna']);
+        // Served by nothing a ref could name, and the vendor's own list is not what runs reach.
+        expect(anthropic!.entries).toEqual([]);
+    });
+
+    it('offers no built-in list when the gateway cannot be asked', async () => {
+        answer = { status: 401, body: { type: 'virtual_key_required', error: { message: 'no' } } };
+        const cat = await loadCatalog('openai');
+        expect(cat.entries).toEqual([]);
+        expect(cat.problem?.state).toBe('dead');
+    });
+
+    it('keeps its cache apart from the vendor listing', async () => {
+        const through = catalogKey('openai');
+        delete process.env.BIFROST_BASE_URL;
+        expect(catalogKey('openai')).not.toBe(through);
     });
 });
 

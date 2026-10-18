@@ -153,6 +153,9 @@ export const green = (s: string): string => styleText('green', s);
 export const yellow = (s: string): string => styleText('yellow', s);
 export const cyan = (s: string): string => styleText('cyan', s);
 
+/** A label meant to be seen first: reverse video, padded so it reads as a tag. */
+export const badge = (s: string): string => styleText(['inverse', 'bold'], ` ${s} `);
+
 /**
  * Whether anything should be coloured at all — `styleText`'s own answer, asked
  * by the places that write escape codes directly and so cannot inherit it.

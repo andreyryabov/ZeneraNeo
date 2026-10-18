@@ -450,6 +450,7 @@ zen key                              # same as `zen key ls`
 zen key ls [--json]
 zen key add <provider> [value] [--name <name>] [--use]
 zen key use <provider> <name>        # pick the active one for that provider
+zen key mode [direct|bifrost]        # vendor keys, or one gateway for every model
 zen key check [<provider>[/<name>] | --all]
 zen key rm  <provider>/<name>
 zen key show <provider>/<name> [--reveal]
@@ -478,6 +479,19 @@ Zenera project, and one word cannot mean both.
 `add` verifies before it stores, unless `--no-check`. A key that fails
 verification is still stored - refusing would be wrong when the network is
 down - but it is stored marked `dead` and `zen key ls` says so.
+
+**Gateway mode.** `bifrost` is a third kind of entry, beside model providers
+and services: one virtual key plus the `--url` it is spent at. Holding it
+changes nothing; `zen key mode bifrost` does. In that mode `materialize()`
+exports `BIFROST_API_KEY` + `BIFROST_BASE_URL` and withholds every vendor key
+(nothing would read them, and the sandbox would be handed keys the run never
+needed). The library treats `BIFROST_BASE_URL` as the switch: every provider,
+declared ones included, is sent to the gateway's drop-in endpoint for its own
+protocol (`/openai`, `/anthropic`, `/genai`), with the model id qualified as
+`<upstream>/<id>` on the wire only - a memory records the embedder id and
+refuses another, so flipping modes must not change it. Liveness asks
+`GET <url>/v1/models`, which Bifrost scopes to the key; `budget_exceeded` is
+_blocked_, not _dead_. User-facing guide: [docs/gateway.md](../../docs/gateway.md).
 
 ### 6.3 Liveness
 

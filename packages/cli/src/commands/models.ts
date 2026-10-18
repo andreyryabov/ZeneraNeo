@@ -12,7 +12,7 @@
 // agents.yaml.
 // ---------------------------------------------------------------------------
 
-import { createEmbedder, ModelRegistry } from '@zenera/neo';
+import { createEmbedder, GATEWAY_NAME, gatewayOf, ModelRegistry, type Gateway } from '@zenera/neo';
 
 import { parse } from '../args.ts';
 import {
@@ -67,6 +67,8 @@ interface Credentialed {
     fromEnv: Set<Provider>;
     /** providers this machine can actually reach, environment first */
     usable: Provider[];
+    /** set in a gateway mode: every provider is reached, and listed, through it */
+    gateway?: Gateway;
 }
 
 /**
@@ -83,6 +85,10 @@ async function credentials(): Promise<Credentialed> {
     // difference between "the environment had it" and "the keyring supplied it".
     const fromEnv = new Set(PROVIDERS.filter((p) => envNames(p).some((n) => process.env[n])));
     store.materialize();
+    const gateway = gatewayOf();
+    if (gateway) {
+        return { store, fromEnv, usable: [...PROVIDERS], gateway };
+    }
     const usable = [
         ...PROVIDERS.filter((p) => fromEnv.has(p)),
         ...PROVIDERS.filter((p) => !fromEnv.has(p) && Boolean(store.active(p))),
@@ -91,6 +97,9 @@ async function credentials(): Promise<Credentialed> {
 }
 
 function source(where: Credentialed, provider: Provider): string {
+    if (where.gateway) {
+        return GATEWAY_NAME;
+    }
     if (where.fromEnv.has(provider)) {
         return 'environment';
     }
@@ -170,10 +179,25 @@ const tokens = (n: number | undefined): string => {
     return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
 };
 
+/**
+ * Said before any listing in a gateway mode, on stderr: the same command lists
+ * something else entirely there, and nothing in a row of model ids shows it.
+ */
+function announce(ctx: Context, where: Credentialed): void {
+    if (!where.gateway || ctx.json) {
+        return;
+    }
+    note(
+        `${cyan(`⇄ ${GATEWAY_NAME} mode`)} ${dim('only what')} ${where.gateway.baseURL} ` +
+            dim('serves; zen key mode direct to list the vendors'),
+    );
+    note('');
+}
+
 /** Freshness of a listing, said the way a person would ask about it. */
 function freshness(cat: Catalog): string {
     if (cat.origin === 'curated') {
-        return yellow('built-in list');
+        return cat.via ? yellow('not listed yet') : yellow('built-in list');
     }
     if (cat.origin === 'stale') {
         return yellow(`stale, ${ago(cat.fetchedAt)}`);
@@ -246,8 +270,9 @@ const providers: Sub = async (ctx, args) => {
         'zen models providers [--refresh]',
     );
     const where = await credentials();
+    // A gateway lists every provider in one request, so its overview can afford to ask.
     const cats = await loadCatalogs(PROVIDERS, {
-        offline: !values.refresh,
+        offline: !values.refresh && !where.gateway,
         refresh: values.refresh,
     });
     const by = new Map(cats.map((c) => [c.provider, c]));
@@ -261,11 +286,13 @@ const providers: Sub = async (ctx, args) => {
                 models: by.get(p)?.entries.length ?? 0,
                 origin: by.get(p)?.origin,
                 fetchedAt: by.get(p)?.fetchedAt,
+                ...(where.gateway ? { gateway: where.gateway.baseURL } : {}),
             })),
         );
         return;
     }
 
+    announce(ctx, where);
     writeAll(
         table(
             PROVIDERS.map((p) => {
@@ -326,9 +353,11 @@ const ls: Sub = async (ctx, args) => {
                 origin,
                 fetchedAt,
             })),
+            ...(where.gateway ? { gateway: where.gateway.baseURL } : {}),
         });
         return;
     }
+    announce(ctx, where);
     explain(cats);
     if (all.length === 0) {
         note(dim('nothing matched — try: zen models ls --refresh'));
@@ -338,7 +367,7 @@ const ls: Sub = async (ctx, args) => {
     if (all.length > limit) {
         note(dim(`${all.length - limit} more — narrow with \`zen models search\`, or pass --all`));
     }
-    if (all.some(isPartner)) {
+    if (!where.gateway && all.some(isPartner)) {
         note(
             dim(
                 'partner models are billed through Vertex and must be enabled in Model Garden first: https://console.cloud.google.com/vertex-ai/model-garden',
@@ -408,6 +437,7 @@ const search: Sub = async (ctx, args) => {
         json({ query, matched: hits.length, models: hits.slice(0, limit) });
         return;
     }
+    announce(ctx, where);
     explain(cats);
     if (hits.length === 0) {
         note(dim(`nothing matched "${query}" — try fewer words, or --refresh`));
@@ -461,6 +491,7 @@ const show: Sub = async (ctx, args) => {
         throw usageError('which model?', 'see: zen models ls');
     }
     const { provider, id } = split(ref);
+    const where = await credentials();
     const cat = await loadCatalog(provider, { refresh: values.refresh });
     const found = cat.entries.find((e) => e.id === id);
 
@@ -468,9 +499,12 @@ const show: Sub = async (ctx, args) => {
         json(found ?? { ref: `${provider}:${id}`, provider, id, known: false });
         return;
     }
+    announce(ctx, where);
     explain([cat]);
     if (!found) {
-        note(`${yellow('not listed')} ${provider} does not advertise ${bold(id)}`);
+        note(
+            `${yellow('not listed')} ${where.gateway ? GATEWAY_NAME : provider} does not advertise ${bold(id)}`,
+        );
         note(dim(`it may still work — try: zen models test ${provider}:${id}`));
         note(dim(`or look: zen models search ${id} --provider ${provider}`));
         return;
@@ -512,7 +546,14 @@ const show: Sub = async (ctx, args) => {
               : undefined,
     );
     add('released', found.created);
-    add('source', found.source === 'live' ? `${provider}, ${freshness(cat)}` : 'built-in list');
+    add(
+        'source',
+        found.source !== 'live'
+            ? 'built-in list'
+            : cat.via
+              ? `${cat.via.name} (${provider}), ${freshness(cat)}`
+              : `${provider}, ${freshness(cat)}`,
+    );
     writeAll(table(rows));
     if (found.description) {
         note('');
@@ -626,6 +667,7 @@ const test: Sub = async (ctx, args) => {
     if (ctx.json) {
         json(probes);
     } else {
+        announce(ctx, where);
         writeAll(
             table(
                 probes.map((p) => [
@@ -643,7 +685,7 @@ const test: Sub = async (ctx, args) => {
         }
         // A Vertex refusal is about a model *in a project*, and the project is
         // the half of that nobody typed.
-        if (parsed.some((p) => p.provider === 'vertex')) {
+        if (!where.gateway && parsed.some((p) => p.provider === 'vertex')) {
             note(dim(vertexAt(where)));
         }
     }
@@ -717,7 +759,7 @@ export async function browseModels(request: BrowseRequest = {}): Promise<Catalog
     const where = await credentials();
     // Offline, like `providers`: the overview should not cost five listings.
     // A provider is fetched when it is opened.
-    const cats = await loadCatalogs(PROVIDERS, { offline: true });
+    const cats = await loadCatalogs(PROVIDERS, { offline: !where.gateway });
     const { browse: draw } = await import('../tui/models.tsx');
     return await draw({
         providers: cats.map((c) => ({
@@ -730,9 +772,12 @@ export async function browseModels(request: BrowseRequest = {}): Promise<Catalog
         initial: request.initial,
         role: request.role,
         theme: request.theme,
+        ...(where.gateway ? { gateway: { name: GATEWAY_NAME, url: where.gateway.baseURL } } : {}),
         load: (provider, refresh) => loadCatalog(provider, { refresh: refresh || request.refresh }),
         balance: async (provider) =>
-            provider === 'openrouter' && source(where, provider) ? routerBalance() : undefined,
+            provider === 'openrouter' && !where.gateway && source(where, provider)
+                ? routerBalance()
+                : undefined,
         test: async (entry) => {
             const role: Role = entry.roles.includes('chat')
                 ? 'chat'

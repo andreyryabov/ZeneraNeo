@@ -1,4 +1,4 @@
-import { EXA_API_KEY_ENV } from '@zenera/neo';
+import { EXA_API_KEY_ENV, GATEWAY_KEY_ENV, GATEWAY_URL_ENV } from '@zenera/neo';
 import { chmodSync, copyFileSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -39,10 +39,24 @@ export const SERVICES = ['exa'] as const;
 
 export type Service = (typeof SERVICES)[number];
 
-/** Anything the keyring can hold a credential for. */
-export const OWNERS = [...PROVIDERS, ...SERVICES] as const;
+/**
+ * Somewhere every model can be reached through, with one key. Its own list for
+ * the same reason as `SERVICES`: it is neither a vendor a model comes from nor
+ * a tool, and a gateway entry only counts while the keyring is in its mode.
+ */
+export const GATEWAYS = ['bifrost'] as const;
 
-export type KeyOwner = Provider | Service;
+export type GatewayOwner = (typeof GATEWAYS)[number];
+
+/** `direct` calls each vendor with its own key; `bifrost` sends everything through the gateway. */
+export type KeyMode = 'direct' | GatewayOwner;
+
+export const MODES: readonly KeyMode[] = ['direct', ...GATEWAYS];
+
+/** Anything the keyring can hold a credential for. */
+export const OWNERS = [...PROVIDERS, ...SERVICES, ...GATEWAYS] as const;
+
+export type KeyOwner = Provider | Service | GatewayOwner;
 
 /**
  * One way a credential can arrive.
@@ -62,8 +76,8 @@ export interface CredentialForm {
 }
 
 interface ProviderShape {
-    /** whether this is somewhere a model lives, or something a tool calls */
-    kind: 'model' | 'service';
+    /** whether this is somewhere a model lives, something a tool calls, or a way to every model */
+    kind: 'model' | 'service' | 'gateway';
     label: string;
     /** the ways in, first being the one this provider is usually reached by */
     forms: [CredentialForm, ...CredentialForm[]];
@@ -151,6 +165,17 @@ export const SHAPES: Record<KeyOwner, ProviderShape> = {
             },
         ],
     },
+    bifrost: {
+        kind: 'gateway',
+        label: 'Bifrost',
+        forms: [
+            {
+                holds: 'secret',
+                env: GATEWAY_KEY_ENV,
+                where: 'a virtual key (sk-bf-…) from your Bifrost administrator',
+            },
+        ],
+    },
 };
 
 /**
@@ -187,6 +212,10 @@ export function isProvider(name: string): name is Provider {
 
 export function isOwner(name: string): name is KeyOwner {
     return (OWNERS as readonly string[]).includes(name);
+}
+
+export function isGateway(name: string): name is GatewayOwner {
+    return (GATEWAYS as readonly string[]).includes(name);
 }
 
 export function assertOwner(name: string): KeyOwner {
@@ -229,6 +258,8 @@ export interface KeyEntry {
     /** vertex, file-shaped only: what the library would otherwise have to be told twice */
     project?: string;
     location?: string;
+    /** gateway only: where it listens */
+    url?: string;
     addedAt: string;
     check?: KeyCheck;
 }
@@ -238,6 +269,8 @@ interface KeyFile {
     entries: KeyEntry[];
     /** provider → chosen entry name */
     active: Partial<Record<KeyOwner, string>>;
+    /** absent means `direct` */
+    mode?: KeyMode;
 }
 
 const EMPTY: KeyFile = { version: 1, entries: [], active: {} };
@@ -352,6 +385,8 @@ export interface KeyMeta {
     project?: string;
     /** GCP region, or `global` */
     location?: string;
+    /** gateway base url */
+    url?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -369,7 +404,13 @@ export class KeyStore {
         const path = paths.keys();
         assertPrivate(path);
         const file = await readJson<KeyFile>(path, EMPTY);
-        return new KeyStore({ ...EMPTY, ...file });
+        // Fresh containers: a missing file hands back EMPTY itself, which `add` would mutate.
+        return new KeyStore({
+            ...EMPTY,
+            ...file,
+            entries: [...(file.entries ?? [])],
+            active: { ...file.active },
+        });
     }
 
     get entries(): readonly KeyEntry[] {
@@ -430,6 +471,7 @@ export class KeyStore {
             // be a way to build the combination the service refuses.
             ...(form.holds === 'file' && meta.project ? { project: meta.project } : {}),
             ...(form.holds === 'file' && meta.location ? { location: meta.location } : {}),
+            ...(isGateway(provider) && meta.url ? { url: meta.url } : {}),
             addedAt: new Date().toISOString(),
         };
         const at = this.#file.entries.findIndex((e) => e.provider === provider && e.name === name);
@@ -471,6 +513,25 @@ export class KeyStore {
         const hit = this.find(entry.provider, entry.name);
         if (hit) {
             hit.check = check;
+        }
+    }
+
+    get mode(): KeyMode {
+        return this.#file.mode ?? 'direct';
+    }
+
+    /** Refuses a gateway mode with no gateway to send anything to. */
+    setMode(mode: KeyMode): void {
+        if (mode !== 'direct' && !this.active(mode)?.url) {
+            throw usageError(
+                `no ${SHAPES[mode].label} key to switch to`,
+                `add one first: zen key add ${mode} --url <gateway url>`,
+            );
+        }
+        if (mode === 'direct') {
+            delete this.#file.mode;
+        } else {
+            this.#file.mode = mode;
         }
     }
 
@@ -524,13 +585,27 @@ export class KeyStore {
      *
      * Services are included by default, because a tool reads its key from the
      * environment for exactly the same reason a model adapter does.
+     *
+     * In a gateway mode the gateway's key replaces every vendor's, so those are
+     * withheld: nothing would read them, and the sandbox would be handed keys
+     * the run never needed. In `direct` mode it is the gateway that is withheld,
+     * since its url alone is what switches the library over.
      */
     environment(only?: KeyOwner[]): Record<string, string> {
         const env: Record<string, string> = {};
+        const mode = this.mode;
         for (const provider of only ?? OWNERS) {
+            const kind = SHAPES[provider].kind;
+            if (kind === 'gateway' ? provider !== mode : kind === 'model' && mode !== 'direct') {
+                continue;
+            }
             const entry = this.active(provider);
             if (!entry) {
                 continue;
+            }
+            // The mode is the switch, so the url goes out even when the shell supplies the key.
+            if (entry.url && !process.env[GATEWAY_URL_ENV]) {
+                env[GATEWAY_URL_ENV] = entry.url;
             }
             // Either variable being set means this provider is already answered
             // for, so the stored alternative must not be exported alongside it.
@@ -702,6 +777,9 @@ export function credentials(): { env: string; holds: 'secret' | 'file'; value: s
  * one clear error here for an obscure one on the first turn.
  */
 export function assertUsable(store: KeyStore): void {
+    if (process.env[GATEWAY_URL_ENV]) {
+        return;
+    }
     const reachable = PROVIDERS.filter(
         (p) => envNames(p).some((name) => process.env[name]) || store.active(p) !== undefined,
     );

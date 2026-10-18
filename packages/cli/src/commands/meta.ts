@@ -9,7 +9,7 @@ import type { Command, Context } from '../command.ts';
 import { loadProjectEnv } from '../env.ts';
 import { copilotEventLog } from '../eventlog.ts';
 import { ensureHome } from '../home.ts';
-import { assertOwner, KeyStore, PROVIDERS, type Provider } from '../keys.ts';
+import { assertOwner, isProvider, KeyStore, PROVIDERS, type Provider } from '../keys.ts';
 import { probeChat, probeModel } from '../liveness.ts';
 import {
     answerBox,
@@ -999,7 +999,7 @@ function count(text: string | undefined, flag: string): number | undefined {
 
 function asProvider(name: string): Provider {
     const owner = assertOwner(name);
-    if (owner === 'exa') {
+    if (!isProvider(owner)) {
         throw usageError(`${name} is not a model provider`);
     }
     return owner;

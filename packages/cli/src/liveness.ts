@@ -1,6 +1,7 @@
 import {
     createModel,
     EXA_BASE_URL,
+    GATEWAY_KEY_HEADER,
     isUnfunded,
     ModelRegistry,
     text,
@@ -233,6 +234,9 @@ export async function probe(store: KeyStore, entry: KeyEntry): Promise<KeyCheck>
     if (shape.kind === 'service') {
         return probeService(entry.provider as Service, store.reveal(entry));
     }
+    if (shape.kind === 'gateway') {
+        return probeGateway(entry.url, store.reveal(entry));
+    }
     const provider = entry.provider as Provider;
     const credential = store.reveal(entry);
     // What the entry holds, not what its provider usually holds: a Vertex
@@ -332,6 +336,57 @@ async function probeService(service: Service, key: string): Promise<KeyCheck> {
         return { state: 'unknown', at, detail: `${res.status} ${await said(res)}` };
     } catch (err) {
         return classify(err);
+    }
+}
+
+/**
+ * Bifrost's model listing is scoped to the virtual key that asks, so it is the
+ * cheap call that looks at the key. Its refusals carry their reason as a
+ * top-level `type` beside `error.message`, and two of them are about the
+ * key's allowance rather than the key.
+ */
+async function probeGateway(url: string | undefined, key: string): Promise<KeyCheck> {
+    const at = new Date().toISOString();
+    if (!url) {
+        return { state: 'unknown', at, detail: 'no gateway url stored with this key' };
+    }
+    try {
+        const res = await fetch(`${url.replace(/\/+$/, '')}/v1/models`, {
+            headers: { authorization: `Bearer ${key}`, [GATEWAY_KEY_HEADER]: key },
+            signal: AbortSignal.timeout(DEADLINE_MS),
+        });
+        if (res.ok) {
+            return { state: 'live', at };
+        }
+        const { type, message } = await refusal(res);
+        const detail = `${res.status} ${message}`;
+        if (res.status === 402 || type === 'budget_exceeded') {
+            return {
+                state: 'blocked',
+                at,
+                detail,
+                fix: "raise the virtual key's budget in Bifrost",
+            };
+        }
+        if (res.status === 401 || res.status === 403) {
+            return { state: 'dead', at, detail };
+        }
+        if (res.status === 404 || /<html/i.test(message)) {
+            return { state: 'unknown', at, detail, fix: 'check the url: is it the gateway root?' };
+        }
+        return { state: 'unknown', at, detail };
+    } catch (err) {
+        return classify(err);
+    }
+}
+
+async function refusal(res: Response): Promise<{ type?: string; message: string }> {
+    const raw = await res.text().catch(() => '');
+    try {
+        const body = JSON.parse(raw) as { type?: string; error?: { message?: string } };
+        return { type: body.type, message: firstLine(body.error?.message ?? res.statusText) };
+    } catch {
+        return { message: firstLine(raw || res.statusText) };
     }
 }
 

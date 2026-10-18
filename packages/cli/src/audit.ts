@@ -10,10 +10,11 @@ import {
     envNames,
     form,
     gcloudAdc,
+    isOwner,
     isProvider,
     SHAPES,
+    type KeyOwner,
     type KeyStore,
-    type Provider,
 } from './keys.ts';
 import { bold, dim } from './term.ts';
 
@@ -49,7 +50,7 @@ export interface ModelIssue {
     /** what to do about a refusal that a new key would not fix */
     fix?: string;
     /** the keyring provider the fix names, when the kind is one of them */
-    add?: Provider;
+    add?: KeyOwner;
 }
 
 /**
@@ -106,6 +107,9 @@ function declared(config: ProjectConfig): Map<DeclaredRole, Map<string, ModelRef
  * such answer, so it names the form the provider is usually reached by.
  */
 export function credentialFor(need: ModelRequirement): { env: string; present: boolean } {
+    if (need.gateway) {
+        return { env: need.apiKeyEnv, present: need.satisfied };
+    }
     const provider = isProvider(need.kind) ? need.kind : undefined;
     // A provider with a file form can authenticate without an api key, which is
     // the only thing `satisfied` knows how to look for.
@@ -146,7 +150,12 @@ export function auditModels(projectDir: string, store: KeyStore): ModelIssue[] {
             }
 
             const { env, present } = credentialFor(need);
-            const provider = isProvider(need.kind) ? need.kind : undefined;
+            const provider: KeyOwner | undefined =
+                need.gateway && isOwner(need.gateway)
+                    ? need.gateway
+                    : isProvider(need.kind)
+                      ? need.kind
+                      : undefined;
 
             if (!present) {
                 issues.push({

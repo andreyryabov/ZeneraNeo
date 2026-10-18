@@ -17,7 +17,15 @@
 // the vendor's own word.
 // ---------------------------------------------------------------------------
 
-import { ModelRegistry, vertexEndpoint } from '@zenera/neo';
+import {
+    GATEWAY_KEY_HEADER,
+    GATEWAY_NAME,
+    GATEWAY_UPSTREAMS,
+    gatewayOf,
+    ModelRegistry,
+    vertexEndpoint,
+    type Gateway,
+} from '@zenera/neo';
 
 import { Cache, cacheKey } from './cache.ts';
 import { PROVIDERS, type KeyCheck, type Provider } from './keys.ts';
@@ -65,6 +73,8 @@ export interface Catalog {
     fetchedAt: string;
     /** why the live call was not used, when it was tried and failed */
     problem?: KeyCheck;
+    /** the gateway it was listed through, when the keyring is in a gateway mode */
+    via?: { name: string; url: string };
 }
 
 /** A day. Model lists change on the scale of weeks; a stale row costs a retry. */
@@ -523,6 +533,97 @@ export async function fetchCatalog(
 }
 
 // ---------------------------------------------------------------------------
+// Through a gateway
+//
+// In a gateway mode a run can reach only what the gateway serves, so that is
+// the whole listing: the vendor's own catalog would offer models the virtual
+// key may not touch. Bifrost lists every upstream at once as `<upstream>/<id>`,
+// which is split back into the provider an `agents.yaml` ref names. Upstreams
+// with no zen provider (bedrock, groq, …) cannot be named by a ref, so they are
+// left out.
+// ---------------------------------------------------------------------------
+
+interface GatewayModel {
+    id?: unknown;
+    name?: unknown;
+    created?: unknown;
+    context_length?: unknown;
+}
+
+const UPSTREAM_OF = new Map<string, Provider>(
+    PROVIDERS.map((p) => [GATEWAY_UPSTREAMS[p], p] as [string, Provider]),
+);
+
+/** One request per gateway per process, however many providers ask. */
+const listings = new Map<string, Promise<Map<Provider, CatalogEntry[]>>>();
+
+function gatewayListing(at: Gateway): Promise<Map<Provider, CatalogEntry[]>> {
+    const key = `${at.baseURL}\0${at.apiKey ?? ''}`;
+    let listing = listings.get(key);
+    if (!listing) {
+        listing = fetchGatewayListing(at);
+        listings.set(key, listing);
+        listing.catch(() => listings.delete(key));
+    }
+    return listing;
+}
+
+async function fetchGatewayListing(at: Gateway): Promise<Map<Provider, CatalogEntry[]>> {
+    const res = await fetch(`${at.baseURL}/v1/models`, {
+        headers: at.apiKey
+            ? { authorization: `Bearer ${at.apiKey}`, [GATEWAY_KEY_HEADER]: at.apiKey }
+            : {},
+        signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw Object.assign(new Error(`${GATEWAY_NAME} answered ${res.status}: ${body}`), {
+            status: res.status,
+        });
+    }
+    const { data } = (await res.json()) as { data?: GatewayModel[] };
+    const by = new Map<Provider, CatalogEntry[]>();
+    for (const model of data ?? []) {
+        if (typeof model.id !== 'string') {
+            continue;
+        }
+        const slash = model.id.indexOf('/');
+        const provider = slash > 0 ? UPSTREAM_OF.get(model.id.slice(0, slash)) : undefined;
+        const id = model.id.slice(slash + 1);
+        const role = openaiRole(id);
+        if (!provider || !id || !role) {
+            continue;
+        }
+        const rows = by.get(provider) ?? [];
+        rows.push(
+            entry(provider, {
+                id,
+                roles: [role],
+                name: typeof model.name === 'string' ? model.name : undefined,
+                contextLength:
+                    typeof model.context_length === 'number' ? model.context_length : undefined,
+                created: iso(typeof model.created === 'number' ? model.created : undefined),
+                publisher: provider === 'vertex' ? publisherOf(id) : undefined,
+            }),
+        );
+        by.set(provider, rows);
+    }
+    return by;
+}
+
+function publisherOf(id: string): string {
+    return /^claude-/.test(id) ? 'anthropic' : id.includes('/') ? id.split('/')[0]! : 'google';
+}
+
+/** What the gateway serves under one provider's name, enriched like a vendor listing. */
+export async function fetchGatewayCatalog(
+    provider: Provider,
+    at: Gateway,
+): Promise<CatalogEntry[]> {
+    return enrich(provider, (await gatewayListing(at)).get(provider) ?? []);
+}
+
+// ---------------------------------------------------------------------------
 // Enrichment and cache
 // ---------------------------------------------------------------------------
 
@@ -563,6 +664,10 @@ const store = (): Cache => new Cache(CATALOG_KIND, { mode: 0o644 });
  * to both. A project left to the service-account file is not seen here.
  */
 function scope(provider: Provider): string | undefined {
+    const at = gatewayOf();
+    if (at) {
+        return cacheKey(GATEWAY_NAME, at.baseURL);
+    }
     if (provider !== 'vertex') {
         return undefined;
     }
@@ -602,6 +707,10 @@ export interface CatalogOptions {
  * model list to four rows.
  */
 export async function loadCatalog(provider: Provider, opts: CatalogOptions = {}): Promise<Catalog> {
+    const at = gatewayOf();
+    const via = at ? { via: { name: GATEWAY_NAME, url: at.baseURL } } : {};
+    // The built-in list names vendor models the gateway may not serve at all.
+    const fallback = (): CatalogEntry[] => (at ? [] : curated(provider));
     const cached = readCache(provider);
     const fresh =
         cached && Date.now() - new Date(cached.fetchedAt).getTime() < CATALOG_TTL_MS
@@ -609,14 +718,22 @@ export async function loadCatalog(provider: Provider, opts: CatalogOptions = {})
             : undefined;
 
     if (fresh && !opts.refresh) {
-        return { provider, entries: fresh.entries, origin: 'cache', fetchedAt: fresh.fetchedAt };
+        return {
+            provider,
+            entries: fresh.entries,
+            origin: 'cache',
+            fetchedAt: fresh.fetchedAt,
+            ...via,
+        };
     }
     if (!opts.offline) {
         try {
-            const entries = await fetchCatalog(provider);
+            const entries = at
+                ? await fetchGatewayCatalog(provider, at)
+                : await fetchCatalog(provider);
             const fetchedAt = new Date().toISOString();
             store().put(catalogKey(provider), { provider, fetchedAt, entries } satisfies CacheFile);
-            return { provider, entries, origin: 'live', fetchedAt };
+            return { provider, entries, origin: 'live', fetchedAt, ...via };
         } catch (err) {
             const problem = classify(err);
             if (cached) {
@@ -626,25 +743,34 @@ export async function loadCatalog(provider: Provider, opts: CatalogOptions = {})
                     origin: 'stale',
                     fetchedAt: cached.fetchedAt,
                     problem,
+                    ...via,
                 };
             }
             return {
                 provider,
-                entries: curated(provider),
+                entries: fallback(),
                 origin: 'curated',
                 fetchedAt: new Date(0).toISOString(),
                 problem,
+                ...via,
             };
         }
     }
     if (cached) {
-        return { provider, entries: cached.entries, origin: 'stale', fetchedAt: cached.fetchedAt };
+        return {
+            provider,
+            entries: cached.entries,
+            origin: 'stale',
+            fetchedAt: cached.fetchedAt,
+            ...via,
+        };
     }
     return {
         provider,
-        entries: curated(provider),
+        entries: fallback(),
         origin: 'curated',
         fetchedAt: new Date(0).toISOString(),
+        ...via,
     };
 }
 
