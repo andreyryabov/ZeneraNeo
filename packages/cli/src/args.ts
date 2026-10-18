@@ -40,8 +40,8 @@ export interface Parsed<T> {
 function plainMessage(err: unknown): string {
     const { code, message } = err as NodeJS.ErrnoException;
     if (code === 'ERR_PARSE_ARGS_UNKNOWN_OPTION') {
-        const cut = message.indexOf('. To specify');
-        return cut === -1 ? message : message.slice(0, cut);
+        const marker = message.lastIndexOf("'. To specify");
+        return marker === -1 ? message : message.slice(0, marker + 1);
     }
     return message;
 }

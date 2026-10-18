@@ -26,5 +26,13 @@ describe('parse', () => {
 
         expect(err.code).toBe(EXIT.usage);
         expect(err.hint).toBe('zen demo');
+        expect(err.message).toBe("Option '--name <value>' argument missing");
+    });
+
+    it('keeps an option name that contains Node’s own advice wording', () => {
+        const err = failure(() => parse(['--foo. To specify'], {}, 'zen demo [options]'));
+
+        expect(err.message).toBe("Unknown option '--foo. To specify'");
+        expect(err.code).toBe(EXIT.usage);
     });
 });
