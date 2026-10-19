@@ -50,7 +50,29 @@ const GLOBAL = {
     directory: { type: 'string', short: 'C' },
 } as const;
 
+/**
+ * The shell's half of tab completion calls this, hidden from help. It answers
+ * before anything else, because a banner or a window title on a Tab press would
+ * be printed into the line being edited — and it never fails loudly for the
+ * same reason: no answer is a valid answer, and the shell completes files.
+ */
+async function completing(words: readonly string[]): Promise<number> {
+    try {
+        const { complete, render } = await import('./completion.ts');
+        const found = render(await complete(words, process.cwd()));
+        if (found) {
+            process.stdout.write(`${found}\n`);
+        }
+    } catch {
+        // Nothing to offer.
+    }
+    return EXIT.ok;
+}
+
 async function main(argv: readonly string[]): Promise<number> {
+    if (argv[0] === '__complete') {
+        return await completing(argv.slice(1));
+    }
     const parts = split(argv);
     const { rest, global } = extract(parts.after);
 
