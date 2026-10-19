@@ -525,6 +525,12 @@ export interface ModelProbe {
 const targetId = (target: ModelTarget): string =>
     target.kind === 'model' ? target.model.id : target.embedder.id;
 
+const PROBE_TOOL = {
+    name: 'noop',
+    description: 'Does nothing. Do not call it.',
+    parameters: { type: 'object' as const, properties: {} },
+};
+
 /**
  * A chat model sized for a probe: 16 output tokens is enough for "ok", and
  * Anthropic requires a cap at all. Only the adapters that read `maxTokens` are
@@ -552,6 +558,10 @@ function classifyModel(err: unknown, target: ModelTarget, ms: number): KeyCheck 
     if (err instanceof Deadline || e?.name === 'AbortError' || e?.name === 'TimeoutError') {
         return { state: 'unknown', at, detail: `no answer in ${MODEL_DEADLINE_MS / 1000}s` };
     }
+    // OpenAI refuses tools alongside reasoning on chat completions, and says so.
+    if (target.kind === 'model' && haystack.includes('/v1/responses')) {
+        return { state: 'blocked', at, detail: firstLine(message), fix: responsesApi(target) };
+    }
     if (UNSERVED.some((needle) => haystack.includes(needle))) {
         return { state: 'blocked', at, detail: firstLine(message), fix: instead(target) };
     }
@@ -577,6 +587,11 @@ function limited(target: ModelTarget): string {
     return `${blame} — retry later`;
 }
 
+function responsesApi(target: ModelTarget): string {
+    const provider = target.ref.includes(':') ? target.ref.split(':')[0]!.split('/')[0] : 'openai';
+    return `use the responses API: \`api: responses\` on the model, or the ref ${provider}/responses:${targetId(target)}`;
+}
+
 /** The command that finds something this account can actually use. */
 function instead(target: ModelTarget): string {
     const provider = target.ref.includes(':') ? target.ref.split(':')[0] : undefined;
@@ -596,6 +611,9 @@ function instead(target: ModelTarget): string {
  * An embedding answers with its width, which is worth carrying back: a model
  * that serves the wrong number of dimensions is not interchangeable with the
  * one an index was built on.
+ *
+ * A chat model is offered one tool, because every agent run offers tools and
+ * some refusals (reasoning plus tools on chat completions) only happen then.
  */
 async function askModel(target: ModelTarget, signal: AbortSignal): Promise<number | undefined> {
     if (target.kind === 'embedding') {
@@ -605,7 +623,7 @@ async function askModel(target: ModelTarget, signal: AbortSignal): Promise<numbe
     await target.model.generate({
         system: 'Reply with the single word: ok',
         messages: [{ role: 'user', content: [text('ping')] }],
-        tools: [],
+        tools: [PROBE_TOOL],
         signal,
     });
     return undefined;

@@ -1,4 +1,11 @@
-import type { Embedder, EmbeddingRequest, Model, ProcResult, runProcess } from '@zenera/neo';
+import type {
+    Embedder,
+    EmbeddingRequest,
+    Model,
+    ModelRequest,
+    ProcResult,
+    runProcess,
+} from '@zenera/neo';
 import { MEMORY_MOUNT, readProjectConfig } from '@zenera/neo';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
@@ -1355,6 +1362,33 @@ describe('the model probe', () => {
         ]);
         expect(probe!.check.state).toBe('blocked');
         expect(probe!.check.fix).toBe('zen models ls openai');
+    });
+
+    // A tool-less ping passed models that then refused the first real turn.
+    it('asks with a tool, as every run does', async () => {
+        let asked: ModelRequest | undefined;
+        const model: Model = {
+            id: 'gpt-stub',
+            generate: async (req) => {
+                asked = req;
+                return { text: 'ok', toolCalls: [] };
+            },
+        };
+        await probeModels([{ ref: 'main', kind: 'model', model }]);
+        expect(asked?.tools).toHaveLength(1);
+    });
+
+    it('points a reasoning model refused tools on chat completions at the responses API', async () => {
+        const err = fails(
+            '400 Function tools with reasoning_effort are not supported for gpt-5.6-luna in ' +
+                "/v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.",
+            400,
+        );
+        const [probe] = await probeModels([
+            { ref: 'openai:gpt-5.6-luna', kind: 'model', model: refuses(err) },
+        ]);
+        expect(probe!.check.state).toBe('blocked');
+        expect(probe!.check.fix).toContain('openai/responses:gpt-stub');
     });
 
     it('keeps the credential refusal and the unreachable host apart', async () => {
