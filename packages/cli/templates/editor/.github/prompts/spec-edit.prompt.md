@@ -40,6 +40,8 @@ What the runtime can do, so that what you write is something it can build:
   description.
 - [zen-sandbox](../skills/zen-sandbox/SKILL.md) - the container: what it mounts,
   what it can reach, what persists.
+- [zen-code-python](../skills/zen-code-python/SKILL.md) - reusable scripts as
+  tools, where they live, and which agents own them.
 
 If any of these did not arrive attached - your editor does not resolve links in
 prompt files - read all of them in **one** batch of parallel reads before doing
@@ -64,6 +66,17 @@ If there is no request after the command, ask what to change and stop.
 
 Before writing a line, work out:
 
+- **Whether this is defining the project from the initial scaffold or editing an
+  existing domain specification.** A freshly initialised `SPECIFICATION.md` is a
+  generic placeholder ("Carry out work inside a workspace on request…",
+  "Currently: no steps", "the only agent; nobody to hand work to") written as
+  meta-commentary about what each section does. When the request asks to make or
+  define a specification for a project or domain on top of that scaffold, it
+  reaches **every** section: replace all generic template sentences and
+  meta-explanations with a complete, concrete specification for that domain.
+  When `SPECIFICATION.md` already describes a real domain project and the
+  request asks for a specific change, keep the pass narrow and touch only the
+  sections the change implicates.
 - **Which sections the request touches.** Usually more than the one it names: a
   new agent changes **Agents**, **Tools and boundaries** and **Done means**; an
   index changes **Setup**, **Knowledge** and **Environment**.
@@ -115,57 +128,104 @@ that would be empty:
 What each one answers:
 
 - **Purpose** - what the system produces, and for whom, in one paragraph.
-- **Scope** - what one request covers, what is in and what is not, and what has
-  to happen before the system acts (a confirmation, a missing value asked for).
-- **Models** - every model and embedding by its full id, and which agent or job
-  uses which. One line each, with the reason where there is more than one.
-- **Setup** - what has to exist before a run: an index built, a document
-  fetched, a file generated. Each is a step `scripts/_setup.sh` runs; say what it
-  produces, from what, and where it lands - not the commands.
+- **Scope** - what one request covers, what is in and what is not, hard numeric
+  bounds (when a request is refused with a count rather than truncated), and
+  what has to happen before the system acts.
+- **Models** - every chat and embedding model by its full id from `zen models`,
+  and which agent or job uses which. Keep the chat model already in
+  `SPECIFICATION.md` unless the request asks to change it; add an embedding
+  model from `zen models ls --embeddings` whenever the specification uses
+  `memory/`, `assets/docs-db`, or `assets/schema-db`.
+- **Setup** - what has to exist before a run: OpenAPI specs or reference
+  documents fetched, a `zen rag schema` index built in `assets/schema-db`, a
+  `zen rag docs` index built in `assets/docs-db`, or reference files generated.
+  Each is a named step `scripts/_setup.sh` runs in order; say what it produces,
+  from what inputs, and where it lands.
 - **Agents** - one entry per agent: its name, its one job, who it hands to or
-  forks, and the behaviours that are specific to it. Whether a second agent
-  should exist at all is **zen-topology**; a job one agent can do with a skill is
-  not a new agent.
+  forks, and the behaviours that are specific to it. Use **zen-topology** to
+  choose the right shape: split into focused agents (for example, a lead
+  coordinator/analyst, a dedicated quantitative/code agent, and a read-only
+  research agent) when tasks have distinct tool boundaries or heavy code
+  execution (**zen-code-python**), and specify `fork` (`context: none`) when a
+  request compares multiple independent items or runs independent research
+  tracks in parallel.
 - **Tools and boundaries** - what each agent may reach for (files, shell,
-  memory, an index, the network, an API) and what nothing may reach. Every
-  capability named here has an agent that holds it.
-- **Knowledge** - each index: what it holds, where it lives under `assets/`,
-  which agents search it, and how - see **zen-rag-docs** and **zen-rag-schema**.
-- **Memory** - what is worth remembering and what is not, who may read and who
-  may write, and when an agent recalls before working and commits after it. The
-  strategy, not the tool calls - see **zen-memory**.
-- **Environment** - the sandbox (image, network, persistence), credentials by
-  name, and external services the project expects to be running - see
-  **zen-sandbox**.
-- **Testing** - how a change to the project is checked: `zen check`, setup run
-  twice, and the real requests a run must handle.
+  reusable scripts in `/workspace/scripts/`, web search/read, memory, indexes,
+  external APIs), what is read-only, how transient network/API errors are
+  retried and fallen back from, and what nothing may reach. Every capability
+  named here has an agent that holds it.
+- **Knowledge** - each index (`assets/schema-db`, `assets/docs-db`), each skill
+  under `agents/skills/` (naming the skill and the concrete procedure, formulas,
+  API conventions, or `rag_search` rules it holds), and the concrete external
+  APIs or data sources the project queries (naming specific zero-key primary
+  APIs and endpoints, required headers and rate limits, optional free-tier
+  keyed APIs, and fallback order).
+- **Memory** - what is worth remembering (reusable scripts as `file` nodes,
+  verified identifiers/mappings, API schemas, workflows) and what is not (or
+  how time-sensitive facts are bounded), who may read and write, and when an
+  agent recalls before working and commits after it - see **zen-memory**.
+- **Environment** - the sandbox (`sandbox/Dockerfile`, persistence, network),
+  the exact languages, CLI tools, and libraries pre-installed in the image so
+  agents never install packages at run time, where scripts and data outputs
+  live under `/workspace`, and optional environment variables or credentials by
+  name - see **zen-sandbox**.
+- **Testing** - how a change to the project is checked: `zen check`,
+  `scripts/_setup.sh --check`, `scripts/_setup.sh` run twice in a row reporting
+  `skipped` the second time, and a concrete verification request the project
+  must handle end-to-end.
 - **Done means** - how a finished job is told from an unfinished one, written as
-  acceptance tests in prose that a reviewer could check against a run.
+  concrete acceptance tests in prose that a reviewer could check against a run
+  (exact attribution fields, script-computed numbers, verified page reads,
+  reusable script paths, and required sections).
 - **Out of scope** - what the runtime could do that this project deliberately
   does not, so nobody adds it because it seemed useful.
 
 ## 3. How to write it
 
-- **Change the smallest thing that does what was asked.** Leave every sentence
-  the request does not reach exactly as it is - no rewording, no reflowing, no
-  tidying of sections you were not sent to.
-- **Write in the specification's own voice.** Its tense, its list style, its
-  heading levels, and the words it already uses for things. A new line should
-  read as if the original author wrote it.
-- **Say what and why, never how.** The specification is not `agents.yaml` in
-  prose. A line that could be pasted into `agents.yaml` unchanged, a tool
-  schema, a prompt sentence addressed to the model, a shell command for a setup
-  step - those are implementation, and `/spec-sync-project` derives them.
+- **Replace scaffold boilerplate on a greenfield request; change the smallest
+  thing on an incremental edit.** When `SPECIFICATION.md` is still the initial
+  `zen init` scaffold or the request asks to make a specification for a new
+  project, rewrite every section for that domain and remove the scaffold's
+  generic meta-commentary ("What the work always needs belongs in the image…",
+  "Currently: no steps…", "The reply names what changed, file by file…"). When
+  editing an already-written domain specification, leave every sentence the
+  request does not reach as it is.
+- **Write in a direct, declarative voice.** Match the clean heading and list
+  structure of the specification, stating concrete project rules rather than
+  abstract explanations of how Zenera works.
+- **Say what and why, never raw config syntax.** The specification is not
+  `agents.yaml` in prose. Name the agents, skills, setup steps, indexes, APIs,
+  packages, paths, and behavioural rules clearly, without pasting raw YAML
+  snippets or shell implementation internals that `/spec-sync-project` derives.
+- **Turn high-level domain requests into concrete architectural choices.** When
+  a request asks to design a project in broad terms (for example, "make a
+  specification for financial analytics using open APIs"), do not repeat vague
+  phrases like "open APIs" or "packages for data analysis". Make the concrete
+  domain choices upfront so `/spec-sync-project` can build a working system
+  without guessing:
+    - Name specific, working zero-key public APIs and endpoints as primary
+      sources (with required headers such as `User-Agent` and rate limits),
+      optional keyed free-tier APIs as secondary sources with clean zero-key
+      fallback when keys are absent, and `web_search` / `web_read` rules.
+    - Name the concrete setup steps (`scripts/<name>.sh`), indexes
+      (`assets/schema-db`, `assets/docs-db`), and domain skills under
+      `agents/skills/`.
+    - Name the exact Python/system libraries to pre-install in
+      `sandbox/Dockerfile` and the `/workspace/scripts/` and `/workspace/data/`
+      conventions from **zen-code-python**.
+    - State explicit numeric limits (such as the maximum entities/tickers per
+      request before refusing with a count), retry/fallback rules, and required
+      citation fields.
 - **Be specific where a reader could decide either way.** A limit is a number,
   a model is an id, a failure has a stated outcome. "Handles large inputs" is
-  not implementable; "a request over 200 files is refused with a count" is.
-- **Never invent a value the request did not give.** A model id, a limit, a
-  path, a retry count, a URL. If the edit cannot be written without one, ask for
-  all the missing values together in one message before editing. If it can,
-  leave the value unstated - the next sync pass raises it as a question - rather
-  than writing one that sounds right. When the missing value is a model, the
-  question offers two to four ids from the `zen models` list, never one from
-  memory.
+  not implementable; "a request over 25 tickers is refused with a count, never
+  truncated" is.
+- **Never invent a model id or a user-owned secret.** Keep the model already in
+  `SPECIFICATION.md` unless the request asks to change it, and take any new
+  chat or embedding model strictly from the `zen models` output on this machine,
+  never from memory. Ask before editing only when a required value belongs
+  exclusively to the user (such as a private server URL or proprietary rule)
+  and cannot be satisfied by a standard public default.
 - **Make it checkable.** Every behaviour the request adds gets a line under
   **Done means** that a reviewer could verify against a recorded run.
 - **Name what is now excluded.** When the request narrows the system, the thing
