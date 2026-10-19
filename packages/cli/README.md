@@ -760,6 +760,9 @@ fixes and the memory are making runs cheaper; each case has its own
 every try. `start` prints a local address that shows those pages in a browser,
 with their diagrams drawn, updated in place as the tuning writes them.
 
+The whole method, with how to write a rubric that tunes the right thing:
+[docs/finetuning.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/finetuning.md).
+
 ## Credentials
 
 One keyring serves every provider, and a key goes in the same way whatever it
@@ -1094,6 +1097,8 @@ terminal:
     - making an API description searchable and mockable.
 - [docs/memory.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/memory.md)
     - what agents keep between sessions.
+- [docs/finetuning.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/finetuning.md)
+    - building a dataset, writing rubrics, and tuning the project on them.
 - [docs/gateway.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/gateway.md)
     - every model through a Bifrost gateway, with one virtual key.
 
