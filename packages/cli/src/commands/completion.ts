@@ -69,7 +69,7 @@ export function install(shell: Shell, file: string): 'added' | 'present' {
 export const completion: Command = {
     summary: 'Print the tab-completion script for your shell.',
     usage: USAGE,
-    banner: { head: 'Zenera', accent: 'Completion', subtitle: 'Shell Integration', hue: 'steel' },
+    banner: { head: 'Zenera', accent: 'Completion', subtitle: 'Shell Integration', hue: 'magenta' },
     quiet: () => true,
     details: [
         'Add one line to your shell’s startup file:',
