@@ -86,6 +86,7 @@ interface Flags {
     part?: string[];
     'question-file'?: string;
     full?: boolean;
+    raw?: boolean;
     open?: boolean;
     rebuild?: boolean;
     'no-timing'?: boolean;
@@ -135,6 +136,7 @@ export const inspect: Command = {
         '  --question-file <path> Read the `ask` question from a file; `-` is stdin.',
         '  --part <name>          Print this part of a node in full. Repeatable.',
         '  --full                 Print every part, the recorded `request` included.',
+        '  --raw                  With one node and one --part: that part alone, unframed.',
         '  --rebuild              Build report.html again from the run state.',
         '  --open                 Open the report in a browser.',
         '  --no-timing            Leave the clock off the graph.',
@@ -159,6 +161,14 @@ export const inspect: Command = {
         'together. Ask for it, or for any one part, by name:',
         '',
         '  zen inspect node n11 --part thinking --part text --dir <run dir>',
+        '',
+        'An `llm_call` also carries two parts read out of its request, printed',
+        'only when named: `tools`, the tool names that call was offered, and',
+        '`messages`, the conversation it saw, one clipped line per message.',
+        '`--raw` prints one part with nothing around it, for a pipe:',
+        '',
+        '  zen inspect node n11 --part tools --dir <run dir>',
+        "  zen inspect node n11 --part request --raw --dir <run dir> | jq '.messages'",
         '',
         '`ask` replays one `llm_call` — its system prompt, its messages, its tool',
         'schemas — to a model, with your question on the end and tool calling off.',
@@ -200,6 +210,7 @@ export const inspect: Command = {
                 part: { type: 'string', multiple: true },
                 'question-file': { type: 'string' },
                 full: { type: 'boolean' },
+                raw: { type: 'boolean' },
                 open: { type: 'boolean' },
                 rebuild: { type: 'boolean' },
                 'no-timing': { type: 'boolean' },
@@ -336,24 +347,54 @@ async function nodes(
         return;
     }
     const whole = wholeParts(found, values);
-    writeAll(preamble(run.id, found, whole, trace.entries.length));
+    if (values.raw) {
+        const [node] = found;
+        const hits = node?.parts.filter((p) => whole(p.name)) ?? [];
+        if (found.length !== 1 || values.part?.length !== 1 || hits.length !== 1) {
+            throw usageError(
+                '--raw prints one part of one node',
+                hits.length > 1
+                    ? `name one: ${hits.map((p) => `--part ${flag(p.name)}`).join(', ')}`
+                    : 'zen inspect node n11 --part request --raw --dir <run dir>',
+            );
+        }
+        const { text } = hits[0] as { text: string };
+        process.stdout.write(text.endsWith('\n') ? text : `${text}\n`);
+        return;
+    }
+    writeAll([
+        ...preamble(run.id, found, whole, trace.entries.length),
+        ...missingParts(found, values.part ?? []).map(
+            (name) => `# no part starts with "${name}" in these nodes`,
+        ),
+    ]);
     for (const node of found) {
         write(renderNode(node, whole));
     }
-    note(dim(`the rest of the run: ${cyan(`zen inspect graph --dir ${run.dir}`)}`));
-    note(
-        dim(
-            `why it did this: ${cyan(`zen inspect ask ${found[0]?.id ?? 'n1'} "…" --dir ${run.dir}`)}`,
-        ),
-    );
+    // A model reading this already has the commands; only a person needs reminding.
+    if (process.stderr.isTTY) {
+        note(dim(`the rest of the run: ${cyan(`zen inspect graph --dir ${run.dir}`)}`));
+        note(
+            dim(
+                `why it did this: ${cyan(`zen inspect ask ${found[0]?.id ?? 'n1'} "…" --dir ${run.dir}`)}`,
+            ),
+        );
+    }
 }
 
-/** The part `--part` leaves out unless it is asked for by name. */
-const BULKY = 'request';
+/** Parts `node` names with their size instead of printing, unless asked for. */
+const BULKY = new Set(['request', 'messages', 'tools']);
+
+/** The `--part` names that match no part of any of these nodes. */
+export function missingParts(found: readonly NodeDetail[], want: readonly string[]): string[] {
+    const names = found.flatMap((n) => n.parts.map((p) => p.name));
+    return want.filter((asked) => !names.some((name) => name.startsWith(asked)));
+}
 
 /**
  * Which parts print in full: everything `--part` names, or everything but
- * `request`. A prefix matches, so `--part call` catches `call run_command (…)`.
+ * the bulky ones. A prefix matches, so `--part call` catches `call run_command (…)`.
+ * A name that matches nothing is an error only when no name matches at all.
  */
 export function wholeParts(
     found: readonly NodeDetail[],
@@ -364,16 +405,15 @@ export function wholeParts(
     }
     const want = values.part ?? [];
     if (!want.length) {
-        return (name) => name !== BULKY;
+        return (name) => !BULKY.has(name);
     }
-    const names = [...new Set(found.flatMap((n) => n.parts.map((p) => p.name)))];
-    for (const asked of want) {
-        if (!names.some((name) => name.startsWith(asked))) {
-            throw usageError(
-                `no part starts with "${asked}" in ${found.length === 1 ? found[0]?.id : 'these nodes'}`,
-                names.length ? `they carry: ${names.join(', ')}` : 'they carry no payloads',
-            );
-        }
+    const missing = missingParts(found, want);
+    if (missing.length === want.length) {
+        const names = [...new Set(found.flatMap((n) => n.parts.map((p) => p.name)))];
+        throw usageError(
+            `no part starts with "${want[0]}" in ${found.length === 1 ? found[0]?.id : 'these nodes'}`,
+            names.length ? `they carry: ${names.join(', ')}` : 'they carry no payloads',
+        );
     }
     return (name) => want.some((asked) => name.startsWith(asked));
 }

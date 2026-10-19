@@ -1,7 +1,9 @@
 import {
+    contentToText,
     coveredIds,
     totalUsage,
     type AgentState,
+    type Message,
     type Payload,
     type PayloadResolver,
     type TrajectoryNode,
@@ -920,11 +922,64 @@ export async function nodeDetail(
         ts: e.node.ts,
         label: labelOf(e.node, {}),
         facts: factsOf(e.node),
-        parts: (named.get(e) ?? []).map((part) => ({
-            name: part.name,
-            text: part.literal ?? blobs.get(part.payload?.sha256 ?? '') ?? '(unresolved)',
-        })),
+        parts: (named.get(e) ?? []).flatMap((part) => {
+            const text = part.literal ?? blobs.get(part.payload?.sha256 ?? '') ?? '(unresolved)';
+            return part.name === 'request'
+                ? [{ name: part.name, text }, ...requestParts(text)]
+                : [{ name: part.name, text }];
+        }),
     }));
+}
+
+/** Longest a message or a tool result runs in `messages` before it is clipped. */
+const MESSAGE_CLIP = 400;
+
+const clip = (s: string, n = MESSAGE_CLIP): string => {
+    const flat = s.replace(/\s+/g, ' ').trim();
+    return flat.length <= n ? flat : `${flat.slice(0, n)} … (+${flat.length - n} chars)`;
+};
+
+/**
+ * The two questions a recorded request is usually opened for, answered without
+ * printing it: which tools the call was offered, and what conversation it saw.
+ */
+export function requestParts(json: string): NodePart[] {
+    let req: { messages?: unknown; tools?: unknown };
+    try {
+        req = JSON.parse(json) as typeof req;
+    } catch {
+        return [];
+    }
+    const out: NodePart[] = [];
+    if (Array.isArray(req.messages)) {
+        const lines = (req.messages as Message[]).map((m) => {
+            switch (m.role) {
+                case 'system':
+                    return `[system] ${clip(m.content, 200)}`;
+                case 'user':
+                    return `[user] ${clip(contentToText(m.content))}`;
+                case 'assistant':
+                    return [
+                        `[assistant${m.agent ? ` @${m.agent}` : ''}] ${clip(m.content) || '(no text)'}`,
+                        ...(m.toolCalls ?? []).map(
+                            (c) => `    -> ${c.name} ${clip(c.args, 300)} #${c.id}`,
+                        ),
+                    ].join('\n');
+                case 'tool':
+                    return `[tool ${m.name} #${m.callId}${m.isError ? ' ERROR' : ''}] ${clip(m.content)}`;
+                default:
+                    return `[${(m as { role?: string }).role ?? '?'}]`;
+            }
+        });
+        out.push({ name: 'messages', text: lines.join('\n') });
+    }
+    if (Array.isArray(req.tools)) {
+        const names = (req.tools as { name?: unknown }[])
+            .map((t) => t?.name)
+            .filter((n): n is string => typeof n === 'string');
+        out.push({ name: 'tools', text: names.join('\n') });
+    }
+    return out;
 }
 
 const GONE = '(the blob is not in this session’s store; only the preview survives)';

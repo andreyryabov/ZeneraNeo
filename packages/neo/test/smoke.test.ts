@@ -262,6 +262,72 @@ describe('smoke', () => {
         expect(Object.values(bundle.blobs)).toContain('done branch: left');
     });
 
+    it.each(['inherit', 'compact'] as const)(
+        'keeps every call of the forking turn in a %s branch, signature included',
+        async (context) => {
+            const peek = tool({
+                name: 'peek',
+                description: 'looks something up',
+                parameters: { type: 'object', properties: {} },
+                execute: () => 'peeked',
+            });
+            const branchRequests: ModelRequest[] = [];
+            const model = new RuleModel(
+                (req) => {
+                    if (!lastToolResult(req, 'fork').startsWith('You are branch')) {
+                        return undefined;
+                    }
+                    branchRequests.push(req);
+                    return say('branch done');
+                },
+                (req) => (hasToolResult(req, 'fork') ? say('merged') : undefined),
+                // Gemini signs only the first call of a parallel turn.
+                () => ({
+                    text: '',
+                    toolCalls: [
+                        { id: 'p1', name: 'peek', args: '{}', signature: 'S' },
+                        {
+                            id: 'f1',
+                            name: 'fork',
+                            args: JSON.stringify({
+                                branches: [
+                                    { name: 'a', instructions: 'go a' },
+                                    { name: 'b', instructions: 'go b' },
+                                ],
+                                context,
+                            }),
+                        },
+                    ],
+                    stopReason: 'tool_calls',
+                }),
+            );
+            const runner = new AgentRunner({ model });
+            runner.agent({
+                name: 'lead',
+                instructions: 'LEAD',
+                tools: [peek],
+                fork: { maxBranches: 2 },
+            });
+
+            const res = await runner.run('lead', 'look and split');
+            expect(res.output).toBe('merged');
+            expect(branchRequests).toHaveLength(2);
+            for (const req of branchRequests) {
+                const turn = req.messages.find(
+                    (m) => m.role === 'assistant' && m.toolCalls?.some((c) => c.name === 'fork'),
+                );
+                expect(
+                    turn?.role === 'assistant' && turn.toolCalls?.map((c) => [c.name, c.signature]),
+                ).toEqual([
+                    ['peek', 'S'],
+                    ['fork', undefined],
+                ]);
+                const results = req.messages.flatMap((m) => (m.role === 'tool' ? [m.name] : []));
+                expect(results).toEqual(['peek', 'fork']);
+            }
+        },
+    );
+
     it('delegates a single branch and keeps its steps out of the caller', async () => {
         const peek = tool({
             name: 'peek',

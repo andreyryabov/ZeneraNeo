@@ -82,7 +82,7 @@ export const SOURCE_LABELS: Record<ModelSource, string> = {
 // and a cheap model reading a specification is a false economy.
 // ---------------------------------------------------------------------------
 
-/** First of each row is the default; the rest are what `--pick` offers beside it. */
+/** First of each row is the default; the rest are the next best. */
 export const RECOMMENDED: Partial<Record<Provider, readonly string[]>> = {
     openai: ['gpt-5.6-sol', 'gpt-5.6-terra'],
     anthropic: ['claude-opus-5', 'claude-sonnet-5'],

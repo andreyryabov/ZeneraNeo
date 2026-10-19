@@ -450,6 +450,7 @@ zen key                              # same as `zen key ls`
 zen key ls [--json]
 zen key add <provider> [value] [--name <name>] [--use]
 zen key use <provider> <name>        # pick the active one for that provider
+zen key mode [direct|bifrost]        # vendor keys, or one gateway for every model
 zen key check [<provider>[/<name>] | --all]
 zen key rm  <provider>/<name>
 zen key show <provider>/<name> [--reveal]
@@ -478,6 +479,19 @@ Zenera project, and one word cannot mean both.
 `add` verifies before it stores, unless `--no-check`. A key that fails
 verification is still stored - refusing would be wrong when the network is
 down - but it is stored marked `dead` and `zen key ls` says so.
+
+**Gateway mode.** `bifrost` is a third kind of entry, beside model providers
+and services: one virtual key plus the `--url` it is spent at. Holding it
+changes nothing; `zen key mode bifrost` does. In that mode `materialize()`
+exports `BIFROST_API_KEY` + `BIFROST_BASE_URL` and withholds every vendor key
+(nothing would read them, and the sandbox would be handed keys the run never
+needed). The library treats `BIFROST_BASE_URL` as the switch: every provider,
+declared ones included, is sent to the gateway's drop-in endpoint for its own
+protocol (`/openai`, `/anthropic`, `/genai`), with the model id qualified as
+`<upstream>/<id>` on the wire only - a memory records the embedder id and
+refuses another, so flipping modes must not change it. Liveness asks
+`GET <url>/v1/models`, which Bifrost scopes to the key; `budget_exceeded` is
+_blocked_, not _dead_. User-facing guide: [docs/gateway.md](../../docs/gateway.md).
 
 ### 6.3 Liveness
 
@@ -524,7 +538,6 @@ use_, needs no project, and is the other half of the same question.
 | `zen models search <q>`    | Narrow it: `--tools`, `--vision`, `--free`, `--min-context`. |
 | `zen models show <ref>`    | One model, every field the vendor gave.                      |
 | `zen models test <ref> …`  | One real minimal call, per ref.                              |
-| `zen models pick`          | `--chat` or `--embedding`: the first ref that answers.       |
 | `zen models browse`        | The same catalog, walked with the arrow keys (TUI).          |
 
 `zen models <provider>` is short for `ls <provider>`, because it is what people
@@ -569,18 +582,10 @@ of expiry - it hands back the entry and the time it was written, and freshness i
 the caller's question. It has to be: `stale` is a distinct answer here, and a
 store that had already discarded the entry could not give it.
 
-**`pick` is the recovery path**, and the reason the command exists. It walks a
-short ordered candidate list, cheapest and fastest first, probing one at a time
-and stopping at the first that answers. Sequential on purpose: the goal is _one_
-working ref, and firing eight billable calls to find it is the wrong trade -
-particularly for the caller most likely to be running it, which is an agent that
-has just been refused. The ref goes to stdout alone and unstyled, so
-`$(zen models pick --embedding)` is the ref and nothing else.
-
 **`browse` is the same catalog for a person** (`src/tui/models.tsx`, alias
 `ui`): providers, then one provider's listing with a `/` filter and a role
 cycle, then one model in full. `t` asks the highlighted model one question,
-`p` takes it. It keeps `pick`'s contract by drawing on **stderr**, so the
+`p` takes it. It draws on **stderr**, so the
 picked ref is the only thing on stdout and `$(zen models browse)` works;
 leaving without a pick is exit 1 when stdout is not a terminal, because a
 substitution waiting for a ref has not been answered. The overview is offline
@@ -591,8 +596,9 @@ and keys only.
 The loop this closes:
 
 ```
-zen check                            → embedding "index" blocked: … zen models pick --embedding
-zen models pick --embedding          → openai:text-embedding-3-small
+zen check                            → embedding "index" blocked: … zen models ls --embeddings
+zen models ls --embeddings           → the embedders this account is served
+zen models test <ref>                → answers
 ```
 
 There is no `test --all`. A matrix sweep across every model on the machine is a

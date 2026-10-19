@@ -1,3 +1,4 @@
+import { GATEWAY_URL_ENV } from '@zenera/neo';
 import { existsSync } from 'node:fs';
 import { parse } from '../args.ts';
 import type { Command, Context } from '../command.ts';
@@ -11,15 +12,19 @@ import {
     envNames,
     envOf,
     formOf,
+    GATEWAYS,
+    isGateway,
     keyId,
     KeyStore,
     mask,
+    MODES,
     OWNERS,
     parseRef,
     SHAPES,
     type Ambient,
     type KeyCheck,
     type KeyEntry,
+    type KeyMode,
     type KeyOwner,
     type Liveness,
 } from '../keys.ts';
@@ -28,6 +33,7 @@ import {
     ago,
     ask,
     askSecret,
+    badge,
     bold,
     confirm,
     credentialError,
@@ -47,7 +53,7 @@ import {
     yellow,
 } from '../term.ts';
 
-const USAGE = 'zen key <ls|add|use|check|rm|show|env> [ref] [options]';
+const USAGE = 'zen key <ls|add|use|mode|check|rm|show|env> [ref] [options]';
 
 // ---------------------------------------------------------------------------
 // Display
@@ -80,6 +86,9 @@ const ORIGIN: Record<'env' | 'stored' | 'file', string> = {
  * the environment supplied either, because then the stored one is not in play.
  */
 function placed(store: KeyStore, entry: KeyEntry): string {
+    if (entry.url) {
+        return dim(entry.url);
+    }
     if (entry.provider !== 'vertex' || entry.holds !== 'file') {
         return '';
     }
@@ -111,14 +120,28 @@ function asEntry(cred: Ambient): KeyEntry {
 
 function rows(store: KeyStore, borrowed: readonly [Ambient, KeyEntry][]): string[] {
     const out: string[][] = [
-        [bold(''), bold('KEY'), bold('VALUE'), bold('GCP'), bold('STATE'), bold('CHECKED')],
+        [bold(''), bold('KEY'), bold('VALUE'), bold('WHERE'), bold('STATE'), bold('CHECKED')],
     ];
     for (const provider of OWNERS) {
+        // Held but not in play under the current mode: drawn grey, so the live set stands out.
+        const idle = unused(store, provider);
         for (const entry of store.for(provider)) {
             const shadow = envNames(provider).find((name) => process.env[name]);
+            if (idle) {
+                out.push([
+                    dim('-'),
+                    dim(keyId(entry)),
+                    dim(describe(store, entry)),
+                    dim(entry.url ?? ''),
+                    dim(entry.check?.state ?? 'unchecked'),
+                    dim(`not used in ${store.mode} mode`),
+                ]);
+                continue;
+            }
+            const gateway = isGateway(provider);
             out.push([
                 store.isActive(entry) ? green('*') : ' ',
-                keyId(entry),
+                gateway && store.isActive(entry) ? bold(cyan(keyId(entry))) : keyId(entry),
                 dim(describe(store, entry)),
                 placed(store, entry),
                 state(entry),
@@ -128,16 +151,56 @@ function rows(store: KeyStore, borrowed: readonly [Ambient, KeyEntry][]): string
         }
         for (const [cred, entry] of borrowed.filter(([c]) => c.provider === provider)) {
             out.push([
-                dim('~'),
+                dim(idle ? '-' : '~'),
                 dim(ambientId(cred)),
                 dim(describe(store, entry)),
-                placed(store, entry),
-                state(entry),
-                dim(cred.env ? 'from the environment' : 'from gcloud'),
+                idle ? '' : placed(store, entry),
+                idle ? dim(entry.check?.state ?? 'unchecked') : state(entry),
+                dim(
+                    idle
+                        ? `not used in ${store.mode} mode`
+                        : cred.env
+                          ? 'from the environment'
+                          : 'from gcloud',
+                ),
             ]);
         }
     }
     return table(out);
+}
+
+/** A vendor key under a gateway mode, or a gateway key under any other. */
+function unused(store: KeyStore, provider: KeyOwner): boolean {
+    if (isGateway(provider)) {
+        return store.mode !== provider;
+    }
+    return SHAPES[provider].kind === 'model' && store.mode !== 'direct';
+}
+
+/**
+ * Above the table, because it decides which half of the table matters. Said
+ * only once a gateway key exists: before that there is no choice to report.
+ */
+function modeLine(store: KeyStore): void {
+    const mode = store.mode;
+    if (mode === 'direct') {
+        if (GATEWAYS.some((g) => store.active(g))) {
+            note(
+                `${bold('mode')} ${cyan('direct')} ${dim('— each provider with its own key; zen key mode bifrost to send every model through the gateway')}`,
+            );
+            note('');
+        }
+        return;
+    }
+    const gateway = store.active(mode);
+    note(`${cyan(badge(`⇄ ${mode.toUpperCase()} MODE`))} ${bold(gateway?.url ?? 'no url stored')}`);
+    note(
+        dim(
+            `every model goes through the gateway with ${gateway ? keyId(gateway) : 'no key'}; ` +
+                'vendor keys are not used — zen key mode direct to stop',
+        ),
+    );
+    note('');
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +251,7 @@ const ls: Sub = async (ctx, args) => {
 
     if (ctx.json) {
         json({
+            mode: store.mode,
             keys: store.entries.map((e) => ({
                 ...e,
                 value: e.holds === 'file' ? store.fileOf(e) : mask(e.value),
@@ -211,10 +275,15 @@ const ls: Sub = async (ctx, args) => {
         note(dim('add one: zen key add openai'));
         return;
     }
+    modeLine(store);
     writeAll(rows(store, borrowed));
 
     const missing = OWNERS.filter(
-        (p) => !store.active(p) && !borrowed.some(([c]) => c.provider === p),
+        (p) =>
+            !store.active(p) &&
+            !borrowed.some(([c]) => c.provider === p) &&
+            (!isGateway(p) || store.mode === p) &&
+            (store.mode === 'direct' || SHAPES[p].kind !== 'model'),
     );
     if (missing.length) {
         note('');
@@ -233,6 +302,7 @@ const add: Sub = async (ctx, args) => {
         'no-check'?: boolean;
         'gcp-project'?: string;
         'gcp-location'?: string;
+        url?: string;
     }>(
         args,
         {
@@ -241,9 +311,10 @@ const add: Sub = async (ctx, args) => {
             // Prefixed because every other command's --project is a Zenera one.
             'gcp-project': { type: 'string' },
             'gcp-location': { type: 'string' },
+            url: { type: 'string' },
         },
         'zen key add <provider>[/name] [--name <name>] [--gcp-project <id>] ' +
-            '[--gcp-location <region>] [--no-check]',
+            '[--gcp-location <region>] [--url <gateway url>] [--no-check]',
     );
 
     const ref = positionals[0];
@@ -261,6 +332,7 @@ const add: Sub = async (ctx, args) => {
             'they configure a Vertex service account',
         );
     }
+    const url = gatewayUrl(provider, values.url);
 
     // Checked before the prompt, so a typo does not cost you pasting the key.
     const region = values['gcp-location'];
@@ -302,6 +374,7 @@ const add: Sub = async (ctx, args) => {
     const entry = store.add(provider, name, raw, {
         project: values['gcp-project'],
         location: values['gcp-location'],
+        url,
     });
 
     // Verified before it is trusted, but stored either way: a key that cannot
@@ -345,6 +418,9 @@ const add: Sub = async (ctx, args) => {
     if (process.env[envOf(entry)]) {
         note(yellow(`$${envOf(entry)} is set and will win over this`));
     }
+    if (isGateway(provider) && store.mode !== provider) {
+        note(dim(`not in use yet — send every model through it with: zen key mode ${provider}`));
+    }
     if (provider === 'vertex' && entry.holds === 'file' && !entry.project) {
         const found = store.projectOf(entry);
         note(
@@ -356,6 +432,42 @@ const add: Sub = async (ctx, args) => {
         );
     }
 };
+
+/**
+ * A gateway is nothing without its address, and nothing else has one. Only
+ * http(s) is taken: the url ends up as an SDK base url, where anything else
+ * fails three frames down.
+ */
+function gatewayUrl(provider: KeyOwner, raw: string | undefined): string | undefined {
+    if (!isGateway(provider)) {
+        if (raw !== undefined) {
+            throw usageError(
+                `--url means nothing to ${SHAPES[provider].label}`,
+                'it locates a gateway',
+            );
+        }
+        return undefined;
+    }
+    if (!raw) {
+        throw usageError(
+            `${SHAPES[provider].label} needs --url`,
+            `e.g. zen key add ${provider} --url https://bifrost.example.com`,
+        );
+    }
+    let url: URL;
+    try {
+        url = new URL(raw);
+    } catch {
+        throw usageError(`"${raw}" is not a url`);
+    }
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+        throw usageError(`"${raw}" is not an http(s) url`);
+    }
+    if (url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
+        note(yellow('plain http: the virtual key will cross the network unencrypted'));
+    }
+    return url.href.replace(/\/+$/, '');
+}
 
 /**
  * A provider with two forms cannot ask for one of them. It asks with the echo
@@ -395,6 +507,34 @@ const use: Sub = async (ctx, args) => {
         return;
     }
     note(`${green('using')} ${bold(keyId(entry))} for ${SHAPES[provider].label}`);
+};
+
+/** Bare, it says which mode a run would use; with a word, it switches. */
+const mode: Sub = async (ctx, args) => {
+    const { positionals } = parse(args, {}, `zen key mode [${MODES.join('|')}]`);
+    const wanted = positionals[0];
+    const store = await KeyStore.open();
+    if (wanted !== undefined) {
+        if (!(MODES as readonly string[]).includes(wanted)) {
+            throw usageError(`unknown mode "${wanted}"`, `one of: ${MODES.join(', ')}`);
+        }
+        store.setMode(wanted as KeyMode);
+        store.save();
+    }
+    const now = store.mode;
+    const gateway = now === 'direct' ? undefined : store.active(now);
+    if (ctx.json) {
+        json({ mode: now, ...(gateway ? { key: keyId(gateway), url: gateway.url } : {}) });
+        return;
+    }
+    if (!gateway) {
+        note(`${cyan('direct')} ${dim('— each provider is called with its own key')}`);
+        return;
+    }
+    note(
+        `${cyan(now)} ${dim('— every model goes through')} ${gateway.url} ` +
+            dim(`with ${keyId(gateway)}`),
+    );
 };
 
 const check: Sub = async (ctx, args) => {
@@ -526,6 +666,7 @@ const show: Sub = async (ctx, args) => {
                 ? [[dim('gcp project'), `${project.id} ${dim(ORIGIN[project.from])}`]]
                 : []),
             ...(entry.location ? [[dim('gcp location'), entry.location]] : []),
+            ...(entry.url ? [[dim('url'), entry.url]] : []),
             [dim('state'), state(entry)],
             ...(entry.check?.fix ? [[dim('fix'), entry.check.fix]] : []),
             [dim('added'), ago(entry.addedAt)],
@@ -548,11 +689,18 @@ const env: Sub = async (ctx, args) => {
     // Ignore what is already exported: the point is to produce the exports.
     const vars: Record<string, string> = {};
     for (const provider of only ?? OWNERS) {
+        // Unasked-for, a gateway is exported only in its own mode, where it is the switch.
+        if (!only && isGateway(provider) && store.mode !== provider) {
+            continue;
+        }
         const entry = store.active(provider);
         if (!entry) {
             continue;
         }
         vars[envOf(entry)] = store.reveal(entry);
+        if (entry.url) {
+            vars[GATEWAY_URL_ENV] = entry.url;
+        }
         // A service account says which project it belongs to but not which
         // region to call, and a shell that has the file and not the region is
         // still a shell that cannot reach a model.
@@ -629,6 +777,7 @@ const SUBS: Record<string, Sub> = {
     list: ls,
     add,
     use,
+    mode,
     check,
     rm,
     remove: rm,
@@ -648,14 +797,22 @@ export const key: Command = {
         '',
         'Model providers: openai, anthropic, google, vertex, openrouter.',
         'Services the tools call: exa.',
+        `Gateways every model can go through: ${GATEWAYS.join(', ')}.`,
         '',
         'Vertex takes either shape: a service-account JSON file, which wants',
         '--gcp-project and --gcp-location too, or an express-mode API key, which',
         'wants neither. Which one you gave is read off the value.',
         '',
+        'A gateway holds one virtual key and its --url. In its mode every model',
+        'goes through it, each in its own vendor protocol, and agents.yaml does',
+        'not change: vertex:gemini-3.5-flash reaches <url>/genai as',
+        'vertex/gemini-3.5-flash. Vendor keys are withheld from runs meanwhile.',
+        '',
         '  zen key ls [--check]              Everything stored, and its state.',
         '  zen key add <provider>[/name]     Read a key from stdin, or ask for it.',
+        '  zen key add bifrost --url <url>   A gateway key, and where the gateway is.',
         '  zen key use <provider>/<name>     Choose which one a run uses.',
+        '  zen key mode [direct|bifrost]     Call vendors directly, or via the gateway.',
         '  zen key check [provider[/name]]   Ask the provider whether it still works.',
         '  zen key rm <provider>/<name>      Forget one.',
         '  zen key show <ref> [--reveal]     Masked by default.',

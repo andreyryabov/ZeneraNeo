@@ -257,6 +257,9 @@ describe('the copies a scaffold leaves behind', () => {
 
         const report = await validateProject({ dir });
         expect(report.findings.some((f) => f.code === 'memory.uninstructed')).toBe(false);
+
+        // A second pass has nothing left to change, so it reports nothing.
+        expect(refreshShared(dir)).toEqual([]);
     });
 
     // A copy from before `requires:` existed is the stale one in the wild, and

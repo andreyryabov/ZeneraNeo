@@ -74,7 +74,7 @@ const DEFAULT_MODEL: Record<Provider, ModelChoice> = {
 /**
  * What vectorises the project's memory, given the provider it ends up on.
  *
- * Taken from the same table `zen models pick` ranks by rather than written out
+ * Taken from the catalogue's `PREFERRED` table rather than written out
  * again here, so the scaffold cannot drift from what the catalogue calls
  * current. Anthropic publishes no embeddings API, and a `--model` naming a
  * provider we do not ship gives nothing to guess from; both scaffold without

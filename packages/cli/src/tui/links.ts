@@ -1,4 +1,5 @@
 import type { Workspace } from '@zenera/neo';
+import { statSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import type { Block, Span } from './wrap.ts';
 
@@ -16,19 +17,26 @@ export interface Mounts {
     names: readonly string[];
     /** the host path an agent path names, or nothing when it is in no tree */
     resolve(path: string): string | undefined;
+    /** the host file a workspace-relative path names, only when that file exists */
+    file(path: string): string | undefined;
 }
 
 /** Exactly the trees the file tools reach, under the same containment rule. */
 export function mountsOf(files: Workspace): Mounts {
     const names = [...(files.mount ? [files.mount] : []), ...files.mounts.map((m) => m.at)];
+    const resolve = (path: string): string | undefined => {
+        try {
+            return files.within(path);
+        } catch {
+            return undefined;
+        }
+    };
     return {
         names: names.sort((a, b) => b.length - a.length),
-        resolve: (path) => {
-            try {
-                return files.within(path);
-            } catch {
-                return undefined;
-            }
+        resolve,
+        file: (path) => {
+            const host = resolve(path);
+            return host && statSync(host, { throwIfNoEntry: false })?.isFile() ? host : undefined;
         },
     };
 }
@@ -61,6 +69,19 @@ export function mountUrl(token: string, mounts: Mounts): string | undefined {
     }
     const host = mounts.resolve(path);
     return host ? pathToFileURL(host).href + fragment : undefined;
+}
+
+/** `scripts/x.py`, `README.md` — no scheme, no leading slash, no spaces. */
+const RELATIVE = /^[\w@+-][\w.@+-]*(?:\/[\w.@+-]+)*$/;
+
+/** The host `file:` url of a workspace-relative path in code, when that file exists. */
+function relativeUrl(text: string, mounts: Mounts): string | undefined {
+    // Without a `.` or `/` it is an identifier, not worth a stat.
+    if (!RELATIVE.test(text) || !/[./]/.test(text)) {
+        return undefined;
+    }
+    const host = mounts.file(text);
+    return host ? pathToFileURL(host).href : undefined;
 }
 
 const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, (c) => `\\${c}`);
@@ -99,6 +120,13 @@ export function linkSpans(spans: readonly Span[], mounts: Mounts): Span[] {
             const url = mountUrl(span.href, mounts);
             out.push(url ? { ...span, href: url } : span);
             continue;
+        }
+        if (span.code) {
+            const url = relativeUrl(span.text, mounts);
+            if (url) {
+                out.push({ ...span, href: url });
+                continue;
+            }
         }
         let from = 0;
         for (const { at, token } of matches(span.text, mounts)) {

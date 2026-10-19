@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { writeAnalyzeBrief } from './analyze-brief.ts';
 import type { Case } from './dataset/types.ts';
 import { type Feedback, readFeedback } from './feedback.ts';
 import { writeApply } from './report.ts';
@@ -285,6 +286,17 @@ export class Rechecks {
             t.checkStopping();
             t.at(s, 'nomem', n, 'analyze');
             const began = Date.now();
+            const patch = join(t.improvements.dir, r.apply, 'diff.patch');
+            const session = randomUUID();
+            writeFileSync(join(dir, 'session'), `${session}\n`);
+            const brief = await writeAnalyzeBrief(t, dir, {
+                run,
+                case: c,
+                phase: 'nomem',
+                attempt: n,
+                earlier: [],
+                recheck: patch,
+            });
             const res = await t.zen(
                 [
                     'meta',
@@ -294,7 +306,9 @@ export class Rechecks {
                     '--events',
                     join(dir, 'analyze.events.jsonl'),
                     '--session-id',
-                    randomUUID(),
+                    session,
+                    '--prompt-file',
+                    brief,
                     '/analyze',
                     run.dir,
                     `case=${c.id}`,
@@ -302,7 +316,7 @@ export class Rechecks {
                     'phase=nomem',
                     `attempt=${n}`,
                     `feedback=${file}`,
-                    `recheck=${join(t.improvements.dir, r.apply, 'diff.patch')}`,
+                    `recheck=${patch}`,
                 ],
                 join(dir, 'analyze.log'),
             );

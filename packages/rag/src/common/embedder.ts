@@ -97,10 +97,8 @@ function choices(keys: KeyStore, fromEnv: ReadonlySet<Provider>): CliError {
         note(dim('  no provider on this machine has a credential — try: zen key add openai'));
         note('');
     }
-    // `pick` is the one that ends the question rather than restating it: it
-    // tries them and prints the first that answers.
     return usageError(
         'no embedder named',
-        'pass --embedding <ref>, or run: zen models pick --embedding',
+        'pass --embedding <ref> - see: zen models ls --embeddings',
     );
 }

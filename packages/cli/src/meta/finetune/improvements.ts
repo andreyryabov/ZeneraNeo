@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { writeApplyBrief } from './apply-brief.ts';
 import { type Cost, costChanges, type Gate, limits, measure, overLimits } from './cost.ts';
 import { errorIn, sizeOf } from './failure.ts';
-import type { Feedback, Improvement } from './feedback.ts';
+import { type Feedback, forProse, type Improvement } from './feedback.ts';
 import { patchFiles, writeApply } from './report.ts';
 import type { Run } from './train.ts';
 import { readJson, type Seat, Stopped, type Tuning } from './tuning.ts';
@@ -61,6 +62,19 @@ const pad = (n: number): string => String(n).padStart(3, '0');
 
 const kept = (d: Decision | undefined): boolean =>
     d?.decision === 'applied' || d?.decision === 'merged';
+
+const DECIDED = new Set(['applied', 'merged', 'rejected', 'deferred', 'structural']);
+
+/** `<request> <improvement>` for each improvement of inputs.json that decisions.json gives no valid decision. */
+export function undecided(dir: string): string[] {
+    const inputs = readJson<Feedback[]>(join(dir, 'inputs.json')) ?? [];
+    const decided = readJson<Decisions>(join(dir, 'decisions.json')) ?? {};
+    return inputs.flatMap((f) =>
+        forProse(f)
+            .filter((i) => !DECIDED.has(decided[f.id]?.[i.id]?.decision ?? ''))
+            .map((i) => `${f.id} ${i.id}`),
+    );
+}
 
 export class Improvements {
     readonly #t: Tuning;
@@ -226,7 +240,7 @@ export class Improvements {
             case: feedback.case,
             phase: feedback.phase,
             attempt: feedback.attempt,
-            detail: `${feedback.improvements.length} improvement(s), worker freed`,
+            detail: `${forProse(feedback).length} improvement(s), worker freed`,
         });
         this.#t.unseat(s);
         try {
@@ -354,6 +368,7 @@ export class Improvements {
                     const { dir: _, ...rest } = f;
                     return {
                         ...rest,
+                        improvements: forProse(f),
                         file: join(at, 'feedback.json'),
                         ...(missed?.length ? { missedSkills: missed } : {}),
                     };
@@ -363,7 +378,7 @@ export class Improvements {
             )}\n`,
         );
         writeFileSync(join(dir, 'deferred.json'), `${JSON.stringify(this.deferred(), null, 2)}\n`);
-        const total = batch.reduce((n, f) => n + f.improvements.length, 0);
+        const total = batch.reduce((n, f) => n + forProse(f).length, 0);
         this.current = { since: Date.now(), name, dir, requests: batch.length };
         let to = from;
         let discarded: string | undefined;
@@ -490,6 +505,11 @@ export class Improvements {
             const applyLog = join(dir, 'apply.log');
             const checkLog = join(dir, 'check.log');
             const offset = { apply: sizeOf(applyLog), check: sizeOf(checkLog) };
+            // An undone attempt's record must not pass for this one's.
+            for (const f of ['decisions.json', 'changes.md']) {
+                rmSync(join(dir, f), { force: true });
+            }
+            const brief = await writeApplyBrief(t, dir, attempt);
             const res = await t.zen(
                 [
                     'meta',
@@ -500,6 +520,8 @@ export class Improvements {
                     session,
                     '--events',
                     join(dir, 'apply.events.jsonl'),
+                    '--prompt-file',
+                    brief,
                     '/finetune-apply',
                     dir,
                 ],
@@ -509,6 +531,37 @@ export class Improvements {
                 join(dir, attempt === 1 ? 'apply.json' : `apply-${attempt}.json`),
                 res.stdout,
             );
+            // An agent cut off by its provider can still exit 0, having decided nothing.
+            const missing = res.code === 0 ? undecided(dir) : [];
+            if (missing.length > 0) {
+                writeFileSync(
+                    join(dir, 'missing.md'),
+                    [
+                        `# Attempt ${attempt} was undone: decisions missing`,
+                        '',
+                        'Written by the tuning loop: the apply ended without a decision for these improvements, so the project was put back. This attempt must write `decisions.json` with every one of them, and `changes.md`.',
+                        '',
+                        ...missing.map((m) => `- ${m}`),
+                        '',
+                    ].join('\n'),
+                );
+                t.error(
+                    `apply ${name}${attempt > 1 ? ` try ${attempt}` : ''}`,
+                    `the apply ended without a decision for ${missing.length} improvement(s)`,
+                    applyLog,
+                );
+                t.system.restore(from);
+                if (attempt === 2) {
+                    throw new Error(
+                        `apply ${dir} ended twice without deciding every improvement - see missing.md`,
+                    );
+                }
+                t.event({
+                    what: 'apply retry',
+                    detail: `no decision for ${missing.length} improvement(s)`,
+                });
+                continue;
+            }
             at('check');
             const check = await t.zen(['check', '--no-models', '--no-sandbox'], checkLog);
             if (res.code !== 0 || check.code !== 0) {

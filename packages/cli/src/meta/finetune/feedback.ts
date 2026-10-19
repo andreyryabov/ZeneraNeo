@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { VERDICTS, type Verdict } from './dataset/types.ts';
+import { type Grade, VERDICTS, type Verdict } from './dataset/types.ts';
 
 // ---------------------------------------------------------------------------
 // What an analysis hands back to the loop
@@ -30,7 +30,7 @@ export interface Feedback {
     phase: Phase;
     attempt: number;
     verdict: Verdict;
-    rubric: Record<string, 'pass' | 'fail'>;
+    rubric: Record<string, Grade>;
     /** right, and nothing left worth changing */
     done: boolean;
     summary: string;
@@ -45,6 +45,13 @@ export interface Feedback {
 
 /** A summary's first paragraph - the verdict, for a table cell or a one-line note. */
 export const lead = (summary: string): string => summary.trim().split(/\n\s*\n/)[0] ?? '';
+
+/** A `specification` improvement is for the dataset, never for an apply: prose cannot fix a rubric. */
+export const forDataset = (i: Improvement): boolean => i.kind === 'specification';
+
+/** The improvements an apply can act on. */
+export const forProse = (f: { improvements: Improvement[] }): Improvement[] =>
+    f.improvements.filter((i) => !forDataset(i));
 
 // Round 1 keeps the bare form, so the ids applies already took still match.
 export const feedbackId = (caseId: string, phase: Phase, attempt: number, round = 1): string =>
@@ -98,10 +105,10 @@ export function readFeedback(
             ...(text('expect') ? { expect: text('expect') } : {}),
         });
     }
-    const rubric: Record<string, 'pass' | 'fail'> = {};
+    const rubric: Record<string, Grade> = {};
     if (isObject(raw.rubric)) {
         for (const [id, result] of Object.entries(raw.rubric)) {
-            if (result === 'pass' || result === 'fail') {
+            if (result === 'pass' || result === 'fail' || result === 'invalid') {
                 rubric[id] = result;
             }
         }
@@ -120,10 +127,30 @@ export function readFeedback(
         return {
             problem:
                 `missing grades for rubric lines ${ungraded.join(', ')} - grade every line of ` +
-                `\`zen meta dataset show ${known.case}@${known.caseRev}\` "pass" or "fail" under "rubric"`,
+                `\`zen meta dataset show ${known.case}@${known.caseRev}\` "pass", "fail" or "invalid" under "rubric"`,
+        };
+    }
+    const unexplained = Object.entries(rubric)
+        .filter(([, g]) => g === 'invalid')
+        .map(([id]) => id)
+        .filter(
+            (id) =>
+                !improvements.some(
+                    (i) =>
+                        forDataset(i) && `${i.change} ${i.why ?? ''}`.split(/[^\w-]+/).includes(id),
+                ),
+        );
+    if (unexplained.length > 0) {
+        return {
+            problem:
+                `rubric lines ${unexplained.join(', ')} are graded "invalid" with no ` +
+                '"specification" improvement naming them - add one per line saying what is wrong ' +
+                'with it and how it should read',
         };
     }
     const failed = Object.values(rubric).includes('fail');
+    // A right run whose only findings are about the dataset has nothing left for the prose.
+    const onlyDataset = improvements.length > 0 && forProse({ improvements }).length === 0;
     return {
         feedback: {
             id: feedbackId(known.case, known.phase, known.attempt, known.round),
@@ -131,7 +158,7 @@ export function readFeedback(
             verdict,
             rubric,
             // `done` on a wrong answer or a failed rubric line is a contradiction; those win.
-            done: raw.done && verdict === 'right' && !failed,
+            done: (raw.done || onlyDataset) && verdict === 'right' && !failed,
             summary: typeof raw.summary === 'string' ? raw.summary : '',
             improvements,
             ...(verdict === 'void' ? { infra } : {}),

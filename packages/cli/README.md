@@ -1,8 +1,15 @@
+<div align="center"> 
+  <img
+    src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/zenera-logo-with-media-queries.svg"
+    alt="Zenera Logo"
+    width="20"
+  />
+  <div>Powered By Zenera</div>
+</div>
+<br>
+
 <div align="center">
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-cli-dark.svg">
-  <img src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-cli-light.svg" alt="ZENERA CLI" width="720">
-</picture>
+  <img src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-cli-with-media-queries.svg" alt="ZENERA CLI"  width="720">
 
 [![npm](https://img.shields.io/npm/v/@zenera/cli.svg)](https://www.npmjs.com/package/@zenera/cli)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/andreyryabov/ZeneraNeo/blob/main/LICENSE)
@@ -131,16 +138,15 @@ zen init my-project          # scaffolds a project and registers it
 zen open my-project          # open the specification and project in your editor
 ```
 
-In the editor, describe the job in `SPECIFICATION.md`, then send this in the
-agent chat:
+In the editor, describe the job in `SPECIFICATION.md`. Then, back in the
+terminal, let the meta agent build the system from it:
 
-```
-/spec-sync-project
+```sh
+zen meta run my-project /spec-sync-project
 ```
 
 It creates the specialists, responsibilities, tool access and handoffs the job
-needs. Back in the terminal, validate the generated system and run it against a
-real workspace:
+needs. Validate the generated system and run it against a real workspace:
 
 ```sh
 zen check my-project
@@ -180,10 +186,11 @@ dashboard rewritten every second: what each item is doing right now, what the
 finished ones cost - per model, since agents may each use a different one - and
 what is still queued.
 
-To change what the system does, update `SPECIFICATION.md` and send
-`/spec-sync-project` again. The next section explains that workflow in detail.
+To change what the system does, update `SPECIFICATION.md` and run
+`zen meta run /spec-sync-project` again. The next section explains that workflow
+in detail.
 
-## You write the specification; a coding agent writes the system
+## You write the specification; the meta agent writes the system
 
 `zen init` writes `SPECIFICATION.md` first, and everything else in the folder
 implements it. Where the two disagree the specification wins, so a change to
@@ -211,9 +218,9 @@ nobody to hand work to, because there is no second job to hand on.
 
 ### How you actually edit it
 
-`SPECIFICATION.md` is ordinary Markdown, so any editor will do - but the loop is
-meant to be driven from a coding agent's chat, and `zen init` installs the
-prompts that make each step a single command:
+`SPECIFICATION.md` is ordinary Markdown, so any editor will do. `zen init`
+installs the prompts that make each step of the loop a single `zen meta run`
+command:
 
 ```sh
 zen open my-project      # or, standing in the folder: zen open
@@ -223,30 +230,29 @@ That launches the editor you already use: the one this terminal belongs to, or
 `$ZENERA_EDITOR`, or the first of VS Code, Cursor, Windsurf, Zed, Sublime Text
 or IntelliJ it can find. `--editor <cmd>` names one outright.
 
-In the window that opens:
-
 1. **Edit `SPECIFICATION.md`** - what the system is for, which agents exist,
    what each may reach for, and what _done_ means.
-2. **Open the chat panel and send `/spec-sync-project`.** It reads the
-   specification and every file implementing it, works out the difference in
-   both directions, and changes the smallest thing that closes each gap.
+2. **Run `zen meta run /spec-sync-project`.** It reads the specification and
+   every file implementing it, works out the difference in both directions, and
+   changes the smallest thing that closes each gap.
 3. **Answer `SPECIFICATION-FEEDBACK.md`**, which it writes for anything it could
    not do without guessing. Every question carries two to four written-out
    answers, each with a `[ ]` box: tick one, delete the ones you do not want, or
    write your own in their place.
-4. **Send `/spec-apply-feedback`.** It folds the answers you chose into
-   `SPECIFICATION.md` - never into a prompt - and then `/spec-sync-project` again.
+4. **Run `zen meta run /spec-apply-feedback`.** It folds the answers you chose
+   into `SPECIFICATION.md` - never into a prompt - and then
+   `/spec-sync-project` again.
 
-Back in the terminal: `zen check`, then `zen run`.
+Then: `zen check`, then `zen run`.
 
 <details>
-<summary>The chat commands <code>zen init</code> installs</summary>
+<summary>The prompts <code>zen init</code> installs</summary>
 
-They are prompt files under `.github/prompts/`, which VS Code and its forks
-offer as chat slash-commands. Both `zen init` and `zen open` write them fresh,
-so they never go stale - and edits to them do not survive.
+They are prompt files under `.github/prompts/`, and `zen meta run /<name>` runs
+one (`zen meta prompts` lists them). Both `zen init` and `zen open` write them
+fresh, so they never go stale - and edits to them do not survive.
 
-| In chat                | Does                                                             |
+| Prompt                 | Does                                                             |
 | ---------------------- | ---------------------------------------------------------------- |
 | `/spec-sync-project`   | Makes every file match `SPECIFICATION.md`, both directions.      |
 | `/spec-apply-feedback` | Folds your answers in `SPECIFICATION-FEEDBACK.md` into the spec. |
@@ -255,10 +261,8 @@ so they never go stale - and edits to them do not survive.
 | `/new-agent`           | Adds an agent - prompt, wiring and hand-offs.                    |
 | `/new-skill`           | Adds a skill under `agents/skills/`.                             |
 
-In an editor that does not support prompt files, paste the contents of
-`.github/prompts/spec-sync-project.prompt.md` into its chat instead - it is only a
-prompt. Alongside them, `.github/copilot-instructions.md` is the standing brief
-that explains this runtime to whatever agent is reading, and
+Alongside them, `.github/copilot-instructions.md` is the standing brief that
+explains this runtime to whatever coding agent opens the folder, and
 `.github/skills/zen-cli/` is the CLI's own reference for it.
 
 </details>
@@ -266,9 +270,9 @@ that explains this runtime to whatever agent is reading, and
 ### The self-improving loop
 
 ```
-edit SPECIFICATION.md → /spec-sync-project → zen check → zen run
-        ↑                                                  ↓
-        └───── refine the spec <-──── zen inspect <-───────┘
+edit SPECIFICATION.md → zen meta run /spec-sync-project → zen check → zen run
+        ↑                                                              ↓
+        └─────────── refine the spec <-──── zen inspect <-─────────────┘
 ```
 
 `zen inspect` makes the record visible: the run trace, timing and token
@@ -276,7 +280,7 @@ statistics, agent architecture, and memory used during the run.
 
 ![Run inspection: trace, agent architecture, and memory](https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/0910_480.gif)
 
-The agent in your editor can close the same loop without the page. `zen inspect
+The meta agent can close the same loop without the page. `zen inspect
 graph` writes the whole run as one Mermaid flowchart - a line per node, short
 sequential ids, the tools counted in a header - which is small enough to read
 whole. Having spotted the loop or the branch that failed, it opens the two or
@@ -297,7 +301,7 @@ prompt that reads correctly and behaves wrongly explains itself.
 `ask` has two modes, decided by whether the question is given:
 
 - **One-shot** - a question on the line, in `--question-file`, or `--json`.
-  For a script or the agent in your editor: no banner, no prompt, no picker.
+  For a script or the meta agent: no banner, no prompt, no picker.
   stdout is the answer and nothing else, and the command exits.
 - **Interactive** - no question. For you, at a terminal: `zen inspect ask`
   walks through the session, run and recorded LLM call (whichever are not
@@ -308,8 +312,8 @@ prompt that reads correctly and behaves wrongly explains itself.
 Every step is a command, and everything each one reads or writes is a plain
 file: the specification, the findings `zen check` prints with a code, a location
 and a fix, the record `zen inspect` renders of what the run actually did. So the
-loop does not need you standing in it. Hand the whole cycle to the agent in your
-editor and it runs on the system it just built - test it, read the failure,
+loop does not need you standing in it. Hand the whole cycle to the meta agent
+and it runs on the system it just built - test it, read the failure,
 change the sentence in the specification that caused it, rebuild, run again.
 "Fix my project" is one instruction. (The first time round, `scripts/_setup.sh`
 prepares the container the tools run in.)
@@ -354,7 +358,7 @@ Read a codebase and leave a short written note about it in the workspace.
 - Every claim in it comes from a file that was actually read.
 ```
 
-Send `/spec-sync-project` in the editor's chat. It writes `agents.yaml` - who
+Run `zen meta run /spec-sync-project`. It writes `agents.yaml` - who
 exists, and what each may reach for:
 
 ```yaml
@@ -656,8 +660,8 @@ an accident.
 the project: a coding agent rooted at the project directory, which reads
 `SPECIFICATION.md`, changes `agents.yaml`, the prompts and the skills, and runs
 whatever commands it needs to check itself - on the keys already in your
-keyring, and not on anybody's subscription. It is the loop your editor's chat
-panel drives, as a command you can put in a script.
+keyring, and not on anybody's subscription. It is the spec-to-system loop as a
+command you can put in a script.
 
 ```sh
 zen meta run "what does this project do?"
@@ -674,9 +678,9 @@ Every prompt goes through `run`, whether you typed it or it is a file: the
 alternative was a verb that appeared only sometimes, and a bare word after
 `zen meta` that was a subcommand on Tuesdays and a question on Wednesdays.
 
-It uses every tool without asking. The prompts it runs were written for an
-editor, where reading files, writing them and running commands is the whole
-point, and a `-p` run has nobody sitting there to answer the question - so the
+It uses every tool without asking. The prompts it runs rely on reading files,
+writing them and running commands, and a `-p` run has nobody sitting there to
+answer the question - so the
 alternative is not a safer run but a stalled one. `--allow-tool read`,
 `--allow-tool 'shell(git:*)'` narrow it to what a particular run needs, and
 `--ask` puts the question back. It is your own checkout and your own key either
@@ -694,11 +698,10 @@ to `.tmp/logs/meta.<when>.log`, whose path is printed before the run starts, so
 kept beside it as `.tmp/logs/meta.<when>.md`, named again once it has printed -
 a terminal turns that into something you click.
 
-`zen meta run /<name>` is the part an editor cannot do for you from a script.
-The prompts under `.github/prompts/` - `/spec-sync-project`, `/project-review` -
-are what a chat panel offers as slash commands, and nothing outside an editor
-reads them. zen reads one, drops the frontmatter and sends the body - so the
-same prompt runs from the editor, from a terminal and from CI.
+`zen meta run /<name>` runs a prompt file. The prompts under
+`.github/prompts/` - `/spec-sync-project`, `/project-review` - are plain
+Markdown with frontmatter. zen reads one, drops the frontmatter and sends the
+body - so the same prompt runs from a terminal, a script and CI.
 
 A terminal has no menu dropping down as you type a slash, so
 `zen meta prompts` lists what this project holds, each with its description.
@@ -824,7 +827,6 @@ zen models openai                           # everything OpenAI serves this acco
 zen models search haiku --tools --free      # narrow it
 zen models show openrouter:anthropic/claude-haiku-4.5
 zen models test vertex:gemini-embedding-001 # one real call, one verdict
-zen models pick --embedding                 # the first ref that answers, on stdout
 zen models browse                           # walk providers and models with the arrow keys
 ```
 
@@ -848,15 +850,15 @@ $ zen models test vertex:gemini-embedding-001
 vertex:gemini-embedding-001  blocked  Vertex AI API has not been used in project my-proj …
 fix vertex:gemini-embedding-001 gcloud services enable aiplatform.googleapis.com --project my-proj
 error 1 of 1 did not answer
-        find one that does: zen models pick --embedding
+        see what else there is: zen models ls --embeddings
 ```
 
-`zen models pick` tries a short list of candidates one at a time, stops at the
-first that works, and prints the bare reference on stdout. So recovering from
-the above is a single substitution, whether a person or an agent is doing it:
+To take another model instead, list what the account serves, test one, and put
+its ref in `agents.yaml` or the flag that needs it:
 
 ```sh
-zen rag schema index --embedding "$(zen models pick --embedding)" ./specs/*.yaml
+zen models ls --embeddings
+zen models test openai:text-embedding-3-small
 ```
 
 `zen models browse [provider]` is the interactive way in: arrow keys through
@@ -1034,6 +1036,26 @@ clear where a working provider actually comes from.
 
 </details>
 
+<details>
+<summary><strong>Every model through a Bifrost gateway</strong></summary>
+
+With one virtual key in place of every vendor key:
+
+```sh
+zen key add bifrost --url https://bifrost.example.com
+zen key mode bifrost            # every run goes through the gateway
+zen key mode direct             # back to the vendor keys
+```
+
+`agents.yaml` does not change. Each model keeps its own vendor's protocol and
+is sent to the gateway's matching endpoint - `vertex:gemini-3.5-flash` reaches
+`/genai` as `vertex/gemini-3.5-flash` - so thinking and cache accounting
+survive the trip. The whole story - variables, the sandbox, `zen models`, known
+limits - is in
+[docs/gateway.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/gateway.md).
+
+</details>
+
 ## Cache - work you have already paid for
 
 Embedding a paragraph, parsing a document, asking a provider what it serves: all
@@ -1083,6 +1105,8 @@ terminal:
     - making an API description searchable and mockable.
 - [docs/memory.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/memory.md)
     - what agents keep between sessions.
+- [docs/gateway.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/gateway.md)
+    - every model through a Bifrost gateway, with one virtual key.
 
 ## License
 

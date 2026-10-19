@@ -776,13 +776,13 @@ async function askModels(
         }
         const where = named(report);
         if (probe.check.state === 'blocked') {
-            const pick = report.role === 'embedding' ? '--embedding' : '--chat';
+            const list = report.role === 'embedding' ? '--embeddings' : '--chat';
             add({
                 severity: 'error',
                 code: `${report.role}.blocked`,
                 where,
                 message: `the credential was accepted and then refused: ${probe.check.detail ?? 'no reason given'}`,
-                fix: `${probe.check.fix ?? 'resolve it in the vendor console'}, or find one that works: zen models pick ${pick}`,
+                fix: `${probe.check.fix ?? 'resolve it in the vendor console'}, or find one that works: zen models ls ${list}`,
             });
             return;
         }

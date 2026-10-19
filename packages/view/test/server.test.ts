@@ -94,7 +94,13 @@ beforeAll(async () => {
     writeFileSync(join(root, 'sub', 'data.json'), '{"a":1}\n');
     writeFileSync(join(base, 'outside.md'), '# outside\n');
     symlinkSync(join(base, 'outside.md'), join(root, 'escape.md'));
-    server = await serveView({ root, port: 0, start: '/README.md', pollMs: 200 });
+    server = await serveView({
+        root,
+        port: 0,
+        start: '/README.md',
+        pollMs: 200,
+        throttleMs: 400,
+    });
 });
 
 afterAll(async () => {
@@ -179,6 +185,30 @@ describe('the view server', () => {
             await until(() => sub.views.some((v) => v.kind === 'markdown'));
         } finally {
             sub.close();
+        }
+    });
+
+    it('pushes a burst of writes at most once per throttle window, to every page alike', async () => {
+        const file = join(root, 'sub', 'busy.md');
+        writeFileSync(file, '# Busy\n\nn: 0\n');
+        const a = subscribe('/sub/busy.md');
+        const b = subscribe('/sub/busy.md');
+        try {
+            await until(() => a.views.length === 1 && b.views.length === 1);
+            const started = Date.now();
+            for (let n = 1; n <= 10; n++) {
+                writeFileSync(`${file}.tmp`, `# Busy\n\nn: ${n}\n`);
+                renameSync(`${file}.tmp`, file);
+                await new Promise((r) => setTimeout(r, 40));
+            }
+            const last = (s: { views: View[] }): boolean => text(s.views.at(-1)).includes('n: 10');
+            await until(() => last(a) && last(b));
+            const windows = Math.ceil((Date.now() - started) / 400) + 1;
+            expect(a.views.length - 1).toBeLessThanOrEqual(windows);
+            expect(a.views.map(text)).toEqual(b.views.map(text));
+        } finally {
+            a.close();
+            b.close();
         }
     });
 });

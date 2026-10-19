@@ -38,7 +38,10 @@ export async function runLoop(t: Tuning): Promise<void> {
     );
     rmSync(t.stopFile, { force: true });
     const timer = setInterval(() => t.report(), REPORT_EVERY_MS);
-    const live = setInterval(() => publish(t), LIVE_EVERY_MS);
+    const live = setInterval(() => {
+        publish(t);
+        t.report(true);
+    }, LIVE_EVERY_MS);
     try {
         await recover(t);
         t.rechecks.resume();
@@ -57,6 +60,7 @@ export async function runLoop(t: Tuning): Promise<void> {
         clearInterval(live);
         t.finished = true;
         publish(t);
+        t.report();
         try {
             unlinkSync(lock);
         } catch {
@@ -108,10 +112,8 @@ async function dispatch(t: Tuning): Promise<void> {
         t.tried.add(c.id);
         const before = resultOf(t, c);
         if (before?.state === 'failed') {
-            // Taken again: until it ends anew it is in progress, not failed. Its analyze session
-            // may be what broke (another model, a dead provider), so the next analysis starts fresh.
+            // Taken again: until it ends anew it is in progress, not failed.
             rmSync(join(t.caseDir(c), 'result.json'), { force: true });
-            rmSync(join(t.caseDir(c), 'session'), { force: true });
             t.event({ what: 'resumed', case: c.id, rev: c.rev, detail: before.reason });
         }
         await t.seat(seat, false);

@@ -1,5 +1,5 @@
 import { Workspace } from '@zenera/neo';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -113,6 +113,20 @@ describe('linking the spans of an answer', () => {
         ).map((b) => linkBlock(b, mounts));
         expect(linked(table?.cells?.flat(2) ?? [])).toEqual([['/workspace/a.csv', `${WS}/a.csv`]]);
         expect(fence?.lines).toEqual(['/workspace/b']);
+    });
+});
+
+describe('a workspace-relative path in code', () => {
+    writeFileSync(join(dir('my ws', 'scripts'), 'chart.py'), '');
+    writeFileSync(join(outside, 'secret.py'), '');
+
+    it('links an existing file and leaves everything else alone', () => {
+        const text =
+            'Run `scripts/chart.py`, not `scripts/missing.py`, `scripts`, `escape/secret.py`, ' +
+            '`../outside/secret.py` or `res.output`; prose scripts/chart.py stays plain.';
+        const spans = linkSpans(inlineOf(text), mounts);
+        expect(joined(spans)).toBe(joined(inlineOf(text)));
+        expect(linked(spans)).toEqual([['scripts/chart.py', `${WS}/scripts/chart.py`]]);
     });
 });
 

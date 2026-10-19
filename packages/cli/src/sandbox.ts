@@ -1,5 +1,6 @@
 import {
     DEFAULT_SANDBOX_IMAGE,
+    GATEWAY_URL_ENV,
     SANDBOX_GROUP,
     SandboxPool,
     type AgentProject,
@@ -69,8 +70,9 @@ function forwarded(): { secrets: string[]; env: Record<string, string>; mounts: 
         secrets.push(cred.env);
     }
     // Not secrets, and useless without one: a service account says which
-    // project it belongs to but never which region to call.
-    for (const name of ['GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION']) {
+    // project it belongs to but never which region to call, and a gateway key
+    // says nothing of where the gateway is.
+    for (const name of ['GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION', GATEWAY_URL_ENV]) {
         const value = process.env[name];
         if (value) {
             env[name] = value;

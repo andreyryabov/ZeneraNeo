@@ -164,6 +164,8 @@ export class Tuning {
     progress: { counts: Record<string, number>; total: number; spent: ByStage } | undefined;
     /** called with every live snapshot */
     readonly watchers = new Set<(s: Snapshot) => void>();
+    /** the latest live snapshot */
+    live: Snapshot | undefined;
     /** the latest step failures, newest first */
     readonly errors: StepFailure[] = [];
 
@@ -371,9 +373,10 @@ export class Tuning {
         this.report();
     }
 
-    report(): void {
+    /** `live`: only what moves by the second is read again; the rest comes from the last full report. */
+    report(live = false): void {
         try {
-            writeStatus(this);
+            writeStatus(this, live);
         } catch {
             // A status page that failed to render must not stop the tuning.
         }

@@ -22,7 +22,7 @@ zen run      [project] [prompt] [options]
 zen run      batch --input <file> [--batch-dir <dir>] [--concurrency <n>] [--memory-read-only]
 zen open     [project] [--editor <cmd>] [--wait]
 zen key      <ls|add|use|check|rm|show|env> [ref] [options]
-zen models   <providers|ls|search|show|test|pick> [ref] [options]
+zen models   <providers|ls|search|show|test|browse> [ref] [options]
 zen check    [name|dir] [--project <name|dir>] [--no-sandbox] [--no-models] [--strict] [--quiet]
 zen inspect  [report|graph|node|ask] [run] [--dir <run dir>] [--part <name>] [--full] [--open]
 zen memory   [stats|ls|search|grep|show|export|merge|forget] [args] [options]
@@ -80,7 +80,7 @@ zen export                            the project as a zip you can send
 zen import a.zip                      unpack one somebody sent, run nothing in it
 zen key ls --check                    which credentials still work
 zen models test <ref>                 whether one model actually answers
-zen models pick --embedding           the first embedder that does, on stdout
+zen models ls --embeddings            the embedders this machine can reach
 zen meta run acme /analyze --json > analyze.json   a stored prompt, the result as JSON
 ```
 

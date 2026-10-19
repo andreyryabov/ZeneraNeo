@@ -278,9 +278,22 @@ zen inspect node n11 --part thinking --part text --dir <run dir>
 zen inspect node n11 --full --dir <run dir>
 ```
 
+An `llm_call` carries two more parts read out of its request, held back the
+same way: `tools`, the tool names that call was offered, one per line, and
+`messages`, the conversation it saw, one clipped line per message with its
+tool calls under it. They answer "was the tool offered" and "what had it seen"
+without opening the request. For the request itself as JSON, `--raw` prints
+one part of one node with no framing, ready for `jq`:
+
+```sh
+zen inspect node n11 --part tools --dir <run dir>
+zen inspect node n11 --part request --raw --dir <run dir> | jq '.messages'
+```
+
 `--part` is repeatable and matches a **prefix**, so `--part call` catches a part
 named `call run_command (toolu_01A…)` without your typing the id. A name that
-matches nothing is an error listing the parts the node does carry.
+matches nothing is reported in a `#` line; when no name matches at all it is an
+error listing the parts the nodes do carry.
 
 ```
 # zen inspect node · 1/41 nodes of run 20260825-143012-a7f3 · ids from `zen inspect graph`

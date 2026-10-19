@@ -5,7 +5,9 @@
 // print in the terminal arrives on the page as flat text on a `<pre>` box that
 // does not match the theme. The art is therefore shipped as two images — one
 // per colour scheme — drawn from the very same font and tones the CLI uses, so
-// the README and `zen` can never drift apart.
+// the README and `zen` can never drift apart. On GitHub pick between them with
+// `#gh-dark-mode-only` / `#gh-light-mode-only`: `<picture>` follows the OS
+// theme, not GitHub's, and shows the wrong one whenever the two differ.
 //
 // The glyphs are drawn as rectangles rather than set as text: an SVG loaded
 // through `<img>` has only the reader's fonts to draw with, and a box-drawing
@@ -89,7 +91,7 @@ const HEAD = {
     light: { face: '#1f2328', shade: '#8c959f' },
 };
 
-/** One accent per package, so the three marks are told apart at a glance. */
+/** One accent per package, so the marks are told apart at a glance. */
 const ACCENTS = {
     orange: {
         dark: { accent: '#ff8700', accentShade: '#d75f00' },
@@ -102,6 +104,10 @@ const ACCENTS = {
     violet: {
         dark: { accent: '#a371f7', accentShade: '#7c4ddb' },
         light: { accent: '#8250df', accentShade: '#5a32a3' },
+    },
+    pink: {
+        dark: { accent: '#ff87d7', accentShade: '#d75faf' },
+        light: { accent: '#bf3989', accentShade: '#99286e' },
     },
 };
 
@@ -168,6 +174,7 @@ const WORDMARKS = [
     { file: 'banner-cli', accent: 'orange', text: { ...NEO_BANNER, accent: 'CLI' } },
     { file: 'banner-rag', accent: 'green', text: { ...NEO_BANNER, accent: 'Rag' } },
     { file: 'banner-faker', accent: 'violet', text: { ...NEO_BANNER, accent: 'Faker' } },
+    { file: 'banner-view', accent: 'pink', text: { ...NEO_BANNER, accent: 'View' } },
 ];
 
 for (const { file, accent, text } of WORDMARKS) {

@@ -167,11 +167,17 @@ export function renderPath(abs: string, path: string, options: RenderOptions = {
 // Markdown
 // ---------------------------------------------------------------------------
 
+/** Raw HTML is dropped, except `<br>`: the one way a markdown table cell holds several lines. */
+const lineBreak = (_state: unknown, node: { value: string }): Element | undefined =>
+    /^<br\s*\/?>$/i.test(node.value.trim())
+        ? { type: 'element', tagName: 'br', properties: {}, children: [] }
+        : undefined;
+
 /** Sanitize before the slugs, so heading ids keep GitHub's form and links to them land. */
 const pipeline = unified()
     .use(remarkParse)
     .use(remarkGfm)
-    .use(remarkRehype)
+    .use(remarkRehype, { handlers: { html: lineBreak } })
     .use(rehypeSanitize)
     .use(rehypeSlug)
     .use(() => highlightBlocks);
@@ -179,7 +185,42 @@ const pipeline = unified()
 export function markdown(text: string): Root {
     const tree = pipeline.runSync(pipeline.parse(text)) as Root;
     tidy(tree);
+    walk(tree, lineCell);
     return tree;
+}
+
+/**
+ * A table cell of `<br>`-separated lines - a trailing `<br>` alone counts - is a list:
+ * one row per line, cut at the column's width by the stylesheet, whole in its tooltip.
+ */
+function lineCell(cell: Element): void {
+    if (
+        (cell.tagName !== 'td' && cell.tagName !== 'th') ||
+        !cell.children.some((c) => c.type === 'element' && c.tagName === 'br')
+    ) {
+        return;
+    }
+    const lines: ElementContent[][] = [[]];
+    for (const c of cell.children) {
+        if (c.type === 'element' && c.tagName === 'br') {
+            lines.push([]);
+        } else {
+            lines.at(-1)!.push(c);
+        }
+    }
+    cell.properties.className = [...classes(cell), 'lines'];
+    cell.children = lines
+        .filter((l) => l.some((c) => c.type !== 'text' || c.value.trim() !== ''))
+        .map((children) => {
+            const line: Element = {
+                type: 'element',
+                tagName: 'div',
+                properties: { className: ['line'] },
+                children,
+            };
+            line.properties.title = textOf(line).trim();
+            return line;
+        });
 }
 
 const TABLE_PARTS = new Set(['table', 'thead', 'tbody', 'tfoot', 'tr']);

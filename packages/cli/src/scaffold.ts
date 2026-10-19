@@ -1,6 +1,5 @@
 import {
     chmodSync,
-    copyFileSync,
     existsSync,
     mkdirSync,
     readdirSync,
@@ -174,10 +173,21 @@ function target(name: string): string {
     return DOTFILES[name] ?? name;
 }
 
+/** Writes `body` to `path` unless those are already its bytes; true if it wrote. */
+function writeIfChanged(path: string, body: string | Buffer): boolean {
+    const bytes = typeof body === 'string' ? Buffer.from(body) : body;
+    if (existsSync(path) && readFileSync(path).equals(bytes)) {
+        return false;
+    }
+    writeFileSync(path, bytes);
+    return true;
+}
+
 /**
  * Copies one template directory into `dir` at `rel`, depth first, sorted so the
  * list it returns is the same on every machine. Only a `.tmpl` is read as text;
- * everything else is copied byte for byte.
+ * everything else is copied byte for byte. A file already holding those bytes
+ * is left alone and not listed.
  */
 export function copyTree(from: string, dir: string, rel: string, opts: CopyOptions): string[] {
     const written: string[] = [];
@@ -197,12 +207,14 @@ export function copyTree(from: string, dir: string, rel: string, opts: CopyOptio
         const body = entry.name.endsWith(TEMPLATE)
             ? render(readFileSync(source, 'utf8'), opts.vars ?? {})
             : readFileSync(source);
-        writeFileSync(join(dir, child), body);
+        const changed = writeIfChanged(join(dir, child), body);
         // The bytes are copied, not the file, so a script arrives unrunnable.
         if (child.endsWith('.sh') || child.endsWith('.mjs')) {
             chmodSync(join(dir, child), 0o755);
         }
-        written.push(child);
+        if (changed) {
+            written.push(child);
+        }
     }
     return written;
 }
@@ -210,7 +222,7 @@ export function copyTree(from: string, dir: string, rel: string, opts: CopyOptio
 /**
  * Replaces every file in a project that nobody is meant to be maintaining:
  * `SHARED_RULES` in the project tree, and the editor tree whole. Returns the
- * relative paths written, project files first.
+ * relative paths that actually changed, project files first.
  *
  * This is the other half of `keep: true`. A scaffold never overwrites, which is
  * right for the files a project goes on to make its own and wrong for the ones
@@ -222,8 +234,9 @@ export function refreshShared(dir: string): string[] {
     for (const rel of SHARED_RULES) {
         const path = join(dir, rel);
         mkdirSync(dirname(path), { recursive: true });
-        copyFileSync(join(TEMPLATES, 'project', rel), path);
-        written.push(rel);
+        if (writeIfChanged(path, readFileSync(join(TEMPLATES, 'project', rel)))) {
+            written.push(rel);
+        }
     }
     written.push(...editorFiles(dir));
     return written;

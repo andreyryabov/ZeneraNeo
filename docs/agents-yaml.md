@@ -392,6 +392,43 @@ Expansion is **lazy**: nothing is read until an agent actually reaches for that
 provider. A repository may therefore declare a vendor a given deployment has no
 key for, and still load.
 
+### Gateway mode (Bifrost)
+
+Setting `BIFROST_BASE_URL` sends **every** provider through a
+[Bifrost](https://github.com/maximhq/bifrost) gateway, with `BIFROST_API_KEY` as
+the one credential. Nothing in this file changes: each model keeps its own
+vendor's SDK and wire format, and is pointed at the gateway's matching drop-in
+endpoint instead of at the vendor.
+
+| Kind                             | Endpoint     | Model id on the wire |
+| -------------------------------- | ------------ | -------------------- |
+| `openai`, `openai-compatible`    | `/openai`    | `openai/<id>`        |
+| `anthropic`                      | `/anthropic` | `anthropic/<id>`     |
+| `google`                         | `/genai`     | `gemini/<id>`        |
+| `vertex` (Gemini)                | `/genai`     | `vertex/<id>`        |
+| `vertex` (Claude, `anthropic/…`) | `/anthropic` | `vertex/claude-…`    |
+| `openrouter`                     | `/openai`    | `openrouter/<id>`    |
+
+The protocol is kept on purpose. Bifrost's unified chat-completions endpoint
+would cost the thinking budgets, thought signatures and cache accounting the
+native adapters exist for.
+
+- Declared providers are rerouted too; their own `apiKey` and `baseURL` are set
+  aside, their `headers`, `timeoutMs` and `maxRetries` are kept. Only a
+  pre-built `client` (code only) stays where it is.
+- The model id is qualified **on the wire only**. A model's `id`, the trajectory
+  and an embedder's id - which a memory and a rag index record - keep the id
+  written here, so switching modes orphans nothing.
+- OpenRouter goes through the OpenAI endpoint, so OpenRouter-only knobs
+  (`routing`, `fallbacks`, `plugins`, …) are a load error in this mode.
+- The virtual key is sent as each SDK's own key header and as `x-bf-vk`, which
+  Bifrost still reads when `Authorization` is taken by gateway login.
+
+`zen key mode bifrost` is the usual way to turn it on; see
+[`zen key`](../packages/cli/templates/editor/.github/skills/zen-cli/references/keys.md).
+The full guide - setup, the sandbox, `zen models`, checking thought signatures,
+known limits - is [gateway.md](gateway.md).
+
 ---
 
 ## `models:`

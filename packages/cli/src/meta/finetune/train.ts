@@ -15,12 +15,21 @@ import { hostname } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { EXIT } from '../host.ts';
 import { sessionKept } from '../tokens.ts';
+import { writeAnalyzeBrief } from './analyze-brief.ts';
 import { batchInput } from './dataset/export.ts';
 import { DatasetStore } from './dataset/store.ts';
 import type { Case } from './dataset/types.ts';
 import { errorIn, sizeOf, StepError } from './failure.ts';
-import { type Feedback, feedbackId, lead, type Phase, readFeedback } from './feedback.ts';
-import { caseTokens, writeFeedback } from './report.ts';
+import {
+    type Feedback,
+    feedbackId,
+    forDataset,
+    forProse,
+    lead,
+    type Phase,
+    readFeedback,
+} from './feedback.ts';
+import { attemptsOf, caseTokens, rubricScore, writeFeedback } from './report.ts';
 import type { Result } from './sampler.ts';
 import { readJson, type Seat, type Tuning } from './tuning.ts';
 import {
@@ -49,6 +58,10 @@ export async function train(t: Tuning, s: Seat, c: Case): Promise<void> {
             passed = run;
             break;
         }
+        const rubricOnly = datasetOnly(feedback);
+        if (rubricOnly) {
+            return markDifficult(t, c, 'nomem', rubricOnly);
+        }
         if (attempt < t.config.tries) {
             const { structural } = await t.improvements.apply(feedback, s);
             if (structural) {
@@ -68,6 +81,10 @@ export async function train(t: Tuning, s: Seat, c: Case): Promise<void> {
             t.memories.submit(c, attempt, run);
             break;
         }
+        const rubricOnly = datasetOnly(feedback);
+        if (rubricOnly) {
+            return markDifficult(t, c, 'mem', rubricOnly);
+        }
         if (attempt < t.config.memTries) {
             const { structural } = await t.improvements.apply(feedback, s);
             if (structural) {
@@ -80,6 +97,15 @@ export async function train(t: Tuning, s: Seat, c: Case): Promise<void> {
     }
 
     markCompleted(t, c);
+}
+
+/** Not done, and every finding is about the case itself: another try on the same prose learns nothing. */
+function datasetOnly(f: Feedback): string | undefined {
+    const dataset = f.improvements.filter(forDataset);
+    if (dataset.length === 0 || forProse(f).length > 0) {
+        return undefined;
+    }
+    return `specification: ${dataset.map((i) => lead(i.change)).join('; ')}`;
 }
 
 /** A run its analysis finds void is set aside and run again: it says nothing about the prose. */
@@ -311,12 +337,7 @@ export async function runOnce(
 // zen meta run /analyze
 // ---------------------------------------------------------------------------
 
-/** The case keeps one analyze session per revision, so each analysis remembers the last. */
-export function sessionOf(t: Tuning, c: Case): string | undefined {
-    const file = join(t.caseDir(c), 'session');
-    return existsSync(file) ? readFileSync(file, 'utf8').trim() || undefined : undefined;
-}
-
+/** One analyze session per try, kept in its folder: the brief carries the earlier tries. */
 async function analyze(
     t: Tuning,
     s: Seat,
@@ -347,7 +368,7 @@ async function analyze(
             result:
                 feedback.verdict === 'void'
                     ? `void: ${feedback.infra}`
-                    : `${feedback.verdict}${graded.length ? ` ${graded.filter((g) => g === 'pass').length}/${graded.length}` : ''}${feedback.done ? ', done' : ''}`,
+                    : `${feedback.verdict}${graded.length ? ` ${rubricScore(feedback)}` : ''}${feedback.done ? ', done' : ''}`,
             took: Date.now() - began,
             tokens: spent(envelopesIn(dir, 'analyze')),
         });
@@ -372,12 +393,18 @@ async function analyzeOnce(
 ): Promise<Feedback> {
     const dir = dirname(file);
     const known = t.known(c, phase, attempt);
-    let session = sessionOf(t, c);
-    if (!session) {
-        session = randomUUID();
-        mkdirSync(t.caseDir(c), { recursive: true });
-        writeFileSync(join(t.caseDir(c), 'session'), `${session}\n`);
-    }
+    let session: string = randomUUID();
+    writeFileSync(join(dir, 'session'), `${session}\n`);
+    const all = attemptsOf(t, c);
+    const at = all.findIndex((a) => a.phase === phase && a.attempt === attempt);
+    const brief = await writeAnalyzeBrief(t, dir, {
+        run,
+        case: c,
+        phase,
+        attempt,
+        earlier: at >= 0 ? all.slice(0, at) : all,
+        ...(run.missedSkills?.length ? { missed: run.missedSkills } : {}),
+    });
     const hash = t.system.hash();
     const applies = t.improvements.started;
     const events = join(dir, 'analyze.events.jsonl');
@@ -389,7 +416,7 @@ async function analyzeOnce(
         '--json',
         '--events',
         events,
-        ...(sessionKept(session!) ? ['--resume', session!] : ['--session-id', session!]),
+        ...(sessionKept(session) ? ['--resume', session] : ['--session-id', session]),
     ];
 
     const log = join(dir, 'analyze.log');
@@ -397,6 +424,8 @@ async function analyzeOnce(
     const res = await t.zen(
         [
             ...continuing(),
+            '--prompt-file',
+            brief,
             '/analyze',
             run.dir,
             `case=${c.id}`,
@@ -413,7 +442,7 @@ async function analyzeOnce(
     const started = sessionIn(res.stdout);
     if (started && started !== session) {
         session = started;
-        writeFileSync(join(t.caseDir(c), 'session'), `${session}\n`);
+        writeFileSync(join(dir, 'session'), `${session}\n`);
     }
 
     const rubricIds = c.rubric.map((r) => r.id);

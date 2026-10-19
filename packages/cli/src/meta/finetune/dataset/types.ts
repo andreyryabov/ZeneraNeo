@@ -125,10 +125,13 @@ export interface NoteRow {
     caseRev: number;
     run?: string;
     verdict?: Verdict;
-    rubric?: Record<string, 'pass' | 'fail'>;
+    rubric?: Record<string, Grade>;
     text: string;
     by: By;
 }
+
+/** `invalid`: the rubric line itself is broken - it says how one implementation did it, not what is right. */
+export type Grade = 'pass' | 'fail' | 'invalid';
 
 export type JournalRow = ChangeRow | NoteRow;
 

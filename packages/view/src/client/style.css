@@ -210,6 +210,22 @@ td.num {
 table.listing td {
     white-space: nowrap;
 }
+/* A table with a cell of lines fills the page, and that column gets a fixed share of it. */
+.table-wrap:has(td.lines),
+.table-wrap:has(td.lines) table {
+    width: 100%;
+}
+td.lines {
+    width: 40%;
+}
+/* No width of its own, so the column is never sized by its longest line. */
+td.lines > .line {
+    contain: inline-size;
+    min-width: 24ch;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 
 code {
     font:

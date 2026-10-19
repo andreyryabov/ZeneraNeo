@@ -8,16 +8,18 @@ import { dim, json, note, usageError, write } from '../term.ts';
 // zen view - a folder in the browser, redrawn as its files change
 // ---------------------------------------------------------------------------
 
-const USAGE = 'zen view [path] [--port <n>] [--open] [--hidden]';
+const USAGE = 'zen view [path] [--port <n>] [--throttle <ms>] [--open] [--hidden]';
 
 interface Flags {
     port?: string;
+    throttle?: string;
     open?: boolean;
     hidden?: boolean;
 }
 
 const OPTIONS = {
     port: { type: 'string' },
+    throttle: { type: 'string' },
     open: { type: 'boolean' },
     hidden: { type: 'boolean' },
 } as const;
@@ -69,6 +71,7 @@ export const view: Command = {
         'Options:',
         '  --port <n>     This port. Default: one derived from the folder, so a page left',
         '                 open reconnects after a restart; any free one if it is taken.',
+        '  --throttle <ms> Least time between two redraws of one page. Default 1000.',
         '  --open         Open the page in the browser.',
         '  --hidden       Serve dotfiles too.',
         '',
@@ -93,6 +96,13 @@ export const view: Command = {
                 throw usageError('--port takes a port number', `got "${values.port}"`);
             }
         }
+        let throttleMs: number | undefined;
+        if (values.throttle !== undefined) {
+            throttleMs = Number(values.throttle);
+            if (!Number.isInteger(throttleMs) || throttleMs < 0) {
+                throw usageError('--throttle takes milliseconds', `got "${values.throttle}"`);
+            }
+        }
         const { root, start } = placeOf(ctx.cwd, target);
         const { openBrowser, serveView } = await import('@zenera/view');
         const server = await serveView({
@@ -100,6 +110,7 @@ export const view: Command = {
             start,
             hidden: values.hidden ?? false,
             ...(port !== undefined ? { port } : {}),
+            ...(throttleMs !== undefined ? { throttleMs } : {}),
         });
         if (ctx.json) {
             json({ url: server.url, root: server.root, port: server.port });

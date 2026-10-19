@@ -1,7 +1,7 @@
 import { readProjectConfig } from '@zenera/neo';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { ParseArgsConfig } from 'node:util';
@@ -11,7 +11,7 @@ import type { Command, Context } from '../command.ts';
 import { loadProjectEnv } from '../env.ts';
 import { copilotEventLog } from '../eventlog.ts';
 import { ensureHome } from '../home.ts';
-import { assertOwner, KeyStore, PROVIDERS, type Provider } from '../keys.ts';
+import { assertOwner, isProvider, KeyStore, PROVIDERS, type Provider } from '../keys.ts';
 import { probeChat, probeModel } from '../liveness.ts';
 import {
     answerBox,
@@ -40,7 +40,6 @@ import {
     PROMPT_DIR,
     providersWarning,
     readMeta,
-    RECOMMENDED,
     recordSession,
     RESUME_PROMPT,
     resumeDelayMs,
@@ -63,6 +62,7 @@ import { splitRef } from '../modelref.ts';
 import { duration } from '../narrate.ts';
 import * as Projects from '../projects.ts';
 import { project as resolveProject } from '../resolve.ts';
+import { TEMPLATES } from '../scaffold.ts';
 import {
     bold,
     choose,
@@ -75,6 +75,7 @@ import {
     isInteractive,
     json,
     note,
+    pad,
     progress,
     readStdin,
     table,
@@ -83,6 +84,7 @@ import {
     write,
     writeAll,
 } from '../term.ts';
+import { wrap } from '../tui/wrap.ts';
 import {
     appendUsage,
     LEDGER_ENV,
@@ -142,6 +144,7 @@ interface Flags {
     provider?: string;
     model?: string;
     prompt?: string;
+    'prompt-file'?: string;
     agent?: string;
     effort?: string;
     share?: string;
@@ -187,6 +190,41 @@ const OPTIONS: NonNullable<ParseArgsConfig['options']> = {
     force: { type: 'boolean' },
     'no-refresh': { type: 'boolean' },
 };
+const RUN_FORMS = [
+    '  zen meta run [project] "<question>"      ask it something',
+    '  zen meta run [project] /<name> [words]   run a stored prompt',
+    '  zen meta run [project]                   pick one of its stored prompts',
+];
+
+const RUN_ARGUMENTS = [
+    'Arguments:',
+    '  [project]   Name of a project. Default: the one you are in.',
+    '  [prompt]    Your question, in quotes. Also --prompt, or piped in.',
+    '  /<name>     A prompt file in .github/prompts/<name>.prompt.md.',
+    '  [words]     Appended to that prompt as a final line.',
+];
+
+const RUN_OPTIONS = [
+    'Options:',
+    '  --project <name|dir>   Which project to work in. The agent is rooted there.',
+    '  --model <ref>          Model for this run, e.g. vertex/gemini-3.8-flash.',
+    '  --provider <name>      Force the key to use. Default: the model ref says.',
+    '  --prompt-file <file>   Append this file to the prompt, after any words.',
+    '  --agent <name>         A .github/agents/<name>.agent.md.',
+    '  --effort <level>       none, minimal, low, medium, high, xhigh or max.',
+    '  --allow-tool <list>    Only these: read, shell(git:*), write(README.md).',
+    '  --ask                  Have it ask before each tool. Default: it does not.',
+    '  --add-dir <dir>        Another directory it may touch. Repeatable.',
+    '  --resume <id>          Continue a copilot session. --continue takes the last.',
+    '  --session-id <uuid>    Start a new session under this id. Default: a random one.',
+    `  --retries <n>          Resume after a rate limit or outage. Default ${DEFAULT_RESUMES}, 0 = off.`,
+    '  --share <file>         Write the transcript to a markdown file.',
+    '  --events <file>        Append what the agent does to this file as it does it:',
+    '                         one JSON line per model call, tool call and message.',
+    '  --dry-run              Print what would run, secrets masked, and stop.',
+    '  --no-refresh           Leave the editor files as they are (parallel runs).',
+    '  --json                 Print one object: answer, answerFile, sessionId, exitCode, tokens.',
+];
 
 export const meta: Command = {
     summary: 'Run the meta agent over this project, on your own keys.',
@@ -194,9 +232,7 @@ export const meta: Command = {
     banner: { head: 'Zenera', accent: 'Meta', subtitle: 'Meta Agent', hue: 'cyan' },
     details: [
         'Forms:',
-        '  zen meta run [project] "<question>"      ask it something',
-        '  zen meta run [project] /<name> [words]   run a stored prompt',
-        '  zen meta run [project]                   pick one of its stored prompts',
+        ...RUN_FORMS,
         '  zen meta prompts [project]               list the stored prompts',
         '  zen meta resume [project] [session]      carry on a run that stopped',
         '  zen meta model [ref]                     show or set the model it uses',
@@ -204,32 +240,12 @@ export const meta: Command = {
         '  zen meta finetune <verb>                 tune the project on those cases',
         '',
         'The project may come before the verb instead: `zen meta acme run`.',
-        '`zen meta dataset --help` and `zen meta finetune --help` have their own pages.',
+        '`zen meta dataset --help`, `zen meta finetune --help` and `zen meta run --help`',
+        'have their own pages; the last lists the stored prompts.',
         '',
-        'Arguments:',
-        '  [project]   Name of a project. Default: the one you are in.',
-        '  [prompt]    Your question, in quotes. Also --prompt, or piped in.',
-        '  /<name>     A prompt file in .github/prompts/<name>.prompt.md.',
-        '  [words]     Appended to that prompt as a final line.',
+        ...RUN_ARGUMENTS,
         '',
-        'Options:',
-        '  --project <name|dir>   Which project to work in. The agent is rooted there.',
-        '  --model <ref>          Model for this run, e.g. vertex/gemini-3.8-flash.',
-        '  --provider <name>      Force the key to use. Default: the model ref says.',
-        '  --agent <name>         A .github/agents/<name>.agent.md.',
-        '  --effort <level>       none, minimal, low, medium, high, xhigh or max.',
-        '  --allow-tool <list>    Only these: read, shell(git:*), write(README.md).',
-        '  --ask                  Have it ask before each tool. Default: it does not.',
-        '  --add-dir <dir>        Another directory it may touch. Repeatable.',
-        '  --resume <id>          Continue a copilot session. --continue takes the last.',
-        '  --session-id <uuid>    Start a new session under this id. Default: a random one.',
-        `  --retries <n>          Resume after a rate limit or outage. Default ${DEFAULT_RESUMES}, 0 = off.`,
-        '  --share <file>         Write the transcript to a markdown file.',
-        '  --events <file>        Append what the agent does to this file as it does it:',
-        '                         one JSON line per model call, tool call and message.',
-        '  --dry-run              Print what would run, secrets masked, and stop.',
-        '  --no-refresh           Leave the editor files as they are (parallel runs).',
-        '  --json                 Print one object: answer, answerFile, sessionId, exitCode, tokens.',
+        ...RUN_OPTIONS,
         '',
         'It always uses your own keys — `zen key add` — and never a coding-agent',
         'subscription. The answer goes to stdout and the progress to stderr, so',
@@ -263,6 +279,9 @@ export const meta: Command = {
         'Setting one asks the provider a one-word question first, so a model that',
         'will not answer is never stored. --force skips that.',
         '',
+        '`zen meta model --pick` browses every model your keys reach: / filters,',
+        't asks one a question, p takes it.',
+        '',
         'Examples:',
         '  zen meta run "what does this project do?"',
         '  zen meta run acme "review the last commit"',
@@ -276,9 +295,16 @@ export const meta: Command = {
         '  zen meta model --pick',
         '  zen meta run --dry-run "hello"',
     ],
-    help: (ctx) => {
+    help: async (ctx) => {
         const sub = subcommand(ctx.args);
-        page(sub ? SUBCOMMANDS[sub.name].page : { ...meta, details: meta.details ?? [] });
+        if (sub) {
+            return page(SUBCOMMANDS[sub.name].page);
+        }
+        const words = ctx.args.filter((a) => !a.startsWith('-'));
+        if (words[0] === 'run' || words[1] === 'run') {
+            return await runHelp(ctx, words);
+        }
+        page({ ...meta, details: meta.details ?? [] });
     },
     run: async (ctx) => {
         // These own their flags, so they are routed before the meta agent's are parsed.
@@ -331,6 +357,64 @@ export const meta: Command = {
     },
 };
 
+// ---------------------------------------------------------------------------
+// zen meta run --help
+//
+// The prompts are the reason to type `run`, so its page names them. The
+// shipped ones come from the templates, which `run` refreshes into the project
+// first; a project's own additions are read from the project.
+// ---------------------------------------------------------------------------
+
+async function runHelp(ctx: Context, words: string[]): Promise<void> {
+    const at = ctx.args.indexOf('--project');
+    const flag =
+        ctx.args.find((a) => a.startsWith('--project='))?.slice('--project='.length) ??
+        (at >= 0 ? ctx.args[at + 1] : undefined);
+    const named = flag ?? (words[1] === 'run' ? words[0] : words[1]);
+    const project =
+        (named && !named.startsWith('/') ? await Projects.find(named) : undefined) ??
+        (await Projects.current(ctx.cwd));
+
+    const shipped = join(TEMPLATES, 'editor');
+    const ours = new Set(await listPrompts(shipped));
+    const theirs = project ? await listPrompts(project.dir) : [];
+    const names = [...new Set([...ours, ...theirs])].sort();
+    const found = await Promise.all(
+        names.map((n) => loadPrompt(ours.has(n) ? shipped : project!.dir, n)),
+    );
+
+    const lines = [
+        'Forms:',
+        ...RUN_FORMS,
+        '',
+        project ? `Prompts in ${project.name}:` : 'Prompts:',
+    ];
+    const nameWidth = Math.max(...found.map((p) => p.name.length + 1));
+    const room = Math.max(30, Math.min(process.stdout.columns ?? 80, 100) - nameWidth - 6);
+    for (const p of found) {
+        const [first = '', ...more] = wrap(p.description ?? '', room);
+        lines.push(`  ${pad(`/${p.name}`, nameWidth)}  ${first}`.trimEnd());
+        lines.push(...more.map((l) => `  ${' '.repeat(nameWidth)}  ${l}`));
+    }
+    lines.push(
+        '',
+        ...RUN_ARGUMENTS,
+        '',
+        ...RUN_OPTIONS,
+        '',
+        'Examples:',
+        '  zen meta run "what does this project do?"',
+        '  zen meta run acme /project-review',
+        '  zen meta run acme /spec-sync-project agents/triage.md',
+        '  zen meta run acme /analyze --json',
+    );
+    page({
+        usage: 'zen meta run [project] [/<name> [words] | "<question>"] [options]',
+        summary: 'Ask the meta agent a question, or run one of the stored prompts.',
+        details: lines,
+    });
+}
+
 /** Words the shell would have split are shown back the way they were typed. */
 const requote = (s: string): string => (/\s/.test(s) ? JSON.stringify(s) : s);
 
@@ -367,7 +451,9 @@ async function where(
 function refresh(project: Projects.Project): void {
     try {
         const written = editorFiles(project.dir);
-        note(dim(`refreshed ${written.length} editor files in ${project.name}`));
+        if (written.length) {
+            note(dim(`refreshed ${written.length} editor files in ${project.name}`));
+        }
     } catch (err) {
         warn(`could not refresh the editor files — ${(err as Error).message}`);
     }
@@ -406,7 +492,8 @@ async function stored(ctx: Context, values: Flags, args: string[]): Promise<void
     if (name) {
         return await runPrompt(ctx, values, project, name, rest);
     }
-    const question = (values.prompt ?? rest.join(' ')).trim() || (await readStdin());
+    const question =
+        withFile(values, (values.prompt ?? rest.join(' ')).trim()) || (await readStdin());
     if (question) {
         return await go(ctx, values, project, question);
     }
@@ -425,8 +512,26 @@ async function runPrompt(
     if (found.description) {
         note(dim(found.description));
     }
-    const prompt = extra.length > 0 ? `${found.body}\n\n${extra.join(' ')}` : found.body;
+    const prompt = withFile(
+        values,
+        extra.length > 0 ? `${found.body}\n\n${extra.join(' ')}` : found.body,
+    );
     await go(ctx, values, project, prompt, name.replace(/^\//, ''));
+}
+
+/** The prompt with `--prompt-file` after it: text too long, or too awkward to quote, for a word. */
+function withFile(values: Flags, prompt: string): string {
+    const file = values['prompt-file'];
+    if (!file) {
+        return prompt;
+    }
+    let text: string;
+    try {
+        text = readFileSync(resolve(file), 'utf8').trim();
+    } catch {
+        throw usageError(`no prompt file at ${file}`, 'name a file that exists');
+    }
+    return [prompt, text].filter(Boolean).join('\n\n');
 }
 
 async function pickPrompt(ctx: Context, project: Projects.Project): Promise<string> {
@@ -608,7 +713,7 @@ async function resumeRun(ctx: Context, values: Flags, args: string[]): Promise<v
     if (!values['no-refresh']) {
         refresh(project);
     }
-    const message = (values.prompt ?? words.join(' ')).trim() || RESUME_PROMPT;
+    const message = withFile(values, (values.prompt ?? words.join(' ')).trim()) || RESUME_PROMPT;
     await go(ctx, { ...values, resume: session, continue: false }, project, message);
 }
 
@@ -1007,7 +1112,7 @@ function count(text: string | undefined, flag: string): number | undefined {
 
 function asProvider(name: string): Provider {
     const owner = assertOwner(name);
-    if (owner === 'exa') {
+    if (!isProvider(owner)) {
         throw usageError(`${name} is not a model provider`);
     }
     return owner;
@@ -1194,12 +1299,17 @@ async function pickModel(ctx: Context): Promise<string> {
     if (known.length === 0) {
         throw credentialError('no keys to choose from', 'add one: zen key add openai');
     }
-    const suggestions = [...new Set(known)].flatMap((p) =>
-        (RECOMMENDED[p] ?? []).map((id) => `${p}/${id}`),
-    );
-    note(dim(bold('Models zen knows how to wire, for providers you hold a key for')));
-    return await choose(
-        'Which model?',
-        suggestions.map((ref) => ({ label: ref, value: ref })),
-    );
+    const held = [...new Set(known)];
+    const { browseModels } = await import('./models.ts');
+    const chosen = await browseModels({
+        initial: held.length === 1 ? held[0] : undefined,
+        role: 'chat',
+    });
+    if (!chosen) {
+        throw usageError(
+            'nothing picked',
+            'name the model instead: zen meta model <provider>/<id>',
+        );
+    }
+    return `${chosen.provider}/${chosen.id}`;
 }

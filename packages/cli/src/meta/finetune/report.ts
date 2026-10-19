@@ -11,8 +11,16 @@ import { basename, dirname, join, relative, sep } from 'node:path';
 import { safe } from '../host.ts';
 import { DatasetStore } from './dataset/store.ts';
 import { type Case, DATASET_DIR } from './dataset/types.ts';
-import { type Feedback, feedbackId, lead, type Phase, readFeedback } from './feedback.ts';
+import {
+    type Feedback,
+    feedbackId,
+    forDataset,
+    lead,
+    type Phase,
+    readFeedback,
+} from './feedback.ts';
 import type { AppliedFile, Decisions, Deferred } from './improvements.ts';
+import type { NowRow } from './live.ts';
 import { type Recheck, RECHECK_TRIES } from './recheck.ts';
 import { resultOf, selection } from './sampler.ts';
 import type { Run } from './train.ts';
@@ -38,8 +46,8 @@ import {
 //
 // Two pages, both written by code from what is on disk and in hand, never by
 // an agent: STATUS.md for the whole tuning, FEEDBACK.md for one case. Diagrams
-// carry only ids, numbers and fixed words - free text goes in tables, escaped -
-// so nothing a model wrote can break a render.
+// carry ids, numbers, fixed words and live lines passed through `safe` - other
+// free text goes in tables, escaped - so nothing a model wrote can break a render.
 // ---------------------------------------------------------------------------
 
 export interface Attempt {
@@ -87,6 +95,15 @@ export function since(ms: number): string {
         return `${m}m ${String(s % 60).padStart(2, '0')}s`;
     }
     return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
+}
+
+/** The analyze session of one try, kept in its folder. */
+export function analyzeSession(dir: string): string | undefined {
+    try {
+        return readFileSync(join(dir, 'session'), 'utf8').trim() || undefined;
+    } catch {
+        return undefined;
+    }
 }
 
 export function attemptsOf(t: Tuning, c: Case): Attempt[] {
@@ -180,9 +197,14 @@ function tokenTable(by: ByStage): string[] {
     ];
 }
 
-const rubricScore = (f: Attempt['feedback']): string => {
+export const rubricScore = (f: Attempt['feedback']): string => {
     const r = Object.values(f?.rubric ?? {});
-    return r.length ? `${r.filter((x) => x === 'pass').length}/${r.length}` : '-';
+    const invalid = r.filter((x) => x === 'invalid').length;
+    const graded = r.length - invalid;
+    if (!r.length) {
+        return '-';
+    }
+    return `${r.filter((x) => x === 'pass').length}/${graded}${invalid ? ` (${invalid} invalid)` : ''}`;
 };
 
 // ---------------------------------------------------------------------------
@@ -502,9 +524,10 @@ export function writeFeedback(t: Tuning, c: Case): void {
     const attempts = attemptsOf(t, c);
     const latest = [...attempts].reverse().find((a) => a.feedback);
     const decided = decisions(t);
-    const session = existsSync(join(t.caseDir(c), 'session'))
-        ? readFileSync(join(t.caseDir(c), 'session'), 'utf8').trim()
-        : undefined;
+    const session = [...attempts]
+        .reverse()
+        .map((a) => analyzeSession(a.dir))
+        .find(Boolean);
     const lines: string[] = [];
     const say = (...more: string[]): void => {
         lines.push(...more);
@@ -566,11 +589,13 @@ export function writeFeedback(t: Tuning, c: Case): void {
             );
             for (const i of improvements) {
                 const d = decided[id]?.[i.id];
-                const decision = d?.decision
-                    ? `${d.decision}${d.note ? `: ${d.note}` : ''}`
-                    : t.improvements.isApplied(id)
-                      ? 'applied (no decision recorded)'
-                      : 'waiting for an apply';
+                const decision = forDataset(i)
+                    ? 'for the dataset - `zen meta dataset`, never an apply'
+                    : d?.decision
+                      ? `${d.decision}${d.note ? `: ${d.note}` : ''}`
+                      : t.improvements.isApplied(id)
+                        ? 'applied (no decision recorded)'
+                        : 'waiting for an apply';
                 say(`| ${cell(i.id)} | ${cell(i.change)} | ${cell(i.file)} | ${cell(decision)} |`);
             }
             say('');
@@ -663,7 +688,7 @@ export function writeFeedback(t: Tuning, c: Case): void {
 // ---------------------------------------------------------------------------
 
 /** A fence longer than any run of backticks in `text`, so nothing inside can close it. */
-function fence(text: string): string {
+export function fence(text: string): string {
     const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((r) => r.length));
     return '`'.repeat(Math.max(3, longest + 1));
 }
@@ -1018,6 +1043,51 @@ function memorySection(t: Tuning, here: string): string[] {
 // STATUS.md - the whole tuning
 // ---------------------------------------------------------------------------
 
+/** Longest live line in a sentence, and in a diagram box. */
+const NOW_CELL = 100;
+const NOW_LABEL = 60;
+
+const cut = (text: string, max: number): string =>
+    text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+
+/** One line, every mark that would style it escaped. */
+const escaped = (text: string): string =>
+    text
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/[\\`*_[\]<>|~&]/g, '\\$&');
+
+/** A live line in running text: cut, and escaped. */
+export const liveCell = (text: string | undefined): string =>
+    text ? escaped(cut(text.replace(/\s+/g, ' ').trim(), NOW_CELL)) : '-';
+
+/**
+ * Several live lines in one cell, oldest first. Each ends in `<br>`, so zen view draws
+ * one row per line, cut at the width the column gets rather than wrapped.
+ */
+const liveCells = (lines: string[] | undefined): string =>
+    lines?.length ? lines.map((l) => `${escaped(l)}<br>`).join('') : '-';
+
+/** A live line in a diagram label: only what `safe` lets through, so it cannot break out. */
+const liveLabel = (text: string | undefined): string =>
+    text ? cut(safe(text, Number.MAX_SAFE_INTEGER), NOW_LABEL) : '';
+
+/** What a worker's agent is doing, if the live snapshot has it on the step the worker is on. */
+function nowOf(t: Tuning, w: Worker): string | undefined {
+    return liveRow(t, w)?.now;
+}
+
+const liveRow = (t: Tuning, w: Worker) =>
+    t.live?.now.find((r) => r.key === `w${w.slot}` && r.step === w.step);
+
+const applierRow = (t: Tuning) => t.live?.now.find((r) => r.key === 'apply');
+
+/** What a step under way has spent so far; it reaches the files only when the step ends. */
+const inFlight = (row: NowRow | undefined): ByStage =>
+    row?.stage && row.act ? { [row.stage]: row.act.byModel } : {};
+
+const applierNow = (t: Tuning): string | undefined => applierRow(t)?.now;
+
 function idleWord(t: Tuning): string {
     if (t.improvements.applying) {
         return 'idle - no run starts during an apply';
@@ -1180,11 +1250,14 @@ const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n =
 
 // The whole machine right now: plain words first, then one box per moving part.
 // Each box links to what it is working on, or to the section that lists it.
-function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
+function systemDiagram(
+    t: Tuning,
+    counts: Record<string, number>,
+    last: { name: string; dir: string } | undefined,
+): string[] {
     const q = t.improvements;
     const m = t.memories;
     const { applyAt, mergeEvery } = t.config;
-    const last = q.applies().at(-1);
     const applying = q.applying;
     const took = q.current ? since(Date.now() - q.current.since) : '';
     const waiting = m.unmerged();
@@ -1229,6 +1302,7 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
                 `**worker ${w.slot}** · ${started ? `${STEP_WORD[w.step]} ${since(Date.now() - w.since)}` : 'starting'}`,
                 safe(w.case.id, 36),
                 started ? `${what} · try ${w.attempt} of ${tries}` : '',
+                started ? liveLabel(nowOf(t, w)) : '',
             )}")`,
         );
         fill(id, w.step === 'run' ? 'run' : w.step === 'analyze' ? 'analyze' : 'case');
@@ -1250,7 +1324,7 @@ function systemDiagram(t: Tuning, counts: Record<string, number>): string[] {
             ? `waiting for ${plural(q.runs, 'run')} to finish`
             : [
                   `${plural(q.inApply.length, 'case')} · ${took}`,
-                  q.current?.step === 'check' ? 'zen check' : '',
+                  liveLabel(applierNow(t)) || (q.current?.step === 'check' ? 'zen check' : ''),
               ]
                   .filter(Boolean)
                   .join('\n')
@@ -1436,10 +1510,33 @@ function summarySection(
     return out;
 }
 
-export function writeStatus(t: Tuning): void {
+/** What a status page reads from every case and every apply: kept between the live rewrites. */
+interface Slow {
+    total: number;
+    revision: number;
+    counts: Record<
+        'queued' | 'nomem' | 'mem' | 'completed' | 'difficult' | 'failed' | 'stopped',
+        number
+    >;
+    summary: string[];
+    applies: number;
+    lastApply: { name: string; dir: string } | undefined;
+    /** tokens per case, keyed `<id>@<rev>` */
+    byCase: Map<string, ByStage>;
+    /** tokens of every step that ended */
+    spent: ByStage;
+    /** the sections between the improvement queue and Tokens */
+    later: string[];
+    /** the sections after Tokens */
+    rest: string[];
+}
+
+function slowStatus(t: Tuning): Slow {
     const here = t.dir;
+    const q = t.improvements;
     const cases = selection(t);
     const store = DatasetStore.open(t.root);
+    const byCase = new Map<string, ByStage>();
     const counts = {
         queued: 0,
         nomem: 0,
@@ -1451,6 +1548,7 @@ export function writeStatus(t: Tuning): void {
     };
     const rows: string[] = [];
     const difficult: string[] = [];
+    const rubricProblems: string[] = [];
     const failed: string[] = [];
     let everything: ByStage = {};
     const spent: Record<Phase, { runs: number; f: Flat }> = {
@@ -1501,6 +1599,7 @@ export function writeStatus(t: Tuning): void {
         const calls = nomem.map((a) => a.run?.turns).filter((n) => n !== undefined);
         const memCalls = mem.map((a) => a.run?.turns).filter((n) => n !== undefined);
         const caseBy = caseTokens(t, c);
+        byCase.set(`${c.id}@${c.rev}`, caseBy);
         everything = mergeStages(everything, caseBy);
         for (const a of attempts) {
             const f = runFlat(a.run);
@@ -1544,6 +1643,15 @@ export function writeStatus(t: Tuning): void {
                 `| ${link(c.id, here, feedbackPath(t, c))} | ${PHASE_WORD[r.phase]} | ${cell(r.reason)} | ${r.phase === 'nomem' ? nomem.length : mem.length} | ${stamp(r.at)} | ${cell(lead(last?.feedback?.summary ?? ''))} | ${lastRun(attempts.at(-1))} |`,
             );
         }
+        const broken = Object.entries(last?.feedback?.rubric ?? {})
+            .filter(([, g]) => g === 'invalid')
+            .map(([id]) => id);
+        if (broken.length > 0) {
+            const why = (last?.feedback?.improvements ?? []).filter(forDataset);
+            rubricProblems.push(
+                `| ${link(c.id, here, feedbackPath(t, c))} | ${broken.join(', ')} | ${cell(why.map((i) => i.change).join(' / '))} |`,
+            );
+        }
         if (r?.state === 'failed') {
             failed.push(
                 `| ${link(c.id, here, feedbackPath(t, c))} | ${PHASE_WORD[r.phase]}, try ${(r.phase === 'nomem' ? nomem : mem).length || 1} | ${cell(r.reason)} | ${stamp(r.at)} | ${lastRun(attempts.at(-1))} |`,
@@ -1551,91 +1659,10 @@ export function writeStatus(t: Tuning): void {
         }
     }
 
-    const done = counts.completed + counts.difficult;
-    const bar = cases.length ? Math.round((done / cases.length) * 20) : 0;
-    const state = t.finished ? 'finished' : t.stopping ? 'stopping' : 'running';
-    const q = t.improvements;
-    const out: string[] = [
-        `# Fine-tuning - ${basename(t.root)}`,
-        '',
-        `**${state}** · started ${new Date(t.startedAt).toISOString().slice(0, 16).replace('T', ' ')} · elapsed ${since(Date.now() - t.startedAt)} · updated ${new Date().toISOString().slice(11, 19)}`,
-        `system **v${t.system.version()}** (applies: ${q.applies().length}) · dataset rev **${store.manifest.revision}** · workers **${t.workers.filter((w) => w.case).length} / ${t.workers.length}** · apply at **${t.config.applyAt}** · tries ${t.config.tries} without memory, ${t.config.memTries} with`,
-        '',
-        `\`${'█'.repeat(bar)}${'░'.repeat(20 - bar)}\` ${done} of ${cases.length} cases done - ${counts.completed} completed, ${counts.difficult} difficult${counts.failed ? ` · ${counts.failed} failed, they resume at the next start` : ''}`,
-        '',
-        ...summarySection(spent, tuning, memory),
-        '## Overview',
-        '',
-        ...pathDiagram(t, counts),
-        '',
-        '## System',
-        '',
-        ...systemDiagram(t, counts),
-        '',
-        '## Workers',
-        '',
-        '| Worker | Case | Class | Phase | Try | Step | Since | Run | Analysis | Session |',
-        '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
-    ];
-    for (const w of t.workers) {
-        if (!w.case) {
-            out.push(
-                `| ${w.slot} | - | - | - | - | ${idleWord(t)} | ${since(Date.now() - w.since)} | - | - | - |`,
-            );
-            continue;
-        }
-        const dir = t.workDir({ ...w, case: w.case });
-        const run = readJson<Run>(join(dir, 'run.json'));
-        const session = existsSync(join(t.caseDir(w.case), 'session'))
-            ? readFileSync(join(t.caseDir(w.case), 'session'), 'utf8').trim()
-            : undefined;
-        const phase = w.recheck
-            ? `recheck after ${w.recheck.apply}`
-            : PHASE_WORD[w.phase ?? 'nomem'];
-        const tries = w.recheck
-            ? RECHECK_TRIES
-            : w.phase === 'mem'
-              ? t.config.memTries
-              : t.config.tries;
-        out.push(
-            `| ${w.slot} | ${link(w.case.id, here, feedbackPath(t, w.case))} | ${cell(w.case.class)} | ${phase} | ${w.attempt} / ${tries} | ${w.step} | ${since(Date.now() - w.since)} | ${run ? `${link('run', here, run.dir)}${run.report ? ` · ${link('report', here, run.report)}` : ''}` : '-'} | ${existsSync(join(dir, 'analysis.md')) ? link('analysis', here, join(dir, 'analysis.md')) : '-'} | ${session && !w.recheck ? `\`zen meta resume ${basename(t.root)} ${session}\`` : '-'} |`,
-        );
-    }
-    for (const w of t.workers) {
-        const by = w.case ? tokenTable(caseTokens(t, w.case)) : [];
-        if (w.case && by.length > 0) {
-            out.push(
-                '',
-                `### Worker ${w.slot} - ${link(w.case.id, here, feedbackPath(t, w.case))}`,
-                '',
-                ...by,
-            );
-        }
-    }
-
-    out.push('', `## Improvement queue - ${q.pending.length} of ${t.config.applyAt} parked`, '');
-    out.push(
-        q.applying
-            ? 'Applying now: no new run starts until it is done.'
-            : `A parked case gives its worker back, so another case runs meanwhile. The next apply comes when ${Math.max(0, t.config.applyAt - q.pending.length)} more park, or once nothing is running and no case is left to start; woken cases take a worker before new ones.`,
-        '',
-    );
-    if (q.pending.length > 0) {
-        out.push(
-            '| Request | Case | Phase | Try | Improvements | Summary |',
-            '| --- | --- | --- | --- | --- | --- |',
-        );
-        for (const f of q.pending) {
-            out.push(
-                `| ${cell(f.id)} | ${link(f.case, here, feedbackPath(t, { id: f.case }))} | ${PHASE_WORD[f.phase]} | ${f.attempt} | ${f.improvements.length} | ${cell(lead(f.summary))} |`,
-            );
-        }
-        out.push('');
-    }
-
+    const later: string[] = [];
     const applies = q.applies();
     if (applies.length > 0) {
-        out.push(
+        later.push(
             '## Applies',
             '',
             'Each apply links to its own page: every request, every decision, every file changed and why. Prose is the change in what every call reads, in bytes, summed over the agents.',
@@ -1678,32 +1705,22 @@ export function writeStatus(t: Tuning): void {
                 a.applied?.kind === 'consolidate' || existsSync(join(a.dir, 'consolidate.json'))
                     ? `${link(a.name, here, applyPath(a.dir))} consolidation`
                     : link(a.name, here, applyPath(a.dir));
-            out.push(
+            later.push(
                 `| ${what} | ${versions} | ${a.applied?.at.slice(11, 16) ?? '-'} | ${a.inputs?.length ?? 0} | ${tally.applied ?? 0} | ${tally.merged ?? 0} | ${tally.rejected ?? 0} | ${tally.deferred ?? 0} | ${tally.structural ?? 0} | ${prose} | ${files} | ${inOut(applyTokens(a.dir))} | ${details.join(' · ') || (a.applied?.skipped ? 'nothing to change' : '-')} |`,
             );
         }
-        out.push('');
+        later.push('');
     }
 
-    out.push(...recheckSection(t, here, () => true, 30));
+    later.push(...recheckSection(t, here, () => true, 30));
     const allStages = mergeStages(everything, t.rechecks.tokens(), {
         apply: mergeModels(...applies.map((a) => applyTokens(a.dir))),
     });
     t.progress = { counts, total: cases.length, spent: allStages };
-    const tokenRows = tokenTable(allStages);
-    if (tokenRows.length > 0) {
-        out.push(
-            '## Tokens',
-            '',
-            'Every try of every case so far, every recheck, and every apply.',
-            '',
-            ...tokenRows,
-        );
-    }
 
-    out.push(...memorySection(t, here));
+    const rest = [...memorySection(t, here)];
 
-    out.push(
+    rest.push(
         '## Cases',
         '',
         '| Case | Class | Rubric | State | Tries without / with | Last verdict | LLM calls without memory | With memory | Memory effect | Run tokens | Analyze tokens | System |',
@@ -1712,7 +1729,7 @@ export function writeStatus(t: Tuning): void {
         '',
     );
     if (difficult.length > 0) {
-        out.push(
+        rest.push(
             '## Difficult cases',
             '',
             '| Case | Phase | Reason | Tries | Difficult since | Last summary | Last run |',
@@ -1721,8 +1738,20 @@ export function writeStatus(t: Tuning): void {
             '',
         );
     }
+    if (rubricProblems.length > 0) {
+        rest.push(
+            '## Rubric problems',
+            '',
+            'Lines the latest analysis graded `invalid`: they say how one implementation did it, not what a right answer is. No apply touches them - fix the case with `zen meta dataset`.',
+            '',
+            '| Case | Lines | What is wrong |',
+            '| --- | --- | --- |',
+            ...rubricProblems,
+            '',
+        );
+    }
     if (failed.length > 0) {
-        out.push(
+        rest.push(
             '## Failed cases',
             '',
             'Something outside the prose broke - the sandbox, a provider, a key - so these taught nothing. They keep their tries and carry on from the step that failed at the next `zen meta finetune start`.',
@@ -1733,6 +1762,134 @@ export function writeStatus(t: Tuning): void {
             '',
         );
     }
+    return {
+        total: cases.length,
+        revision: store.manifest.revision,
+        counts,
+        summary: summarySection(spent, tuning, memory),
+        applies: applies.length,
+        lastApply: applies.at(-1),
+        byCase,
+        spent: allStages,
+        later,
+        rest,
+    };
+}
+
+const slowParts = new WeakMap<Tuning, Slow>();
+
+/** `live` reuses the parts read from every case and apply; only what moves by the second is read. */
+export function writeStatus(t: Tuning, live = false): void {
+    const here = t.dir;
+    let s = live ? slowParts.get(t) : undefined;
+    if (!s) {
+        s = slowStatus(t);
+        slowParts.set(t, s);
+    }
+    const counts = s.counts;
+    const done = counts.completed + counts.difficult;
+    const bar = s.total ? Math.round((done / s.total) * 20) : 0;
+    const state = t.finished ? 'finished' : t.stopping ? 'stopping' : 'running';
+    const q = t.improvements;
+    const out: string[] = [
+        `# Fine-tuning - ${basename(t.root)}`,
+        '',
+        `**${state}** · started ${new Date(t.startedAt).toISOString().slice(0, 16).replace('T', ' ')} · elapsed ${since(Date.now() - t.startedAt)} · updated ${new Date().toISOString().slice(11, 19)}`,
+        `system **v${t.system.version()}** (applies: ${s.applies}) · dataset rev **${s.revision}** · workers **${t.workers.filter((w) => w.case).length} / ${t.workers.length}** · apply at **${t.config.applyAt}** · tries ${t.config.tries} without memory, ${t.config.memTries} with`,
+        '',
+        `\`${'█'.repeat(bar)}${'░'.repeat(20 - bar)}\` ${done} of ${s.total} cases done - ${counts.completed} completed, ${counts.difficult} difficult${counts.failed ? ` · ${counts.failed} failed, they resume at the next start` : ''}`,
+        '',
+        ...s.summary,
+        '## Overview',
+        '',
+        ...pathDiagram(t, counts),
+        '',
+        '## System',
+        '',
+        ...systemDiagram(t, counts, s.lastApply),
+        '',
+        '## Workers',
+        '',
+        '| Worker | Case | Class | Phase | Try | Step | Since | Run | Analysis | Session | Now |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+    ];
+    for (const w of t.workers) {
+        if (!w.case) {
+            out.push(`| ${w.slot} | - | - | - | - | ${idleWord(t)} | - | - | - | - | - |`);
+            continue;
+        }
+        const dir = t.workDir({ ...w, case: w.case });
+        const run = readJson<Run>(join(dir, 'run.json'));
+        const session = analyzeSession(dir);
+        const phase = w.recheck
+            ? `recheck after ${w.recheck.apply}`
+            : PHASE_WORD[w.phase ?? 'nomem'];
+        const tries = w.recheck
+            ? RECHECK_TRIES
+            : w.phase === 'mem'
+              ? t.config.memTries
+              : t.config.tries;
+        out.push(
+            `| ${w.slot} | ${link(w.case.id, here, feedbackPath(t, w.case))} | ${cell(w.case.class)} | ${phase} | ${w.attempt} / ${tries} | ${w.step} | ${since(Date.now() - w.since)} | ${run ? `${link('run', here, run.dir)}${run.report ? ` · ${link('report', here, run.report)}` : ''}` : '-'} | ${existsSync(join(dir, 'analysis.md')) ? link('analysis', here, join(dir, 'analysis.md')) : '-'} | ${session ? `\`zen meta resume ${basename(t.root)} ${session}\`` : '-'} | ${liveCells(liveRow(t, w)?.recent)} |`,
+        );
+    }
+    for (const w of t.workers) {
+        const by = w.case
+            ? tokenTable(
+                  mergeStages(
+                      s.byCase.get(`${w.case.id}@${w.case.rev}`) ?? caseTokens(t, w.case),
+                      inFlight(liveRow(t, w)),
+                  ),
+              )
+            : [];
+        if (w.case && by.length > 0) {
+            out.push(
+                '',
+                `### Worker ${w.slot} - ${link(w.case.id, here, feedbackPath(t, w.case))}`,
+                '',
+                ...by,
+            );
+        }
+    }
+
+    out.push('', `## Improvement queue - ${q.pending.length} of ${t.config.applyAt} parked`, '');
+    out.push(
+        q.applying
+            ? `Applying now: no new run starts until it is done.${applierNow(t) ? ` Now: ${liveCell(applierNow(t))}` : ''}`
+            : `A parked case gives its worker back, so another case runs meanwhile. The next apply comes when ${Math.max(0, t.config.applyAt - q.pending.length)} more park, or once nothing is running and no case is left to start; woken cases take a worker before new ones.`,
+        '',
+    );
+    if (q.pending.length > 0) {
+        out.push(
+            '| Request | Case | Phase | Try | Improvements | Summary |',
+            '| --- | --- | --- | --- | --- | --- |',
+        );
+        for (const f of q.pending) {
+            out.push(
+                `| ${cell(f.id)} | ${link(f.case, here, feedbackPath(t, { id: f.case }))} | ${PHASE_WORD[f.phase]} | ${f.attempt} | ${f.improvements.length} | ${cell(lead(f.summary))} |`,
+            );
+        }
+        out.push('');
+    }
+
+    out.push(...s.later);
+    const tokenRows = tokenTable(
+        mergeStages(
+            s.spent,
+            ...t.workers.map((w) => inFlight(liveRow(t, w))),
+            inFlight(t.improvements.current?.dir ? applierRow(t) : undefined),
+        ),
+    );
+    if (tokenRows.length > 0) {
+        out.push(
+            '## Tokens',
+            '',
+            'Every try of every case so far, every recheck, and every apply - the steps under way included.',
+            '',
+            ...tokenRows,
+        );
+    }
+    out.push(...s.rest);
     out.push('## Recent events', '');
     for (const e of t.recent.slice(0, 20)) {
         const who = [
@@ -1750,9 +1907,9 @@ export function writeStatus(t: Tuning): void {
         '## Files',
         '',
         '- `cases/<id>/FEEDBACK.md` - one case: rubric, latest analysis, decisions, history',
-        '- `cases/<id>/r<rev>/<NN>-<phase>/` - one try: `request.json`, `run.json`, `memory/`, `workspace/`, `feedback.json`, `analysis.md`, logs',
+        '- `cases/<id>/r<rev>/<NN>-<phase>/` - one try: `request.json`, `run.json`, `memory/`, `workspace/`, `brief.md`, `feedback.json`, `analysis.md`, logs',
         '- `applies/<NNN>/APPLY.md` - one apply: requests, decisions, files changed with their diffs, zen check',
-        '- `applies/<NNN>/` - `inputs.json`, `apply.log`, `check.log`, `changes.md`, `decisions.json`, `diff.patch`',
+        '- `applies/<NNN>/` - `inputs.json`, `brief.md`, `apply.log`, `check.log`, `changes.md`, `decisions.json`, `diff.patch`',
         '- `memories/` - `submissions.jsonl`, `merges.jsonl`, `submitted/<case>@r<rev>/`, `merged/mNN/`',
         '- `systems/` - `systems.jsonl` and a copy of `agents.yaml` + `agents/` per version',
         '- `events.jsonl` - every step, in order; `loop.json` - the settings',

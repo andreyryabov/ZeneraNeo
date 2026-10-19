@@ -88,6 +88,8 @@ interface Verdict {
     newSession?: string;
     /** skills the run loads */
     loads?: string[];
+    /** the rubric line is broken: graded `invalid`, the one finding a `specification` improvement */
+    spec?: boolean;
 }
 
 /** What `zen meta run --json` reports about itself. */
@@ -120,6 +122,7 @@ function fakeZen(
     let runs = 0;
     let applies = 0;
     let failChecks = 0;
+    let forgetDecisions = 0;
     let applyMs = 0;
     let applyText = (n: number) => `- rule ${n}\n`;
     let decision = (_request: string, _improvement: string, _apply: number): object => ({
@@ -239,6 +242,9 @@ function fakeZen(
             if (applyMs) {
                 await new Promise((r) => setTimeout(r, applyMs));
             }
+            if (forgetDecisions-- > 0) {
+                return { code: 0, stdout: JSON.stringify(META_ENVELOPE) };
+            }
             const inputs = JSON.parse(readFileSync(join(dir, 'inputs.json'), 'utf8')) as {
                 id: string;
                 improvements: { id: string }[];
@@ -307,16 +313,21 @@ function fakeZen(
                 word('feedback'),
                 JSON.stringify({
                     verdict: v.done ? 'right' : 'wrong',
-                    rubric: { r1: v.done ? 'pass' : 'fail' },
+                    rubric: { r1: v.spec ? 'invalid' : v.done ? 'pass' : 'fail' },
                     done: v.done,
                     summary: v.done ? 'fine' : 'misses it | badly',
-                    improvements: Array.from(
-                        { length: v.improvements ?? (v.done ? 0 : 1) },
-                        (_, i) => ({
-                            id: `i${i + 1}`,
-                            change: `say it ${i + 1}`,
-                        }),
-                    ),
+                    improvements: v.spec
+                        ? [
+                              {
+                                  id: 'i1',
+                                  kind: 'specification',
+                                  change: 'r1 names one implementation',
+                              },
+                          ]
+                        : Array.from({ length: v.improvements ?? (v.done ? 0 : 1) }, (_, i) => ({
+                              id: `i${i + 1}`,
+                              change: `say it ${i + 1}`,
+                          })),
                 }),
             );
             const answer = join(root, '.tmp', `answer-${calls.length}.md`);
@@ -343,6 +354,10 @@ function fakeZen(
         },
         failChecks(n: number) {
             failChecks = n;
+        },
+        /** The next n applies edit, then end without writing decisions.json - as a cut-off agent does. */
+        forgetDecisions(n: number) {
+            forgetDecisions = n;
         },
         slowApply(ms: number) {
             applyMs = ms;
@@ -421,6 +436,22 @@ describe('feedback', () => {
         });
         const r = read({ verdict: 'void', done: false, rubric: {}, infra: 'n4: no DNS' });
         expect('feedback' in r && r.feedback.infra).toBe('n4: no DNS');
+    });
+
+    // A rubric that says how one implementation did it is the dataset's fault, not the run's.
+    it('takes an invalid rubric line only with a specification improvement naming it', () => {
+        const rubric = { r1: 'pass', r2: 'invalid' };
+        expect(read({ verdict: 'right', done: true, rubric })).toEqual({
+            problem: expect.stringContaining('rubric lines r2 are graded "invalid"'),
+        });
+        const spec = { id: 'i1', kind: 'specification', change: 'r2 names a JS helper' };
+        const r = read({ verdict: 'right', done: false, rubric, improvements: [spec] });
+        expect('feedback' in r && r.feedback.rubric.r2).toBe('invalid');
+        // Nothing is left for the prose, so the run is done whatever the file said.
+        expect('feedback' in r && r.feedback.done).toBe(true);
+        const prose = { id: 'i2', kind: 'prompt', change: 'say it' };
+        const more = read({ verdict: 'right', done: false, rubric, improvements: [spec, prose] });
+        expect('feedback' in more && more.feedback.done).toBe(false);
     });
 });
 
@@ -811,31 +842,53 @@ describe('zen meta finetune', () => {
         );
     });
 
-    it('follows the analysis to the new session the meta agent started, after a model change', async () => {
+    it('keeps the session the meta agent started in the try folder, after a model change', async () => {
         await dataset(['a1']);
         const fresh = '11111111-2222-3333-4444-555555555555';
         const fake = fakeZen((_c, _p, attempt, applies) =>
             attempt === 1 && applies === 0 ? { done: false, newSession: fresh } : { done: true },
         );
         await start(fake.zen, '-N', '1');
-        const file = join(root, 'finetune', 'cases', 'a1', 'r1', 'session');
+        const file = join(root, 'finetune', 'cases', 'a1', 'r1', '01-nomem', 'session');
         expect(readFileSync(file, 'utf8').trim()).toBe(fresh);
-        const analyses = fake.calls.filter((a) => a.includes('/analyze'));
-        const id = (a: string[]) =>
-            a[a.indexOf(a.includes('--session-id') ? '--session-id' : '--resume') + 1];
-        expect(analyses.length).toBeGreaterThan(1);
-        expect(id(analyses[1])).toBe(fresh);
     });
 
-    it('reuses one analyze session for every try of a case', async () => {
+    it('analyzes every try in a session of its own, from a brief in the prompt', async () => {
         await dataset(['a1']);
         const fake = fakeZen((_c, _p, _a, applies) => ({ done: applies > 0 }));
         await start(fake.zen, '-N', '1');
         const analyses = fake.calls.filter((a) => a.includes('/analyze'));
-        const ids = analyses.map(
-            (a) => a[a.indexOf(a.includes('--session-id') ? '--session-id' : '--resume') + 1],
-        );
-        expect(new Set(ids).size).toBe(1);
+        expect(analyses.length).toBeGreaterThan(1);
+        const ids = analyses.map((a) => a[a.indexOf('--session-id') + 1]);
+        expect(new Set(ids).size).toBe(analyses.length);
+        const second = analyses[1];
+        const brief = second[second.indexOf('--prompt-file') + 1];
+        expect(brief).toBe(join(root, 'finetune', 'cases', 'a1', 'r1', '02-nomem', 'brief.md'));
+        const text = readFileSync(brief, 'utf8');
+        expect(text).toContain('## The brief');
+        const tryDir = dirname(brief);
+        expect(existsSync(join(tryDir, 'ask'))).toBe(true);
+        expect(text).toContain(`\`${join(tryDir, 'ask')}/<node>-<topic>.md\``);
+        expect(text).toContain(`\`${join(tryDir, 'feedback.json')}\`, not written yet`);
+        expect(text).toContain('> zen inspect graph --dir');
+        expect(text).toContain('> cat agents.yaml');
+        expect(text).toContain('#### no memory, try 1 - wrong, rubric 0/1');
+        expect(text).toContain('What changed in agents.yaml and agents/ since the last try');
+        expect(fake.calls).toContainEqual(['meta', 'dataset', 'show', 'a1@1', '--json']);
+        const out: string[] = [];
+        const write = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+            out.push(String(chunk));
+            return true;
+        });
+        try {
+            await runFinetune(
+                { args: ['session', 'a1'], json: false, cwd: root },
+                { dir: root, name: 'acme' },
+            );
+        } finally {
+            write.mockRestore();
+        }
+        expect(out.join('')).toContain(`zen meta resume acme ${ids.at(-1)}`);
     });
 
     it('carries on where it stopped, repeating nothing that finished', async () => {
@@ -950,6 +1003,62 @@ describe('zen meta finetune', () => {
         fake.failChecks(2);
         await expect(start(fake.zen, '-N', '1')).rejects.toThrow(/broken twice/);
         expect(readFileSync(join(root, 'agents', 'instructions.md'), 'utf8')).toBe('# Rules\n');
+    });
+
+    it('undoes an apply that ended without deciding every improvement, and tries once more', async () => {
+        await dataset(['a1']);
+        const fake = fakeZen((_c, _p, _a, applies) => ({ done: applies > 1 }));
+        fake.forgetDecisions(1);
+        await start(fake.zen, '-N', '1');
+        const dir = join(root, 'finetune', 'applies', '001');
+        expect(readFileSync(join(dir, 'missing.md'), 'utf8')).toContain('- a1@nomem-1 i1');
+        expect(readFileSync(join(dir, 'brief.md'), 'utf8')).toContain(
+            '> cat finetune/applies/001/missing.md',
+        );
+        expect(readFileSync(join(root, 'agents', 'instructions.md'), 'utf8')).toBe(
+            '# Rules\n- rule 2\n',
+        );
+        expect(JSON.parse(readFileSync(join(dir, 'applied.json'), 'utf8')).ids).toEqual([
+            'a1@nomem-1',
+        ]);
+    });
+
+    it('stops when an apply ends twice without its decisions, leaving its requests unapplied', async () => {
+        await dataset(['a1']);
+        const fake = fakeZen(() => ({ done: false }));
+        fake.forgetDecisions(2);
+        await expect(start(fake.zen, '-N', '1')).rejects.toThrow(/without deciding/);
+        expect(readFileSync(join(root, 'agents', 'instructions.md'), 'utf8')).toBe('# Rules\n');
+        expect(existsSync(join(root, 'finetune', 'applies', '001', 'applied.json'))).toBe(false);
+    });
+
+    it('hands the apply a brief: requests by file, skills to load, earlier tries', async () => {
+        await dataset(['a1']);
+        const fake = fakeZen((_c, _p, _a, applies) => ({ done: applies > 1 }));
+        await start(fake.zen, '-N', '1');
+        const second = fake.calls.filter((a) => a.includes('/finetune-apply'))[1]!;
+        const dir = join(root, 'finetune', 'applies', '002');
+        expect(second.at(-1)).toBe(dir);
+        expect(second.slice(-4)).toEqual([
+            '--prompt-file',
+            join(dir, 'brief.md'),
+            '/finetune-apply',
+            dir,
+        ]);
+        const brief = readFileSync(join(dir, 'brief.md'), 'utf8');
+        expect(brief).toContain('## The brief');
+        expect(brief).toContain('This is apply 002, attempt 1.');
+        expect(brief).toContain('  - `a1@nomem-2`: i1');
+        expect(brief).toContain(`\`zen meta finetune gate ${dir}\``);
+        expect(brief).toContain('### Skills to load\n\n- `zen-instructions` - every apply');
+        expect(brief).toMatch(/### Requests by file\n\n#### \(no file named\) - 1 case\(s\): a1/);
+        expect(brief).toContain('| a1@nomem-2 | i1 | - | say it 1 | - | - | this batch |');
+        expect(brief).toContain(
+            '- `a1@nomem-1` i1, apply 001, (no file named): say it 1 → applied: agents/instructions.md',
+        );
+        expect(brief).toContain('> cat finetune/applies/002/budget.json');
+        expect(brief).toContain('> cat agents/instructions.md');
+        expect(brief).not.toContain('missing.md');
     });
 
     it('keeps every passing memory privately and merges them every K', async () => {
@@ -1279,6 +1388,48 @@ describe('what an apply may cost', () => {
         );
     });
 
+    it('says what each worker is doing now, escaped in the table and safe in the diagram', async () => {
+        await dataset(['a1']);
+        let page = '';
+        const said =
+            'Look at "x"]) --> EVIL and `code` | pipe **bold** <b> and then a long tail that runs on past every limit there is';
+        const fake = fakeZen((_c, _p, attempt, applies) => {
+            if (attempt === 1 && applies === 0 && !page) {
+                const run = fake.calls.at(-1)!;
+                const at = new Date().toISOString();
+                const llm = {
+                    t: at,
+                    type: 'llm',
+                    model: 'vertex/gemini-live',
+                    in: 123,
+                    cached: 0,
+                    out: 4,
+                    reasoning: 0,
+                };
+                writeFileSync(
+                    run[run.indexOf('--events') + 1]!,
+                    `${JSON.stringify(llm)}\n${JSON.stringify({ t: at, type: 'think', text: 'Planning' })}\n${JSON.stringify({ t: at, type: 'say', text: said })}\n`,
+                );
+                setTimeout(() => {
+                    page = readFileSync(join(root, 'finetune', 'STATUS.md'), 'utf8');
+                }, 1500);
+                return { done: true, slow: 2500 };
+            }
+            return { done: true };
+        });
+        await start(fake.zen, '-N', '1', '-M', '1', '--force');
+        expect(page).toContain(
+            '| thinks: Planning<br>says: Look at "x"\\]) --\\> EVIL and \\`code\\` \\| pipe \\*\\*bold\\*\\* \\<b\\> and then a long tail',
+        );
+        expect(page).toMatch(/runs on past every limit there is<br> \|\n/);
+        const diagrams = (page.match(/```mermaid[\s\S]*?```/g) ?? []).join('\n');
+        expect(diagrams).toContain('says: Look at x ) -- EVIL and code pipe bold b');
+        expect(diagrams).not.toContain('EVIL and `');
+        expect(diagrams).not.toContain('--> EVIL');
+        // The run under way is counted before it writes anything: its worker's table and Tokens.
+        expect(page.match(/\| run \| gemini-live \| 1 \| 123 \|/g)).toHaveLength(2);
+    }, 15_000);
+
     it('shows a recheck on its worker in the status page and the live view', async () => {
         await dataset(['a1', 'b1']);
         let page = '';
@@ -1336,6 +1487,24 @@ describe('what an apply may cost', () => {
             reason: 'structural: needs a tool in agents.yaml',
         });
         expect(runsOf(fake.calls, 'a1')).toHaveLength(1);
+    });
+
+    it('ends a case whose only finding is a broken rubric, without an apply', async () => {
+        await dataset(['a1']);
+        const fake = fakeZen(() => ({ done: false, spec: true }));
+        await start(fake.zen, '-N', '1');
+        expect(result('a1')).toMatchObject({
+            state: 'difficult',
+            reason: 'specification: r1 names one implementation',
+        });
+        expect(fake.applies).toBe(0);
+        expect(runsOf(fake.calls, 'a1')).toHaveLength(1);
+        const status = readFileSync(join(root, 'finetune', 'STATUS.md'), 'utf8');
+        expect(status).toContain('## Rubric problems');
+        expect(status).toMatch(/\| r1 \| r1 names one implementation \|/);
+        const page = readFileSync(join(root, 'finetune', 'cases', 'a1', 'FEEDBACK.md'), 'utf8');
+        expect(page).toContain('rubric 0/0 (1 invalid)');
+        expect(page).toContain('for the dataset');
     });
 
     it('tells the analysis when a case never loaded the skill an apply made for it', async () => {

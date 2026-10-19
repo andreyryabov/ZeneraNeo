@@ -1834,11 +1834,12 @@ zen models test <ref>          # one real call, one verdict
 enable …` line.
 - **no answer** - the network. Try again.
 
-Either run the printed fix, or take a model that works and put the ref it prints
-into `agents.yaml`:
+Either run the printed fix, or take a model that works and put its ref into
+`agents.yaml`:
 
 ```sh
-zen models pick --embedding    # or --chat; the ref goes to stdout, alone
+zen models ls --embeddings     # or --chat; what this account is served
+zen models test <ref>          # the one you chose actually answers
 ```
 
 Then re-run `zen check`.
@@ -1996,7 +1997,7 @@ candidates; these are the judgements to make about each one)**
 | Answers from stale knowledge of the world     | Grant `web_search` + `web_read`, and say when - §3.8                |
 | Cites a page it only saw the excerpt of       | A prompt line: `web_read` before quoting - §3.8                     |
 | Every web call refuses                        | No Exa key: `zen key add exa` - `zen check` warns - §3.8            |
-| A model or embedder refuses every call        | `zen models test <ref>` - if `blocked`, `zen models pick` - §8      |
+| A model or embedder refuses every call        | `zen models test <ref>` - if `blocked`, `zen models ls` - §8        |
 | Answers instead of routing                    | Router prompt prohibition; check `handoffs:`                        |
 | Routes to the wrong specialist                | The target agents' `description:` fields                            |
 | Gets stuck in the agent it routed to          | The target needs a handoff back - §6.3                              |

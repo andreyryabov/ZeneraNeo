@@ -47,6 +47,25 @@ describe('markdown', () => {
         expect(a?.properties.href).toBeUndefined();
     });
 
+    it('turns a cell of <br>-separated lines into one row per line, and keeps no other HTML', () => {
+        const tree = markdown(
+            '| now | n |\n| - | - |\n| one **1**<br>two<br/><b>three</b><br onclick=x><br> | 2 |\n| only<br> | 3 |\n',
+        );
+        const [first, , second] = all(tree).filter((e) => e.tagName === 'td');
+        expect(classes(first!)).toEqual(['lines']);
+        const lines = first!.children as Element[];
+        expect(lines.map((l) => [l.tagName, classes(l), l.properties.title])).toEqual([
+            ['div', ['line'], 'one 1'],
+            ['div', ['line'], 'two'],
+            ['div', ['line'], 'three'],
+        ]);
+        expect(tags({ type: 'root', children: lines })).toContain('strong');
+        expect(JSON.stringify(first)).not.toContain('onclick');
+        expect(JSON.stringify(first)).not.toContain('"b"');
+        expect((second!.children as Element[]).map((l) => l.properties.title)).toEqual(['only']);
+        expect(classes(all(tree).filter((e) => e.tagName === 'td')[1]!)).toEqual([]);
+    });
+
     it('gives headings the ids GitHub does, so #links into a page land', () => {
         const tree = markdown('# Fine-tuning test50\n\n## Memory · merges\n\n## Memory · merges\n');
         const ids = all(tree)

@@ -1062,6 +1062,29 @@ export async function createChildState(
 
     const b = begin(child, env);
     if (prefix.length) {
+        // Gemini signs only a parallel turn's first call: answer the siblings so none is dropped.
+        const turn = prefix.findLast(
+            (n): n is LlmCallNode =>
+                n.type === 'llm_call' && n.toolCalls.some((c) => c.callId === fork.callId),
+        );
+        const answered = new Set(
+            prefix.flatMap((n) => (n.type === 'tool_result' ? [n.callId] : [])),
+        );
+        for (const c of turn?.toolCalls ?? []) {
+            if (c.callId === fork.callId || answered.has(c.callId)) {
+                continue;
+            }
+            b.add<ToolResultNode>({
+                type: 'tool_result',
+                callId: c.callId,
+                name: c.name,
+                result: await put(
+                    env,
+                    'Not run in this branch: the parent runs this call, and its result is not visible here.',
+                ),
+                isError: false,
+            });
+        }
         // The branch inherited the turn that called `fork`, so the honest way to
         // hand it its assignment is to answer that call: the model sees a tool
         // result for a tool it just called, instead of a second user message

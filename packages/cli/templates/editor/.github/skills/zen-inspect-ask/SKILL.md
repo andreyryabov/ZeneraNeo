@@ -35,14 +35,14 @@ invented rationale.
 
 | Check                                  | How                                                                                     | If it fails, the cause is                          |
 | -------------------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| The tool was offered on that call      | grep the recorded request for its schema (below)                                        | `agents.yaml` - tool not granted, or depth cap hit |
+| The tool was offered on that call      | `--part tools` of that call (below)                                                     | `agents.yaml` - tool not granted, or depth cap hit |
 | The instruction file was in the prompt | the `system_prompt` label lists files: `fork-instructions.md`, `memory-instructions.md` | missing file, or its `requires:` not met           |
 | The skill was loaded                   | a `load_skills` node naming it, or the skill index in `request`                         | binding in `agents.yaml` (`skills:`)               |
 | Memory was already recalled for it     | a `memory_recall` node before the call; `recall 0 nodes`                                | memory content, not behaviour                      |
 | The context still held what it needed  | no `compaction` before the node, or the item is not `hidden by` one                     | compaction, not instructions                       |
 
 ```sh
-zen inspect node n9 --part request --dir <run-dir> | grep -oE '"name": *"(fork|memory_search|memory_grep)"' | sort -u
+zen inspect node n9 --part tools --dir <run-dir> | grep -xE 'fork|memory_search|memory_grep'
 ```
 
 Only when every row passes is the question "which instruction stopped you".
@@ -144,7 +144,8 @@ zen inspect ask n9 --question-file .tmp/ask/<run-id>/n9-memory.md --dir <run-dir
 ```
 
 - One file per question, at `.tmp/ask/<run-id>/<node>-<topic>.md`. `.tmp/` is
-  the project's git-ignored scratch.
+  the project's git-ignored scratch. A tuning loop's brief names its own `ask/`
+  folder instead: use that one.
 - `--question-file` is the only way the question reaches `zen`. Never a quoted
   argument, a heredoc, `$(cat ...)`, or a Python or Node script around `zen`.
 - A retry (section 5, step 1) or a second opinion (step 4) reuses the same

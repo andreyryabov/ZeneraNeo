@@ -37,7 +37,7 @@ import { copyTree, TEMPLATES } from './host.ts';
  * ours: they say how the editor is to treat a directory the agents write into,
  * and they describe the file formats of the version of `zen` in hand, so the
  * current answer is the only one worth having and a stale one is worse than
- * none. Returns the relative paths written.
+ * none. Returns the relative paths that actually changed.
  */
 export function editorFiles(dir: string): string[] {
     return copyTree(join(TEMPLATES, 'editor'), dir, '', {});

@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { locate } from './paths.ts';
 import { drawn, MAX_BYTES, renderPath } from './render.ts';
 import type { View } from './types.ts';
-import { Watcher } from './watch.ts';
+import { stampOf, Watcher } from './watch.ts';
 
 // ---------------------------------------------------------------------------
 // The server
@@ -25,6 +25,11 @@ import { Watcher } from './watch.ts';
 // DNS name pointed at 127.0.0.1. A file the page draws is pushed to it over
 // server-sent events as a sanitized tree, again each time the file changes; any
 // other file is served as it is, under a sandboxing CSP.
+//
+// A file is rendered once per change however many pages show it: the tree is
+// cached against the file's stamp, every page on a path shares one feed, and a
+// feed pushes at most once per `throttleMs` - a file rewritten every second
+// would otherwise cost a full render per page per write.
 // ---------------------------------------------------------------------------
 
 export interface ViewOptions {
@@ -41,6 +46,8 @@ export interface ViewOptions {
     /** most pages open at once */
     maxClients?: number;
     pollMs?: number;
+    /** least time between two pushes of one path, in ms; default 1000 */
+    throttleMs?: number;
 }
 
 export interface ViewServer {
@@ -55,6 +62,19 @@ const HOST = '127.0.0.1';
 const PORT_BASE = 20000;
 const PORT_SPAN = 20000;
 const BEAT_MS = 25_000;
+const THROTTLE_MS = 1000;
+const CACHED = 64;
+
+interface Feed {
+    abs: string;
+    path: string;
+    clients: Set<ServerResponse>;
+    json: string;
+    /** when it was last rendered */
+    at: number;
+    timer?: NodeJS.Timeout;
+    off: () => void;
+}
 
 /** The same root asks for the same port, so an open tab reconnects after a restart. */
 export function stablePort(root: string): number {
@@ -86,8 +106,11 @@ export async function serveView(options: ViewOptions): Promise<ViewServer> {
     const hidden = options.hidden ?? false;
     const render = { maxBytes: options.maxBytes ?? MAX_BYTES, hidden };
     const maxClients = options.maxClients ?? 64;
+    const throttleMs = options.throttleMs ?? THROTTLE_MS;
     const watcher = new Watcher({ pollMs: options.pollMs });
     const clients = new Set<ServerResponse>();
+    const feeds = new Map<string, Feed>();
+    const cache = new Map<string, { stamp: string; json: string }>();
     let hosts = new Set<string>();
 
     const server = createServer((req, res) => {
@@ -132,7 +155,7 @@ export async function serveView(options: ViewOptions): Promise<ViewServer> {
         if (name === 'render') {
             const at = locate(root, url.searchParams.get('path') ?? '/', hidden);
             return at
-                ? send(res, 200, 'application/json', JSON.stringify(view(at.abs, at.path)))
+                ? send(res, 200, 'application/json', rendered(at.abs, at.path))
                 : plain(res, 404, 'not found');
         }
         if (name === 'health') {
@@ -185,6 +208,62 @@ export async function serveView(options: ViewOptions): Promise<ViewServer> {
         }
     }
 
+    /** The view as JSON, rendered again only when the file's stamp moved. */
+    function rendered(abs: string, path: string): string {
+        const stamp = stampOf(abs);
+        const hit = cache.get(path);
+        if (hit?.stamp === stamp) {
+            return hit.json;
+        }
+        const json = JSON.stringify(view(abs, path));
+        cache.delete(path);
+        cache.set(path, { stamp, json });
+        if (cache.size > CACHED) {
+            cache.delete(cache.keys().next().value!);
+        }
+        return json;
+    }
+
+    function refresh(feed: Feed): void {
+        clearTimeout(feed.timer);
+        feed.timer = undefined;
+        feed.at = Date.now();
+        const json = rendered(feed.abs, feed.path);
+        if (json === feed.json) {
+            return;
+        }
+        feed.json = json;
+        for (const res of feed.clients) {
+            res.write(`event: view\ndata: ${json}\n\n`);
+        }
+    }
+
+    /** Leading and trailing: a change after a quiet spell goes out at once, a burst once per window. */
+    function changed(feed: Feed): void {
+        if (feed.timer) {
+            return;
+        }
+        const wait = feed.at + throttleMs - Date.now();
+        if (wait <= 0) {
+            return refresh(feed);
+        }
+        feed.timer = setTimeout(() => refresh(feed), wait);
+        feed.timer.unref();
+    }
+
+    function feedOf(abs: string, path: string): Feed {
+        let feed = feeds.get(path);
+        if (!feed) {
+            const f: Feed = { abs, path, clients: new Set(), json: '', at: 0, off: () => {} };
+            // Subscribed before the first render, so a write in between is not missed.
+            f.off = watcher.subscribe(abs, () => changed(f));
+            refresh(f);
+            feeds.set(path, f);
+            feed = f;
+        }
+        return feed;
+    }
+
     function events(req: IncomingMessage, res: ServerResponse, url: URL): void {
         const at = locate(root, url.searchParams.get('path') ?? '/', hidden);
         if (!at) {
@@ -199,23 +278,21 @@ export async function serveView(options: ViewOptions): Promise<ViewServer> {
             'x-content-type-options': 'nosniff',
         });
         res.write('retry: 1000\n\n');
-        let last = '';
-        const push = (): void => {
-            const json = JSON.stringify(view(at.abs, at.path));
-            if (json !== last) {
-                last = json;
-                res.write(`event: view\ndata: ${json}\n\n`);
-            }
-        };
-        push();
-        const off = watcher.subscribe(at.abs, push);
+        const feed = feedOf(at.abs, at.path);
+        res.write(`event: view\ndata: ${feed.json}\n\n`);
+        feed.clients.add(res);
         const beat = setInterval(() => res.write(': beat\n\n'), BEAT_MS);
         beat.unref();
         clients.add(res);
         req.on('close', () => {
-            off();
             clearInterval(beat);
             clients.delete(res);
+            feed.clients.delete(res);
+            if (feed.clients.size === 0 && feeds.get(feed.path) === feed) {
+                feed.off();
+                clearTimeout(feed.timer);
+                feeds.delete(feed.path);
+            }
         });
     }
 
@@ -237,6 +314,11 @@ export async function serveView(options: ViewOptions): Promise<ViewServer> {
         port,
         root,
         close: async () => {
+            for (const feed of feeds.values()) {
+                clearTimeout(feed.timer);
+            }
+            feeds.clear();
+            cache.clear();
             watcher.close();
             for (const res of clients) {
                 res.end();

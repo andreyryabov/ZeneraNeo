@@ -1,9 +1,9 @@
 ---
-description: Apply a batch of improvement requests from the tuning loop to the project's prose - merge them into patterns, edit prompts, skills and policy files, tidy up every file touched, and record what was done with each. Run by `zen meta finetune`; the last line names the apply directory.
+description: Apply a batch of improvement requests from the tuning loop to the project's prose - merge them into patterns, edit prompts, skills and policy files, tidy up every file touched, and record what was done with each. Run by `zen meta finetune`; the line after the prompt names the apply directory, and a brief follows it.
 ---
 
 The tuning loop has collected improvement requests from several cases and
-wants them applied **together**. The last line of this prompt names the apply
+wants them applied **together**. The line after this prompt names the apply
 directory.
 
 Every sentence you add is read by every later call of every agent that loads
@@ -13,6 +13,20 @@ is **undone** - all of it. Then a few cases that passed before run again on
 your edit; one it broke comes back to the next apply as a request.
 
 ## What you are given
+
+A `## The brief` section after that line is what the loop already read and
+worked out for you, from the files below. Work from it:
+
+- Do not read a file the brief shows, and do not run a command it shows -
+  until you have edited that file yourself.
+- Do not parse `inputs.json`, `deferred.json`, `budget.json` or `growth.json`
+  with a script: `Requests by file`, `The requests`, `Growth` and the
+  `budget.json` block are their content. Open one only for a field the brief
+  marks `(cut at ...)` or `(left out ...)`.
+- Do not open other `finetune/applies/*` folders: `Earlier tries of these
+cases` is what they hold about these cases.
+
+The files behind it:
 
 - `<apply dir>/inputs.json` - the requests: each has `id` (`<case>@<phase>-<attempt>`),
   `case`, `phase` (`nomem` or `mem`), `summary`, `improvements` (each with `id`,
@@ -35,45 +49,32 @@ your edit; one it broke comes back to the next apply as a request.
   apply may add nothing), `skillCap`, `maxSkills`.
 - `<apply dir>/growth.json` - per file under `agents/`: bytes at the start of
   the tuning and now, how many applies changed it, and the latest of them.
-- Every earlier `finetune/applies/*/decisions.json` and `changes.md` - what
-  was already tried. Do not re-apply a rule an earlier apply added and a later
-  run showed did not work; change it instead.
-- From your previous attempt, if it was undone - read these first:
-  `check.log` (it failed `zen check`) and `budget.md` (it grew the prose past a
-  limit - this attempt must cut).
+- Earlier requests of the same cases, and what each apply decided about them -
+  the brief's `Earlier tries of these cases`. Do not re-apply a rule an
+  earlier apply added and a later run showed did not work; change it instead.
+- From your previous attempt, if it was undone - the first files in the brief:
+  `check.log` (it failed `zen check`), `budget.md` (it grew the prose past a
+  limit - this attempt must cut) and `missing.md` (it ended without a decision
+  for every improvement).
 
 ## Load the skills
 
 A request says what a run did wrong; the rules for fixing it live in the editor
-skills, not in the request. Read `inputs.json`, then run:
-
-```sh
-grep -nE '^\s*(memory|sandbox|handoffs|fork):|docs:|schema:' agents.yaml
-grep -rlE 'zen rag (docs|schema)|run_command' agents/
-```
-
-Now load, before the first edit, every skill whose condition holds:
-
-- `zen-instructions` - always.
-- `zen-memory` - a `memory:` line above, or any request from a `mem` run.
-- `zen-rag-docs` - `docs:` or `zen rag docs` above, or any improvement about
-  finding something in documents.
-- `zen-rag-schema` - `schema:` or `zen rag schema` above, or any improvement
-  about finding an API call, a field or a type.
-- `zen-topology` - `handoffs:` or `fork:` above, or any improvement about
-  delegating, handing off, forking or which agent does what.
-- `zen-code-python` - `run_command` above, or any improvement touching an agent
-  that writes or runs code.
-- `zen-sandbox` - any improvement about the container, installing packages, or
-  a command that failed for want of a tool.
+skills, not in the request. The brief's `Skills to load` lists the ones this
+project's capabilities call for. Load every one of them now, before the first
+edit. Load `zen-sandbox` too when any improvement is about the container,
+installing packages, or a command that failed for want of a tool. No other
+`zen-*` skill is needed.
 
 An improvement that already sounds right is not a reason to skip its skill -
 the skill is how you find out whether it is.
 
 ## What to do
 
-1. **Merge before editing.** Group the improvements - and the entries of
-   `deferred.json` - by the behaviour they fix. Several cases asking for the
+1. **Merge before editing.** The brief's `Requests by file` has already put
+   the improvements - and the entries of `deferred.json` - under the file each
+   names, with the distinct cases behind each file. Now group them by the
+   behaviour they fix, across files too. Several cases asking for the
    same thing in different words is one pattern. Two that contradict each
    other: decide, and say why. Count the **distinct cases** behind each
    pattern.

@@ -10,9 +10,11 @@ audit cannot be graded without it.
 
 ## Which run
 
-The last line of this prompt may name the run - a run directory or a run id.
+The line after this prompt may name the run - a run directory or a run id.
 If it does, use it. Words after it like `case=<id> ... feedback=<file>` mean
 the tuning loop sent you: follow section 7 of the skill and write that file.
+A `## The brief` section below that line is what the loop already ran for
+you: section 1 of the skill says how to use it.
 
 If it does not, list this project's most recent runs, newest first:
 

@@ -7,12 +7,12 @@
 // This command answers the first, and needs no project at all.
 //
 // The split matters most when something breaks. `zen check` says "this
-// embedder was refused"; `zen models pick --embedding` says "use this one
-// instead", and prints a ref on stdout that can be pasted straight back into
-// agents.yaml — or read by an agent doing the pasting.
+// embedder was refused"; `zen models ls --embeddings` and `zen models test`
+// find one that answers, as a ref that can be pasted straight back into
+// agents.yaml.
 // ---------------------------------------------------------------------------
 
-import { createEmbedder, ModelRegistry } from '@zenera/neo';
+import { createEmbedder, GATEWAY_NAME, gatewayOf, ModelRegistry, type Gateway } from '@zenera/neo';
 
 import { parse } from '../args.ts';
 import {
@@ -22,7 +22,6 @@ import {
     loadCatalog,
     loadCatalogs,
     matches,
-    PREFERRED,
     routerBalance,
     type Catalog,
     type CatalogEntry,
@@ -54,7 +53,7 @@ import {
     yellow,
 } from '../term.ts';
 
-const USAGE = 'zen models <providers|ls|search|show|test|pick|browse> [ref] [options]';
+const USAGE = 'zen models <providers|ls|search|show|test|browse> [ref] [options]';
 
 type Sub = (ctx: Context, args: readonly string[]) => Promise<void>;
 
@@ -68,6 +67,8 @@ interface Credentialed {
     fromEnv: Set<Provider>;
     /** providers this machine can actually reach, environment first */
     usable: Provider[];
+    /** set in a gateway mode: every provider is reached, and listed, through it */
+    gateway?: Gateway;
 }
 
 /**
@@ -84,6 +85,10 @@ async function credentials(): Promise<Credentialed> {
     // difference between "the environment had it" and "the keyring supplied it".
     const fromEnv = new Set(PROVIDERS.filter((p) => envNames(p).some((n) => process.env[n])));
     store.materialize();
+    const gateway = gatewayOf();
+    if (gateway) {
+        return { store, fromEnv, usable: [...PROVIDERS], gateway };
+    }
     const usable = [
         ...PROVIDERS.filter((p) => fromEnv.has(p)),
         ...PROVIDERS.filter((p) => !fromEnv.has(p) && Boolean(store.active(p))),
@@ -92,6 +97,9 @@ async function credentials(): Promise<Credentialed> {
 }
 
 function source(where: Credentialed, provider: Provider): string {
+    if (where.gateway) {
+        return GATEWAY_NAME;
+    }
     if (where.fromEnv.has(provider)) {
         return 'environment';
     }
@@ -171,10 +179,25 @@ const tokens = (n: number | undefined): string => {
     return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
 };
 
+/**
+ * Said before any listing in a gateway mode, on stderr: the same command lists
+ * something else entirely there, and nothing in a row of model ids shows it.
+ */
+function announce(ctx: Context, where: Credentialed): void {
+    if (!where.gateway || ctx.json) {
+        return;
+    }
+    note(
+        `${cyan(`⇄ ${GATEWAY_NAME} mode`)} ${dim('only what')} ${where.gateway.baseURL} ` +
+            dim('serves; zen key mode direct to list the vendors'),
+    );
+    note('');
+}
+
 /** Freshness of a listing, said the way a person would ask about it. */
 function freshness(cat: Catalog): string {
     if (cat.origin === 'curated') {
-        return yellow('built-in list');
+        return cat.via ? yellow('not listed yet') : yellow('built-in list');
     }
     if (cat.origin === 'stale') {
         return yellow(`stale, ${ago(cat.fetchedAt)}`);
@@ -247,8 +270,9 @@ const providers: Sub = async (ctx, args) => {
         'zen models providers [--refresh]',
     );
     const where = await credentials();
+    // A gateway lists every provider in one request, so its overview can afford to ask.
     const cats = await loadCatalogs(PROVIDERS, {
-        offline: !values.refresh,
+        offline: !values.refresh && !where.gateway,
         refresh: values.refresh,
     });
     const by = new Map(cats.map((c) => [c.provider, c]));
@@ -262,11 +286,13 @@ const providers: Sub = async (ctx, args) => {
                 models: by.get(p)?.entries.length ?? 0,
                 origin: by.get(p)?.origin,
                 fetchedAt: by.get(p)?.fetchedAt,
+                ...(where.gateway ? { gateway: where.gateway.baseURL } : {}),
             })),
         );
         return;
     }
 
+    announce(ctx, where);
     writeAll(
         table(
             PROVIDERS.map((p) => {
@@ -285,7 +311,6 @@ const providers: Sub = async (ctx, args) => {
     note('');
     note(dim('zen models ls <provider>   what one of them serves'));
     note(dim('zen models browse          walk them with the arrow keys'));
-    note(dim('zen models pick --chat     the first one that answers'));
 };
 
 // ---------------------------------------------------------------------------
@@ -328,9 +353,11 @@ const ls: Sub = async (ctx, args) => {
                 origin,
                 fetchedAt,
             })),
+            ...(where.gateway ? { gateway: where.gateway.baseURL } : {}),
         });
         return;
     }
+    announce(ctx, where);
     explain(cats);
     if (all.length === 0) {
         note(dim('nothing matched — try: zen models ls --refresh'));
@@ -340,7 +367,7 @@ const ls: Sub = async (ctx, args) => {
     if (all.length > limit) {
         note(dim(`${all.length - limit} more — narrow with \`zen models search\`, or pass --all`));
     }
-    if (all.some(isPartner)) {
+    if (!where.gateway && all.some(isPartner)) {
         note(
             dim(
                 'partner models are billed through Vertex and must be enabled in Model Garden first: https://console.cloud.google.com/vertex-ai/model-garden',
@@ -410,6 +437,7 @@ const search: Sub = async (ctx, args) => {
         json({ query, matched: hits.length, models: hits.slice(0, limit) });
         return;
     }
+    announce(ctx, where);
     explain(cats);
     if (hits.length === 0) {
         note(dim(`nothing matched "${query}" — try fewer words, or --refresh`));
@@ -463,6 +491,7 @@ const show: Sub = async (ctx, args) => {
         throw usageError('which model?', 'see: zen models ls');
     }
     const { provider, id } = split(ref);
+    const where = await credentials();
     const cat = await loadCatalog(provider, { refresh: values.refresh });
     const found = cat.entries.find((e) => e.id === id);
 
@@ -470,9 +499,12 @@ const show: Sub = async (ctx, args) => {
         json(found ?? { ref: `${provider}:${id}`, provider, id, known: false });
         return;
     }
+    announce(ctx, where);
     explain([cat]);
     if (!found) {
-        note(`${yellow('not listed')} ${provider} does not advertise ${bold(id)}`);
+        note(
+            `${yellow('not listed')} ${where.gateway ? GATEWAY_NAME : provider} does not advertise ${bold(id)}`,
+        );
         note(dim(`it may still work — try: zen models test ${provider}:${id}`));
         note(dim(`or look: zen models search ${id} --provider ${provider}`));
         return;
@@ -514,7 +546,14 @@ const show: Sub = async (ctx, args) => {
               : undefined,
     );
     add('released', found.created);
-    add('source', found.source === 'live' ? `${provider}, ${freshness(cat)}` : 'built-in list');
+    add(
+        'source',
+        found.source !== 'live'
+            ? 'built-in list'
+            : cat.via
+              ? `${cat.via.name} (${provider}), ${freshness(cat)}`
+              : `${provider}, ${freshness(cat)}`,
+    );
     writeAll(table(rows));
     if (found.description) {
         note('');
@@ -628,6 +667,7 @@ const test: Sub = async (ctx, args) => {
     if (ctx.json) {
         json(probes);
     } else {
+        announce(ctx, where);
         writeAll(
             table(
                 probes.map((p) => [
@@ -645,114 +685,19 @@ const test: Sub = async (ctx, args) => {
         }
         // A Vertex refusal is about a model *in a project*, and the project is
         // the half of that nobody typed.
-        if (parsed.some((p) => p.provider === 'vertex')) {
+        if (!where.gateway && parsed.some((p) => p.provider === 'vertex')) {
             note(dim(vertexAt(where)));
         }
     }
     const failed = probes.filter((p) => p.check.state !== 'live');
     if (failed.length > 0) {
-        // The suggestion follows what was actually asked, not what was flagged:
-        // being told to `pick --chat` after an embedder was refused is how a
-        // recovery path stops being one.
-        const role = failed.every((p) => p.kind === 'embedding') ? '--embedding' : '--chat';
+        // The suggestion follows what was actually asked, not what was flagged.
+        const role = failed.every((p) => p.kind === 'embedding') ? '--embeddings' : '--chat';
         throw credentialError(
             `${failed.length} of ${probes.length} did not answer`,
-            `find one that does: zen models pick ${role}`,
+            `see what else there is: zen models ls ${role}`,
         );
     }
-};
-
-// ---------------------------------------------------------------------------
-// pick
-// ---------------------------------------------------------------------------
-
-/**
- * The recovery path, and the reason this command exists.
- *
- * Candidates are tried one at a time and the walk stops at the first that
- * answers. Sequential on purpose: the goal is *one* working ref, and firing
- * eight billable calls to find it is the wrong trade — especially for the
- * caller most likely to be running this, which is an agent that has just been
- * refused and is looking for somewhere else to go.
- */
-const pick: Sub = async (ctx, args) => {
-    const { values } = parse<RoleFlags & { provider?: string; limit?: string }>(
-        args,
-        { ...ROLE_OPTIONS, provider: { type: 'string' }, limit: { type: 'string' } },
-        'zen models pick --chat|--embedding [--provider p] [--limit N]',
-    );
-    const roles = rolesFrom(values);
-    if (roles.length !== 1 || (roles[0] !== 'chat' && roles[0] !== 'embedding')) {
-        throw usageError('which kind of model?', 'pass --chat or --embedding');
-    }
-    const role = roles[0];
-
-    const where = await credentials();
-    const targets = scope(where, values.provider);
-    const cap = num(values.limit, '--limit') ?? 8;
-    const candidates = targets
-        .flatMap((p) => PREFERRED[p][role].map((id) => ({ provider: p, id, ref: `${p}:${id}` })))
-        .slice(0, cap);
-
-    if (candidates.length === 0) {
-        throw credentialError(
-            `no ${role} model is known for ${targets.join(', ')}`,
-            'try: zen models pick --provider openai',
-        );
-    }
-
-    const tried: ModelProbe[] = [];
-    const bar = ctx.json ? undefined : progress();
-    for (const candidate of candidates) {
-        bar?.update(dim(`trying ${candidate.ref} …`));
-        const probe = await probeModel(
-            target(candidate.ref, candidate.provider, candidate.id, role),
-        );
-        tried.push(probe);
-        if (probe.check.state !== 'live') {
-            continue;
-        }
-        bar?.done();
-        if (ctx.json) {
-            json({
-                ref: probe.ref,
-                provider: candidate.provider,
-                model: candidate.id,
-                role,
-                ...(probe.dimensions ? { dimensions: probe.dimensions } : {}),
-                ms: probe.ms,
-                tried: tried.map(({ ref, check }) => ({ ref, ...check })),
-            });
-            return;
-        }
-        for (const t of tried.slice(0, -1)) {
-            note(`${dim(t.ref)} ${verdict(t)} ${dim(t.check.detail ?? '')}`);
-        }
-        note(`${green('works')} ${bold(probe.ref)} ${dim(ms(probe.ms))}`);
-        // stdout, alone and unstyled, so `$(zen models pick --embedding)` is
-        // the ref and nothing else.
-        write(probe.ref);
-        return;
-    }
-    bar?.done();
-
-    if (ctx.json) {
-        json({ ref: null, role, tried: tried.map(({ ref, check }) => ({ ref, ...check })) });
-    } else {
-        writeAll(
-            table(
-                tried.map((t) => [
-                    dim(t.ref),
-                    verdict(t),
-                    dim(t.check.fix ?? t.check.detail ?? ''),
-                ]),
-            ),
-        );
-    }
-    throw credentialError(
-        `no ${role} model answered on this machine`,
-        'add a credential: zen key add openai',
-    );
 };
 
 // ---------------------------------------------------------------------------
@@ -764,7 +709,7 @@ const pick: Sub = async (ctx, args) => {
  * one model in full, with a key to ask it a question and a key to take it.
  *
  * The interface is drawn on stderr, so a pick reaches stdout alone and
- * `$(zen models browse)` is the ref, the same contract `pick` keeps.
+ * `$(zen models browse)` is the ref.
  */
 const browse: Sub = async (ctx, args) => {
     const { values, positionals } = parse<{ refresh?: boolean; theme?: string }>(
@@ -779,16 +724,44 @@ const browse: Sub = async (ctx, args) => {
     if (ctx.json || !isInteractive()) {
         throw usageError(
             'browsing needs a person at a terminal',
-            'from a script: zen models ls --json, or zen models pick --chat',
+            'from a script: zen models ls --json',
         );
     }
 
+    const chosen = await browseModels({
+        initial,
+        theme: values.theme,
+        refresh: values.refresh,
+    });
+
+    if (!chosen) {
+        // Leaving is a fine way to end a browse, but not an answer to a
+        // substitution that was waiting for one.
+        if (!process.stdout.isTTY) {
+            throw new CliError('nothing picked', EXIT.failed);
+        }
+        return;
+    }
+    write(chosen.ref);
+};
+
+export interface BrowseRequest {
+    /** opens straight into this provider's listing */
+    initial?: Provider;
+    /** the role filter each listing opens on; tab still cycles */
+    role?: Role;
+    refresh?: boolean;
+    theme?: string;
+}
+
+/** The browser, for any command that wants a person to pick a model. */
+export async function browseModels(request: BrowseRequest = {}): Promise<CatalogEntry | undefined> {
     const where = await credentials();
     // Offline, like `providers`: the overview should not cost five listings.
     // A provider is fetched when it is opened.
-    const cats = await loadCatalogs(PROVIDERS, { offline: true });
+    const cats = await loadCatalogs(PROVIDERS, { offline: !where.gateway });
     const { browse: draw } = await import('../tui/models.tsx');
-    const chosen = await draw({
+    return await draw({
         providers: cats.map((c) => ({
             provider: c.provider,
             credential: source(where, c.provider),
@@ -796,11 +769,15 @@ const browse: Sub = async (ctx, args) => {
             origin: c.origin,
             fetchedAt: c.fetchedAt,
         })),
-        initial,
-        theme: values.theme,
-        load: (provider, refresh) => loadCatalog(provider, { refresh: refresh || values.refresh }),
+        initial: request.initial,
+        role: request.role,
+        theme: request.theme,
+        ...(where.gateway ? { gateway: { name: GATEWAY_NAME, url: where.gateway.baseURL } } : {}),
+        load: (provider, refresh) => loadCatalog(provider, { refresh: refresh || request.refresh }),
         balance: async (provider) =>
-            provider === 'openrouter' && source(where, provider) ? routerBalance() : undefined,
+            provider === 'openrouter' && !where.gateway && source(where, provider)
+                ? routerBalance()
+                : undefined,
         test: async (entry) => {
             const role: Role = entry.roles.includes('chat')
                 ? 'chat'
@@ -817,17 +794,7 @@ const browse: Sub = async (ctx, args) => {
             };
         },
     });
-
-    if (!chosen) {
-        // Leaving is a fine way to end a browse, but not an answer to a
-        // substitution that was waiting for one.
-        if (!process.stdout.isTTY) {
-            throw new CliError('nothing picked', EXIT.failed);
-        }
-        return;
-    }
-    write(chosen.ref);
-};
+}
 
 // ---------------------------------------------------------------------------
 // Dispatch
@@ -842,13 +809,12 @@ const SUBS: Record<string, Sub> = {
     show: show,
     test,
     check: test,
-    pick,
     browse,
     ui: browse,
 };
 
 export const models: Command = {
-    summary: 'What this machine can use: list, search, test and pick models.',
+    summary: 'What this machine can use: list, search, test and browse models.',
     usage: USAGE,
     banner: { head: 'Zenera', accent: 'Models', subtitle: 'Model Catalog', hue: 'dusk' },
     details: [
@@ -867,7 +833,6 @@ export const models: Command = {
         '  zen models search <query>        Narrow it — --tools, --vision, --free.',
         '  zen models show <ref>            One model, in full.',
         '  zen models test <ref> …          Ask it one real question.',
-        '  zen models pick --embedding      The first ref that answers, on stdout.',
         '  zen models browse [provider]     Walk providers and models with the',
         '                                   arrow keys; t asks one, p prints its ref.',
     ],
@@ -890,7 +855,7 @@ export const models: Command = {
         }
         throw usageError(
             `unknown: zen models ${name}`,
-            `try: ${cyan('providers, ls, search, show, test, pick, browse')} — or a provider: ${dim(PROVIDERS.join(', '))}`,
+            `try: ${cyan('providers, ls, search, show, test, browse')} — or a provider: ${dim(PROVIDERS.join(', '))}`,
         );
     },
 };

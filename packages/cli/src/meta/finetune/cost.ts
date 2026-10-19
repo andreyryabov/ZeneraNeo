@@ -44,6 +44,20 @@ export async function measure(root: string): Promise<Cost> {
     return costOf(root, await validateProject({ dir: root }));
 }
 
+export interface Binding {
+    discovery: string;
+    allow?: string[];
+    preload?: string[];
+}
+
+/** No `skills:` key is the whole catalog as an index, the same as the runtime. */
+export const bindingOf = (a: ProjectReport['agents'][number]): Binding =>
+    a.skills ?? { discovery: 'index' };
+
+/** The skills a binding lets its agent load. */
+export const visibleTo = <S extends { name: string }>(b: Binding, entries: S[]): S[] =>
+    entries.filter((s) => !b.allow || b.allow.includes(s.name));
+
 function size(root: string, rel: string): number {
     try {
         return statSync(join(root, rel)).size;
@@ -58,11 +72,8 @@ export function costOf(root: string, report: ProjectReport): Cost {
     const alwaysRead: Record<string, number> = {};
     const visible: Record<string, number> = {};
     for (const a of report.agents) {
-        // No `skills:` key is the whole catalog as an index, the same as the runtime.
-        const binding: { discovery: string; allow?: string[]; preload?: string[] } = a.skills ?? {
-            discovery: 'index',
-        };
-        const seen = entries.filter((s) => !binding.allow || binding.allow.includes(s.name));
+        const binding = bindingOf(a);
+        const seen = visibleTo(binding, entries);
         const index =
             binding.discovery === 'index'
                 ? seen.reduce((n, s) => n + Buffer.byteLength(`- ${s.name}: ${s.description}\n`), 0)

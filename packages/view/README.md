@@ -1,14 +1,73 @@
+<div align="center"> 
+  <img
+    src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/zenera-logo-with-media-queries.svg"
+    alt="Zenera Logo"
+    width="20"
+  />
+  <div>Powered By Zenera</div>
+</div>
+<br>
+
+<div align="center">
+  <img src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-view-with-media-queries.svg" alt="ZENERA VIEW" width="747">
+
+[![npm](https://img.shields.io/npm/v/@zenera/view.svg)](https://www.npmjs.com/package/@zenera/view)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/andreyryabov/ZeneraNeo/blob/main/LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
+
+</div>
+
 # @zenera/view
 
-A live local viewer for a folder. Markdown is drawn with GitHub tables and
-[Mermaid](https://mermaid.js.org) diagrams, code (`.json`, `.jsonl`, `.py`, `.ts`,
-`.yaml`, `.patch`, …) is highlighted, a directory is a listing - and an open page
-follows its file: when the file changes, only what changed is redrawn. No reload,
-no lost scroll position, no flicker of diagrams that did not change.
+**A live local viewer for a folder. Markdown with tables and Mermaid diagrams,
+highlighted code, directory listings - redrawn in place as the files change.**
+
+> Part of [ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo). It ships with
+> [`zen`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)
+> as the `view` **subcommand**, and works just as well as a library on its own.
+
+## Why
+
+Agents write reports, plans, traces and diagrams to disk, and keep rewriting
+them while they work. `@zenera/view` turns that folder into a page you can leave
+open: every change shows up within a second, with no reload, no lost scroll
+position, and no flicker of diagrams that did not change.
+
+- **Markdown as GitHub draws it** - GFM tables, task lists, heading anchors and
+  [Mermaid](https://mermaid.js.org) diagrams.
+- **Highlighted code** - `.json`, `.jsonl`, `.py`, `.ts`, `.yaml`, `.patch` and more.
+- **Directories as listings**, so the whole tree is navigable from one page.
+- **Everything else as is** - images, HTML and PDF are handed to the browser.
+- **Live, minimal updates** - only the nodes that changed are repainted.
+- **Local and offline** - loopback only, nothing fetched from the network.
+
+## Install
+
+Node.js 24+, ESM only. It comes with the CLI:
+
+```sh
+npm i -g @zenera/cli
+```
+
+or on its own, as a library:
 
 ```sh
 npm i @zenera/view
 ```
+
+## Use
+
+### From the command line
+
+```sh
+zen view                              # this folder
+zen view finetune/STATUS.md --open    # one file, opened in the browser
+```
+
+`zen view` serves until Ctrl-C and prints its address. `--port`, `--throttle`
+and `--hidden` map to the options below; `zen view --help` has the details.
+
+### From code
 
 ```ts
 import { serveView } from '@zenera/view';
@@ -19,21 +78,7 @@ console.log(server.url); // http://127.0.0.1:<port>/STATUS.md
 await server.close();
 ```
 
-With `@zenera/cli` installed the same thing is `zen view [path]`.
-
-## How it works
-
-The server parses each file into a sanitized HTML syntax tree (remark + GFM for
-markdown, lowlight for code) and pushes it to the page over server-sent events -
-on connect, and again whenever the file changes. The page is a small React app
-that turns the tree into elements, so an update repaints only the nodes that
-differ. Mermaid runs in the browser, from the copy installed with this package,
-so nothing is fetched from the network.
-
-Files are watched through their directory, so a writer that replaces a file by
-renaming a temporary over it is followed; a slow poll backs up `fs.watch`.
-
-## Options
+### Options
 
 | option       | default                        | meaning                                     |
 | ------------ | ------------------------------ | ------------------------------------------- |
@@ -43,6 +88,21 @@ renaming a temporary over it is followed; a slow poll backs up `fs.watch`.
 | `hidden`     | `false`                        | serve dotfiles; `.env`, `.git` never are    |
 | `maxBytes`   | 2 MB                           | the most of one file rendered               |
 | `maxClients` | 64                             | pages open at once                          |
+| `throttleMs` | 1000                           | least time between two pushes of one path   |
+
+## How it works
+
+The server parses each file into a sanitized HTML syntax tree (remark + GFM for
+markdown, lowlight for code). It pushes that tree to the page over server-sent
+events, on connect and again whenever the file changes. The page is a small
+React app that turns the tree into elements, so an update repaints only the
+nodes that differ. Mermaid runs in the browser from the copy installed with
+this package.
+
+Files are watched through their directory, so a writer that replaces a file by
+renaming a temporary file over it is still followed. A slow poll backs up
+`fs.watch`. Each change is rendered once however many pages show the file, and
+one path is pushed at most once per `throttleMs`.
 
 ## Safety
 

@@ -7,8 +7,8 @@
 //
 // Drawn on STDERR, like the banner and every other piece of narration, so the
 // one thing that reaches stdout is the ref picked at the end. That is what
-// makes `ref=$(zen models browse)` work the way `zen models pick` does: the
-// person sees the interface, the shell sees the answer.
+// makes `ref=$(zen models browse)` work: the person sees the interface, the
+// shell sees the answer.
 //
 // Nothing here knows how to list or probe a model. Both arrive as callbacks
 // from commands/models.ts, which already owns credentials and the catalog, so
@@ -56,7 +56,11 @@ export interface BrowseOptions {
     providers: readonly ProviderRow[];
     /** opens straight into this provider's listing */
     initial?: Provider;
+    /** the role filter a listing opens on, when it has any such model */
+    role?: Role;
     theme?: string;
+    /** set in a gateway mode: every listing and test goes through it */
+    gateway?: { name: string; url: string };
     load(provider: Provider, refresh: boolean): Promise<Catalog>;
     /** what the account has left to spend, for providers that say */
     balance?(provider: Provider): Promise<Balance | undefined>;
@@ -95,10 +99,10 @@ function account(b: Balance, short: boolean): string {
     return parts.join(' · ');
 }
 
-function freshness(origin: Catalog['origin'], fetchedAt: string): string {
+function freshness(origin: Catalog['origin'], fetchedAt: string, via?: unknown): string {
     switch (origin) {
         case 'curated':
-            return 'built-in list';
+            return via ? 'not listed yet' : 'built-in list';
         case 'stale':
             return `stale, ${ago(fetchedAt)}`;
         case 'live':
@@ -148,6 +152,26 @@ function Keys({ theme, text }: { theme: Theme; text: string }): React.JSX.Elemen
     return <Row color={theme.chrome.color}>{text}</Row>;
 }
 
+/** Rides on each screen's title row, so it costs the frame no height. */
+function Via({
+    gateway,
+    theme,
+}: {
+    gateway: BrowseOptions['gateway'];
+    theme: Theme;
+}): React.JSX.Element | null {
+    if (!gateway) {
+        return null;
+    }
+    return (
+        <>
+            <Text>{'   '}</Text>
+            <Text inverse bold color={theme.warn}>{` ⇄ ${gateway.name} `}</Text>
+            <Text color={theme.chrome.color}>{` ${gateway.url}`}</Text>
+        </>
+    );
+}
+
 interface BrowserProps {
     options: BrowseOptions;
     theme: Theme;
@@ -175,7 +199,7 @@ function Browser({ options, theme, onPick }: BrowserProps): React.JSX.Element | 
     const [failure, setFailure] = useState<string>();
     const [query, setQuery] = useState('');
     const [typing, setTyping] = useState(false);
-    const [role, setRole] = useState(0);
+    const [role, setRole] = useState<Role | undefined>(options.role);
     const [selected, setSelected] = useState(0);
     const [verdicts, setVerdicts] = useState<ReadonlyMap<string, Verdict | 'asking'>>(new Map());
     const [balances, setBalances] = useState<ReadonlyMap<Provider, Balance | string>>(new Map());
@@ -234,7 +258,7 @@ function Browser({ options, theme, onPick }: BrowserProps): React.JSX.Element | 
         ],
         [catalog],
     );
-    const only = present[role % present.length];
+    const only = present.includes(role) ? role : undefined;
     const rows = useMemo(
         () =>
             (catalog?.entries ?? [])
@@ -251,7 +275,7 @@ function Browser({ options, theme, onPick }: BrowserProps): React.JSX.Element | 
         setScreen('models');
         setQuery('');
         setTyping(false);
-        setRole(0);
+        setRole(options.role);
         setSelected(0);
         top.current = 0;
         if (!catalogs.has(p)) {
@@ -385,7 +409,7 @@ function Browser({ options, theme, onPick }: BrowserProps): React.JSX.Element | 
             setQuery(input.slice(1));
             setSelected(0);
         } else if (key.tab) {
-            setRole((r) => (r + 1) % present.length);
+            setRole(present[(present.indexOf(only) + 1) % present.length]);
             setSelected(0);
         } else if ((key.return || key.rightArrow || input === 'l') && current) {
             setScreen('detail');
@@ -418,8 +442,11 @@ function Browser({ options, theme, onPick }: BrowserProps): React.JSX.Element | 
         const nameW = Math.max(...options.providers.map((p) => p.provider.length)) + 2;
         return (
             <Box flexDirection="column">
-                <Row bold color={theme.accent}>
-                    Providers
+                <Row>
+                    <Text bold color={theme.accent}>
+                        Providers
+                    </Text>
+                    <Via gateway={options.gateway} theme={theme} />
                 </Row>
                 <Text> </Text>
                 {options.providers.map((p, i) => {
@@ -427,8 +454,8 @@ function Browser({ options, theme, onPick }: BrowserProps): React.JSX.Element | 
                     const cat = catalogs.get(p.provider);
                     const count = cat?.entries.length ?? p.models;
                     const fresh = cat
-                        ? freshness(cat.origin, cat.fetchedAt)
-                        : freshness(p.origin, p.fetchedAt);
+                        ? freshness(cat.origin, cat.fetchedAt, cat.via)
+                        : freshness(p.origin, p.fetchedAt, options.gateway);
                     const b = balances.get(p.provider);
                     return (
                         <Row key={p.provider}>
@@ -465,6 +492,7 @@ function Browser({ options, theme, onPick }: BrowserProps): React.JSX.Element | 
                 entry={current}
                 catalog={catalog}
                 verdict={verdicts.get(current.ref)}
+                gateway={options.gateway}
                 theme={theme}
                 width={width}
                 rows={size.rows - 1}
@@ -473,7 +501,7 @@ function Browser({ options, theme, onPick }: BrowserProps): React.JSX.Element | 
     }
 
     const header = catalog
-        ? `${provider} · ${catalog.entries.length} models · ${freshness(catalog.origin, catalog.fetchedAt)}`
+        ? `${provider} · ${catalog.entries.length} models · ${freshness(catalog.origin, catalog.fetchedAt, catalog.via)}`
         : provider;
     const withMaker = rows.some((e) => e.publisher);
     const priced = rows.some((e) => e.pricing);
@@ -564,6 +592,7 @@ function Browser({ options, theme, onPick }: BrowserProps): React.JSX.Element | 
                     {filter ? '   ' : ''}
                 </Text>
                 <Text color={theme.code.color}>{filter}</Text>
+                <Via gateway={options.gateway} theme={theme} />
             </Row>
             {problem ? (
                 <Row color={theme.warn}>
@@ -604,12 +633,21 @@ interface DetailProps {
     entry: CatalogEntry;
     catalog: Catalog | undefined;
     verdict: Verdict | 'asking' | undefined;
+    gateway: BrowseOptions['gateway'];
     theme: Theme;
     width: number;
     rows: number;
 }
 
-function Detail({ entry, catalog, verdict, theme, width, rows }: DetailProps): React.JSX.Element {
+function Detail({
+    entry,
+    catalog,
+    verdict,
+    gateway,
+    theme,
+    width,
+    rows,
+}: DetailProps): React.JSX.Element {
     const facts: [string, string][] = [];
     const add = (label: string, value: string | undefined): void => {
         if (value) {
@@ -648,7 +686,7 @@ function Detail({ entry, catalog, verdict, theme, width, rows }: DetailProps): R
     add(
         'source',
         entry.source === 'live' && catalog
-            ? `${entry.provider}, ${freshness(catalog.origin, catalog.fetchedAt)}`
+            ? `${catalog.via ? `${catalog.via.name} (${entry.provider})` : entry.provider}, ${freshness(catalog.origin, catalog.fetchedAt, catalog.via)}`
             : 'built-in list',
     );
 
@@ -671,8 +709,11 @@ function Detail({ entry, catalog, verdict, theme, width, rows }: DetailProps): R
 
     return (
         <Box flexDirection="column">
-            <Row bold color={theme.accent}>
-                {entry.ref}
+            <Row>
+                <Text bold color={theme.accent}>
+                    {entry.ref}
+                </Text>
+                <Via gateway={gateway} theme={theme} />
             </Row>
             <Text> </Text>
             {facts.map(([label, value]) => (

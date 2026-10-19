@@ -64,6 +64,12 @@ tries used up  ->  difficult
 - **Prose cannot fix everything.** When all an apply could say of a request is
   `structural` - a tool, a skill binding, the dataset - the case is difficult
   at once, reason `structural: ...`, instead of trying again on the same prose.
+- **A broken rubric is the dataset's to fix.** The analysis grades a line
+  `invalid` when it says how one implementation did it rather than what is
+  right, with a `specification` improvement saying how it should read. No
+  apply sees those, an `invalid` line never keeps a case from completing, and
+  a case whose only findings are `specification` is difficult at once, reason
+  `specification: ...`. STATUS.md lists them under **Rubric problems**.
 - **A skill must be loaded.** When an apply makes or changes a skill for a
   case, the case's next run must load it. If it does not, the run says so
   (`missedSkills`), the analysis is told (`missed-skills=`), and the next apply
@@ -74,8 +80,17 @@ tries used up  ->  difficult
   `--merge-every` kept memories are merged, with the last merge, into
   `memories/merged/mNN/` - numbered, never rewritten, each listing the cases it
   holds. Whatever is left is merged when the tuning ends.
-- **Each case keeps one analyze session**, so every analysis of it remembers
-  the earlier tries. `session <case>` prints the command to resume it.
+- **Each analysis starts from a brief.** The loop runs what every analysis
+  reads - the case, the graph, the run's files, the prose, the earlier tries
+  and the diff since the last one - writes it to the try's `brief.md`, and
+  hands it to `/analyze` in the prompt (`zen meta run --prompt-file`). Each try
+  is analyzed in a session of its own; `session <case>` prints the command to
+  resume the latest one.
+- **So does each apply.** Its `brief.md` holds the requests and held-back
+  improvements grouped by the file they name, the editor skills to load, the
+  earlier tries of the same cases with their decisions, the budget, and the
+  files to edit. An attempt that ends without a decision for every
+  improvement is undone (`missing.md`) and tried once more.
 - **Stop and resume freely.** `stop` (or Ctrl-C once) lets the steps in flight
   finish, then exits; Ctrl-C twice kills them. `start` again carries on: every
   step's result is on disk, and nothing finished is repeated.
@@ -92,20 +107,21 @@ tries used up  ->  difficult
 ```
 finetune/
     STATUS.md            the whole tuning: summary (spend per phase, tuning and memory
-                         effect), workers, queue, applies, cases - generated
+                         effect), workers and what each is doing now, queue, applies,
+                         cases - generated, rewritten every second while it runs
     loop.json            the settings; flags on start update it
     events.jsonl         every step, in order
     cases/<id>/
         FEEDBACK.md      that case: rubric, latest analysis, decisions, history, metrics
                          of every try and how they moved - generated
-        r<rev>/session   its analyze session
         r<rev>/result.json            completed or difficult, once it ends
         r<rev>/<NN>-<nomem|mem>/      one try: request.json, run.json, memory/,
-                                      feedback.json, analysis.md, run.log, analyze.log
+                                      brief.md, session, feedback.json, analysis.md,
+                                      run.log, analyze.log
     applies/<NNN>/       APPLY.md (generated), inputs.json, deferred.json, budget.json,
-                         growth.json, gate.json, apply.log, check.log, changes.md,
-                         decisions.json, diff.patch, cost.md; budget.md when an
-                         attempt was undone
+                         growth.json, gate.json, brief.md, apply.log, check.log,
+                         changes.md, decisions.json, diff.patch, cost.md; budget.md
+                         or missing.md when an attempt was undone
     rechecks.json        every recheck: case, apply, state, tries, the request it sent
     rechecks/<NNN>/<id>/<NN>-nomem/   one recheck try, as a case's try
     baseline.json        what the agents read when the tuning began

@@ -31,7 +31,7 @@ import { costChanges, type Gate, measure, overLimits } from './cost.ts';
 import { drift } from './dataset/drift.ts';
 import { DatasetStore } from './dataset/store.ts';
 import { runLoop } from './loop.ts';
-import { attemptsOf } from './report.ts';
+import { analyzeSession, attemptsOf } from './report.ts';
 import { retry } from './retry.ts';
 import { resultOf, selection } from './sampler.ts';
 import {
@@ -61,7 +61,7 @@ export const FINETUNE_HELP = [
     '  zen meta finetune stop                    finish the steps in flight, then stop',
     '  zen meta finetune serve                   the tuning live in a browser, while it is not running',
     '  zen meta finetune retry --difficult       give difficult cases another round, then start',
-    "  zen meta finetune session <case>          resume that case's analyze session",
+    "  zen meta finetune session <case>          resume the analyze session of that case's latest try",
     '  zen meta finetune gate <apply dir>        would this apply pass? - for the apply agent',
     '',
     '  start: -N <workers> (4), -M <apply at> (4), --tries <n> (4), --mem-tries <n> (3),',
@@ -86,7 +86,8 @@ export const FINETUNE_DETAILS = [
     '                         itself, and prints the address; serve is for when it is not running.',
     '  retry [ids...]         Another round for difficult cases: --difficult takes them all,',
     '                         ids and globs add to it, --class narrows. Run them with start.',
-    "  session <case>         Print the command that resumes that case's analyze session.",
+    "  session <case>         Print the command that resumes the analyze session of that case's",
+    '                         latest try.',
     '  gate <apply dir>       Judge an apply in progress as the loop will: bytes moved per',
     '                         agent, skill and file, any limit broken, and zen check.',
     '                         Exits 1 when it would be undone. Read-only.',
@@ -589,11 +590,18 @@ function session(project: { dir: string; name: string }, rest: string[]): void {
     if (!c) {
         throw invalidError(`no case ${id}`);
     }
-    const file = join(project.dir, FINETUNE_DIR, 'cases', id, `r${c.rev}`, 'session');
-    if (!existsSync(file)) {
+    const t = new Tuning(project.dir, readConfig(project.dir), async () => ({
+        code: 1,
+        stdout: '',
+    }));
+    const latest = attemptsOf(t, c)
+        .reverse()
+        .map((a) => analyzeSession(a.dir))
+        .find(Boolean);
+    if (!latest) {
         throw invalidError(`${id} has not been analyzed yet at revision ${c.rev}`);
     }
-    write(`zen meta resume ${project.name} ${readFileSync(file, 'utf8').trim()}`);
+    write(`zen meta resume ${project.name} ${latest}`);
 }
 
 /** The gates `#edit` runs after the apply agent exits, run now against the same `before` and limits. */
@@ -612,7 +620,7 @@ async function gate(
     if (!g || existsSync(join(dir, 'applied.json'))) {
         throw invalidError(
             `${at} is not an apply in progress`,
-            'pass the apply directory named on the last line of /finetune-apply',
+            'pass the apply directory named on the line after /finetune-apply',
         );
     }
     const after = await measure(project.dir);

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+    missingParts,
     readQuestion,
     renderAskExchange,
     renderNode,
@@ -13,7 +14,14 @@ import {
 } from '../src/commands/inspect.ts';
 import { runPathsAt } from '../src/session.ts';
 import { CliError, choose, deferBanner, plain } from '../src/term.ts';
-import { parseNodeIds, safe, traceIndex, traceMermaid, traceOf } from '../src/trace.ts';
+import {
+    parseNodeIds,
+    requestParts,
+    safe,
+    traceIndex,
+    traceMermaid,
+    traceOf,
+} from '../src/trace.ts';
 
 // ---------------------------------------------------------------------------
 // The trajectory as a diagram
@@ -573,6 +581,48 @@ describe('asking for nodes', () => {
         expect((thrown as CliError).message).toContain('no part starts with "nope" in n7');
         // And it says what it could have been asked for.
         expect((thrown as CliError).hint).toContain('call run_command (toolu_1)');
+
+        // One name that matches is enough: the rest are reported, not fatal.
+        const some = wholeParts(found, { part: ['nope', 'call'] });
+        expect(some('call run_command (toolu_1)')).toBe(true);
+        expect(missingParts(found, ['nope', 'call'])).toEqual(['nope']);
+
+        // What is read out of a request is as bulky as the request, by default.
+        expect(byDefault('messages')).toBe(false);
+        expect(byDefault('tools')).toBe(false);
+    });
+
+    it('reads the tools offered and the conversation seen out of a request', () => {
+        const request = JSON.stringify({
+            system: 'you are lead',
+            messages: [
+                { role: 'user', content: [{ type: 'text', text: 'find the\ninvoice' }] },
+                {
+                    role: 'assistant',
+                    agent: 'lead',
+                    content: '',
+                    toolCalls: [{ id: 'c1', name: 'run_command', args: '{"cmd":"ls"}' }],
+                },
+                {
+                    role: 'tool',
+                    callId: 'c1',
+                    name: 'run_command',
+                    content: 'x'.repeat(900),
+                    isError: true,
+                },
+            ],
+            tools: [{ name: 'run_command' }, { name: 'memory_search' }],
+        });
+        const [messages, tools] = requestParts(request);
+        expect(tools).toEqual({ name: 'tools', text: 'run_command\nmemory_search' });
+        expect(messages?.name).toBe('messages');
+        expect(messages?.text.split('\n')).toEqual([
+            '[user] find the invoice',
+            '[assistant @lead] (no text)',
+            '    -> run_command {"cmd":"ls"} #c1',
+            `[tool run_command #c1 ERROR] ${'x'.repeat(400)} … (+500 chars)`,
+        ]);
+        expect(requestParts('not json')).toEqual([]);
     });
 });
 

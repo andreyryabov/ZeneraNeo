@@ -77,6 +77,57 @@ describe('the live view', () => {
         expect(tails.read(file)).toMatchObject({ model: 'gemini-b', calls: 1, input: 10 });
     });
 
+    it('says in one line what the agent is doing now, never what a command printed', () => {
+        const file = join(root, 'events.jsonl');
+        const tails = new Tails();
+        writeFileSync(file, line({ type: 'think', text: 'Planning the search' }));
+        expect(tails.read(file).now).toBe('thinks: Planning the search');
+        appendFileSync(file, line({ type: 'say', text: 'Searching the docs.' }));
+        expect(tails.read(file).now).toBe('says: Searching the docs.');
+        appendFileSync(
+            file,
+            line({
+                type: 'tool',
+                phase: 'start',
+                id: '1',
+                name: 'bash',
+                subject: 'zen rag docs search "tenant"',
+            }),
+        );
+        expect(tails.read(file).now).toBe('runs: zen rag docs search "tenant"');
+        appendFileSync(
+            file,
+            line({ type: 'tool', phase: 'end', id: '1', name: 'bash', ok: true }) +
+                line({ type: 'llm', model: 'gemini-a', in: 1, cached: 0, out: 1, reasoning: 0 }),
+        );
+        expect(tails.read(file).now).toBe('runs: zen rag docs search "tenant"');
+        appendFileSync(
+            file,
+            line({ type: 'tool', phase: 'start', id: '2', name: 'view', subject: 'a.md' }),
+        );
+        expect(tails.read(file).now).toBe('runs: view a.md');
+        expect(tails.read(file).recent).toEqual([
+            'thinks: Planning the search',
+            'says: Searching the docs.',
+            'runs: zen rag docs search "tenant"',
+            'runs: view a.md',
+        ]);
+        appendFileSync(
+            file,
+            line({ type: 'say', text: 'Done.' }) +
+                line({ type: 'think', text: 'Checking' }) +
+                line({ type: 'say', text: 'All good.' }),
+        );
+        expect(tails.read(file).recent).toEqual([
+            'says: Searching the docs.',
+            'runs: zen rag docs search "tenant"',
+            'runs: view a.md',
+            'says: Done.',
+            'thinks: Checking',
+            'says: All good.',
+        ]);
+    });
+
     const snap = (over: Partial<Snapshot> = {}): Snapshot => ({
         pid: 1,
         project: 'acme',
@@ -104,6 +155,7 @@ describe('the live view', () => {
                     output: 100,
                     byModel: {},
                     last: 'run_command pytest -q',
+                    recent: [],
                     lines: [
                         {
                             t: '2026-10-08T10:00:00Z',
@@ -117,7 +169,17 @@ describe('the live view', () => {
                 },
             },
         ],
-        tokens: [{ stage: 'run', model: 'gemini-a', calls: 7, input: 12_000, output: 900 }],
+        tokens: [
+            {
+                stage: 'run',
+                model: 'gemini-a',
+                calls: 7,
+                input: 12_000,
+                cached: 0,
+                output: 900,
+                reasoning: 0,
+            },
+        ],
         log: Array.from({ length: 40 }, (_, i) => ({
             at: '2026-10-08T09:59:00Z',
             action: 'ran',

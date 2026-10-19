@@ -1,8 +1,16 @@
+<div align="center"> 
+  <img
+    src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/zenera-logo-with-media-queries.svg"
+    alt="Zenera Logo"
+    width="20"
+  />
+  <div>Powered By Zenera</div>
+</div>
+<br>
+
 <div align="center">
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/imgs/banner-neo-dark.svg">
-  <img src="docs/imgs/banner-neo-light.svg" alt="ZENERA NEO" width="720">
-</picture>
+<img src="docs/imgs/banner-neo-dark.svg#gh-dark-mode-only" alt="ZENERA NEO" width="720">
+<img src="docs/imgs/banner-neo-light.svg#gh-light-mode-only" alt="ZENERA NEO" width="720">
 
 [![CI](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -18,7 +26,7 @@ specification and the knowledge your work already has.**
 
 ZeneraNeo turns a clear description of a job into an agentic system built for
 that job. Give it the documents, policies, API schemas, files and integrations
-the work depends on; describe the outcome and its constraints; then let **[the-meta-agent](#what-is-the-meta-agent)** design the specialists, tools, skills, memory, handoffs, retrieval
+the work depends on; describe the outcome and its constraints; then let **[the meta-agent](#what-is-the-meta-agent)** design the specialists, tools, skills, memory, handoffs, retrieval
 and execution strategy that fit.
 
 ## What is it for?
@@ -81,24 +89,32 @@ and the meta-agent turns that description into the actual system.
 - **Memory** - what the agents should remember between runs, and when to look
   in memory first.
 
-> **❓ Why different models are configured?**
-> 
+> **❓ Why are different models configured?**
+>
 > **Because both are needed:**
 >
 > - **The meta-agent model** (`zen meta model --pick`) is used by `zen meta` to
->  _build_ the project. It writes the agents, scripts and configuration, so
->  choose a strong reasoning model. It is set once per machine and is not part
->  of the project.
+>   _build_ the project. It writes the agents, scripts and configuration, so
+>   choose a strong reasoning model. It is set once per machine and is not part
+>   of the project.
 > - **The project models** (the `## Models` section of `SPECIFICATION.md`) are
->  used by the generated agents when they _run_. They are stored in the project
->  (`agents.yaml`), so anyone who clones it runs the same system. They include
->  an embedding model for indexes and memory. A chat model cannot be used for
->  embeddings, and changing the embedding model requires re-indexing.
-
+>   used by the generated agents when they _run_. They are stored in the project
+>   (`agents.yaml`), so anyone who clones it runs the same system. They include
+>   an embedding model for indexes and memory. A chat model cannot be used for
+>   embeddings, and changing the embedding model requires re-indexing.
 
 See a complete example in
 [`SPECIFICATION.md`](examples/projects/01-docs-rag/SPECIFICATION.md) of
 example 01.
+
+> Worked examples available now:
+>
+> - [01 - Documentation RAG](examples/projects/01-docs-rag/README.md): answers
+>   questions about the Hugging Face Transformers documentation from an index
+>   built out of it.
+> - [02 - API Integration](examples/projects/02-api-integration/README.md):
+>   finds a meeting request in a mock mailbox, checks mock calendar availability
+>   and, after you confirm, creates an event and sends a confirmation.
 
 ### 5. Generate the system
 
@@ -138,7 +154,7 @@ zen meta run my-project /spec-apply-feedback
   improvement opportunities.
 
 > When you are standing inside a project, the project name is optional: a bare
-`zen run`, `zen check` or `zen inspect` means the project you are in.
+> `zen run`, `zen check` or `zen inspect` means the project you are in.
 
 ## What is the meta-agent?
 
@@ -169,8 +185,6 @@ tests it, examines its observable trajectory, and proposes improvements to the
 specification. The next system is generated from that improved intent. This is a
 continuous loop for making a specialized system more effective without losing
 the human-defined purpose and constraints.
-
-![The continuous improvement loop from knowledge and specification to an agentic system, run analysis, and specification updates](docs/imgs/continuous_improvement_loop.svg)
 
 The loop is deliberate. A run is not only an answer; it is evidence about the
 system that produced it. ZeneraNeo records the trajectory, evaluates the result
@@ -221,6 +235,7 @@ their own subcommands. Install only the capabilities a project needs.
 - [Agent knowledge and document retrieval](docs/knowledge.md)
 - [API integrations](docs/integrations.md)
 - [Memory](docs/memory.md)
+- [Every model through a Bifrost gateway](docs/gateway.md)
 
 Early days and moving fast - issues, questions and pull requests are welcome.
 [MIT](LICENSE).

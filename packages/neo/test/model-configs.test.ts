@@ -101,6 +101,8 @@ const ENV: Record<string, string> = {
     ZN_DEFINITELY_UNSET: '',
     ZN_NO_SUCH_KEY: '',
     GOOGLE_CLOUD_LOCATION: '',
+    // A gateway in the developer's `.env` would reroute every fixture.
+    BIFROST_BASE_URL: '',
 };
 
 beforeEach(() => {

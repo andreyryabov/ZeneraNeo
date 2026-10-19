@@ -14,6 +14,17 @@ import { OpenRouterEmbedder, type OpenRouterEmbedderOptions } from '../embedding
 import { unfundedSymbol } from '../embeddings/rate-limit.ts';
 import type { Model } from '../model.ts';
 import { AnthropicModel, type AnthropicModelOptions } from './anthropic.ts';
+import {
+    GATEWAY_KEY_ENV,
+    GATEWAY_KEY_HEADER,
+    GATEWAY_NAME,
+    GATEWAY_PATHS,
+    GATEWAY_UPSTREAMS,
+    gatewayOf,
+    upstreamFetch,
+    type Gateway,
+    type GatewayProtocol,
+} from './gateway.ts';
 import { GeminiModel, type GeminiModelOptions } from './gemini.ts';
 import { OpenAIModel } from './openai-chat.ts';
 import { OpenAIResponsesModel, type OpenAIResponsesModelOptions } from './openai-responses.ts';
@@ -237,6 +248,8 @@ export interface ModelRequirement {
     satisfied: boolean;
     /** the SDK authenticates without a key, so `satisfied` says little */
     keyOptional: boolean;
+    /** set when the request goes through a gateway, whose key `apiKeyEnv` then names */
+    gateway?: string;
 }
 
 interface KindDefaults {
@@ -349,6 +362,21 @@ function protocolOf(kind: ProviderKind, model: string): Protocol {
 function apisOf(kind: ProviderKind, protocol: Protocol): readonly OpenAIApi[] {
     return kind === 'vertex' && protocol === 'openai' ? ['chat'] : KINDS[kind].apis;
 }
+
+/** Bifrost has no OpenRouter drop-in, so OpenRouter models go through its OpenAI one. */
+function gatewayProtocol(kind: ProviderKind, model: string): GatewayProtocol {
+    const protocol = protocolOf(kind, model);
+    return protocol === 'openrouter' ? 'openai' : protocol;
+}
+
+/** How one model is reached: directly, or through the gateway and in which protocol. */
+interface Route {
+    protocol: Protocol;
+    apis: readonly OpenAIApi[];
+    gateway?: Gateway;
+}
+
+const GATEWAY_APIS: readonly OpenAIApi[] = ['chat', 'responses'];
 
 // ---------------------------------------------------------------------------
 // Tuning knobs
@@ -520,6 +548,33 @@ export class ModelRegistry {
         return built;
     }
 
+    /**
+     * Gateway mode takes every provider, declared ones included; only a
+     * pre-built client stays put, since there is nothing in it to repoint.
+     */
+    #route(spec: { model: string; client?: ProviderClient }, name: string): Route {
+        const kind = this.kindOf(name);
+        const gateway = spec.client || this.#spec(name).client ? undefined : gatewayOf();
+        if (gateway) {
+            const protocol = gatewayProtocol(kind, spec.model);
+            return { protocol, apis: protocol === 'openai' ? GATEWAY_APIS : [], gateway };
+        }
+        const protocol = protocolOf(kind, spec.model);
+        return { protocol, apis: apisOf(kind, protocol) };
+    }
+
+    /** One client per provider and protocol, keyed by the gateway it points at. */
+    #gateway(name: string, protocol: GatewayProtocol, at: Gateway): ProviderClient {
+        const key = `${name}\0gateway\0${protocol}\0${at.baseURL}\0${at.apiKey ?? ''}`;
+        const existing = this.#clients.get(key);
+        if (existing) {
+            return existing;
+        }
+        const built = buildGatewayClient(name, this.kindOf(name), protocol, this.#spec(name), at);
+        this.#clients.set(key, built);
+        return built;
+    }
+
     /** A Vertex provider's Claude or partner client: built once, beside its GenAI one. */
     #partner(name: string, protocol: 'anthropic' | 'openai', spec: ProviderSpec): ProviderClient {
         const key = `${name}\0${protocol}`;
@@ -562,14 +617,12 @@ export class ModelRegistry {
      */
     knobs(ref: ModelRef): KnobIssue[] {
         const spec = typeof ref === 'string' ? this.parse(ref) : ref;
-        const kind = this.kindOf(spec.provider ?? this.#default);
-        const protocol = protocolOf(kind, spec.model);
+        const { protocol, apis } = this.#route(spec, spec.provider ?? this.#default);
         if (protocol !== 'openai') {
             return unreadKnobs(spec, protocol);
         }
         // An api this vendor does not speak already has an error of its own;
         // answering about its knobs would only bury it.
-        const apis = apisOf(kind, protocol);
         const api = spec.api ?? apis[0];
         return api && apis.includes(api) ? unreadKnobs(spec, `openai/${api}`) : [];
     }
@@ -580,7 +633,7 @@ export class ModelRegistry {
         const name = spec.provider ?? this.#default;
         const provider = this.#spec(name);
         const kind = this.kindOf(name);
-        const protocol = protocolOf(kind, spec.model);
+        const { protocol, apis, gateway } = this.#route(spec, name);
 
         // Before the client, so a knob for the wrong vendor is reported as the
         // config mistake it is rather than behind a missing credential.
@@ -597,16 +650,18 @@ export class ModelRegistry {
         // silently ignore them.
         const client =
             spec.client ??
-            (protocol !== KINDS[kind].protocol
-                ? this.#partner(name, protocol as 'anthropic' | 'openai', provider)
-                : hasCredentials(spec)
-                  ? buildClient(name, kind, spec, provider)
-                  : this.client(name));
+            (gateway
+                ? this.#gateway(name, protocol as GatewayProtocol, gateway)
+                : protocol !== KINDS[kind].protocol
+                  ? this.#partner(name, protocol as 'anthropic' | 'openai', provider)
+                  : hasCredentials(spec)
+                    ? buildClient(name, kind, spec, provider)
+                    : this.client(name));
 
         // The *resolved* name, not `spec.provider`: a bare ref carries none,
         // and a failure that cannot say which connection refused it is the
         // thing this is here to prevent.
-        const options = { ...spec, provider: name };
+        const options = { ...spec, provider: gateway ? `${name} via ${GATEWAY_NAME}` : name };
 
         // Every protocol but OpenAI's has exactly one API, so naming one is a
         // mistake worth reporting rather than a field to ignore.
@@ -630,7 +685,6 @@ export class ModelRegistry {
             }
         }
 
-        const apis = apisOf(kind, protocol);
         const api = spec.api ?? apis[0];
         if (!apis.includes(api)) {
             throw new TypeError(
@@ -653,20 +707,26 @@ export class ModelRegistry {
         const name = spec.provider ?? this.#default;
         const provider = this.#spec(name);
         const kind = this.kindOf(name);
+        const { protocol, gateway } = this.#route(spec, name);
 
         const client =
             spec.client ??
-            (hasCredentials(spec) ? buildClient(name, kind, spec, provider) : this.client(name));
+            (gateway
+                ? this.#gateway(name, protocol as GatewayProtocol, gateway)
+                : hasCredentials(spec)
+                  ? buildClient(name, kind, spec, provider)
+                  : this.client(name));
 
         // Inline credentials are a different connection, and so a different
         // budget: they get pacing of their own rather than the provider's.
+        const own = hasCredentials(spec) && !gateway;
         const options = {
             ...spec,
-            provider: name,
-            limiter: spec.limiter ?? (hasCredentials(spec) ? undefined : this.#limiter(name)),
+            provider: gateway ? `${name} via ${GATEWAY_NAME}` : name,
+            limiter: spec.limiter ?? (own ? undefined : this.#limiter(name)),
         };
 
-        switch (KINDS[kind].protocol) {
+        switch (gateway ? protocol : KINDS[kind].protocol) {
             case 'openai':
                 return new OpenAIEmbedder(spec.model, client as OpenAI, options);
             case 'gemini':
@@ -693,6 +753,17 @@ export class ModelRegistry {
         const name = spec.provider ?? this.#default;
         const provider = this.#spec(name);
         const kind = this.kindOf(name);
+        const gateway = this.#route(spec, name).gateway;
+        if (gateway) {
+            return {
+                provider: name,
+                kind,
+                apiKeyEnv: GATEWAY_KEY_ENV,
+                satisfied: Boolean(gateway.apiKey),
+                keyOptional: false,
+                gateway: GATEWAY_NAME,
+            };
+        }
         const defaults = KINDS[kind];
         const creds: Credentials = hasCredentials(spec) ? spec : provider;
         const apiKeyEnv = creds.apiKeyEnv ?? defaults.apiKeyEnv;
@@ -960,15 +1031,12 @@ function buildGenAI(
     where: string,
 ): GoogleGenAI {
     const { GoogleGenAI } = sdk<GenAIModule>('@google/genai', kind);
-    // `attempts` counts the initial call, so a retry budget of zero is one
-    // attempt. Delays are fractions of a second here, unlike everywhere else.
-    const retryOptions = {
-        attempts: retriesOf(opts) + 1,
-        initialDelay: RETRY_INITIAL_MS / 1000,
-        maxDelay: RETRY_MAX_MS / 1000,
-        expBase: RETRY_EXPONENT,
+    const httpOptions = {
+        baseUrl: baseURL,
+        headers,
+        timeout: opts.timeoutMs,
+        retryOptions: genaiRetries(opts),
     };
-    const httpOptions = { baseUrl: baseURL, headers, timeout: opts.timeoutMs, retryOptions };
     if (kind !== 'vertex') {
         return new GoogleGenAI({ apiKey, httpOptions });
     }
@@ -994,6 +1062,68 @@ function buildGenAI(
             'global',
         httpOptions,
     });
+}
+
+/**
+ * `attempts` counts the initial call, so a retry budget of zero is one attempt.
+ * Delays are fractions of a second here, unlike everywhere else.
+ */
+function genaiRetries(opts: ProviderSpec) {
+    return {
+        attempts: retriesOf(opts) + 1,
+        initialDelay: RETRY_INITIAL_MS / 1000,
+        maxDelay: RETRY_MAX_MS / 1000,
+        expBase: RETRY_EXPONENT,
+    };
+}
+
+/**
+ * A client aimed at the gateway's drop-in endpoint for `protocol`, with the
+ * virtual key in place of the vendor's. The provider keeps its transport
+ * settings and headers; its own key and base url are what the gateway replaces.
+ */
+function buildGatewayClient(
+    name: string,
+    kind: ProviderKind,
+    protocol: GatewayProtocol,
+    opts: ProviderSpec,
+    at: Gateway,
+): ProviderClient {
+    const baseURL = `${at.baseURL}${GATEWAY_PATHS[protocol]}`;
+    // Every SDK refuses to construct without a key, even for a gateway that wants none.
+    const apiKey = at.apiKey ?? GATEWAY_NAME;
+    const headers = {
+        ...expandHeaders(opts.headers, `provider "${name}"`),
+        ...(at.apiKey ? { [GATEWAY_KEY_HEADER]: at.apiKey } : {}),
+    };
+    const routed = upstreamFetch(GATEWAY_UPSTREAMS[kind], protocol);
+    if (protocol === 'gemini') {
+        const { GoogleGenAI } = sdk<GenAIModule>('@google/genai', kind);
+        return new GoogleGenAI({
+            apiKey,
+            httpOptions: {
+                baseUrl: baseURL,
+                headers,
+                timeout: opts.timeoutMs,
+                retryOptions: genaiRetries(opts),
+                fetch: routed,
+            },
+        });
+    }
+    const common = {
+        apiKey,
+        baseURL,
+        defaultHeaders: headers,
+        timeout: opts.timeoutMs,
+        maxRetries: retriesOf(opts),
+        fetch: funded(routed),
+    };
+    if (protocol === 'anthropic') {
+        const { Anthropic } = sdk<AnthropicModule>('@anthropic-ai/sdk', kind);
+        return new Anthropic(common);
+    }
+    const { OpenAI } = sdk<OpenAIModule>('openai', kind);
+    return new OpenAI(common);
 }
 
 /**

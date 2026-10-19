@@ -1,7 +1,7 @@
 # Models - `zen models`
 
 ```
-zen models <providers|ls|search|show|test|pick|browse> [ref] [options]
+zen models <providers|ls|search|show|test|browse> [ref] [options]
 ```
 
 Alias: `model`.
@@ -20,17 +20,14 @@ but a credential.
 | `zen models search <query>` | Narrow it                                              |
 | `zen models show <ref>`     | One model, every field the vendor gave                 |
 | `zen models test <ref> …`   | One real minimal call per ref, and a verdict           |
-| `zen models pick`           | The first ref that answers, printed on stdout          |
 | `zen models browse`         | Interactive TUI for a person; needs a terminal         |
 
 Filters, on `ls` and `search`: `--chat`, `--embeddings`, `--images`, `--audio`,
 `--tools`, `--vision`, `--free`, `--min-context <n>`, `--provider <name>`,
 `--limit <n>`, `--all`, `--refresh`.
 
-`pick` requires `--chat` or `--embedding`, and takes `--provider` and `--limit`.
-
 `browse` is for a person at a terminal and refuses without one (exit 2). An
-agent wants `ls --json`, `search` or `pick` instead.
+agent wants `ls --json` or `search` instead.
 
 ## Where the lists come from
 
@@ -42,6 +39,19 @@ it was - `--json` carries `source` per model and `origin` per provider.
 `--refresh` bypasses the cache. It is the only thing that does.
 
 `zen models` on its own does **not** go to the network. `ls` and `search` do.
+
+### In gateway mode
+
+After `zen key mode bifrost`, every listing is **what the gateway serves**,
+not what the vendors do: one `GET <url>/v1/models`, split by its
+`<upstream>/<id>` names back into refs (`vertex/gemini-3.5-flash` lists as
+`vertex:gemini-3.5-flash`). Upstreams no zen provider names (bedrock, groq, ...)
+are left out, and there is no built-in fallback list. Each command says so on
+stderr with a `⇄ bifrost mode` line, `browse` carries the same badge on every
+screen, and `--json` adds a `gateway` field. `zen models` then does go to the
+network, since one request covers every provider; `test` asks through the
+gateway too. The full guide is
+[docs/gateway.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/gateway.md).
 
 ## Testing a model
 
@@ -77,30 +87,19 @@ $ zen models test vertex:gemini-embedding-001
 vertex:gemini-embedding-001  blocked  Vertex AI API has not been used in project my-proj …
 fix vertex:gemini-embedding-001 gcloud services enable aiplatform.googleapis.com --project my-proj
 error 1 of 1 did not answer
-        find one that does: zen models pick --embedding
+        see what else there is: zen models ls --embeddings
 ```
 
-Two ways out. Run the `gcloud` line, or take a different model:
+Two ways out. Run the `gcloud` line, or take a different model: list what the
+account serves, test the one you want, and put its ref where the old one was.
 
 ```
-$ zen models pick --embedding
-openai:text-embedding-3-small
+$ zen models ls --embeddings
+$ zen models test openai:text-embedding-3-small
+openai:text-embedding-3-small  answers 412ms  1536 dims
 ```
 
-`pick` tries a short ordered list one at a time and stops at the first that
-works. Sequential on purpose - the goal is one working ref, not a survey. The
-ref goes to **stdout alone and unstyled**, so it substitutes directly:
-
-```sh
-zen rag schema index --embedding "$(zen models pick --embedding)" ./specs/*.yaml
-```
-
-`zen models pick --embedding --json` gives `{ref, provider, model, role,
-dimensions, ms, tried}` - `tried` lists every candidate and why it was passed
-over, so a caller can see _why_ a provider was skipped rather than only that it
-was.
-
-When nothing answers, exit `4` and the table of everything tried.
+Test one model, not the whole list - each test is a billable call.
 
 ## What it will not do
 

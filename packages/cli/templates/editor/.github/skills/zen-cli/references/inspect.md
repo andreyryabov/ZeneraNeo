@@ -30,6 +30,7 @@ Four ways to read one run, for two different readers.
 | `--question-file <f>`   | ask           | Read the question from a file; `-` is stdin          |
 | `--part <name>`         | node          | Print this part in full. Repeatable, prefix-matched  |
 | `--full`                | node          | Print every part, the recorded `request` included    |
+| `--raw`                 | node          | One `--part` of one node, unframed - for a pipe      |
 | `--open`                | report        | Open the report in a browser                         |
 | `--rebuild`             | report        | Rebuild `report.html` from the recorded state        |
 | `--no-timing`           | graph         | Leave the clock off the graph                        |
@@ -186,9 +187,22 @@ zen inspect node n11 --full --dir <run dir>
 ```
 
 `--part` matches a prefix, so `--part call` catches a part named
-`call run_command (toolu_01A…)` without your typing the id. Naming a part the
-node does not carry is an error listing the ones it does - nothing is ever
+`call run_command (toolu_01A…)` without your typing the id. A name no node
+carries is reported in a `#` line under the header; when none of the names
+matches it is an error listing the parts the nodes do carry - nothing is ever
 elided in silence.
+
+An `llm_call` also carries two parts read out of its request and held back the
+same way: `tools`, the names of the tools that call was offered, and
+`messages`, the conversation it saw, one clipped line per message with its tool
+calls indented under it. `--raw` prints one part of one node and nothing else -
+no `#` header, no frame - so it pipes:
+
+```
+zen inspect node n11 --part tools --dir <run dir>
+zen inspect node n11 --part messages --dir <run dir>
+zen inspect node n11 --part request --raw --dir <run dir> | jq '.tools[].name'
+```
 
 Two `#` lines come first - which run, how many of its nodes you asked for, and
 a reminder of what part text is. Then each node is framed, and each payload
