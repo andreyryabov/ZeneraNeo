@@ -452,6 +452,19 @@ describe('keys', () => {
             expect(() => store.setMode('bifrost')).toThrow(/no Bifrost key/);
         });
 
+        // The sandbox forwards what this returns as secrets, by name; the url goes as plain env.
+        it('hands the key to the sandbox as a secret', async () => {
+            const store = await stocked();
+            store.setMode('bifrost');
+            store.materialize();
+            expect(credentials()).toContainEqual({
+                env: 'BIFROST_API_KEY',
+                holds: 'secret',
+                value: 'sk-bf-1',
+            });
+            expect(credentials().map((c) => c.env)).not.toContain('OPENAI_API_KEY');
+        });
+
         it('survives a save', async () => {
             const store = await stocked();
             store.setMode('bifrost');
