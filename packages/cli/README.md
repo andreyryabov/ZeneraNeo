@@ -118,7 +118,19 @@ npx @zenera/cli --help
 ```
 
 Tab completion for zsh, bash and fish - commands, projects, stored prompts - is
-one line in your shell's startup file. `zen` adds it for you, after asking:
+set up automatically by the global npm install. It appends a guarded loader to
+your current shell's startup file, once. **Open a new terminal** to activate it;
+the installer cannot update the terminal where you ran npm.
+
+Setup respects `ZDOTDIR` for zsh and `XDG_CONFIG_HOME` for fish. For Bash on
+macOS it covers both login shells (the active `.bash_profile`, `.bash_login` or
+`.profile`) and non-login shells (`.bashrc`). The loader does nothing when `zen`
+is no longer installed.
+
+Local installs and `npx` do not change shell files. Automatic setup is skipped
+under root/sudo, in CI, on Windows, or when `$SHELL` is missing or unsupported.
+Disabling lifecycle scripts with `--ignore-scripts` also disables setup.
+If automatic setup is skipped or fails, or to enable another shell, run:
 
 ```sh
 zen completion --install            # the shell you are in; --yes to skip the question

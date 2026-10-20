@@ -1,64 +1,18 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { basename } from 'node:path';
 import { one, parse } from '../args.ts';
 import type { Command } from '../command.ts';
+import { install, installed, loader, rcFiles, shellOf } from '../completion-install.ts';
 import { TEMPLATES } from '../scaffold.ts';
 import { bold, confirm, usageError, write } from '../term.ts';
 
-const USAGE = 'zen completion [<zsh|bash|fish>] [--install [--yes]]';
+export { install, installed, loader, rcFile } from '../completion-install.ts';
 
-const SHELLS = ['zsh', 'bash', 'fish'] as const;
-type Shell = (typeof SHELLS)[number];
+const USAGE = 'zen completion [<zsh|bash|fish>] [--install [--yes]]';
 
 interface Flags {
     install?: boolean;
     yes?: boolean;
-}
-
-/** The startup file a shell reads for every interactive session. */
-export function rcFile(shell: Shell, env: NodeJS.ProcessEnv = process.env): string {
-    const home = homedir();
-    switch (shell) {
-        case 'zsh':
-            return join(env['ZDOTDIR'] || home, '.zshrc');
-        case 'bash': {
-            // macOS terminals start login shells, which skip .bashrc.
-            const rc = join(home, '.bashrc');
-            const profile = join(home, '.bash_profile');
-            return process.platform === 'darwin' && !existsSync(rc) && existsSync(profile)
-                ? profile
-                : rc;
-        }
-        case 'fish':
-            return join(env['XDG_CONFIG_HOME'] || join(home, '.config'), 'fish', 'config.fish');
-    }
-}
-
-/** The line that loads the script, as the shell's own startup file would say it. */
-export function loader(shell: Shell): string {
-    return shell === 'fish' ? 'zen completion fish | source' : `eval "$(zen completion ${shell})"`;
-}
-
-/** Whether `file` already loads the script — a commented-out line does not count. */
-export function installed(shell: Shell, file: string): boolean {
-    if (!existsSync(file)) {
-        return false;
-    }
-    const loads = new RegExp(`^\\s*(?!#).*\\b(zen|zn|zenera)\\s+completion\\s+${shell}\\b`, 'm');
-    return loads.test(readFileSync(file, 'utf8'));
-}
-
-/** Appends the loader to `file`, unless it is already there. */
-export function install(shell: Shell, file: string): 'added' | 'present' {
-    if (installed(shell, file)) {
-        return 'present';
-    }
-    const have = existsSync(file) ? readFileSync(file, 'utf8') : '';
-    mkdirSync(dirname(file), { recursive: true });
-    const gap = have === '' || have.endsWith('\n\n') ? '' : have.endsWith('\n') ? '\n' : '\n\n';
-    appendFileSync(file, `${gap}# zen tab completion\n${loader(shell)}\n`);
-    return 'added';
 }
 
 /**
@@ -72,6 +26,8 @@ export const completion: Command = {
     banner: { head: 'Zenera', accent: 'Completion', subtitle: 'Shell Integration', hue: 'magenta' },
     quiet: () => true,
     details: [
+        'Global npm installs set this up automatically. Open a new shell afterward.',
+        '',
         'Add one line to your shell’s startup file:',
         '  zsh    eval "$(zen completion zsh)"      in ~/.zshrc',
         '  bash   eval "$(zen completion bash)"     in ~/.bashrc',
@@ -95,29 +51,33 @@ export const completion: Command = {
             { install: { type: 'boolean' }, yes: { type: 'boolean' } },
             USAGE,
         );
-        const shell = one(positionals, 'shell', USAGE) ?? basename(process.env.SHELL ?? '');
-        if (!(SHELLS as readonly string[]).includes(shell)) {
+        const name = one(positionals, 'shell', USAGE) ?? basename(process.env.SHELL ?? '');
+        const shell = shellOf(name);
+        if (!shell) {
             throw usageError(
-                shell ? `no completion for "${shell}"` : 'which shell?',
-                `try: zen completion ${SHELLS.join('|')}`,
+                name ? `no completion for "${name}"` : 'which shell?',
+                'try: zen completion zsh|bash|fish',
             );
         }
         if (values.yes && !values.install) {
             throw usageError('--yes only goes with --install', USAGE);
         }
         if (values.install) {
-            const file = rcFile(shell as Shell);
-            if (installed(shell as Shell, file)) {
-                write(`Already set up in ${file}.`);
+            const files = rcFiles(shell).filter((file) => !installed(shell, file));
+            if (files.length === 0) {
+                write(`Already set up in ${rcFiles(shell).join(', ')}.`);
                 return;
             }
-            const line = bold(loader(shell as Shell));
-            if (!values.yes && !(await confirm(`Add ${line} to ${file}?`, true))) {
+            const line = bold(loader(shell));
+            if (!values.yes && !(await confirm(`Add ${line} to ${files.join(', ')}?`, true))) {
                 write('Nothing changed.');
                 return;
             }
-            install(shell as Shell, file);
-            write(`Added to ${file}. Open a new shell, or run: source ${file}`);
+            for (const file of files) {
+                install(shell, file);
+                write(`Added to ${file}.`);
+            }
+            write('Open a new shell to use tab completion.');
             return;
         }
         process.stdout.write(readFileSync(`${TEMPLATES}/completions/zen.${shell}`, 'utf8'));

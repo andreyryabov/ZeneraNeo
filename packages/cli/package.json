@@ -45,6 +45,7 @@
     "scripts": {
         "build": "tsc -b",
         "clean": "tsc -b --clean && rm -rf dist",
+        "postinstall": "node dist/postinstall.js",
         "prepack": "tsc -b"
     },
     "dependencies": {
