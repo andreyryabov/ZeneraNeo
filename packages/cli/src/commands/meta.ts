@@ -171,6 +171,7 @@ const OPTIONS: NonNullable<ParseArgsConfig['options']> = {
     provider: { type: 'string' },
     model: { type: 'string' },
     prompt: { type: 'string', short: 'p' },
+    'prompt-file': { type: 'string' },
     agent: { type: 'string' },
     effort: { type: 'string' },
     share: { type: 'string' },
