@@ -37,6 +37,7 @@
     "files": [
         "dist",
         "!dist/**/*.map",
+        "postinstall.mjs",
         "templates"
     ],
     "engines": {
@@ -45,7 +46,7 @@
     "scripts": {
         "build": "tsc -b",
         "clean": "tsc -b --clean && rm -rf dist",
-        "postinstall": "node dist/postinstall.js",
+        "postinstall": "node postinstall.mjs",
         "prepack": "tsc -b"
     },
     "dependencies": {
