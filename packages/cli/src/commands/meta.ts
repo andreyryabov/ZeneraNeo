@@ -200,7 +200,8 @@ const RUN_FORMS = [
 const RUN_ARGUMENTS = [
     'Arguments:',
     '  [project]   Name of a project. Default: the one you are in.',
-    '  [prompt]    Your question, in quotes. Also --prompt, or piped in.',
+    '  [prompt]    Your question, in quotes. Or --prompt, or piped in when neither',
+    '              it nor --prompt-file is given.',
     '  /<name>     A prompt file in .github/prompts/<name>.prompt.md.',
     '  [words]     Appended to that prompt as a final line.',
 ];
@@ -210,7 +211,10 @@ const RUN_OPTIONS = [
     '  --project <name|dir>   Which project to work in. The agent is rooted there.',
     '  --model <ref>          Model for this run, e.g. vertex/gemini-3.8-flash.',
     '  --provider <name>      Force the key to use. Default: the model ref says.',
-    '  --prompt-file <file>   Append this file to the prompt, after any words.',
+    '  -p, --prompt <text>    The question, in place of [prompt].',
+    '                         Ignored with /<name>: put words after it instead.',
+    '  --prompt-file <file>   Added after the question - or after /<name> and its',
+    '                         words - past a blank line. Alone, it is the question.',
     '  --agent <name>         A .github/agents/<name>.agent.md.',
     '  --effort <level>       none, minimal, low, medium, high, xhigh or max.',
     '  --allow-tool <list>    Only these: read, shell(git:*), write(README.md).',
