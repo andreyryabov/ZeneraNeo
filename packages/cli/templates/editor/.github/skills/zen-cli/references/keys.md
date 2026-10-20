@@ -73,7 +73,9 @@ Declared providers are rerouted too. `zen check` then reports
 `BIFROST_API_KEY`, not the vendor variables, as the credential in use.
 
 The switch is `BIFROST_BASE_URL` itself, so exporting it in a shell or a `.env`
-turns gateway mode on without the keyring. In this mode `zen models` lists only
+turns gateway mode on without the keyring - and `zen key mode`/`ls`/`check`
+report and probe it (`bifrost/$BIFROST_API_KEY`), with nothing stored. In this
+mode `zen models` lists only
 what the gateway serves - see `models.md`. The full guide is
 [docs/gateway.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/gateway.md).
 

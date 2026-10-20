@@ -111,6 +111,11 @@ reachable from the container: a `localhost` url on the host is not, and a
 | `zen key ls`                      | Shows the url in the `WHERE` column and a `mode bifrost` line       |
 | `zen key env`                     | In `bifrost` mode, exports `BIFROST_API_KEY` and `BIFROST_BASE_URL` |
 
+A `BIFROST_BASE_URL` in the environment puts all of these in `bifrost` mode with
+an empty keyring, as it does a run: `mode` says it was set by the environment,
+and `ls` and `check` list and probe `bifrost/$BIFROST_API_KEY` against that url.
+`zen key mode direct` is saved but has no effect until the variable is unset.
+
 Several gateway keys can be held at once (`zen key add bifrost/prod --url …`);
 `zen key use bifrost/prod` picks the one runs use.
 

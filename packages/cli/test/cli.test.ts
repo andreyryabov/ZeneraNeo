@@ -557,6 +557,87 @@ describe('keys', () => {
                 expect(await check()).toMatchObject({ state: 'blocked', fix: /budget/ });
             });
         });
+
+        // A pod handed BIFROST_* by a Secret has an empty keys.json and runs through the gateway.
+        describe('set only in the environment', () => {
+            let server: Server;
+            let seen: Record<string, string | string[] | undefined>;
+            beforeEach(async () => {
+                server = createServer((req, res) => {
+                    seen = { path: req.url, ...req.headers };
+                    res.writeHead(200, { 'content-type': 'application/json' });
+                    res.end(JSON.stringify({ data: [] }));
+                });
+                await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+                process.env.BIFROST_BASE_URL = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+                process.env.BIFROST_API_KEY = 'sk-bf-env';
+                // Keeps a real gcloud login on this machine out of the ambient credentials.
+                process.env.CLOUDSDK_CONFIG = home;
+            });
+            afterEach(() => new Promise<void>((done) => server.close(() => done())));
+
+            async function zenKey(...args: string[]): Promise<any> {
+                const out: string[] = [];
+                const write = vi
+                    .spyOn(process.stdout, 'write')
+                    .mockImplementation((chunk: string | Uint8Array) => {
+                        out.push(String(chunk));
+                        return true;
+                    });
+                const quiet = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+                try {
+                    await COMMANDS.key!.run({ args, json: true, cwd: home });
+                } finally {
+                    write.mockRestore();
+                    quiet.mockRestore();
+                }
+                return JSON.parse(out.join(''));
+            }
+
+            it('is in gateway mode with nothing stored', async () => {
+                const store = await KeyStore.open();
+                expect([store.mode, store.modeFrom]).toEqual(['bifrost', 'env']);
+                expect(await zenKey('mode')).toEqual({
+                    mode: 'bifrost',
+                    from: 'env',
+                    key: '$BIFROST_API_KEY',
+                    url: process.env.BIFROST_BASE_URL,
+                });
+            });
+
+            it('withholds the stored vendor keys, which the runtime would not read', async () => {
+                expect((await stocked()).environment()).toEqual({ EXA_API_KEY: 'exa-key' });
+            });
+
+            it('lists the environment key in that mode', async () => {
+                const listed = await zenKey('ls');
+                expect(listed.mode).toBe('bifrost');
+                expect(listed.ambient).toEqual([
+                    expect.objectContaining({ id: 'bifrost/$BIFROST_API_KEY' }),
+                ]);
+            });
+
+            it('checks the environment key against the environment url', async () => {
+                expect(await zenKey('check')).toEqual([
+                    expect.objectContaining({ key: 'bifrost/$BIFROST_API_KEY', state: 'live' }),
+                ]);
+                expect(seen).toMatchObject({ path: '/v1/models', 'x-bf-vk': 'sk-bf-env' });
+            });
+
+            it('accepts the mode it is already in, with no gateway key stored', async () => {
+                expect(await zenKey('mode', 'bifrost')).toMatchObject({ mode: 'bifrost' });
+            });
+
+            it('stays in it when switched to direct, since the environment wins', async () => {
+                (await stocked()).save();
+                expect(await zenKey('mode', 'direct')).toMatchObject({
+                    mode: 'bifrost',
+                    from: 'env',
+                });
+                delete process.env.BIFROST_BASE_URL;
+                expect((await KeyStore.open()).mode).toBe('direct');
+            });
+        });
     });
 });
 

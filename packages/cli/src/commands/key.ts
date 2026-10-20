@@ -22,6 +22,7 @@ import {
     parseRef,
     SHAPES,
     type Ambient,
+    type GatewayOwner,
     type KeyCheck,
     type KeyEntry,
     type KeyMode,
@@ -48,6 +49,7 @@ import {
     red,
     table,
     usageError,
+    warn,
     write,
     writeAll,
     yellow,
@@ -108,15 +110,31 @@ function placed(store: KeyStore, entry: KeyEntry): string {
  * intent — it can be listed and probed, not chosen or forgotten.
  */
 function asEntry(cred: Ambient): KeyEntry {
+    const url = isGateway(cred.provider) ? envUrl() : undefined;
     return {
         provider: cred.provider,
         name: cred.env ? `$${cred.env}` : 'adc',
         holds: cred.holds,
         value: cred.value,
         env: cred.env,
+        ...(url ? { url } : {}),
         addedAt: new Date().toISOString(),
     };
 }
+
+const envUrl = (): string | undefined => process.env[GATEWAY_URL_ENV]?.trim() || undefined;
+
+/** Where a gateway mode sends runs, and with which key: the environment beats the keyring. */
+function route(store: KeyStore, mode: GatewayOwner): { url?: string; key?: string } {
+    const entry = store.active(mode);
+    const shell = envNames(mode).find((name) => process.env[name]);
+    return {
+        url: envUrl() ?? entry?.url,
+        key: shell ? `$${shell}` : entry ? keyId(entry) : undefined,
+    };
+}
+
+const FROM_ENV = `set by $${GATEWAY_URL_ENV} in the environment`;
 
 function rows(store: KeyStore, borrowed: readonly [Ambient, KeyEntry][]): string[] {
     const out: string[][] = [
@@ -192,12 +210,14 @@ function modeLine(store: KeyStore): void {
         }
         return;
     }
-    const gateway = store.active(mode);
-    note(`${cyan(badge(`⇄ ${mode.toUpperCase()} MODE`))} ${bold(gateway?.url ?? 'no url stored')}`);
+    const { url, key } = route(store, mode);
+    note(`${cyan(badge(`⇄ ${mode.toUpperCase()} MODE`))} ${bold(url ?? 'no url stored')}`);
     note(
         dim(
-            `every model goes through the gateway with ${gateway ? keyId(gateway) : 'no key'}; ` +
-                'vendor keys are not used — zen key mode direct to stop',
+            `every model goes through the gateway with ${key ?? 'no key'}; vendor keys are not used — ` +
+                (store.modeFrom === 'env'
+                    ? `${FROM_ENV}, unset it to stop`
+                    : 'zen key mode direct to stop'),
         ),
     );
     note('');
@@ -270,7 +290,7 @@ const ls: Sub = async (ctx, args) => {
         return;
     }
 
-    if (store.entries.length === 0 && borrowed.length === 0) {
+    if (store.entries.length === 0 && borrowed.length === 0 && store.mode === 'direct') {
         note('the keyring is empty');
         note(dim('add one: zen key add openai'));
         return;
@@ -518,31 +538,47 @@ const mode: Sub = async (ctx, args) => {
         if (!(MODES as readonly string[]).includes(wanted)) {
             throw usageError(`unknown mode "${wanted}"`, `one of: ${MODES.join(', ')}`);
         }
-        store.setMode(wanted as KeyMode);
-        store.save();
+        // Already on through the environment: storing it as well needs a gateway key of its own.
+        const viaEnv = store.modeFrom === 'env' && wanted === store.mode;
+        if (!viaEnv || store.active(store.mode as GatewayOwner)?.url) {
+            store.setMode(wanted as KeyMode);
+            store.save();
+        }
+        if (store.modeFrom === 'env' && wanted !== store.mode) {
+            warn(`saved, but ${FROM_ENV} wins: unset it to call vendors directly`);
+        }
     }
     const now = store.mode;
-    const gateway = now === 'direct' ? undefined : store.active(now);
+    const from = store.modeFrom;
+    const { url, key } = now === 'direct' ? {} : route(store, now);
     if (ctx.json) {
-        json({ mode: now, ...(gateway ? { key: keyId(gateway), url: gateway.url } : {}) });
+        json({ mode: now, from, ...(key ? { key } : {}), ...(url ? { url } : {}) });
         return;
     }
-    if (!gateway) {
+    if (now === 'direct') {
         note(`${cyan('direct')} ${dim('— each provider is called with its own key')}`);
         return;
     }
     note(
-        `${cyan(now)} ${dim('— every model goes through')} ${gateway.url} ` +
-            dim(`with ${keyId(gateway)}`),
+        `${cyan(now)} ${dim('— every model goes through')} ${url ?? 'no url stored'} ` +
+            dim(`with ${key ?? 'no key'}`),
     );
+    if (from === 'env') {
+        note(dim(FROM_ENV));
+    }
 };
 
 const check: Sub = async (ctx, args) => {
     const { positionals } = parse(args, {}, 'zen key check [provider[/name]]');
     const store = await KeyStore.open();
-    assertNotEmpty(store);
-
-    const targets = positionals[0] ? select(store, positionals[0]) : store.entries;
+    // Checked like stored keys, never recorded: `store.record` finds no entry for them.
+    const borrowed = ambient(store).map(asEntry);
+    const targets = positionals[0]
+        ? select(store, positionals[0], borrowed)
+        : [...store.entries, ...borrowed];
+    if (targets.length === 0) {
+        assertNotEmpty(store);
+    }
     const checks = await checkAll(ctx, store, targets);
     for (const [entry, result] of checks) {
         store.record(entry, result);
@@ -577,12 +613,14 @@ const check: Sub = async (ctx, args) => {
     }
 };
 
-function select(store: KeyStore, ref: string): KeyEntry[] {
+function select(store: KeyStore, ref: string, borrowed: readonly KeyEntry[] = []): KeyEntry[] {
     const { provider, name } = parseRef(ref);
     if (!name) {
-        return store.for(provider);
+        return [...store.for(provider), ...borrowed.filter((e) => e.provider === provider)];
     }
-    const entry = store.find(provider, name);
+    const entry =
+        store.find(provider, name) ??
+        borrowed.find((e) => e.provider === provider && e.name === name);
     if (!entry) {
         throw usageError(`no key ${ref}`, 'see: zen key ls');
     }

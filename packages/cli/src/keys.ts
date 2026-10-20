@@ -516,8 +516,13 @@ export class KeyStore {
         }
     }
 
+    /** A `BIFROST_BASE_URL` in the environment wins over the keyring, as it does for the runtime. */
     get mode(): KeyMode {
-        return this.#file.mode ?? 'direct';
+        return this.modeFrom === 'env' ? 'bifrost' : (this.#file.mode ?? 'direct');
+    }
+
+    get modeFrom(): 'env' | 'keyring' {
+        return process.env[GATEWAY_URL_ENV]?.trim() ? 'env' : 'keyring';
     }
 
     /** Refuses a gateway mode with no gateway to send anything to. */
