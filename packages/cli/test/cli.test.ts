@@ -3516,10 +3516,35 @@ describe('listing through a gateway', () => {
         expect(cat.problem?.state).toBe('dead');
     });
 
-    it('keeps its cache apart from the vendor listing', async () => {
-        const through = catalogKey('openai');
-        delete process.env.BIFROST_BASE_URL;
-        expect(catalogKey('openai')).not.toBe(through);
+    it('never caches a gateway listing, so an empty one does not stick', async () => {
+        answer = { status: 200, body: { data: [] } };
+        expect((await loadCatalog('openai')).entries).toEqual([]);
+        answer = { status: 200, body: LISTING };
+        // A new key is a new process memo, which is the only cache left.
+        process.env.BIFROST_API_KEY = 'sk-bf-2';
+        const cat = await loadCatalog('openai', { offline: true });
+        expect(asked).toBe(2);
+        expect(cat).toMatchObject({ origin: 'live' });
+        expect(cat.entries.map((e) => e.ref)).toEqual(['openai:gpt-5.6-luna']);
+    });
+
+    it('ignores a cached vendor listing', async () => {
+        new Cache(CATALOG_KIND).put(catalogKey('openai'), {
+            provider: 'openai',
+            fetchedAt: new Date().toISOString(),
+            entries: [
+                {
+                    ref: 'openai:vendor-only',
+                    id: 'vendor-only',
+                    provider: 'openai',
+                    roles: ['chat'],
+                    source: 'live',
+                },
+            ],
+        });
+        answer = { status: 200, body: LISTING };
+        const cat = await loadCatalog('openai');
+        expect(cat.entries.map((e) => e.ref)).toEqual(['openai:gpt-5.6-luna']);
     });
 });
 

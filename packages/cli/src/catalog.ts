@@ -664,10 +664,6 @@ const store = (): Cache => new Cache(CATALOG_KIND, { mode: 0o644 });
  * to both. A project left to the service-account file is not seen here.
  */
 function scope(provider: Provider): string | undefined {
-    const at = gatewayOf();
-    if (at) {
-        return cacheKey(GATEWAY_NAME, at.baseURL);
-    }
     if (provider !== 'vertex') {
         return undefined;
     }
@@ -698,6 +694,29 @@ export interface CatalogOptions {
 }
 
 /**
+ * Through a gateway nothing is cached on disk: the gateway caches its own
+ * listing, one request serves every provider, and a stale copy outlives the
+ * gateway's providers or the virtual key that was allowed to see them.
+ */
+async function loadGatewayCatalog(provider: Provider, at: Gateway): Promise<Catalog> {
+    const via = { via: { name: GATEWAY_NAME, url: at.baseURL } };
+    try {
+        const entries = await fetchGatewayCatalog(provider, at);
+        return { provider, entries, origin: 'live', fetchedAt: new Date().toISOString(), ...via };
+    } catch (err) {
+        // No built-in list: it names vendor models the gateway may not serve at all.
+        return {
+            provider,
+            entries: [],
+            origin: 'curated',
+            fetchedAt: new Date(0).toISOString(),
+            problem: classify(err),
+            ...via,
+        };
+    }
+}
+
+/**
  * The listing for one provider, from the cheapest source that can answer.
  *
  * Fresh cache, else the provider, else a *stale* cache, else the curated table.
@@ -708,9 +727,9 @@ export interface CatalogOptions {
  */
 export async function loadCatalog(provider: Provider, opts: CatalogOptions = {}): Promise<Catalog> {
     const at = gatewayOf();
-    const via = at ? { via: { name: GATEWAY_NAME, url: at.baseURL } } : {};
-    // The built-in list names vendor models the gateway may not serve at all.
-    const fallback = (): CatalogEntry[] => (at ? [] : curated(provider));
+    if (at) {
+        return loadGatewayCatalog(provider, at);
+    }
     const cached = readCache(provider);
     const fresh =
         cached && Date.now() - new Date(cached.fetchedAt).getTime() < CATALOG_TTL_MS
@@ -723,17 +742,14 @@ export async function loadCatalog(provider: Provider, opts: CatalogOptions = {})
             entries: fresh.entries,
             origin: 'cache',
             fetchedAt: fresh.fetchedAt,
-            ...via,
         };
     }
     if (!opts.offline) {
         try {
-            const entries = at
-                ? await fetchGatewayCatalog(provider, at)
-                : await fetchCatalog(provider);
+            const entries = await fetchCatalog(provider);
             const fetchedAt = new Date().toISOString();
             store().put(catalogKey(provider), { provider, fetchedAt, entries } satisfies CacheFile);
-            return { provider, entries, origin: 'live', fetchedAt, ...via };
+            return { provider, entries, origin: 'live', fetchedAt };
         } catch (err) {
             const problem = classify(err);
             if (cached) {
@@ -743,16 +759,14 @@ export async function loadCatalog(provider: Provider, opts: CatalogOptions = {})
                     origin: 'stale',
                     fetchedAt: cached.fetchedAt,
                     problem,
-                    ...via,
                 };
             }
             return {
                 provider,
-                entries: fallback(),
+                entries: curated(provider),
                 origin: 'curated',
                 fetchedAt: new Date(0).toISOString(),
                 problem,
-                ...via,
             };
         }
     }
@@ -762,15 +776,13 @@ export async function loadCatalog(provider: Provider, opts: CatalogOptions = {})
             entries: cached.entries,
             origin: 'stale',
             fetchedAt: cached.fetchedAt,
-            ...via,
         };
     }
     return {
         provider,
-        entries: fallback(),
+        entries: curated(provider),
         origin: 'curated',
         fetchedAt: new Date(0).toISOString(),
-        ...via,
     };
 }
 
