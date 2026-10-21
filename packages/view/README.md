@@ -14,6 +14,9 @@
 [![npm](https://img.shields.io/npm/v/@zenera/view.svg)](https://www.npmjs.com/package/@zenera/view)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/andreyryabov/ZeneraNeo/blob/main/LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
+[![CI](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml)
+
+[Install](#install) · [Use](#use) · [How it works](#how-it-works) · [Safety](#safety) · [Family](#the-rest-of-the-family) · [License](#license)
 
 </div>
 
@@ -114,6 +117,17 @@ one path is pushed at most once per `throttleMs`.
   strict Content-Security-Policy. Files served as they are (HTML, SVG, …) carry
   a `sandbox` CSP, so they run - if at all - in an origin of their own.
 
+## The rest of the family
+
+| Package                                                                                         | What it is                                                    |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| [`@zenera/cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` - agent projects on the command line                    |
+| [`@zenera/neo`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md)     | the runtime - agents, models, tools, skills, memory           |
+| [`@zenera/faker`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` - a mock API from an openapi/swagger document     |
+| [`@zenera/rag`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md)     | `zen rag` - indexing and search for documents and API schemas |
+| **`@zenera/view`**                                                                              | `zen view` - a live local viewer for a folder                 |
+
 ## License
 
-MIT
+Early days and moving fast - issues, questions and pull requests are welcome.
+[MIT](LICENSE).

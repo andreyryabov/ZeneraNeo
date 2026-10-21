@@ -14,6 +14,9 @@
 [![npm](https://img.shields.io/npm/v/@zenera/cli.svg)](https://www.npmjs.com/package/@zenera/cli)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/andreyryabov/ZeneraNeo/blob/main/LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
+[![CI](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml)
+
+[Install](#install) · [Quickstart](#quickstart) · [Commands](#commands) · [Documentation](#documentation) · [Family](#the-rest-of-the-family) · [License](#license)
 
 </div>
 
@@ -1124,6 +1127,16 @@ terminal:
     - building a dataset, writing rubrics, and tuning the project on them.
 - [docs/gateway.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/gateway.md)
     - every model through a Bifrost gateway, with one virtual key.
+
+## The rest of the family
+
+| Package                                                                                         | What it is                                                    |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| **`@zenera/cli`**                                                                               | `zen` - agent projects on the command line                    |
+| [`@zenera/neo`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md)     | the runtime - agents, models, tools, skills, memory           |
+| [`@zenera/faker`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` - a mock API from an openapi/swagger document     |
+| [`@zenera/rag`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md)     | `zen rag` - indexing and search for documents and API schemas |
+| [`@zenera/view`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/view/README.md)   | `zen view` - a live local viewer for a folder                 |
 
 ## License
 

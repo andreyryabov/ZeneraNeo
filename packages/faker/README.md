@@ -14,6 +14,9 @@
 [![npm](https://img.shields.io/npm/v/@zenera/faker.svg)](https://www.npmjs.com/package/@zenera/faker)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/andreyryabov/ZeneraNeo/blob/main/LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
+[![CI](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml)
+
+[Install](#install) · [Use](#use) · [Commands](#commands) · [Credentials](#credentials) · [Family](#the-rest-of-the-family) · [License](#license)
 
 </div>
 
@@ -26,6 +29,16 @@ serves it - the response bodies are written, once, by a model.**
 > binary of its own: installing it adds a `faker` **subcommand** to
 > [`zen`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md),
 > which is also where the credentials already are.
+
+## What you get
+
+- **A mock server from a spec** - point it at one or more swagger/OpenAPI
+  documents and every operation answers.
+- **Bodies written once** - a model writes a Python generator per operation,
+  checked against the response schema; after that no request costs a token.
+- **Stable answers** - pin a `--seed` and the same request returns the same body.
+- **Lists that end** - paging tokens are recognised, walked and cut, so a client
+  never loops forever.
 
 ## Install
 
@@ -172,12 +185,15 @@ Environment variables still win over the keyring, exactly as they do for `zen`.
 
 ## The rest of the family
 
-| Package                                                                                     | What it is                                           |
-| ------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| [`@zenera/cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md) | `zen` - agent projects on the command line           |
-| [`@zenera/neo`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md) | the runtime - agents, models, tools, skills, memory  |
-| [`@zenera/rag`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md) | `zen rag` - an API description as a searchable graph |
+| Package                                                                                       | What it is                                                    |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| [`@zenera/cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)   | `zen` - agent projects on the command line                    |
+| [`@zenera/neo`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md)   | the runtime - agents, models, tools, skills, memory           |
+| **`@zenera/faker`**                                                                           | `zen faker` - a mock API from an openapi/swagger document     |
+| [`@zenera/rag`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md)   | `zen rag` - indexing and search for documents and API schemas |
+| [`@zenera/view`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/view/README.md) | `zen view` - a live local viewer for a folder                 |
 
 ## License
 
-[MIT](https://github.com/andreyryabov/ZeneraNeo/blob/main/LICENSE).
+Early days and moving fast - issues, questions and pull requests are welcome.
+[MIT](LICENSE).
