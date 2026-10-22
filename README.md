@@ -144,9 +144,7 @@ zen meta run my-project /spec-apply-feedback
 
 ### 7. Check and run
 
-> Opening the project in your editor does not change your terminal's working
-> directory. The bare `zen check` and `zen inspect` commands below use the current
-> project. If your terminal is still in the parent directory, first run:
+> Enter the project directory:
 >
 > ```sh
 > cd my-project
