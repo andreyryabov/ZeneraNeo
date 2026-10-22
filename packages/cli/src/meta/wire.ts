@@ -51,6 +51,11 @@ export function wireApi(provider: Provider, id: string): string | undefined {
         : undefined;
 }
 
+/** Whether copilot's tools survive the model: OpenAI's completions-only models refuse them. */
+export function metaCompatible(provider: Provider, id: string): boolean {
+    return provider !== 'openai' || wireApi(provider, id) !== undefined;
+}
+
 export interface Wiring {
     provider: Provider;
     /** what the model is called on the wire */

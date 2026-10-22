@@ -6,9 +6,9 @@
 //
 // Note what is *not* here: any judgement about which model is good. The lists
 // below are ordered by how likely a call is to succeed and how little it costs
-// to find out, not by quality — a recovery path, not a recommender. The moment
-// a file like this starts ranking intelligence it becomes a thing that has to
-// be argued about every quarter, and the argument is not what anyone came for.
+// to find out, not by quality — a recovery path, not a recommender. The one
+// judgement the CLI does make lives in `rank.ts`, read off the ids a listing
+// returns, so that no table here has to be argued about every quarter.
 //
 // Nor is there a single hard-coded table of every model. Vendors ship models
 // faster than a release cycle, so the shipped table is a *fallback* and the
@@ -30,6 +30,7 @@ import {
 import { Cache, cacheKey } from './cache.ts';
 import { PROVIDERS, type KeyCheck, type Provider } from './keys.ts';
 import { classify } from './liveness.ts';
+import { compareModels } from './rank.ts';
 
 /**
  * What a model is *for*. A model can hold more than one — Gemini's embedding
@@ -612,7 +613,13 @@ async function fetchGatewayListing(at: Gateway): Promise<Map<Provider, CatalogEn
 }
 
 function publisherOf(id: string): string {
-    return /^claude-/.test(id) ? 'anthropic' : id.includes('/') ? id.split('/')[0]! : 'google';
+    if (/^claude-/.test(id)) {
+        return 'anthropic';
+    }
+    if (/^(mistral|codestral)-/.test(id)) {
+        return 'mistral';
+    }
+    return id.includes('/') ? id.split('/')[0]! : 'google';
 }
 
 /** What the gateway serves under one provider's name, enriched like a vendor listing. */
@@ -929,22 +936,57 @@ export const catalogProviders = (): readonly Provider[] => PROVIDERS;
 export const isPartner = (e: CatalogEntry): boolean =>
     e.publisher !== undefined && e.publisher !== 'google';
 
-/** Provider, then Google's own models, then each partner's together. */
+/** The order listings are shown in: the vendors in rank order, then the resellers. */
+const GROUP_ORDER: readonly Provider[] = ['anthropic', 'openai', 'google', 'vertex', 'openrouter'];
+
+/** Provider, then Google's own models, then each partner's together; best first within each. */
 export function byGroup(a: CatalogEntry, b: CatalogEntry): number {
     return (
-        a.provider.localeCompare(b.provider) ||
+        GROUP_ORDER.indexOf(a.provider) - GROUP_ORDER.indexOf(b.provider) ||
         Number(isPartner(a)) - Number(isPartner(b)) ||
         (a.publisher ?? '').localeCompare(b.publisher ?? '') ||
-        a.id.localeCompare(b.id)
+        compareModels(a, b)
     );
 }
 
-/** The heading a row is listed under, when its provider resells other makers' models. */
-export function groupOf(e: CatalogEntry): string | undefined {
+/** The heading a row is listed under: its provider, split by maker where the provider resells. */
+export function groupOf(e: CatalogEntry): string {
     if (!e.publisher) {
-        return undefined;
+        return e.provider;
     }
     return isPartner(e)
         ? `${e.provider} · partner · ${e.publisher}`
         : `${e.provider} · Google (Gemini, Gemma, Imagen, Veo)`;
+}
+
+/**
+ * At most `limit` rows, shared evenly between providers and kept in order, so a
+ * long first listing does not push the others off a truncated screen.
+ */
+export function sampleByProvider(rows: readonly CatalogEntry[], limit: number): CatalogEntry[] {
+    if (rows.length <= limit) {
+        return [...rows];
+    }
+    const counts = new Map<Provider, { total: number; take: number }>();
+    for (const row of rows) {
+        const c = counts.get(row.provider) ?? { total: 0, take: 0 };
+        c.total++;
+        counts.set(row.provider, c);
+    }
+    for (let left = limit, gave = true; left > 0 && gave;) {
+        gave = false;
+        for (const c of counts.values()) {
+            if (left > 0 && c.take < c.total) {
+                c.take++;
+                left--;
+                gave = true;
+            }
+        }
+    }
+    const seen = new Map<Provider, number>();
+    return rows.filter((row) => {
+        const n = (seen.get(row.provider) ?? 0) + 1;
+        seen.set(row.provider, n);
+        return n <= counts.get(row.provider)!.take;
+    });
 }

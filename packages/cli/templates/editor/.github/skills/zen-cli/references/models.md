@@ -26,6 +26,13 @@ Filters, on `ls` and `search`: `--chat`, `--embeddings`, `--images`, `--audio`,
 `--tools`, `--vision`, `--free`, `--min-context <n>`, `--provider <name>`,
 `--limit <n>`, `--all`, `--refresh`.
 
+Listings are grouped by provider (Anthropic, OpenAI, Google, Vertex,
+OpenRouter), best model first in each. `--best` drops the groups for one list,
+best first, `--json` included: Anthropic, OpenAI, Google, then the rest; newer
+generation, then higher tier; mini, nano, lite and haiku last. It is a heuristic
+read off the ids, not a benchmark. `zen models ls --chat --best --json` is the
+list to pick a default from.
+
 `browse` is for a person at a terminal and refuses without one (exit 2). An
 agent wants `ls --json` or `search` instead.
 

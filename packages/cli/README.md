@@ -735,7 +735,8 @@ Highest first: `--model`, `ZENERA_META_MODEL` in the shell, the same variable in
 the project's `.env`, `zen meta model`, then the project's `agents.yaml`
 `model:`. When none of them answers, a key does: the best model zen knows of
 for the first provider you hold one for, named on stderr as it starts, so a
-fresh machine needs a key and nothing else.
+fresh machine needs a key and nothing else. Through a gateway it is the best
+chat model the gateway serves instead, as `zen models ls --chat --best` ranks it.
 The store is separate from `agents.yaml` on purpose - the model a coding agent
 runs on is a personal choice about a tool, like a key, where `agents.yaml` is a
 committed decision about the project's own agents.
@@ -743,7 +744,8 @@ committed decision about the project's own agents.
 Not every model works. The meta agent declares its tools in a form only the
 reasoning APIs accept, so use a reasoning model - `gpt-5.6-sol`,
 `claude-opus-5`, `gemini-3.8-flash`. Those three are also what it falls back
-to, and what `zen meta model --pick` offers.
+to, and what `zen meta model --pick` offers. `zen meta model` refuses the ones
+that cannot (gpt-4o and older) before asking them anything.
 
 Setting one asks it a one-word question before storing it, so a model that will
 not answer is refused with the provider's own words rather than at the start of

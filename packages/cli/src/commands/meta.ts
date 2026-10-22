@@ -21,8 +21,8 @@ import {
     DATASET_USAGE,
     datasetProjectFlag,
     DEFAULT_RESUMES,
-    defaultRef,
     editorFiles,
+    fallbackRef,
     FINETUNE_DETAILS,
     FINETUNE_SUMMARY,
     FINETUNE_USAGE,
@@ -33,6 +33,7 @@ import {
     loadPrompt,
     locate,
     masked,
+    metaCompatible,
     misspelledProvider,
     MODEL_ENV,
     openLog,
@@ -280,10 +281,13 @@ export const meta: Command = {
         'The model is looked for in this order: --model, ZENERA_META_MODEL in the',
         "shell, ZENERA_META_MODEL in the project's .env, `zen meta model`, then",
         'agents.yaml. With none of them set it uses the best model it knows of for',
-        'a provider you hold a key for, and says which on stderr.',
+        'a provider you hold a key for, and says which on stderr. Through a gateway',
+        'it asks what the gateway serves and takes the best of that, as ranked by',
+        '`zen models ls --chat --best`.',
         '',
         'Setting one asks the provider a one-word question first, so a model that',
-        'will not answer is never stored. --force skips that.',
+        "will not answer is never stored. A model whose API rejects copilot's tools",
+        '(gpt-4o and older) is refused before that. --force skips both.',
         '',
         '`zen meta model --pick` browses every model your keys reach: / filters,',
         't asks one a question, p takes it.',
@@ -752,14 +756,15 @@ async function go(
     const gateway = gatewayOf();
 
     const only = values.provider ? asProvider(values.provider) : undefined;
-    const chosen = chooseModel({
-        flag: values.model,
-        shell,
-        env: process.env[MODEL_ENV],
-        stored: (await readMeta()).model,
-        project: projectModel(project.dir),
-        fallback: defaultRef(store, only, gateway !== undefined),
-    });
+    // The fallback can cost a gateway listing, so it is only looked up when nothing else answers.
+    const chosen =
+        chooseModel({
+            flag: values.model,
+            shell,
+            env: process.env[MODEL_ENV],
+            stored: (await readMeta()).model,
+            project: projectModel(project.dir),
+        }) ?? chooseModel({ fallback: await fallbackRef(store, only, gateway !== undefined) });
     if (!chosen) {
         if (only) {
             throw credentialError(`no ${only} key`, `add one: zen key add ${only}`);
@@ -830,7 +835,10 @@ async function go(
         warn(competing);
     }
     if (chosen.from === 'default') {
-        note(dim(`no model set — using ${chosen.ref}, the best ${owner} model zen knows of`));
+        const what = gateway
+            ? 'the best model the gateway serves'
+            : `the best ${owner} model zen knows of`;
+        note(dim(`no model set — using ${chosen.ref}, ${what}`));
         note(dim('set another: zen meta model <provider>/<id>'));
     }
     note(cyan(`${owner} · ${wiring.model} · ${project.name}`));
@@ -1150,13 +1158,15 @@ async function model(ctx: Context, values: Flags, args: string[]): Promise<void>
         return set(ctx, values, project, ref);
     }
 
+    const store = await KeyStore.open();
+    store.materialize();
     const sources: ModelSources = {
         flag: undefined,
         shell,
         env: process.env[MODEL_ENV],
         stored: (await readMeta()).model,
         project: project ? projectModel(project.dir) : undefined,
-        fallback: defaultRef(await KeyStore.open()),
+        fallback: await fallbackRef(store, undefined, gatewayOf() !== undefined),
     };
     const chosen = chooseModel(sources);
     const at: Record<string, string | undefined> = {
@@ -1238,6 +1248,12 @@ async function vet(ctx: Context, ref: string): Promise<void> {
     }
     const { provider, id } = splitRef(ref);
     const owner = provider ?? 'openai';
+    if (!metaCompatible(owner, id)) {
+        throw usageError(
+            `${owner}/${id} cannot run the meta agent: its API rejects copilot's tools`,
+            'pick a reasoning model, e.g. from: zen models ls --chat --best',
+        );
+    }
     const store = await KeyStore.open();
     store.materialize();
     if (!gatewayOf() && !store.active(owner)) {

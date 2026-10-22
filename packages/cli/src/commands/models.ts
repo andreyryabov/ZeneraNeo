@@ -23,6 +23,7 @@ import {
     loadCatalogs,
     matches,
     routerBalance,
+    sampleByProvider,
     type Catalog,
     type CatalogEntry,
     type Filters,
@@ -32,11 +33,13 @@ import type { Command, Context } from '../command.ts';
 import { ensureHome } from '../home.ts';
 import { envNames, form, isProvider, KeyStore, PROVIDERS, type Provider } from '../keys.ts';
 import { probeChat, probeModel, type ModelProbe, type ModelTarget } from '../liveness.ts';
+import { compareModels } from '../rank.ts';
 import {
     ago,
     bold,
     CliError,
     credentialError,
+    cut,
     cyan,
     dim,
     EXIT,
@@ -44,6 +47,7 @@ import {
     isInteractive,
     json,
     note,
+    plain,
     progress,
     red,
     table,
@@ -221,18 +225,67 @@ function row(entry: CatalogEntry): string[] {
     ];
 }
 
-/** The table, with a heading wherever a reseller's rows change maker. */
-function grouped(entries: readonly CatalogEntry[]): string[] {
-    const lines = table(entries.map(row));
+/** Drops every column no row has anything in, so a blank one costs no gap. */
+function filled(rows: readonly string[][]): string[][] {
+    const keep = (rows[0] ?? []).map((_, c) => rows.some((r) => plain(r[c] ?? '') !== ''));
+    return rows.map((r) => r.filter((_, c) => keep[c]));
+}
+
+/**
+ * One section per provider (and per maker, where a provider resells), each
+ * headed by how much of it is on screen and how fresh it is. The maker is in
+ * the heading, so it is not repeated as a column. Columns line up across
+ * sections, so the eye can run down them past a heading.
+ */
+function sections(
+    shown: readonly CatalogEntry[],
+    all: readonly CatalogEntry[],
+    cats: readonly Catalog[],
+): string[] {
+    const totals = new Map<string, number>();
+    for (const e of all) {
+        totals.set(groupOf(e), (totals.get(groupOf(e)) ?? 0) + 1);
+    }
+    const counts = new Map<string, number>();
+    for (const e of shown) {
+        counts.set(groupOf(e), (counts.get(groupOf(e)) ?? 0) + 1);
+    }
+    const fresh = new Map(cats.map((c) => [c.provider, c]));
+    // An empty cell stays unstyled: style codes around nothing defeat the table's trimEnd.
+    const faint = (s: string): string => (s ? dim(s) : '');
+    const lines = table(
+        filled(
+            shown.map((e) => [
+                cyan(e.ref),
+                faint(roleMark(e)),
+                faint(tokens(e.contextLength)),
+                faint(e.pricing?.free ? 'free' : ''),
+                // A gateway names a model by its id, which the ref already says.
+                faint(e.name && e.name !== e.id ? e.name : ''),
+            ]),
+        ),
+    );
     const out: string[] = [];
+    const headed = new Set<Provider>();
+    // A wrapped row reads as two models; a piped listing keeps every character.
+    const fit = (line: string): string =>
+        process.stdout.isTTY && process.stdout.columns ? cut(line, process.stdout.columns) : line;
     let last: string | undefined;
-    entries.forEach((e, i) => {
+    shown.forEach((e, i) => {
         const group = groupOf(e);
-        if (group && group !== last) {
-            out.push(...(out.length > 0 ? [''] : []), bold(group));
+        if (group !== last) {
+            const total = totals.get(group)!;
+            const on = counts.get(group)!;
+            const size = on < total ? `${on} of ${total}` : String(total);
+            const cat = headed.has(e.provider) ? undefined : fresh.get(e.provider);
+            headed.add(e.provider);
+            out.push(
+                ...(out.length > 0 ? [''] : []),
+                `${bold(group)}  ${dim(size)}${cat ? `  ${freshness(cat)}` : ''}`,
+            );
         }
         last = group;
-        out.push(lines[i]!);
+        out.push(fit(`  ${lines[i]!}`));
     });
     return out;
 }
@@ -242,12 +295,19 @@ function grouped(entries: readonly CatalogEntry[]): string[] {
  * on stderr, because it is narration about the answer rather than the answer.
  */
 function explain(cats: readonly Catalog[]): void {
+    // Through a gateway every provider shares one request, so one failure is said once.
+    const said = new Set<string>();
     for (const cat of cats) {
         if (cat.problem) {
-            note(
-                `${yellow(cat.provider)} could not be listed: ${cat.problem.detail ?? 'no reason given'} ` +
-                    dim(`(showing the ${cat.origin} list)`),
-            );
+            const who = cat.via ? cat.via.name : cat.provider;
+            const detail = cat.problem.detail ?? 'no reason given';
+            if (said.has(`${who}\0${detail}`)) {
+                continue;
+            }
+            said.add(`${who}\0${detail}`);
+            // A gateway has no built-in list to fall back on.
+            const shown = cat.via ? 'nothing listed' : `showing the ${cat.origin} list`;
+            note(`${yellow(who)} could not be listed: ${detail} ` + dim(`(${shown})`));
             if (cat.problem.fix) {
                 note(dim(`  ${cat.problem.fix}`));
             }
@@ -319,7 +379,7 @@ const providers: Sub = async (ctx, args) => {
 
 const ls: Sub = async (ctx, args) => {
     const { values, positionals } = parse<
-        RoleFlags & { refresh?: boolean; limit?: string; all?: boolean }
+        RoleFlags & { refresh?: boolean; limit?: string; all?: boolean; best?: boolean }
     >(
         args,
         {
@@ -327,8 +387,9 @@ const ls: Sub = async (ctx, args) => {
             refresh: { type: 'boolean' },
             limit: { type: 'string' },
             all: { type: 'boolean' },
+            best: { type: 'boolean' },
         },
-        'zen models ls [provider] [--chat] [--embeddings] [--refresh] [--limit N] [--all]',
+        'zen models ls [provider] [--chat] [--embeddings] [--best] [--refresh] [--limit N] [--all]',
     );
     const where = await credentials();
     const targets = scope(where, positionals[0]);
@@ -343,7 +404,7 @@ const ls: Sub = async (ctx, args) => {
     const all = cats
         .flatMap((c) => c.entries)
         .filter((e) => matches(e, '', { roles }))
-        .sort(byGroup);
+        .sort(values.best ? compareModels : byGroup);
 
     if (ctx.json) {
         json({
@@ -360,14 +421,24 @@ const ls: Sub = async (ctx, args) => {
     announce(ctx, where);
     explain(cats);
     if (all.length === 0) {
-        note(dim('nothing matched — try: zen models ls --refresh'));
+        if (!cats.every((c) => c.problem)) {
+            note(dim('nothing matched — try: zen models ls --refresh'));
+        }
         return;
     }
-    writeAll(grouped(all.slice(0, limit)));
-    if (all.length > limit) {
-        note(dim(`${all.length - limit} more — narrow with \`zen models search\`, or pass --all`));
+    // A ranking keeps its top; a grouped listing shows some of every provider.
+    const shown = values.best ? all.slice(0, limit) : sampleByProvider(all, limit);
+    writeAll(values.best ? table(shown.map(row)) : sections(shown, all, cats));
+    if (all.length > shown.length) {
+        const one = targets.length === 1 ? targets[0] : '<provider>';
+        note('');
+        note(
+            dim(
+                `showing ${shown.length} of ${all.length} — zen models ls ${one} --all, or zen models search <words>`,
+            ),
+        );
     }
-    if (!where.gateway && all.some(isPartner)) {
+    if (!where.gateway && shown.some(isPartner)) {
         note(
             dim(
                 'partner models are billed through Vertex and must be enabled in Model Garden first: https://console.cloud.google.com/vertex-ai/model-garden',
@@ -389,6 +460,7 @@ const search: Sub = async (ctx, args) => {
         'min-context'?: string;
         limit?: string;
         refresh?: boolean;
+        best?: boolean;
     };
     const { values, positionals } = parse<Values>(
         args,
@@ -401,8 +473,9 @@ const search: Sub = async (ctx, args) => {
             'min-context': { type: 'string' },
             limit: { type: 'string' },
             refresh: { type: 'boolean' },
+            best: { type: 'boolean' },
         },
-        'zen models search <query> [--provider p] [--embeddings] [--tools] [--vision] [--free] [--min-context N] [--limit N]',
+        'zen models search <query> [--provider p] [--embeddings] [--tools] [--vision] [--free] [--min-context N] [--best] [--limit N]',
     );
     const query = positionals.join(' ').trim();
     const where = await credentials();
@@ -428,9 +501,11 @@ const search: Sub = async (ctx, args) => {
         // Cheapest first when price is known: search is usually the step before
         // picking one, and the free ones are what most people are looking for.
         .sort(
-            (a, b) =>
-                Number(b.pricing?.free ?? false) - Number(a.pricing?.free ?? false) ||
-                byGroup(a, b),
+            values.best
+                ? compareModels
+                : (a, b) =>
+                      Number(b.pricing?.free ?? false) - Number(a.pricing?.free ?? false) ||
+                      byGroup(a, b),
         );
 
     if (ctx.json) {
@@ -835,6 +910,11 @@ export const models: Command = {
         '  zen models test <ref> …          Ask it one real question.',
         '  zen models browse [provider]     Walk providers and models with the',
         '                                   arrow keys; t asks one, p prints its ref.',
+        '',
+        'Listings are grouped by provider, best model first in each. `ls --best`',
+        'and `search --best` drop the groups for one list, best first: Anthropic,',
+        'OpenAI, Google, then the rest; newer generations and higher tiers ahead;',
+        'mini, nano, lite and haiku last. A heuristic read off the ids, not a benchmark.',
     ],
     run: async (ctx) => {
         const [name, ...rest] = ctx.args;

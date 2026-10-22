@@ -1,11 +1,15 @@
 import {
+    loadCatalogs,
     paths,
     PROVIDER_NAMES,
+    PROVIDERS,
+    rankModels,
     readJson,
     writeJson,
     type KeyStore,
     type Provider,
 } from './host.ts';
+import { metaCompatible } from './wire.ts';
 
 // ---------------------------------------------------------------------------
 // The model
@@ -112,6 +116,31 @@ export function defaultRef(store: KeyStore, only?: Provider, gateway = false): s
         }
     }
     return undefined;
+}
+
+/**
+ * The best chat model a gateway actually serves, by `rank.ts`: a vendor
+ * recommendation it does not carry would fail on the first call. The store must
+ * already be materialized, since that is what puts the gateway in the environment.
+ */
+export async function gatewayDefaultRef(only?: Provider): Promise<string | undefined> {
+    const cats = await loadCatalogs(only ? [only] : PROVIDERS);
+    const usable = cats
+        .flatMap((c) => c.entries)
+        .filter((e) => e.roles.includes('chat') && metaCompatible(e.provider, e.id));
+    const best = rankModels(usable)[0];
+    return best ? `${best.provider}/${best.id}` : undefined;
+}
+
+/** The last resort: through a gateway, what it serves; otherwise what a held key recommends. */
+export async function fallbackRef(
+    store: KeyStore,
+    only?: Provider,
+    gateway = false,
+): Promise<string | undefined> {
+    return (
+        (gateway ? await gatewayDefaultRef(only) : undefined) ?? defaultRef(store, only, gateway)
+    );
 }
 
 // ---------------------------------------------------------------------------

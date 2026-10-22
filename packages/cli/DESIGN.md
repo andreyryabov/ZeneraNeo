@@ -903,7 +903,11 @@ for the first provider holding a key. A first `zen meta` on a machine with one
 key should run, and the agent is pointed at the project's own specification, so
 the deep tier is what it falls back to rather than the cheap one. The choice is
 announced on stderr with the command that overrides it, since a model picked
-for you is only acceptable if you can see it happen.
+for you is only acceptable if you can see it happen. Through a gateway the
+recommendation table is the wrong answer - the gateway may not carry it - so the
+last resort there is the best chat model it lists, ranked by `rank.ts`: parsed
+generation and tier, Anthropic before OpenAI before Google, small tiers last.
+It is looked up only when nothing above answered, since it costs a listing.
 
 **A stored ref is vetted before it is stored.** `zen meta model <ref>` asks the
 model one word and refuses to write one that does not answer, because the whole

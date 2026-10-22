@@ -41,6 +41,7 @@ import {
     loadCatalogs,
     matches,
     perMillion,
+    sampleByProvider,
     type CatalogEntry,
 } from '../src/catalog.ts';
 import { ALIASES, COMMANDS, EXTERNAL, type External } from '../src/commands/index.ts';
@@ -69,7 +70,9 @@ import {
     chooseModel,
     defaultRef,
     footerCells,
+    gatewayDefaultRef,
     masked,
+    metaCompatible,
     misspelledProvider,
     promptPath,
     readPrompt,
@@ -3316,6 +3319,34 @@ describe('reading a provider listing', () => {
         expect(failed.map((r) => r.id)).toContain('gemini-3.8-flash');
     });
 
+    it('shares a truncated listing between providers, best of each first', () => {
+        const rows = (
+            [
+                ['anthropic', 'claude-opus-5'],
+                ['anthropic', 'claude-sonnet-5'],
+                ['anthropic', 'claude-haiku-5'],
+                ['openai', 'gpt-6-sol'],
+                ['openai', 'gpt-5.6-sol'],
+                ['openai', 'gpt-5.6-terra'],
+                ['google', 'gemini-4-argon'],
+            ] as const
+        ).map(([provider, id]) => ({
+            ref: `${provider}:${id}`,
+            id,
+            provider,
+            roles: ['chat' as const],
+            source: 'live' as const,
+        }));
+        expect(sampleByProvider(rows, 5).map((r) => r.ref)).toEqual([
+            'anthropic:claude-opus-5',
+            'anthropic:claude-sonnet-5',
+            'openai:gpt-6-sol',
+            'openai:gpt-5.6-sol',
+            'google:gemini-4-argon',
+        ]);
+        expect(sampleByProvider(rows, 10)).toHaveLength(7);
+    });
+
     it('walks every OpenRouter page and folds in the separate embedding list', async () => {
         const chat = (id: string) => ({
             id,
@@ -3527,6 +3558,31 @@ describe('listing through a gateway', () => {
         expect(asked).toBe(2);
         expect(cat).toMatchObject({ origin: 'live' });
         expect(cat.entries.map((e) => e.ref)).toEqual(['openai:gpt-5.6-luna']);
+    });
+
+    // The meta agent's last resort: what the gateway serves, not a vendor recommendation it may not.
+    it('falls back to the best chat model the gateway serves that can carry the tools', async () => {
+        answer = {
+            status: 200,
+            body: {
+                data: [
+                    { id: 'openai/gpt-4o' },
+                    { id: 'openai/gpt-6-sol' },
+                    { id: 'gemini/gemini-4-argon' },
+                    { id: 'anthropic/claude-haiku-5' },
+                    { id: 'vertex/claude-sonnet-5' },
+                    { id: 'openai/text-embedding-3-large' },
+                ],
+            },
+        };
+        expect(await gatewayDefaultRef()).toBe('vertex/claude-sonnet-5');
+        expect(await gatewayDefaultRef('openai')).toBe('openai/gpt-6-sol');
+        expect(await gatewayDefaultRef('anthropic')).toBe('anthropic/claude-haiku-5');
+    });
+
+    it('has no gateway fallback when nothing served can run the meta agent', async () => {
+        answer = { status: 200, body: { data: [{ id: 'openai/gpt-4o' }] } };
+        expect(await gatewayDefaultRef()).toBeUndefined();
     });
 
     it('ignores a cached vendor listing', async () => {
@@ -3816,6 +3872,14 @@ describe('wiring a zen key into copilot', () => {
         expect(wireApi('openai', 'gpt-6-sol')).toBe('responses');
         expect(wireApi('openai', 'gpt-4o')).toBeUndefined();
         expect(wireApi('anthropic', 'claude-sonnet-4.5')).toBeUndefined();
+    });
+
+    it('knows which models cannot carry its tools', () => {
+        expect(metaCompatible('openai', 'gpt-5-mini')).toBe(true);
+        expect(metaCompatible('openai', 'gpt-4o')).toBe(false);
+        expect(metaCompatible('openai', 'chatgpt-4o-latest')).toBe(false);
+        expect(metaCompatible('anthropic', 'claude-opus-5')).toBe(true);
+        expect(metaCompatible('vertex', 'gemini-3.8-flash')).toBe(true);
     });
 
     it('never lets a secret into something printable', () => {

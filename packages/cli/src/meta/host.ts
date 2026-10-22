@@ -7,11 +7,13 @@
 // ---------------------------------------------------------------------------
 
 export { invokedAs, parse } from '../args.ts';
+export { loadCatalogs } from '../catalog.ts';
 export type { EventLine } from '../eventlog.ts';
 export { paths, readJson, writeJson } from '../home.ts';
-export { envOf, type KeyEntry, type KeyStore, type Provider } from '../keys.ts';
+export { envOf, PROVIDERS, type KeyEntry, type KeyStore, type Provider } from '../keys.ts';
 export { PROVIDER_NAMES, splitRef } from '../modelref.ts';
 export { duration } from '../narrate.ts';
+export { rankModels } from '../rank.ts';
 export { copyTree, SHARED_RULES, TEMPLATES } from '../scaffold.ts';
 export {
     bold,
