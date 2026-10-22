@@ -47,6 +47,9 @@ npm run release -- patch       # minor | major | 1.4.0 are also accepted
 git push --follow-tags
 ```
 
+`make patch` does all of the above, pushes only the new tag, then waits - printing as it
+goes - until the new version appears on npm.
+
 **One tag at a time.** `--follow-tags` pushes every unpushed tag, so bumping twice before
 pushing starts two workflow runs at once; they race to write the same packument and the
 registry answers `409 Failed to save packument`, leaving a release half published. The
