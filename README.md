@@ -64,9 +64,11 @@ zen meta model --pick
 ```sh
 zen init my-project
 zen open my-project
+cd my-project
 ```
 
-`zen open my-project` opens the project in your default editor.
+`zen open my-project` opens the project in your default editor. Run the remaining
+commands from the project directory entered above.
 
 ### 4. Describe the system
 
