@@ -64,11 +64,9 @@ zen meta model --pick
 ```sh
 zen init my-project
 zen open my-project
-cd my-project
 ```
 
-`zen open my-project` opens the project in your default editor. Run the remaining
-commands from the project directory entered above.
+`zen open my-project` opens the project in your default editor.
 
 ### 4. Describe the system
 
@@ -145,6 +143,12 @@ zen meta run my-project /spec-apply-feedback
 ```
 
 ### 7. Check and run
+
+> Enter the project directory:
+>
+> ```sh
+> cd my-project
+> ```
 
 - `zen check` to verify that the project loads and the models answer.
 - `zen run my-project "your question"` to run it. Without a question it opens
