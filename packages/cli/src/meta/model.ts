@@ -45,6 +45,11 @@ export const ORDER: readonly ModelSource[] = [
     'default',
 ];
 
+/**
+ * Decides which model `zen meta` runs copilot on, when it can be named in six
+ * places at once. The source comes back too, so a surprising pick can be traced
+ * ("from agents.yaml model:") instead of guessed at.
+ */
 export function chooseModel(sources: ModelSources): ModelChoice | undefined {
     const at: Record<ModelSource, string | undefined> = {
         flag: sources.flag,
@@ -94,11 +99,15 @@ export const RECOMMENDED: Partial<Record<Provider, readonly string[]>> = {
 /** Which provider is tried first when several are held. */
 const PREFERENCE: readonly Provider[] = ['anthropic', 'openai', 'vertex', 'google', 'openrouter'];
 
-/** The recommended ref for the first provider with a key, or for `only`. */
-export function defaultRef(store: KeyStore, only?: Provider): string | undefined {
+/**
+ * The model `zen meta` falls back to when nothing names one, so a machine with
+ * just a key (or just a gateway, which reaches every provider) still runs.
+ * `only` is `--provider`: the recommendation for that provider, if it is held.
+ */
+export function defaultRef(store: KeyStore, only?: Provider, gateway = false): string | undefined {
     for (const provider of only ? [only] : PREFERENCE) {
         const id = RECOMMENDED[provider]?.[0];
-        if (id && store.active(provider)) {
+        if (id && (gateway || store.active(provider))) {
             return `${provider}/${id}`;
         }
     }

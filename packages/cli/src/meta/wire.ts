@@ -1,3 +1,4 @@
+import { GATEWAY_UPSTREAMS, type Gateway } from '@zenera/neo';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import {
@@ -161,6 +162,32 @@ export function wire(store: KeyStore, entry: KeyEntry, id: string): Wiring {
     }
 
     return { provider, model: env.COPILOT_PROVIDER_WIRE_MODEL ?? id, env, secret, warnings };
+}
+
+/**
+ * Through a gateway: one virtual key, and Bifrost's OpenAI or Anthropic drop-in,
+ * which routes on an `<upstream>/<id>` wire model. Claude speaks Anthropic
+ * wherever it is hosted; everything else goes through the OpenAI one.
+ */
+export function wireGateway(at: Gateway, provider: Provider, id: string): Wiring {
+    const claude = provider === 'anthropic' || (provider === 'vertex' && vertexClaude(id));
+    const model = provider === 'vertex' ? id.replace(/^anthropic\//, '') : id;
+    const env: Record<string, string> = {
+        COPILOT_PROVIDER_TYPE: claude ? 'anthropic' : 'openai',
+        COPILOT_PROVIDER_BASE_URL: `${at.baseURL}${claude ? '/anthropic' : '/openai/v1'}`,
+        COPILOT_PROVIDER_MODEL_ID: model.replace(/^google\//, ''),
+        COPILOT_PROVIDER_WIRE_MODEL: `${GATEWAY_UPSTREAMS[provider]}/${model}`,
+    };
+    const api = wireApi(provider, model);
+    if (api) {
+        env.COPILOT_PROVIDER_WIRE_API = api;
+    }
+    const secret: string[] = [];
+    if (at.apiKey) {
+        env.COPILOT_PROVIDER_API_KEY = at.apiKey;
+        secret.push('COPILOT_PROVIDER_API_KEY');
+    }
+    return { provider, model: env.COPILOT_PROVIDER_WIRE_MODEL!, env, secret, warnings: [] };
 }
 
 /** Values a `--dry-run` may print. A key is four characters and an apology. */

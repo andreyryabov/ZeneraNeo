@@ -628,7 +628,12 @@ export class KeyStore {
         return env;
     }
 
-    /** Applies `environment()` to this process. Returns what it set. */
+    /**
+     * Copies the keyring's active credentials into `process.env`, the only
+     * place the library looks. Must run before anything that reads them —
+     * in `bifrost` mode this is what sets `BIFROST_BASE_URL`, so `gatewayOf()`
+     * returns undefined until it has. Returns what it set.
+     */
     materialize(only?: KeyOwner[]): Record<string, string> {
         const env = this.environment(only);
         Object.assign(process.env, env);

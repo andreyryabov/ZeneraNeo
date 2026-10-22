@@ -85,6 +85,7 @@ import {
     transient,
     wire,
     wireApi,
+    wireGateway,
     type Outcome,
     type Sink,
 } from '../src/meta/index.ts';
@@ -3728,6 +3729,8 @@ describe('which model the meta agent runs on', () => {
         expect(defaultRef(held('openai', 'vertex'), 'vertex')).toBe('vertex/gemini-3.8-flash');
         expect(defaultRef(held('openai'), 'vertex')).toBeUndefined();
         expect(defaultRef(held())).toBeUndefined();
+        expect(defaultRef(held(), undefined, true)).toBe('anthropic/claude-opus-5');
+        expect(defaultRef(held(), 'vertex', true)).toBe('vertex/gemini-3.8-flash');
     });
 });
 
@@ -3847,6 +3850,47 @@ describe('wiring a zen key into copilot', () => {
         expect(() =>
             wire(store, entry({ provider: 'vertex', holds: 'secret' }), 'claude-sonnet-5-5'),
         ).toThrow(/service account/);
+    });
+
+    describe('through a gateway', () => {
+        const at = { baseURL: 'http://bifrost:8080', apiKey: 'sk-bf-secret' };
+
+        it('sends OpenAI models to the openai drop-in, qualified, on the responses api', () => {
+            const out = wireGateway(at, 'openai', 'gpt-6-sol');
+            expect(out.env).toMatchObject({
+                COPILOT_PROVIDER_TYPE: 'openai',
+                COPILOT_PROVIDER_BASE_URL: 'http://bifrost:8080/openai/v1',
+                COPILOT_PROVIDER_MODEL_ID: 'gpt-6-sol',
+                COPILOT_PROVIDER_WIRE_MODEL: 'openai/gpt-6-sol',
+                COPILOT_PROVIDER_WIRE_API: 'responses',
+            });
+            expect(masked(out.env, out.secret).join('\n')).not.toContain('sk-bf-secret');
+        });
+
+        it('sends Claude to the anthropic drop-in, wherever it is hosted', () => {
+            for (const [provider, id] of [
+                ['anthropic', 'claude-opus-5'],
+                ['vertex', 'anthropic/claude-opus-5'],
+            ] as const) {
+                const out = wireGateway(at, provider, id);
+                expect(out.env.COPILOT_PROVIDER_TYPE).toBe('anthropic');
+                expect(out.env.COPILOT_PROVIDER_BASE_URL).toBe('http://bifrost:8080/anthropic');
+                expect(out.env.COPILOT_PROVIDER_MODEL_ID).toBe('claude-opus-5');
+                expect(out.env.COPILOT_PROVIDER_WIRE_MODEL).toBe(`${provider}/claude-opus-5`);
+                expect(out.relay).toBeUndefined();
+            }
+        });
+
+        it('names the upstream for everything else, and holds no key it was not given', () => {
+            const out = wireGateway(
+                { baseURL: 'http://bifrost:8080' },
+                'google',
+                'gemini-3.8-flash',
+            );
+            expect(out.env.COPILOT_PROVIDER_WIRE_MODEL).toBe('gemini/gemini-3.8-flash');
+            expect(out.env.COPILOT_PROVIDER_API_KEY).toBeUndefined();
+            expect(out.secret).toEqual([]);
+        });
     });
 });
 

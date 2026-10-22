@@ -31,7 +31,21 @@ export interface Gateway {
     apiKey?: string;
 }
 
-/** The gateway this process is configured for, or undefined when vendors are called directly. */
+/**
+ * The single switch for gateway mode: the Bifrost gateway named by
+ * `BIFROST_BASE_URL` (and its virtual key from `BIFROST_API_KEY`), or undefined
+ * when providers are called directly with their own vendor keys.
+ *
+ * When it returns a gateway, the model registry routes every provider through
+ * it (only a pre-built client is left alone), and the CLI stops requiring
+ * per-vendor keys since the virtual key stands in for all of them.
+ *
+ * The environment is the only source, read on every call and never cached.
+ * `zen key mode bifrost` keeps the url and key in the keyring, not the shell;
+ * they reach `process.env` only when the CLI's `KeyStore.materialize()` runs.
+ * Called before that, or from the library without the CLI, this returns
+ * undefined unless `BIFROST_BASE_URL` is really set.
+ */
 export function gatewayOf(): Gateway | undefined {
     const url = process.env[GATEWAY_URL_ENV]?.trim();
     if (!url) {

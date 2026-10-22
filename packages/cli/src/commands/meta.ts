@@ -1,4 +1,4 @@
-import { readProjectConfig } from '@zenera/neo';
+import { gatewayOf, readProjectConfig } from '@zenera/neo';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
@@ -55,6 +55,7 @@ import {
     terminalSink,
     transient,
     wire,
+    wireGateway,
     writeMeta,
     type ModelSources,
 } from '../meta/index.ts';
@@ -747,6 +748,8 @@ async function go(
     ensureHome();
     const store = await KeyStore.open();
     store.materialize();
+    // After materialize: a keyring in bifrost mode is what sets the url.
+    const gateway = gatewayOf();
 
     const only = values.provider ? asProvider(values.provider) : undefined;
     const chosen = chooseModel({
@@ -755,7 +758,7 @@ async function go(
         env: process.env[MODEL_ENV],
         stored: (await readMeta()).model,
         project: projectModel(project.dir),
-        fallback: defaultRef(store, only),
+        fallback: defaultRef(store, only, gateway !== undefined),
     });
     if (!chosen) {
         if (only) {
@@ -775,12 +778,12 @@ async function go(
     if (meant && !only) {
         warn(`${chosen.ref} names no provider — did you mean ${meant}/${id}?`);
     }
-    const entry = store.active(owner);
-    if (!entry) {
+    const entry = gateway ? undefined : store.active(owner);
+    if (!gateway && !entry) {
         throw credentialError(`no ${owner} key`, `add one: zen key add ${owner}`);
     }
 
-    const wiring = wire(store, entry, id);
+    const wiring = gateway ? wireGateway(gateway, owner, id) : wire(store, entry!, id);
     const binary = locate();
     // Copilot cannot carry a session to another model: the resume fails on the first call.
     const ran = values.resume ? sessionModel(values.resume) : undefined;
@@ -1236,10 +1239,10 @@ async function vet(ctx: Context, ref: string): Promise<void> {
     const { provider, id } = splitRef(ref);
     const owner = provider ?? 'openai';
     const store = await KeyStore.open();
-    if (!store.active(owner)) {
+    store.materialize();
+    if (!gatewayOf() && !store.active(owner)) {
         throw credentialError(`no ${owner} key to try ${id} with`, `add one: zen key add ${owner}`);
     }
-    store.materialize();
 
     const bar = ctx.json ? undefined : progress();
     bar?.update(dim(`asking ${owner} about ${id} …`));
@@ -1298,13 +1301,12 @@ async function pickModel(ctx: Context): Promise<string> {
         throw usageError('--pick needs a terminal', 'name the model instead');
     }
     const store = await KeyStore.open();
-    const known = store.entries
-        .filter((e) => e.provider !== 'exa')
-        .map((e) => e.provider as Provider);
-    if (known.length === 0) {
+    store.materialize();
+    const known = store.entries.map((e) => e.provider).filter(isProvider);
+    if (known.length === 0 && !gatewayOf()) {
         throw credentialError('no keys to choose from', 'add one: zen key add openai');
     }
-    const held = [...new Set(known)];
+    const held = gatewayOf() ? [] : [...new Set(known)];
     const { browseModels } = await import('./models.ts');
     const chosen = await browseModels({
         initial: held.length === 1 ? held[0] : undefined,
