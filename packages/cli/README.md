@@ -30,9 +30,6 @@ work in a specification; a **meta-agent** designs the multi-agent system that
 does it; a **self-improving loop** of runs, traces, evals and fine-tuning makes
 that system better over time.
 
-`Multi-Agent Systems` · `Meta-Agent` · `Self-Improvement` · `Agent Fine-Tuning` ·
-`Evals & Rubrics` · `Trajectory Inspection` · `Hybrid RAG` · `Graph Memory` · `Sandboxed Tools`
-
 > Part of [ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo). This is an
 > open-source side project for experimentation and chore work - **not** the
 > official Zenera AI Platform. It carries no support or stability promises.
