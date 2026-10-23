@@ -48,6 +48,9 @@ Read, in this order, and do not edit until all of it is read:
 6. `SPECIFICATION-FEEDBACK.md`, if it exists - do not re-raise something already
    open there.
 
+Never read `.tmp/logs/meta.*` - those are other runs of this prompt, not
+evidence - nor anything of `zen`'s own (copilot instructions §0.2).
+
 On an incremental pass this list narrows to the artefacts the scope implicates,
 and to the changed hunks of the specification rather than all of it. The
 narrowing is a claim: name what you skipped and why the diff does not reach it.
@@ -382,10 +385,14 @@ answer, fold its text into `SPECIFICATION.md` yourself, and say so in the chat.
 After `zen check` passes, run `scripts/_setup.sh` yourself. A pass is not done
 until it has run to completion in this session.
 
-It is slow - an embedding index is minutes, not seconds - so start it in the
-background and follow the logs instead of waiting blind:
+It is slow - embedding a large corpus is hours, and the progress line says how
+many - so start it in the background and follow the logs instead of waiting
+blind:
 
 - Tail `.tmp/logs/setup-*.log` and check the output artefact is still growing.
+- **Slow is not failed.** A step has failed when it exits non-zero, or when its
+  log has not grown for 10 minutes. A long estimate is the answer to how long
+  the step takes, not a problem to investigate.
 - **Wait in a loop, never in one long sleep.** Sleep at most 30 seconds at a
   time, then check the log and say what it shows, and repeat until the step
   finishes. A single long block makes the run unwatchable and hides a failure
@@ -397,6 +404,10 @@ background and follow the logs instead of waiting blind:
 - On failure, read that step's log, fix the cause, and run `scripts/_setup.sh`
   again - re-running is the fix path, not a reset. If the same step fails twice
   for the same reason, stop and raise it in `SPECIFICATION-FEEDBACK.md`.
+- The cause you fix is in the project: the step's script, its inputs,
+  `agents.yaml`. When the log points inside `zen` itself, do not go looking -
+  quote the command and the line in `SPECIFICATION-FEEDBACK.md`, report the step
+  as failed, and go on to §7.
 - Prove re-entrancy: once it has succeeded, run `scripts/_setup.sh` once more and
   check that every step reports `skipped` rather than rebuilding.
 - Prove the dry run: `scripts/_setup.sh --check` must then report every step

@@ -22,16 +22,16 @@ hits for `limit` are not an answer; the eight lines around one of them are.
 zen rag docs <index|restore|ready|search|list|grep|show|stats> [path...]
 ```
 
-| Command   | Answers                                    | Embedder? | Typical |
-| --------- | ------------------------------------------ | --------- | ------- |
-| `index`   | builds the thing                           | yes       | minutes |
-| `restore` | _put the vectors back_                     | **yes**   | minutes |
-| `ready`   | _can this index answer at all?_            | no        | instant |
-| `search`  | _where does this corpus talk about X?_     | **yes**   | seconds |
-| `list`    | _what documents/headings/tables are here?_ | no        | instant |
-| `grep`    | _does the string X appear anywhere?_       | no        | instant |
-| `show`    | _print this section, verbatim_             | no        | instant |
-| `stats`   | _what is in this index?_                   | no        | instant |
+| Command   | Answers                                    | Embedder? | Typical          |
+| --------- | ------------------------------------------ | --------- | ---------------- |
+| `index`   | builds the thing                           | yes       | minutes to hours |
+| `restore` | _put the vectors back_                     | **yes**   | minutes to hours |
+| `ready`   | _can this index answer at all?_            | no        | instant          |
+| `search`  | _where does this corpus talk about X?_     | **yes**   | seconds          |
+| `list`    | _what documents/headings/tables are here?_ | no        | instant          |
+| `grep`    | _does the string X appear anywhere?_       | no        | instant          |
+| `show`    | _print this section, verbatim_             | no        | instant          |
+| `stats`   | _what is in this index?_                   | no        | instant          |
 
 Only `search` ranks, and only `search` costs a network round trip - it embeds
 the query before it can compare anything. The other four read `outline.json`
@@ -199,7 +199,7 @@ would land on the same name are deduped rather than merged.
 | -------------------- | ----------- | ------------------------------------------------------------ |
 | `--embedding <ref>`  | -           | Which embedder makes the vectors. Omit it to see the choices |
 | `-o`, `--out <dir>`  | `./docs-db` | Where the index goes; `$ZEN_DOCS_DB` if that is set          |
-| `--batch <n>`        | `96`        | Texts per embedding request, and how often progress prints   |
+| `--batch <n>`        | model's own | Texts per embedding request. `gemini-embedding-*` takes 1    |
 | `--chunk-tokens <n>` | `384`       | Target chunk size. Leave it alone unless you have a reason   |
 | `--quiet`            | -           | No narration                                                 |
 
@@ -210,9 +210,13 @@ a real environment variable always wins.
 ### What it prints
 
 A per-document table (lines, sections, tables, chunks) with a total row, a line
-per skipped file with the reason, then a progress line per batch. **stdout is
-the output directory and nothing else**, so `DIR=$(zen rag docs index …)` works;
-everything else is stderr.
+per skipped file with the reason, then a progress line every few seconds:
+`embedded 22416/242175 · 9% · 8m50s · ~1h26m left`. **That estimate is how
+long the build takes, not a sign that it is stuck.** Time is chunks divided by
+throughput, and a `gemini-embedding-*` model takes one text per request, so a
+corpus of a few hundred thousand chunks is hours. **stdout is the output
+directory and nothing else**, so `DIR=$(zen rag docs index …)` works; everything
+else is stderr.
 
 This is the one command here that spends money and time: it embeds every chunk.
 While it runs, the output directory narrates itself - `README.md` is a live

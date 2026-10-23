@@ -5,7 +5,15 @@ import { hostname, tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { LOCK_FILE, README_FILE, type Building } from '../src/common/progress.ts';
+import {
+    embedReporter,
+    INTERVAL_MS,
+    LOCK_FILE,
+    README_FILE,
+    remaining,
+    span,
+    type Building,
+} from '../src/common/progress.ts';
 import type { Counts as DocCounts } from '../src/docs/files.ts';
 import { DOCS_REPORT } from '../src/docs/readme.ts';
 import { buildIndex } from '../src/schema/build.ts';
@@ -223,5 +231,66 @@ describe('the README of a build still running', () => {
 
     it('says nothing about what it waits on when it waits on nothing', () => {
         expect(DOCS_REPORT.building(state(10, []))).not.toContain('still on');
+    });
+});
+
+// A slow embedding pass with no estimate reads as a hang, and a hang gets investigated.
+describe('the embedding narration', () => {
+    const run = (reports: [ms: number, done: number][], total = 1000): string[] => {
+        const said: string[] = [];
+        let now = 0;
+        const report = embedReporter(
+            (line) => said.push(line),
+            0,
+            () => now,
+        );
+        for (const [at, done] of reports) {
+            now = at;
+            report(done, total);
+        }
+        return said;
+    };
+
+    it('estimates what is left from the pace so far', () => {
+        const said = run([
+            [1000, 10],
+            [1000 + INTERVAL_MS, 110],
+        ]);
+        expect(said).toHaveLength(2);
+        expect(said[0]).not.toContain('left');
+        // 100 in 5s, 890 to go: 44.5s.
+        expect(said[1]).toContain('110/1000 · 11% · 6s · ~45s left');
+    });
+
+    it('speaks once per interval however often it is told, and always at the end', () => {
+        const said = run([
+            [0, 1],
+            [10, 2],
+            [20, 3],
+            [30, 1000],
+        ]);
+        expect(said).toHaveLength(2);
+        expect(said[1]).toContain('1000/1000 · 100%');
+        expect(said[1]).not.toContain('left');
+    });
+
+    it('does not let vectors the cache already held make the rest look free', () => {
+        const said = run([
+            [0, 900],
+            [INTERVAL_MS, 910],
+        ]);
+        // 10 in 5s, 90 to go: 45s - not the 0.5s a pace from zero would claim.
+        expect(said[1]).toContain('~45s left');
+    });
+
+    it('has no estimate without progress', () => {
+        expect(remaining({ at: 0, done: 5 }, 5, 10, 60_000)).toBeUndefined();
+        expect(remaining({ at: 0, done: 0 }, 5, 10, 0)).toBeUndefined();
+    });
+
+    it('writes hours as hours', () => {
+        expect(span(45_000)).toBe('45s');
+        expect(span(173_000)).toBe('2m53s');
+        expect(span(5_700_000)).toBe('1h35m');
     });
 });

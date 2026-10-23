@@ -21,17 +21,17 @@ word "password" appears in forty places that are not the one you want.
 zen rag schema <index|restore|ready|search|list|grep|trace|show|stats> [spec...]
 ```
 
-| Command   | Answers                                | Embedder? | Typical |
-| --------- | -------------------------------------- | --------- | ------- |
-| `index`   | builds the thing                       | yes       | minutes |
-| `restore` | _put the vectors back_                 | **yes**   | minutes |
-| `ready`   | _can this index answer at all?_        | no        | instant |
-| `search`  | _what is this API's way to do X?_      | **yes**   | seconds |
-| `list`    | _what methods/types/fields are there?_ | no        | instant |
-| `grep`    | _does the string X appear anywhere?_   | no        | instant |
-| `trace`   | _which call can reach this field?_     | no        | instant |
-| `show`    | _print exactly these things_           | no        | instant |
-| `stats`   | _what is in this index?_               | no        | instant |
+| Command   | Answers                                | Embedder? | Typical          |
+| --------- | -------------------------------------- | --------- | ---------------- |
+| `index`   | builds the thing                       | yes       | minutes to hours |
+| `restore` | _put the vectors back_                 | **yes**   | minutes to hours |
+| `ready`   | _can this index answer at all?_        | no        | instant          |
+| `search`  | _what is this API's way to do X?_      | **yes**   | seconds          |
+| `list`    | _what methods/types/fields are there?_ | no        | instant          |
+| `grep`    | _does the string X appear anywhere?_   | no        | instant          |
+| `trace`   | _which call can reach this field?_     | no        | instant          |
+| `show`    | _print exactly these things_           | no        | instant          |
+| `stats`   | _what is in this index?_               | no        | instant          |
 
 Only `search` ranks, and only `search` costs a network round trip - it embeds
 the query before it can compare anything. The other five read `graph.json` off
@@ -163,7 +163,7 @@ zen rag schema index <spec...> [--embedding <ref>] [-o <dir>] [--batch <n>]
 | ------------------- | ------------- | ---------------------------------------------------------------------------------------------- |
 | `--embedding <ref>` | -             | Which embedder makes the vectors. Omit it to see the choices                                   |
 | `-o`, `--out <dir>` | `./schema-db` | Where the index goes; `$ZEN_SCHEMA_DB` if that is set                                          |
-| `--batch <n>`       | `96`          | Texts per embedding request, and how often progress prints                                     |
+| `--batch <n>`       | model's own   | Texts per embedding request. `gemini-embedding-*` takes 1                                      |
 | `--no-sources`      | -             | Keep no copy of the documents; `show --source` rebuilds them, and `restore` becomes impossible |
 | `--quiet`           | -             | No narration                                                                                   |
 

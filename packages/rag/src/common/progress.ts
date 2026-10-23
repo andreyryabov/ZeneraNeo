@@ -249,3 +249,56 @@ function claim(path: string, lock: Lock): void {
             ),
     );
 }
+
+export function span(ms: number): string {
+    const seconds = Math.round(ms / 1000);
+    if (seconds < 60) {
+        return `${seconds}s`;
+    }
+    const minutes = Math.floor(seconds / 60);
+    return minutes < 60
+        ? `${minutes}m${seconds % 60}s`
+        : `${Math.floor(minutes / 60)}h${minutes % 60}m`;
+}
+
+/**
+ * How long is left at the pace since `first`, or undefined until there is a
+ * pace. Measured from the first report rather than the start, so vectors the
+ * cache already held do not make the rest look free.
+ */
+export function remaining(
+    first: { at: number; done: number },
+    done: number,
+    total: number,
+    now: number,
+): number | undefined {
+    const went = done - first.done;
+    const took = now - first.at;
+    return went > 0 && took > 0 && done < total ? ((total - done) * took) / went : undefined;
+}
+
+/**
+ * The embedding narration. A model that takes one text per request reports
+ * once per text, so it is throttled; the last report always gets through.
+ */
+export function embedReporter(
+    say: (line: string) => void,
+    started: number,
+    clock: () => number = Date.now,
+): (done: number, total: number) => void {
+    let first: { at: number; done: number } | undefined;
+    let saidAt = -Infinity;
+    return (done, total) => {
+        const now = clock();
+        first ??= { at: now, done };
+        if (done < total && now - saidAt < INTERVAL_MS) {
+            return;
+        }
+        saidAt = now;
+        const left = remaining(first, done, total, now);
+        say(
+            `  embedded ${done}/${total} · ${Math.floor((done / total) * 100)}% · ${span(now - started)}` +
+                (left === undefined ? '' : ` · ~${span(left)} left`),
+        );
+    };
+}

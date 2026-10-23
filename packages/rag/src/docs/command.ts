@@ -21,7 +21,7 @@ import { join, relative, resolve } from 'node:path';
 import { resolveEmbedder } from '../common/embedder.ts';
 import { locateIndex, outputDir } from '../common/locate.ts';
 import { assertSameEmbedding, inspectIndex } from '../common/manifest.ts';
-import { INTERVAL_MS } from '../common/progress.ts';
+import { embedReporter, INTERVAL_MS, span } from '../common/progress.ts';
 import { breakdown, grid, indexing } from '../common/prose.ts';
 import { announce, reportReady, stagingFor, swapIn } from '../common/restore.ts';
 import { assemble, DEFAULT_MAX_LINES } from './assemble.ts';
@@ -351,7 +351,7 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
                   note(
                       dim(
                           `  parsed ${done}/${total} · ${Math.floor((done / total) * 100)}% · ` +
-                              `${elapsed(started)}${still(pending)}`,
+                              `${span(Date.now() - started)}${still(pending)}`,
                       ),
                   ),
               )
@@ -368,14 +368,7 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
                   note(dim(`  embedding ${summary.counts.chunks} chunks with ${chosen.id} …`));
               }
             : undefined,
-        onProgress: loud
-            ? (done, total) =>
-                  note(
-                      dim(
-                          `  embedded ${done}/${total} · ${Math.floor((done / total) * 100)}% · ${elapsed(started)}`,
-                      ),
-                  )
-            : undefined,
+        onProgress: loud ? embedReporter((line) => note(dim(line)), started) : undefined,
         onWriting: loud ? (rows) => notes(indexing(rows, 'chunks').map(aside)) : undefined,
     });
 
@@ -487,14 +480,7 @@ async function restore(args: readonly string[], ctx: Context): Promise<void> {
         dimensions,
         cache: !values['no-cache'],
         cacheDir: values['cache-dir'] ? cacheDir : undefined,
-        onProgress: loud
-            ? (done, total) =>
-                  note(
-                      dim(
-                          `  embedded ${done}/${total} · ${Math.floor((done / total) * 100)}% · ${elapsed(started)}`,
-                      ),
-                  )
-            : undefined,
+        onProgress: loud ? embedReporter((line) => note(dim(line)), started) : undefined,
         onWriting: loud ? (rows) => notes(indexing(rows, 'chunks').map(aside)) : undefined,
     });
     await swapIn(dir, staging);
@@ -570,11 +556,6 @@ function printSources(sources: readonly DocRecord[]): void {
 
 const column = (source: DocRecord, at: number): number =>
     [source.lines, source.sections, source.tables, source.chunks][at] ?? 0;
-
-function elapsed(since: number): string {
-    const seconds = Math.round((Date.now() - since) / 1000);
-    return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60}s`;
-}
 
 /** Reading fires per document, and a line per document is not a narration. */
 function throttled<A extends unknown[]>(say: (...args: A) => void): (...args: A) => void {

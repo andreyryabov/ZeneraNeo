@@ -21,6 +21,7 @@ import { join, relative, resolve } from 'node:path';
 import { resolveEmbedder } from '../common/embedder.ts';
 import { locateIndex, outputDir } from '../common/locate.ts';
 import { assertSameEmbedding, inspectIndex } from '../common/manifest.ts';
+import { embedReporter } from '../common/progress.ts';
 import { breakdown, indexing } from '../common/prose.ts';
 import { announce, reportReady, stagingFor, swapIn } from '../common/restore.ts';
 import { buildIndex } from './build.ts';
@@ -321,14 +322,7 @@ async function index(args: readonly string[], ctx: Context): Promise<void> {
                   note(dim(`  embedding ${summary.counts.entities} entities with ${chosen.id} …`));
               }
             : undefined,
-        onProgress: loud
-            ? (done, total) =>
-                  note(
-                      dim(
-                          `  embedded ${done}/${total} · ${Math.floor((done / total) * 100)}% · ${elapsed(started)}`,
-                      ),
-                  )
-            : undefined,
+        onProgress: loud ? embedReporter((line) => note(dim(line)), started) : undefined,
         onWriting: loud ? (rows) => notes(indexing(rows, 'entities').map(aside)) : undefined,
     });
 
@@ -418,14 +412,7 @@ async function restore(args: readonly string[], ctx: Context): Promise<void> {
         dimensions,
         cache: !values['no-cache'],
         cacheDir: values['cache-dir'] ? cacheDir : undefined,
-        onProgress: loud
-            ? (done, total) =>
-                  note(
-                      dim(
-                          `  embedded ${done}/${total} · ${Math.floor((done / total) * 100)}% · ${elapsed(started)}`,
-                      ),
-                  )
-            : undefined,
+        onProgress: loud ? embedReporter((line) => note(dim(line)), started) : undefined,
         onWriting: loud ? (rows) => notes(indexing(rows, 'entities').map(aside)) : undefined,
     });
     await swapIn(dir, staging);
@@ -485,11 +472,6 @@ async function ready(args: readonly string[], ctx: Context): Promise<void> {
 }
 
 const HEADERS = ['PATHS', 'OPERATIONS', 'SCHEMAS', 'FIELDS'] as const;
-
-function elapsed(since: number): string {
-    const seconds = Math.round((Date.now() - since) / 1000);
-    return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60}s`;
-}
 
 function printSources(sources: readonly SourceRecord[]): void {
     const rows = sources.map((s) => ({

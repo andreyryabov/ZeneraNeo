@@ -26,7 +26,7 @@ zen rag schema index <spec...> [--embedding <ref>] [-o <dir>] [--batch <n>]
 | ------------------- | ------------- | ------------------------------------------------------------ |
 | `--embedding <ref>` | -             | Which embedder makes the vectors. Omit it to see the choices |
 | `-o`, `--out <dir>` | `./schema-db` | Where the index goes; `$ZEN_SCHEMA_DB` if set                |
-| `--batch <n>`       | `96`          | Texts per embedding request, and how often progress prints   |
+| `--batch <n>`       | model's own   | Texts per embedding request. `gemini-embedding-*` takes 1    |
 | `--no-sources`      | -             | Keep no copy of the documents in the index                   |
 | `--quiet`           | -             | No narration                                                 |
 
@@ -385,7 +385,7 @@ zen rag docs index <path...> [--embedding <ref>] [-o <dir>] [--chunk-tokens <n>]
 | -------------------- | ----------- | ------------------------------------------------------------ |
 | `--embedding <ref>`  | -           | Which embedder makes the vectors. Omit it to see the choices |
 | `-o`, `--out <dir>`  | `./docs-db` | Where the index goes; `$ZEN_DOCS_DB` if set                  |
-| `--batch <n>`        | `96`        | Texts per embedding request                                  |
+| `--batch <n>`        | model's own | Texts per embedding request. `gemini-embedding-*` takes 1    |
 | `--chunk-tokens <n>` | `384`       | Target chunk size                                            |
 | `--quiet`            | -           | No narration                                                 |
 

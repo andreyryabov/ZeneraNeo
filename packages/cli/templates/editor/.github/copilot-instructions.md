@@ -139,6 +139,26 @@ not do, and a `.spec-sync/baseline/` whose `manifest.txt` no longer matches its
 files. Both are reported, not quietly repaired - rewriting the manifest asserts
 a pass that never happened.
 
+### 0.2 `zen` is a black box
+
+`zen` is the tool you drive, not the code you are working on. What it does is
+what the `zen-cli` skill and its own output say it does. So:
+
+- Never read, list or search `zen`'s installed code or data: the `@zenera/*`
+  packages under `$(npm root -g)`, and `~/.zenera`.
+- Never read `.tmp/logs/meta.*`. Those are other runs of the meta agent -
+  earlier ones, or one still going - not evidence about this project.
+- Never probe a model provider or gateway yourself: no `curl` at its endpoint,
+  no `node -e` against an SDK, no throughput test. `zen models test <ref>` is
+  the probe.
+- A slow command is not a failed one. It has failed when it exits non-zero, or
+  when its log has not grown for 10 minutes. Embedding a large corpus takes
+  hours, and the progress line says how many.
+- When a `zen` command fails, or does something its skill does not describe,
+  quote the command and the line it printed in your answer - and in
+  `SPECIFICATION-FEEDBACK.md` during a `/spec-sync-project` pass - then go on
+  with the next step. Do not look for the cause.
+
 ---
 
 ## 1. Mental model
