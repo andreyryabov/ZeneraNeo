@@ -16,20 +16,60 @@
 [![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
 [![CI](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml)
 
-[Install](#install) · [Quickstart](#quickstart) · [Commands](#commands) · [Documentation](#documentation) · [Family](#the-rest-of-the-family) · [License](#license)
+[Install](#install) · [Quickstart](#quickstart) · [How it works](#how-it-works) · [Self-improving loop](#the-self-improving-loop) · [Fine-tuning](#evaluate-and-fine-tune) · [Reference](#reference) · [Docs](#documentation)
 
 </div>
 
 # @zenera/cli
 
-**`zen` - build specialist agents. Share them. Run them from the command line.**
+**`zen`: build specialist agents, share them, and run them from the command line.**
 
-`@zenera/cli` is the command-line package in the
-[ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo) toolkit. It creates,
-runs, tests and improves the specialized agent systems defined by a project.
+`@zenera/cli` is the command-line package of the
+[ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo) toolkit. You describe the
+work in a specification; a **meta-agent** designs the multi-agent system that
+does it; a **self-improving loop** of runs, traces, evals and fine-tuning makes
+that system better over time.
 
-Not one general assistant that is passable at everything - a team built for the
-work you actually keep doing, under a name you can type:
+`Multi-Agent Systems` · `Meta-Agent` · `Self-Improvement` · `Agent Fine-Tuning` ·
+`Evals & Rubrics` · `Trajectory Inspection` · `Hybrid RAG` · `Graph Memory` · `Sandboxed Tools`
+
+> Part of [ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo). This is an
+> open-source side project for experimentation and chore work - **not** the
+> official Zenera AI Platform. It carries no support or stability promises.
+
+<details>
+<summary><strong>Contents</strong></summary>
+
+- [What it is](#what-it-is)
+- [What you build](#what-you-build)
+- [Why it is different](#why-it-is-different)
+- [Install](#install)
+- [Quickstart](#quickstart)
+- [Concepts](#concepts)
+- [How it works](#how-it-works)
+    - [The specification and the meta agent](#the-specification-and-the-meta-agent)
+    - [A worked example](#a-worked-example)
+    - [Anatomy of a project](#anatomy-of-a-project)
+- [The self-improving loop](#the-self-improving-loop)
+- [Evaluate and fine-tune](#evaluate-and-fine-tune)
+- [Share a project](#share-a-project)
+- [Reference](#reference)
+    - [Commands](#commands)
+    - [Conventions and exit codes](#conventions-and-exit-codes)
+    - [The meta agent](#the-meta-agent)
+    - [Models and credentials](#models-and-credentials)
+    - [Sandbox](#sandbox)
+    - [Cache](#cache)
+- [Ecosystem](#ecosystem)
+- [Documentation](#documentation)
+- [License](#license)
+
+</details>
+
+## What it is
+
+Not one general assistant that is passable at everything, but a team built for
+the work you keep doing, under a name you can type:
 
 ```sh
 zen run accountant "Q3 - match the receipts drawer to the ledger, then update the return"
@@ -40,180 +80,184 @@ zen run devops     "this week's advisories - which of them actually reach our co
 zen run devops     "the 03:12 outage - timeline, contributing factors, owners"
 ```
 
-Three agents there, six things asked of them: an agent you have built is not a
-script with one job, it is a specialist you keep going back to. And it is work
-that comes back - every quarter, every sprint, every deal - which is exactly the
-work nobody has shipped you a product for.
+Three agents, six requests. An agent you have built is not a one-job script; it
+is a specialist you keep coming back to, for work that returns every quarter,
+every sprint, every deal.
 
-Once the agent exists it is a command: it works on the files you are standing
-in, runs real commands in a container, searches the web when it has to, and
-records every token it spent doing it.
+Once built, the agent is a command. It works on the files in your current
+directory, runs real commands in a container, searches the web when it needs
+to, and records every token it spends.
 
-Getting there is three beats:
+Getting there takes three steps:
 
-1. **Describe it.** You write `SPECIFICATION.md` - what the system is for,
-   which specialists it needs, what each may reach for, what _done_ means. The
-   rest of the folder is built to implement it.
-2. **Test it.** `zen check` validates the project and every file it names,
-   `zen run` exercises it for real, `zen inspect` opens the record of what it
-   actually did. When it comes out wrong you fix the specification, not the
-   prompts, and go round again.
-3. **Share it.** It is a folder - commit it, review it in a pull request, send
-   it. One `zen init <dir>` on a project that arrived by clone registers it
-   without touching a thing, and it is their command now too.
-
-> Part of [ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo). This is an
-> open-source side project for experimentation and chore work - **not** the
-> official Zenera AI Platform. It carries no support or stability promises.
+1. **Describe it.** Write `SPECIFICATION.md`: what the system is for, which
+   specialists it needs, what each may use, and what _done_ means.
+2. **Test it.** `zen check` validates the project, `zen run` exercises it,
+   `zen inspect` shows what it actually did. When the result is wrong, fix the
+   specification, not the prompts, and go round again.
+3. **Share it.** A project is a folder: commit it, review it in a pull request,
+   send it. On the other end, one `zen init <dir>` registers it and it becomes
+   their command too.
 
 ## What you build
 
-Half a page of specification turns into a system like one of these. Nothing here
-ships with the CLI - each is a folder somebody wrote, and could send you.
+Half a page of specification becomes a system like one of these. None of them
+ship with the CLI; each is a folder someone wrote and could send you.
 
-| Project        | The team inside it                                                                                                                                                                                                                                                                                                              |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **accountant** | A bookkeeper that reads and classifies every receipt, statement, invoice and agreement in the folder; a reconciler that holds each against a ledger line or a playbook position and lists what has no pair; a preparer that fills the return or drafts the redlines; a checker that refuses anything no document substantiates. |
-| **analyst**    | A planner that splits the question into branches; researchers that run in parallel over your files and the web; a statistician that writes and runs Python in the sandbox; an editor that joins it into one answer where every claim carries its source.                                                                        |
-| **devops**     | A gatherer that pulls advisories, logs, alerts and deploys into one picture; a tracer that works out whether a vulnerable path is reachable at all, or which change actually broke it; an engineer that plans the fix, applies it a step at a time, and stops the moment a check fails.                                         |
+| Project        | The team inside it                                                                                                                                                                                                                                                                                                          |
+| :------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **accountant** | A **bookkeeper** reads and classifies every receipt, statement, invoice and agreement in the folder. A **reconciler** matches each against a ledger line or playbook position and lists what has no pair. A **preparer** fills the return or drafts the redlines. A **checker** rejects anything no document substantiates. |
+| **analyst**    | A **planner** splits the question into branches. **Researchers** work in parallel over your files and the web. A **statistician** writes and runs Python in the sandbox. An **editor** joins it into one answer where every claim carries its source.                                                                       |
+| **devops**     | A **gatherer** pulls advisories, logs, alerts and deploys into one picture. A **tracer** works out whether a vulnerable path is reachable, or which change broke production. An **engineer** plans the fix, applies it step by step, and stops the moment a check fails.                                                    |
 
-Build one, commit it, and it runs the same on anyone else's machine - on
-whichever models they prefer, and without carrying your keys.
+A committed project runs the same on anyone's machine, on whichever models they
+prefer, without carrying your keys.
 
-## What makes it different
+## Why it is different
 
-Most tools give you one agent, or a framework and an empty file. This is a
+Most tools give you one agent, or a framework and an empty file. `zen` is a
 factory: it designs the system for you, then keeps it honest.
 
-- **You state the problem; a meta-agent designs the system.** Specialists,
-  prompts, tool grants, hand-offs, where it fans out - all of it drawn from what
-  you wrote, and checked before it ever runs.
-- **A self-improving loop, not a one-off build.** Build, run, read the record,
-  change what was wrong, run again - and the system can drive that loop on
-  itself. Failures come back as findings with a cause and a fix, so the next
-  version is written rather than debugged.
-- **It watches itself work.** Every run is recorded against the architecture it
-  declared - the agent nobody called, the skill that never fired, where the
+- **A meta-agent designs the system.** You state the problem; it derives the
+  specialists, prompts, tool grants, hand-offs and fan-out from what you wrote,
+  and validates them before anything runs.
+- **Self-improvement, not a one-off build.** Build, run, read the record, fix
+  what was wrong, run again, and the meta-agent can drive that loop itself.
+  Failures come back as findings with a cause and a fix.
+- **Agent fine-tuning on datasets and rubrics.** Cases built from your
+  specification are run, scored, analyzed and re-run until the system is both
+  correct and lean. It tunes prompts, skills and memory, not model weights.
+- **Built-in observability.** Every run is recorded against the architecture it
+  declared: the agent nobody called, the skill that never fired, where the
   tokens went. Nothing to instrument, nothing to sign up for.
-- **Customisable all the way down.** Live in the specification and never look
-  lower. Or set the model, tools and memory of a single agent. Or take the
-  kernel itself and manage the trajectory turn by turn. No layer is sealed.
-- **Your documents, searchable.** Hybrid retrieval over your files and your API
-  descriptions, plus a memory that is a graph rather than a bucket of rows - so
-  what an agent learned in March is still there in September.
+- **Your knowledge, searchable.** Hybrid retrieval over your documents and API
+  descriptions, plus a graph memory, so what an agent learned in March is still
+  there in September.
 - **Integrations it writes itself.** No MCP server to find, no connector to wait
-  for. If it has to reach your ERP, your database or a twenty-year-old SOAP
-  endpoint, it writes the call and runs it in a sandbox.
+  for. To reach your ERP, your database or a twenty-year-old SOAP endpoint, it
+  writes the call and runs it in a sandbox.
+- **Customisable all the way down.** Stay in the specification, tune a single
+  agent's model, tools and memory, or drive the kernel turn by turn. No layer is
+  sealed.
 
 ## Install
 
-Node.js 24+. One command - the OpenAI, Anthropic, Google and OpenRouter SDKs
-all ship with the CLI, so any provider works out of the box.
+Requires Node.js 24+. The OpenAI, Anthropic, Google and OpenRouter SDKs ship
+with the CLI, so any of those providers works out of the box.
 
 ```sh
 npm i -g @zenera/cli
 ```
 
-Or without installing anything:
+Or try it without installing:
 
 ```sh
 npx @zenera/cli --help
 ```
 
-Tab completion for zsh, bash and fish - commands, projects, stored prompts - is
-set up automatically by the global npm install. It appends a guarded loader to
-your current shell's startup file, once. **Open a new terminal** to activate it;
-the installer cannot update the terminal where you ran npm.
+The binary is installed under three names: `zen`, `zn` and `zenera`.
+
+<details>
+<summary><strong>Tab completion</strong> (zsh, bash, fish)</summary>
+
+A global npm install sets up completion for commands, projects and stored
+prompts automatically. It appends a guarded loader to your current shell's
+startup file, once. **Open a new terminal** to activate it; the installer
+cannot update the terminal where you ran npm.
 
 Setup respects `ZDOTDIR` for zsh and `XDG_CONFIG_HOME` for fish. For Bash on
 macOS it covers both login shells (the active `.bash_profile`, `.bash_login` or
-`.profile`) and non-login shells (`.bashrc`). The loader does nothing when `zen`
-is no longer installed.
+`.profile`) and non-login shells (`.bashrc`). The loader does nothing once `zen`
+is uninstalled.
 
-Local installs and `npx` do not change shell files. Automatic setup is skipped
-under root/sudo, in CI, on Windows, or when `$SHELL` is missing or unsupported.
-Disabling lifecycle scripts with `--ignore-scripts` also disables setup.
-If automatic setup is skipped or fails, or to enable another shell, run:
+Automatic setup is skipped for local installs and `npx`, under root/sudo, in
+CI, on Windows, when `$SHELL` is missing or unsupported, and with
+`--ignore-scripts`. To set it up by hand, or for another shell:
 
 ```sh
 zen completion --install            # the shell you are in; --yes to skip the question
 zen completion fish --install       # or name one
 ```
 
-Or add it yourself: `eval "$(zen completion zsh)"` in `~/.zshrc`.
+Or add `eval "$(zen completion zsh)"` to `~/.zshrc` yourself.
+
+</details>
 
 ## Quickstart
 
-From nothing to a specialized agent system:
+From nothing to a working agent system:
 
 ```sh
 npm i -g @zenera/cli         # every vendor SDK comes with it
-zen key add openai           # asks for the key without showing it; stored in ~/.zenera
+zen key add openai           # prompts for the key without echoing it; stored in ~/.zenera
 zen init my-project          # scaffolds a project and registers it
-zen open my-project          # open the specification and project in your editor
+zen open my-project          # opens it in your editor
 ```
 
-In the editor, describe the job in `SPECIFICATION.md`. Then, back in the
-terminal, let the meta agent build the system from it:
+Describe the job in `SPECIFICATION.md`, then let the meta agent build the
+system from it:
 
 ```sh
 zen meta run my-project /spec-sync-project
 ```
 
-It creates the specialists, responsibilities, tool access and handoffs the job
-needs. Validate the generated system and run it against a real workspace:
+Validate the result and run it against a real directory:
 
 ```sh
 zen check my-project
 cd ~/code/some-repo
 zen run my-project "summarise this repo and write NOTES.md"
+zen inspect                  # open the run's report.html
 ```
 
-Then, day to day:
+Day to day:
 
 ```sh
-zen run my-project              # no prompt given: opens a full-screen terminal app (a TUI)
-zen check my-project            # validate the project and every file it names
-zen inspect                     # open the last run's report.html
-zen inspect graph               # the same run as a graph a model can read
+zen run my-project              # no prompt: opens a full-screen terminal app (TUI)
 zen list --sessions             # every project, its sessions and last run
-zen list --runs                 # the most recent runs, newest first, across every project
+zen list --runs                 # the most recent runs across every project
 echo "triage this" | zen run my-project --json | jq
-zen run batch --input cases.json   # a file full of questions, 16 at a time
 ```
 
-Standing inside the project, the name is optional: a bare `zen run`, `zen check`
-or `zen inspect` means the one you are in.
+Inside a project folder the name is optional: a bare `zen run`, `zen check` or
+`zen inspect` means the project you are in.
 
-Giving a prompt on the command line skips every question: it starts a fresh
-session and uses the current directory as the workspace, with write access.
+A prompt on the command line skips every question: it starts a fresh session
+and uses the current directory as the workspace, with write access.
 `--session`, `--workspace` and `--read-only` override that.
 
-`zen run batch` is the same thing for an evaluation set: one project, many
-questions, each in a session, workspace and memory of its own under a batch
-directory. It prints that directory, writes each item's answer the moment it
-lands, and treats a failure as data rather than a stop. Sharing one memory is
-the exception that needs saying out loud - `--memory-read-only` lets every item
-recall from the same graph, because nothing is written and so nothing needs the
-lock. Without it each item gets a copy, and `zen memory merge <batch-dir>/*/memory`
-folds what they learned back in. While it runs, `<batch-dir>/README.md` is a
-dashboard rewritten every second: what each item is doing right now, what the
-finished ones cost - per model, since agents may each use a different one - and
-what is still queued.
+## Concepts
 
-To change what the system does, update `SPECIFICATION.md` and run
-`zen meta run /spec-sync-project` again. The next section explains that workflow
-in detail.
+- **Project**: a named directory holding a complete agent definition and the
+  sessions run against it. `agents.yaml` is what makes a directory a project,
+  so moving or cloning it loses nothing.
+- **Specification**: `SPECIFICATION.md`, the description of what the project is
+  for. Every other file implements it, and where they disagree it wins.
+- **Meta agent**: a coding agent that works _on_ the project, keeping its files
+  in line with the specification and improving them from evidence.
+- **Session**: a context that persists across runs: one workspace, one memory,
+  one store for large files, and a full record of what happened. Resumable.
+- **Run**: one prompt in, one answer out, inside a session. Recorded in full,
+  whether or not you were watching.
+- **Workspace**: the directory the agents may read and write. A command-line
+  prompt uses the current directory; the TUI offers the session's own empty
+  folder and asks before using anything outside it.
+- **Keyring**: `~/.zenera/neo`, readable only by you. See
+  [Models and credentials](#models-and-credentials).
+- **Cache**: `~/.zenera/neo/cache`, shared by every project on the machine and
+  never emptied by anything but you. See [Cache](#cache).
 
-## You write the specification; the meta agent writes the system
+## How it works
+
+### The specification and the meta agent
 
 `zen init` writes `SPECIFICATION.md` first, and everything else in the folder
-implements it. Where the two disagree the specification wins, so a change to
-what the system does starts there and not in `agents.yaml`.
+implements it. A change to what the system does therefore starts in the
+specification, not in `agents.yaml`.
 
-The one `zen init` writes is not a heading list - it is a true specification of
-the project just scaffolded, so you can read it against the files beside it
-before changing a word:
+The scaffolded specification is not a list of headings. It accurately describes
+the project just created, so you can read it alongside the files before
+changing a word:
 
 ```markdown
 ## Agents
@@ -231,325 +275,223 @@ nobody to hand work to, because there is no second job to hand on.
   not do.
 ```
 
-### How you actually edit it
+The editing cycle is four steps, each a single command:
 
-`SPECIFICATION.md` is ordinary Markdown, so any editor will do. `zen init`
-installs the prompts that make each step of the loop a single `zen meta run`
-command:
+1. **Edit `SPECIFICATION.md`** (`zen open` launches your editor): what the
+   system is for, which agents exist, what each may use, what _done_ means.
+2. **Run `zen meta run /spec-sync-project`.** It compares the specification
+   with every file that implements it, in both directions, and makes the
+   smallest change that closes each gap.
+3. **Answer `SPECIFICATION-FEEDBACK.md`.** For anything it could not do
+   without guessing, it asks a question with two to four written-out answers.
+   Tick one, delete the rest, or write your own.
+4. **Run `zen meta run /spec-apply-feedback`.** It folds your answers into
+   `SPECIFICATION.md` (never into a prompt), then syncs again.
 
-```sh
-zen open my-project      # or, standing in the folder: zen open
-```
-
-That launches the editor you already use: the one this terminal belongs to, or
-`$ZENERA_EDITOR`, or the first of VS Code, Cursor, Windsurf, Zed, Sublime Text
-or IntelliJ it can find. `--editor <cmd>` names one outright.
-
-1. **Edit `SPECIFICATION.md`** - what the system is for, which agents exist,
-   what each may reach for, and what _done_ means.
-2. **Run `zen meta run /spec-sync-project`.** It reads the specification and
-   every file implementing it, works out the difference in both directions, and
-   changes the smallest thing that closes each gap.
-3. **Answer `SPECIFICATION-FEEDBACK.md`**, which it writes for anything it could
-   not do without guessing. Every question carries two to four written-out
-   answers, each with a `[ ]` box: tick one, delete the ones you do not want, or
-   write your own in their place.
-4. **Run `zen meta run /spec-apply-feedback`.** It folds the answers you chose
-   into `SPECIFICATION.md` - never into a prompt - and then
-   `/spec-sync-project` again.
-
-Then: `zen check`, then `zen run`.
+Then `zen check`, then `zen run`. Full guide:
+[docs/specification.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/specification.md).
 
 <details>
 <summary>The prompts <code>zen init</code> installs</summary>
 
-They are prompt files under `.github/prompts/`, and `zen meta run /<name>` runs
-one (`zen meta prompts` lists them). Both `zen init` and `zen open` write them
-fresh, so they never go stale - and edits to them do not survive.
+Prompt files live under `.github/prompts/`; `zen meta run /<name>` runs one and
+`zen meta prompts` lists them. `zen init` and `zen open` rewrite them each time,
+so they never go stale, and local edits to them do not survive.
 
 | Prompt                 | Does                                                             |
-| ---------------------- | ---------------------------------------------------------------- |
+| :--------------------- | :--------------------------------------------------------------- |
 | `/spec-sync-project`   | Makes every file match `SPECIFICATION.md`, both directions.      |
 | `/spec-apply-feedback` | Folds your answers in `SPECIFICATION-FEEDBACK.md` into the spec. |
-| `/project-review`      | Reads the project as a reviewer would, and reports.              |
+| `/project-review`      | Reviews the project as a human reviewer would, and reports.      |
 | `/analyze [run]`       | Analyzes one run and says which instruction to change.           |
-| `/new-agent`           | Adds an agent - prompt, wiring and hand-offs.                    |
+| `/dataset`             | Builds or refreshes the evaluation dataset from the spec.        |
+| `/new-agent`           | Adds an agent: prompt, wiring and hand-offs.                     |
 | `/new-skill`           | Adds a skill under `agents/skills/`.                             |
 
-Alongside them, `.github/copilot-instructions.md` is the standing brief that
-explains this runtime to whatever coding agent opens the folder, and
-`.github/skills/zen-cli/` is the CLI's own reference for it.
+Alongside them, `.github/copilot-instructions.md` explains this runtime to
+whatever coding agent opens the folder, and `.github/skills/zen-cli/` is the
+CLI's own reference for it.
 
 </details>
 
-### The self-improving loop
+### A worked example
 
-```
-edit SPECIFICATION.md → zen meta run /spec-sync-project → zen check → zen run
-        ↑                                                              ↓
-        └─────────── refine the spec <-──── zen inspect <-─────────────┘
-```
-
-`zen inspect` makes the record visible: the run trace, timing and token
-statistics, agent architecture, and memory used during the run.
-
-![Run inspection: trace, agent architecture, and memory](https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/0910_480.gif)
-
-The meta agent can close the same loop without the page. `zen inspect
-graph` writes the whole run as one Mermaid flowchart - a line per node, short
-sequential ids, the tools counted in a header - which is small enough to read
-whole. Having spotted the loop or the branch that failed, it opens the two or
-three nodes that explain it:
-
-```sh
-DIR=$(zen run my-project "fix the tests" --json | jq -r .run.dir)
-zen inspect graph --dir "$DIR"        # the shape of the run
-zen inspect node n14..n20 --dir "$DIR"  # the nodes behind the ids, in full
-zen inspect ask n17 "why python -c here?" --dir "$DIR"  # ask the model itself
-```
-
-`ask` replays that one call - its recorded system prompt, messages and tool
-schemas - to a model with your question on the end and tool calling off, and
-tells it the run is over and its own instructions are quotable. It is how a
-prompt that reads correctly and behaves wrongly explains itself.
-
-`ask` has two modes, decided by whether the question is given:
-
-- **One-shot** - a question on the line, in `--question-file`, or `--json`.
-  For a script or the meta agent: no banner, no prompt, no picker.
-  stdout is the answer and nothing else, and the command exits.
-- **Interactive** - no question. For you, at a terminal: `zen inspect ask`
-  walks through the session, run and recorded LLM call (whichever are not
-  named), frames each question and Markdown answer separately, and keeps
-  accepting follow-ups until you submit an empty question. Without a terminal
-  it is an error, never a wait.
-
-Every step is a command, and everything each one reads or writes is a plain
-file: the specification, the findings `zen check` prints with a code, a location
-and a fix, the record `zen inspect` renders of what the run actually did. So the
-loop does not need you standing in it. Hand the whole cycle to the meta agent
-and it runs on the system it just built - test it, read the failure,
-change the sentence in the specification that caused it, rebuild, run again.
-"Fix my project" is one instruction. (The first time round, `scripts/_setup.sh`
-prepares the container the tools run in.)
-
-The last turn is the one that matters. When a run comes out wrong the fix is the
-sentence that was missing from the specification, and the prompt edit follows
-from that. Prompts patched directly drift away from the document meant to
-describe them, and a project whose specification is no longer true is a project
-with no specification.
-
-Full guide:
-[docs/specification.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/specification.md).
-
-## A worked example
-
-From a sentence to a working two-agent system, without hand-writing any wiring.
+A few sentences of `SPECIFICATION.md` become a working two-agent system, with no
+hand-written wiring:
 
 ```sh
 zen init repo-notes && cd repo-notes
-zen open                      # opens this folder in your editor
+zen open                                   # describe a `reader` and a `writer` agent
+zen meta run /spec-sync-project            # writes agents.yaml and both prompts
+zen check
+zen run repo-notes "summarise this repo"   # now a command, usable from any directory
 ```
 
-Replace `SPECIFICATION.md` with what you want. This is the whole input - no
-YAML, no prompt files:
-
-```markdown
-# Specification
-
-## Purpose
-
-Read a codebase and leave a short written note about it in the workspace.
-
-## Agents
-
-- `reader` - explores the workspace and forms a picture of it. May read files
-  and list directories, and nothing else. Hands off to `writer`.
-- `writer` - turns that picture into `NOTES.md`. May write to the workspace.
-
-## Done means
-
-- `NOTES.md` exists, is Markdown, and is under 40 lines.
-- Every claim in it comes from a file that was actually read.
-```
-
-Run `zen meta run /spec-sync-project`. It writes `agents.yaml` - who
-exists, and what each may reach for:
-
-```yaml
-default: reader
-model: openai:gpt-5.4-mini
-
-agents:
-    - name: reader
-      description: Reads the workspace and summarises what is in it.
-      system: agents/prompts/reader.md
-      tools: [files:read_file, files:list_dir, files:find_files]
-      handoffs: [writer]
-
-    - name: writer
-      description: Turns a summary into a file on disk.
-      system: agents/prompts/writer.md
-      tools: [files:*]
-      handoffs: [reader] # a hand-off does not return by itself; give it a way back
-```
-
-- and one prompt file per agent.
-
-<details>
-<summary>The prompt files it writes</summary>
-
-`agents/prompts/reader.md`:
-
-```markdown
-You explore a codebase and describe it plainly: what it is, how it is laid out,
-how it is built and tested. Read before you conclude. When you have a picture,
-hand off to `writer`.
-```
-
-`agents/prompts/writer.md`:
-
-```markdown
-You write the summary you were handed to `NOTES.md`, in Markdown, under 40
-lines. Then say where you put it and stop.
-```
-
-</details>
-
-<details>
-<summary>What each <code>agents.yaml</code> key means</summary>
-
-| Key           | Is                                                                    |
-| ------------- | --------------------------------------------------------------------- |
-| `name`        | how everything else refers to this agent                              |
-| `description` | what it is for - read by the _other_ agents when deciding to hand off |
-| `system`      | its own brief, in prose, at `agents/prompts/<name>.md`                |
-| `model`       | this agent's model; the top-level one otherwise                       |
-| `tools`       | what it may reach for - `files:*` (or `workspace:*`), `sandbox:*`     |
-| `handoffs`    | who it may pass the work to                                           |
-| `skills`      | knowledge pulled in mid-run instead of carried in every prompt        |
-
-The file is validated strictly at load: an unknown tool, a handoff to nobody, a
-missing prompt file - each fails immediately, naming the offending key, rather
-than surfacing three turns into a run as a confused model. Full reference:
+The full walkthrough, with the specification, the generated `agents.yaml` and
+prompts, is in
+[docs/specification.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/specification.md#a-worked-example).
+For complete projects, see
+[examples/projects](https://github.com/andreyryabov/ZeneraNeo/tree/main/examples/projects);
+for what each `agents.yaml` key means, see
 [docs/agents-yaml.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/agents-yaml.md).
 
-</details>
+### Anatomy of a project
 
-Check it, then point it at a real directory:
-
-```sh
-zen check                                  # every file it names, validated
-cd ~/code/some-repo
-zen run repo-notes "summarise this repo"   # this directory is the workspace
-zen inspect --project repo-notes --open    # what it actually did
-```
-
-That is the end of it: `repo-notes` is now a command like any other, in any
-directory, for as long as the folder exists. Commit the folder and whoever
-clones it types `zen init repo-notes` once - a directory that is already a
-project is registered, not rebuilt, and nothing in it is touched - and the name
-is a command on their machine too.
-
-When a newer `zen` is installed, `zen check --fix` brings a project's copies of
-_our_ files up to date: the memory and tool house rules under `agents/`, and the
-`.vscode/` and `.github/` trees. They restate how the version in hand behaves,
-so a copy left behind by an upgrade is worse than none. Nothing that describes
-_your_ project is touched.
-
-## A project is a folder
-
-Prompts, agent wiring, skills and tool selections are all files - Markdown and
-YAML - rather than code buried inside an application. So the folder can be
-committed, copied to another machine, reviewed in a pull request, and handed to
-someone else who runs it with one command. Model credentials live in `$HOME`,
-never in the project, and anything the project itself needs goes in a
-git-ignored `.env` - so there is no secret to strip before sharing it.
+Prompts, agent wiring, skills and tool selections are files (Markdown and YAML),
+not code buried in an application. Model credentials live in `$HOME`, never in
+the project, so there is no secret to strip before sharing.
 
 ```
 my-project/
-    SPECIFICATION.md             what this is for - the intent
-    agents.yaml                  who exists, what they may reach for
-    agents/
-        instructions.md          house rules, prepended to every agent
-        <topic>-instructions.md  more of them, one subject at a time
-        prompts/<name>.md        each agent's own brief
-        skills/<name>/           knowledge loaded on demand, not always-on
-    assets/                      reference material, read-only at /assets
-    sandbox/Dockerfile           the container commands run in
-    scripts/_setup.sh            the one command that initialises the project
-    .spec-sync/                  what the last sync with the spec applied
-    .env                         this project's environment - git-ignored
-    sessions/                    one workspace, memory and trajectory each
-        <id>/
-            workspace/           what the agents can read and write
-            runs/<id>/           input, output, state, report.html, graph.mmd, meta
+    SPECIFICATION.md   what this is for - the intent
+    agents.yaml        who exists, what they may use
+    agents/            house rules, one prompt per agent, skills
+    assets/ dataset/ finetune/ sandbox/ scripts/
+    sessions/          what happened when it ran
 ```
 
-Everything above the `sessions/` line is the system; everything below it is what
-happened when it ran. Nothing here is tied to the machine it was written on,
-which is the point of the CLI: it makes agentic systems shareable the way
-repositories are shareable.
+Everything above `sessions/` is the system; everything below it is what happened
+when it ran. Nothing is tied to the machine it was written on: agentic systems
+become shareable the way repositories are.
 
-`zen init` also writes `.vscode/` and a `.github/` tree - a standing brief that
-explains this runtime to whatever coding agent you open the folder with, plus
-the prompts and skills it needs to keep the project matching its specification.
+The full file-by-file layout, including `.github/`, `.spec-sync/` and `.env`, is
+in
+[docs/projects.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/projects.md#layout).
 
-## Concepts
+## The self-improving loop
 
-- **Project** - a named directory holding a complete agent definition and the
-  sessions that have run against it. It is self-describing: `agents.yaml` is
-  what makes a directory a project, so moving or cloning it loses nothing.
-- **Session** - a context that persists across runs: one workspace, one memory,
-  one store for large files, and a record of everything that happened, added to
-  as it goes. Resumable.
-- **Run** - one prompt in, one answer out, inside a session. Recorded in full,
-  whether or not you were watching.
-- **Workspace** - the directory the agents may read and write. A prompt given on
-  the command line uses the current directory; the TUI offers the session's own
-  empty folder instead, and asks before using anything outside it.
-- **Keyring** - `~/.zenera/neo`, readable only by you. See
-  [Credentials](#credentials).
-- **Cache** - `~/.zenera/neo/cache`, one place for work already done: vectors,
-  parses, model listings, generated mocks. Shared by every project on the
-  machine, and never emptied by anything but you. See [Cache](#cache--work-you-have-already-paid-for).
+```mermaid
+flowchart LR
+    A[Edit SPECIFICATION.md] --> B["zen meta run /spec-sync-project"]
+    B --> C[zen check]
+    C --> D[zen run]
+    D --> E[zen inspect]
+    E -->|refine the spec| A
+```
 
-## Sandbox commands
+Every step is a command, and everything each step reads or writes is a plain
+file. That means the loop does not need you in it: the meta agent can run the
+whole cycle on the system it just built.
 
-Agents use an isolated container when a project grants them command-line tools.
-`zen run` prepares it automatically before the first command, but these commands
-make setup, diagnostics and cleanup explicit - useful on a new machine or when
-you want to validate a project's execution environment before a run.
+### Inspect a run
+
+`zen inspect` opens a run's `report.html`: the trace, timing and token
+statistics, agent architecture, and memory used.
+
+![Run inspection: trace, agent architecture, and memory](https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/0910_480.gif)
+
+For a model rather than a person, `zen inspect graph` writes the whole run as
+one compact Mermaid flowchart: one line per node, short sequential ids, tool
+counts in a header. It is small enough to read whole, so the meta agent can
+find the failing loop or branch and then open just the nodes that explain it:
 
 ```sh
-zen sandbox status                    # engine, project image and active containers
-zen sandbox top                       # memory and cpu, live: this computer, the machine, each container
-zen sandbox top --once                # the same, printed once (also with --json or when piped)
-zen sandbox up                        # prepare the execution environment for this project
-zen sandbox pull                      # pull or build this project's image only
-zen sandbox status --project my-app   # inspect a named project from anywhere
-zen sandbox disk                      # storage used by the engine and known projects
-zen sandbox clean                     # remove containers created by zen
-zen sandbox clean --idle              # only what no live run is using
+DIR=$(zen run my-project "fix the tests" --json | jq -r .run.dir)
+zen inspect graph --dir "$DIR"                          # the shape of the run
+zen inspect node n14..n20 --dir "$DIR"                  # those nodes in full
+zen inspect ask n17 "why python -c here?" --dir "$DIR"  # ask the model itself
 ```
 
-`status`, `up` and `pull` use the project in the current directory, or accept
-`--project <name|dir>`. `--image <ref>` selects an image explicitly. `clean` and
-`disk` are machine-wide operations, so use them when you mean to inspect or
-remove resources beyond the current project.
+### Ask the model why
 
-`top` is machine-wide too. Next to every figure it says in a few words what the
-figure means; `--brief` leaves those notes out, `--interval <seconds>` sets how
-often the live screen refreshes. On macOS it answers the usual question - why
-Activity Monitor shows "Virtual Machine Service for vfkit" holding many
-gigabytes - by setting what macOS counts for the machine against what is in use
-inside it, and naming the command that gives the difference back.
+`zen inspect ask` replays one recorded call (its system prompt, messages and
+tool schemas) with your question appended and tool calling off. The model is
+told the run is over and that its instructions may be quoted. This is how a
+prompt that reads correctly but behaves wrongly explains itself.
 
-## Sharing a project
+- **One-shot:** pass the question on the command line, via `--question-file`,
+  or with `--json`. Meant for scripts and the meta agent: stdout carries only
+  the answer, then the command exits.
+- **Interactive:** omit the question. At a terminal, it walks you through the
+  session, run and call, then keeps taking follow-ups until you submit an empty
+  one. Without a terminal it errors rather than waiting.
 
-A project is a directory, so sending one somewhere else is a zip - except that
-half of the directory belongs to this machine rather than to the project.
-`zen export` writes the other half.
+### Let the meta agent close the loop
+
+Because the specification, the `zen check` findings (each with a code, location
+and fix) and the run records are all files, you can hand the whole cycle to the
+meta agent: test, read the failure, change the sentence in the specification
+that caused it, rebuild, run again. "Fix my project" is one instruction. (On
+first use, `scripts/_setup.sh` prepares the tool container.)
+
+The rule that keeps this working: **when a run comes out wrong, fix the
+specification first, and let the prompt change follow.** Prompts patched
+directly drift away from the document that describes them, and a project whose
+specification is no longer true has no specification.
+
+## Evaluate and fine-tune
+
+Inspecting single runs finds individual mistakes. To improve a system
+systematically, `zen` evaluates it against a dataset and tunes it on the
+results. This is **agent fine-tuning**: it optimizes the harness around the
+model (prompts, instructions, skills and memory policies), not model weights.
+
+### 1. Build a dataset
+
+```sh
+zen meta run /dataset                        # build or refresh dataset/ from its sources
+zen meta dataset                             # revision, counts, what drifted
+zen meta dataset drift                       # cases whose source sections changed
+zen meta dataset sample --rubric yes -n 12 --format batch -o cases.json
+zen meta dataset log planning-organize-day   # every change and verdict for one case
+```
+
+`dataset/` holds every case with its **rubric**, an anchor to the section it was
+derived from, and a journal of changes and findings. Only `zen meta dataset`
+writes it. `/dataset` re-reads just the sections that changed, and a case whose
+question or rubric changed is marked as restarted. See the `zen-dataset` skill
+under `.github/skills/`.
+
+### 2. Run it in batch
+
+```sh
+zen run batch --input cases.json   # a file of questions, 16 at a time
+```
+
+One project, many questions, each in its own session, workspace and memory
+under a batch directory. Answers are written as they arrive, and a failure is
+recorded as data rather than stopping the batch. While it runs,
+`<batch-dir>/README.md` is a live dashboard, rewritten every second: what each
+item is doing, what finished items cost (per model, since agents may use
+different ones), and what is still queued.
+
+Memory is isolated by default: each item gets a copy, and
+`zen memory merge <batch-dir>/*/memory` folds what they learned back in.
+`--memory-read-only` instead lets every item recall from one shared graph,
+which is safe because nothing is written.
+
+### 3. Fine-tune on it
+
+```sh
+zen meta finetune start -N 4                 # 4 cases at a time; resumes if stopped
+zen meta finetune                            # current status
+zen meta finetune stop                       # finish steps in flight, then stop
+zen meta finetune serve                      # browse the status pages while stopped
+zen meta finetune session plan-day           # resume one case's analysis session
+```
+
+For each case, the tuner:
+
+1. runs it **without memory** and analyzes the trace until the answer is
+   correct and lean;
+2. runs it **with the memory it wrote** until that run is cheaper (a memory
+   ablation that checks stored knowledge actually helps);
+3. collects improvement requests and applies them **in batches** between runs,
+   each apply producing a new, diffable version of the prose.
+
+Progress is in `finetune/STATUS.md`, whose summary shows whether the fixes and
+the memory are making runs cheaper. Each case has its own
+`finetune/cases/<id>/FEEDBACK.md` with the latest analysis and the metrics of
+every attempt. `start` prints a local address that shows these pages in a
+browser, with diagrams rendered and updated live.
+
+The full method, including how to write rubrics that tune the right thing:
+[docs/finetuning.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/finetuning.md).
+
+## Share a project
+
+A project is a directory, but part of that directory belongs to your machine.
+`zen export` packs only the part that belongs to the project.
 
 ```sh
 zen export                            # ./<project>-<stamp>.zip, from inside the project
@@ -560,80 +502,79 @@ zen import a.zip                      # unpacks into ./<project> and registers i
 zen import a.zip ~/code/theirs --name theirs
 ```
 
-It carries `agents.yaml`, the `agents/` tree, the specification and its
-feedback, `assets/`, `memory/`, `sandbox/`, `scripts/` and the editor files.
-It leaves behind `sessions/`, `.tmp/`, `.git/`, `node_modules/`, lock files, any
-`*.zip` at the top of the project - and `.env`. The **values** in `.env` never
-travel, behind no flag; the names do, as a `.env.example` with every value
-blank, because knowing which credentials a project needs is the first thing you
-want on the other end.
+**Included:** `agents.yaml`, `agents/`, the specification and its feedback,
+`assets/`, `memory/`, `sandbox/`, `scripts/` and editor files.
+**Left out:** `sessions/`, `.tmp/`, `.git/`, `node_modules/`, lock files, any
+top-level `*.zip`, and `.env`.
 
-The vectors travel by default. A rag index without its `lance/` tree looks built
-and cannot search, and memory has no other source at all - a graph without its
-vectors recalls by term overlap until every node is written again. `--no-vectors`
-leaves both out for a much smaller archive, and the import tells you to run
+`.env` **values** never travel, and no flag changes that. The names do, as a
+`.env.example` with blank values, because which credentials a project needs is
+the first thing the recipient wants to know.
+
+Vectors travel by default. A RAG index without its `lance/` tree looks built but
+cannot search, and memory without vectors falls back to term overlap.
+`--no-vectors` produces a much smaller archive; the import then tells you to run
 `zen rag <subject> restore`.
 
-`zen import` treats the archive as something a stranger sent: every path is
-checked against escaping the target directory, symbolic-link entries are
-refused, and the size it unpacks to is bounded. **Nothing inside is executed** -
-not `scripts/_setup.sh`, not the Dockerfile, not a line of the `.github/` tree.
-The commands to run next are printed for you to read and type.
+**Import is safe by design.** The archive is treated as untrusted: every path is
+checked against escaping the target directory, symbolic links are refused, and
+the unpacked size is bounded. **Nothing inside is executed**, not
+`scripts/_setup.sh`, not the Dockerfile, not the `.github/` tree. The next
+commands are printed for you to read and run yourself.
 
-## Commands
+## Reference
 
-| Command      | Does                                                                 |
-| ------------ | -------------------------------------------------------------------- |
-| `init`       | Creates a project here, or in `<dir>`, and registers it.             |
-| `list`       | Every known project: sessions, last run, whether one is live.        |
-| `open`       | Opens a project in your editor.                                      |
-| `key`        | The credential keyring - add, check, switch, remove.                 |
-| `models`     | What this machine can use - list, search, test, pick.                |
-| `run`        | Runs the project - the TUI on a terminal, a single answer otherwise. |
-| `meta`       | Runs the meta agent over the project - the one that edits it.        |
-| `inspect`    | Opens or rebuilds a run's `report.html`.                             |
-| `view`       | Shows a folder in the browser, redrawn live as its files change.     |
-| `memory`     | What the agents remember - size, listing, one node, or a whole page. |
-| `check`      | Validates the project and every file it names, and asks the models.  |
-| `export`     | Writes the project to a shareable zip archive.                       |
-| `import`     | Unpacks one, registers it, and runs nothing in it.                   |
-| `sandbox`    | Checks and prepares the container that command-line tools run in.    |
-| `cache`      | What work has been kept, and getting rid of it.                      |
-| `completion` | Tab completion for zsh, bash and fish - printed, or installed.       |
-| `version`    | CLI, library and Node versions.                                      |
+### Commands
 
-### Commands from other packages
+| Stage        | Command      | Does                                                                     |
+| :----------- | :----------- | :----------------------------------------------------------------------- |
+| **Set up**   | `key`        | The credential keyring: add, check, switch, remove.                      |
+|              | `models`     | What this machine can use: list, search, test, pick.                     |
+|              | `completion` | Tab completion for zsh, bash and fish.                                   |
+| **Build**    | `init`       | Creates a project here or in `<dir>`, and registers it.                  |
+|              | `open`       | Opens a project in your editor.                                          |
+|              | `meta`       | Runs the meta agent over the project; includes `dataset` and `finetune`. |
+|              | `check`      | Validates the project and every file it names, and pings the models.     |
+| **Run**      | `run`        | Runs the project: the TUI at a terminal, a single answer otherwise.      |
+|              | `sandbox`    | Checks and prepares the container command-line tools run in.             |
+| **Inspect**  | `inspect`    | Opens or rebuilds a run's report, graph and nodes; `ask` queries a call. |
+|              | `memory`     | What the agents remember: size, listing, one node, or a whole page.      |
+|              | `view`       | Shows a folder in the browser, redrawn live as files change.             |
+| **Share**    | `export`     | Writes the project to a shareable zip archive.                           |
+|              | `import`     | Unpacks one and registers it, executing nothing.                         |
+| **Maintain** | `list`       | Every known project: sessions, last run, whether one is live.            |
+|              | `cache`      | What work has been kept, and removing it.                                |
+|              | `version`    | CLI, library and Node versions.                                          |
 
-A command can also come from a package installed alongside this one, so a new
-capability arrives as a subcommand instead of another binary to remember: one
-thing on your path, one keyring, one name. `zen --help` lists these whether or
-not they are installed, and tells you what to install if not. Nothing is
-imported until you type the command, so an uninstalled one costs you nothing and
-an installed one costs nothing until it is used.
+#### Commands from other packages
 
-| Command | Package         | Does                                           |
-| ------- | --------------- | ---------------------------------------------- |
-| `faker` | `@zenera/faker` | A mock API from an openapi/swagger document.   |
-| `rag`   | `@zenera/rag`   | Search an openapi/swagger document as a graph. |
+Some commands come from packages installed alongside the CLI, so new
+capabilities arrive as subcommands rather than separate binaries: one tool on
+your path, one keyring. `zen --help` lists them whether or not they are
+installed, and says what to install. Nothing is loaded until you use it.
 
-**`zen faker`** turns an OpenAPI or Swagger description into a working mock
-server. It generates behavior for each route, checks the result against the
-response contract, and reuses the generated implementation on later requests.
+| Command | Package         | Does                                                 |
+| :------ | :-------------- | :--------------------------------------------------- |
+| `faker` | `@zenera/faker` | A working mock API from an OpenAPI/Swagger document. |
+| `rag`   | `@zenera/rag`   | Indexing and search for documents and API schemas.   |
+
+**`zen faker`** turns an OpenAPI or Swagger description into a mock server. It
+generates each route's behavior, checks responses against the contract, and
+reuses the generated implementation on later requests.
 
 ```sh
 npm i -g @zenera/faker
-zen faker serve api/openapi.yaml --port 8787   # a working mock, bodies written by a model
+zen faker serve api/openapi.yaml --port 8787   # response bodies written by a model
 
 curl -s localhost:8787/users/12324
 # { "user_id": 12324, "email": "brooke.hoffman@example.org", … }
 ```
 
-**`zen rag`** adds advanced retrieval for the knowledge an agent needs to work
-from: documentation and API schemas. Document indexes support semantic,
-full-text and hybrid search with passages returned alongside their source lines.
-Schema indexes add graph-aware retrieval across operations, types, fields,
-requests and responses, so an answer can include the connected API context
-rather than an isolated match.
+**`zen rag`** adds retrieval over the knowledge agents work from. Document
+indexes support semantic, full-text and hybrid search, returning passages with
+their source lines. Schema indexes add graph-aware retrieval across operations,
+types, fields, requests and responses, so results carry connected API context
+rather than isolated matches.
 
 ```sh
 npm i -g @zenera/rag
@@ -644,24 +585,17 @@ zen rag docs index ./handbook --embedding openai:text-embedding-3-small
 zen rag docs search "how does failover work when the primary is unreachable"
 ```
 
-Use [@zenera/rag](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md)
-for its complete retrieval capabilities and examples. Details:
-[@zenera/faker](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md)
-·
-[@zenera/rag](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md).
+Details: [@zenera/faker](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md)
+· [@zenera/rag](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md).
 
-### Conventions
+### Conventions and exit codes
 
-The binary is installed under three names: `zen`, `zn` and `zenera`.
-
-Global flags: `-h/--help`, `-v/--version`, `--json`, `-C <dir>`.
-
-`stdout` carries the answer and `stderr` carries the narration, and `--json`
-works on every command - so `zen run … | jq` is a supported way to use this, not
-an accident.
+- Global flags: `-h/--help`, `-v/--version`, `--json`, `-C <dir>`.
+- `stdout` carries the answer and `stderr` the narration. `--json` works on
+  every command, so `zen run … | jq` is a supported use, not an accident.
 
 | Exit code | Meaning              |
-| --------- | -------------------- |
+| :-------- | :------------------- |
 | `0`       | ok                   |
 | `1`       | the run failed       |
 | `2`       | bad invocation       |
@@ -669,60 +603,46 @@ an accident.
 | `4`       | no usable credential |
 | `5`       | sandbox unavailable  |
 
-## The meta agent - the agent that works on the project
+### The meta agent
 
-`zen run` runs the agents your project describes. `zen meta` runs an agent _over_
-the project: a coding agent rooted at the project directory, which reads
-`SPECIFICATION.md`, changes `agents.yaml`, the prompts and the skills, and runs
-whatever commands it needs to check itself - on the keys already in your
-keyring, and not on anybody's subscription. It is the spec-to-system loop as a
-command you can put in a script.
+`zen run` runs the agents your project describes. `zen meta` runs an agent
+_over_ the project: a coding agent rooted at the project directory that reads
+`SPECIFICATION.md`, edits `agents.yaml`, prompts and skills, and runs whatever
+commands it needs to check its work. It uses the keys in your keyring, not
+anyone's subscription, which makes the spec-to-system loop scriptable.
 
 ```sh
 zen meta run "what does this project do?"
 zen meta run acme "review the last commit"
 zen meta prompts                             # which /<name> prompts this project has
-zen meta run /project-review                 # .github/prompts/project-review.prompt.md
+zen meta run /project-review                 # runs .github/prompts/project-review.prompt.md
 zen meta run acme /spec-sync-project agents/triage.md
 zen meta run /analyze 20260825-143012-a7f3   # analyze one run
 git diff | zen meta run "what broke?" --allow-tool read
 zen meta run --dry-run "hello"               # what would run, secrets masked
 ```
 
-Every prompt goes through `run`, whether you typed it or it is a file: the
-alternative was a verb that appeared only sometimes, and a bare word after
-`zen meta` that was a subcommand on Tuesdays and a question on Wednesdays.
+Every prompt, typed or from a file, goes through `run`, so a bare word after
+`zen meta` is never ambiguous between a subcommand and a question. Prompt files
+are plain Markdown with frontmatter; `zen` strips the frontmatter and sends the
+body, so the same prompt works from a terminal, a script and CI. With no
+argument, `zen meta run` asks which prompt to run.
 
-It uses every tool without asking. The prompts it runs rely on reading files,
-writing them and running commands, and a `-p` run has nobody sitting there to
-answer the question - so the
-alternative is not a safer run but a stalled one. `--allow-tool read`,
-`--allow-tool 'shell(git:*)'` narrow it to what a particular run needs, and
-`--ask` puts the question back. It is your own checkout and your own key either
-way, so treat it as you would `git push`: fine on a project you own, worth
-narrowing on one you do not.
+**Permissions.** By default it uses every tool without asking: its prompts need
+to read, write and run commands, and a non-interactive run has nobody to answer
+a question, so asking would only stall it. Narrow it with
+`--allow-tool read` or `--allow-tool 'shell(git:*)'`, or restore prompting with
+`--ask`. Treat it like `git push`: fine on a project you own, worth narrowing on
+one you don't.
 
-The answer goes to stdout and the progress to stderr, like everything else here,
-so `zen meta run "…" > out.md` keeps the answer alone.
+**Output.** The answer goes to stdout and progress to stderr, so
+`zen meta run "…" > out.md` captures only the answer. Progress is a small
+self-rewriting window. The full log (prompt, every tool call, the answer) is
+written live to `.tmp/logs/meta.<when>.log`, whose path is printed at start, so
+`tail -f` can follow a running session. The answer alone is saved as
+`.tmp/logs/meta.<when>.md`.
 
-Progress is a small window that rewrites itself rather than a transcript
-scrolling past, because only the last few steps say what it is doing now. The
-whole of it - the prompt, every tool call, the answer - is written as it happens
-to `.tmp/logs/meta.<when>.log`, whose path is printed before the run starts, so
-`tail -f` in another terminal follows a run already going. The answer alone is
-kept beside it as `.tmp/logs/meta.<when>.md`, named again once it has printed -
-a terminal turns that into something you click.
-
-`zen meta run /<name>` runs a prompt file. The prompts under
-`.github/prompts/` - `/spec-sync-project`, `/project-review` - are plain
-Markdown with frontmatter. zen reads one, drops the frontmatter and sends the
-body - so the same prompt runs from a terminal, a script and CI.
-
-A terminal has no menu dropping down as you type a slash, so
-`zen meta prompts` lists what this project holds, each with its description.
-`zen meta run` with nothing to say asks the same question interactively.
-
-### Which model it runs on
+#### Which model it runs on
 
 ```sh
 zen meta model                            # the whole chain, with the winner marked
@@ -731,115 +651,70 @@ zen meta model --local openai/gpt-5.6-sol # for this project only, via its .env
 zen meta model --pick                     # choose from providers you hold a key for
 ```
 
-Highest first: `--model`, `ZENERA_META_MODEL` in the shell, the same variable in
-the project's `.env`, `zen meta model`, then the project's `agents.yaml`
-`model:`. When none of them answers, a key does: the best model zen knows of
-for the first provider you hold one for, named on stderr as it starts, so a
-fresh machine needs a key and nothing else. Through a gateway it is the best
-chat model the gateway serves instead, as `zen models ls --chat --best` ranks it.
-The store is separate from `agents.yaml` on purpose - the model a coding agent
-runs on is a personal choice about a tool, like a key, where `agents.yaml` is a
+Precedence, highest first: `--model`; `ZENERA_META_MODEL` in the shell; the
+same variable in the project's `.env`; `zen meta model`; the project's
+`agents.yaml` `model:`. If none applies, `zen` picks the best model it knows
+for the first provider you hold a key for, and says so on stderr. A fresh
+machine needs only a key.
+
+This setting is kept apart from `agents.yaml` on purpose: the model a coding
+agent runs on is a personal tool choice, like a key, while `agents.yaml` is a
 committed decision about the project's own agents.
 
-Not every model works. The meta agent declares its tools in a form only the
-reasoning APIs accept, so use a reasoning model - `gpt-5.6-sol`,
-`claude-opus-5`, `gemini-3.8-flash`. Those three are also what it falls back
-to, and what `zen meta model --pick` offers. `zen meta model` refuses the ones
-that cannot (gpt-4o and older) before asking them anything.
+Use a **reasoning model** (`gpt-5.6-sol`, `claude-opus-5`, `gemini-3.8-flash`):
+the meta agent declares its tools in a form only reasoning APIs accept. These
+three are also the fallbacks and what `--pick` offers. Setting a model sends it
+a one-word test question first, so a model that won't answer is rejected now,
+with the provider's own error. A prefix that names no provider (`vertes/...`)
+is caught before anything is sent. `--force` skips the check.
 
-Setting one asks it a one-word question before storing it, so a model that will
-not answer is refused with the provider's own words rather than at the start of
-the next run. A typed prefix that names no provider - `vertes/...` - is caught
-before that, because it would otherwise be sent whole to a vendor you never
-named. `--force` stores a ref without asking.
+### Models and credentials
 
-### The dataset it evaluates against
+One keyring serves every provider, and every key goes in the same way:
 
 ```sh
-zen meta run /dataset                        # build or refresh dataset/ from its sources
-zen meta dataset                             # revision, counts, what drifted
-zen meta dataset drift                       # which cases their source sections moved under
-zen meta dataset sample --rubric yes -n 12 --format batch -o cases.json
-zen meta dataset log planning-organize-day   # every change and verdict, and the sessions
-```
-
-`dataset/` holds every case with its rubric, an anchor to the section it was
-read from, and a journal of what changed and what was found. Only
-`zen meta dataset` writes it; `/dataset` re-reads just the sections that
-changed, and a case whose question or rubric changed is listed as restarted.
-See the `zen-dataset` skill a project carries in `.github/skills/`.
-
-### Tuning on it
-
-```sh
-zen meta finetune start -N 4                 # 4 cases at a time; resumes if stopped
-zen meta finetune                            # where it stands
-zen meta finetune stop                       # finish the steps in flight, then stop
-zen meta finetune serve                      # the pages live in a browser, while it is stopped
-zen meta finetune session plan-day           # resume that case's analyze session
-```
-
-Each case is run without memory and analyzed until it is right and lean, then
-run with the memory it wrote until that is cheaper. Improvement requests are
-applied in batches between runs, and every apply is a new, diffable version of
-the prose. Follow it in `finetune/STATUS.md`, whose summary shows whether the
-fixes and the memory are making runs cheaper; each case has its own
-`finetune/cases/<id>/FEEDBACK.md` with its latest analysis and the metrics of
-every try. `start` prints a local address that shows those pages in a browser,
-with their diagrams drawn, updated in place as the tuning writes them.
-
-The whole method, with how to write a rubric that tunes the right thing:
-[docs/finetuning.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/finetuning.md).
-
-## Credentials
-
-One keyring serves every provider, and a key goes in the same way whatever it
-is for:
-
-```sh
-zen key add <provider>              # asks for the key without showing it
+zen key add <provider>              # prompts for the key without echoing it
 zen key add <provider> < key.txt    # or pipe it in
 ```
 
-The value is never passed as an argument. A command line is visible to anyone
-listing running processes, is saved in your shell history and is captured in CI
-logs - so the hidden prompt and piping it in are the only two ways.
+The value is never accepted as an argument: command lines are visible in the
+process list, saved in shell history and captured in CI logs.
 
-Entries live in `~/.zenera/neo/keys.json`, in a file only you can read. They are
-copied into the environment just before a run, which has two consequences worth
-knowing: an environment variable you set yourself always wins, and a project
-checked out on a machine without `zen` still runs.
+Keys live in `~/.zenera/neo/keys.json`, readable only by you, and are copied
+into the environment just before a run. So an environment variable you set
+yourself always wins, and a project checked out on a machine without `zen`
+still runs.
 
-| Provider     | The value is                          | Exported as                      |
-| ------------ | ------------------------------------- | -------------------------------- |
-| `openai`     | a secret                              | `OPENAI_API_KEY`                 |
-| `anthropic`  | a secret                              | `ANTHROPIC_API_KEY`              |
-| `google`     | a secret - AI Studio                  | `GEMINI_API_KEY`                 |
-| `vertex`     | a path to a service-account JSON file | `GOOGLE_APPLICATION_CREDENTIALS` |
-| `openrouter` | a secret                              | `OPENROUTER_API_KEY`             |
-| `exa`        | a secret - for the search tool        | `EXA_API_KEY`                    |
+| Provider     | The value is                                   | Exported as                                         |
+| :----------- | :--------------------------------------------- | :-------------------------------------------------- |
+| `openai`     | a secret                                       | `OPENAI_API_KEY`                                    |
+| `anthropic`  | a secret                                       | `ANTHROPIC_API_KEY`                                 |
+| `google`     | a secret (AI Studio)                           | `GEMINI_API_KEY`                                    |
+| `vertex`     | a service-account JSON path, or an express key | `GOOGLE_APPLICATION_CREDENTIALS` / `VERTEX_API_KEY` |
+| `openrouter` | a secret                                       | `OPENROUTER_API_KEY`                                |
+| `exa`        | a secret, for the web search tool              | `EXA_API_KEY`                                       |
 
-`zen key add` verifies the credential against the provider before it finishes,
-but stores it either way: a key that cannot be checked right now - offline,
-behind a proxy - is not a key that is wrong. `--no-check` skips the call.
+`zen key add` verifies the credential with the provider but stores it either
+way: a key that can't be checked right now (offline, behind a proxy) is not
+necessarily wrong. `--no-check` skips the call.
 
-### Which key a model uses
+#### Model references
 
 A model reference is `[provider[/api]:]model`, and the first segment names a
-**provider, not a vendor**. So `vertex:gemini-3.5-flash` and
-`google:gemini-3.5-flash` are the same model reached through two different
-services, needing two different credentials; a bare `gpt-5.4-mini` goes to the
-default provider, `openai`.
+**provider, not a vendor**. `vertex:gemini-3.5-flash` and
+`google:gemini-3.5-flash` are the same model through two services with two
+different credentials. A bare `gpt-5.4-mini` goes to the default provider,
+`openai`.
 
-`zen check` resolves every reference in a project against what is stored and
-says which credential each one needs. It then spends a few tokens asking each
-model to answer, which is the only way to catch a model id this account is not
-served. `--no-models` stops before that.
+`zen check` resolves every reference in a project, says which credential each
+needs, and spends a few tokens asking each model to answer, which is the only
+way to catch a model id your account isn't served. `--no-models` stops before
+that.
 
-### Which models you can use
+#### Finding models
 
 `zen check` answers _does my project work_. `zen models` answers _what can I
-use_, needs no project, and asks the providers themselves:
+use_, needs no project, and asks the providers directly:
 
 ```sh
 zen models                                  # who has a credential, and what is cached
@@ -847,23 +722,19 @@ zen models openai                           # everything OpenAI serves this acco
 zen models search haiku --tools --free      # narrow it
 zen models show openrouter:anthropic/claude-haiku-4.5
 zen models test vertex:gemini-embedding-001 # one real call, one verdict
-zen models browse                           # walk providers and models with the arrow keys
+zen models browse                           # interactive: arrows, / to filter, p to pick
 ```
 
-Listings are cached for a day in `~/.zenera/neo/cache`. If a provider cannot be
-reached, the last listing is used and marked stale; only when there has never
-been one does a short built-in list stand in.
+Listings are cached for a day. If a provider is unreachable, the last listing is
+used and marked stale. `zen models browse` prints the picked ref on stdout, so
+`ref="$(zen models browse)"` works.
 
-`zen models test` separates three kinds of failure, because each calls for a
-different action:
+`zen models test` distinguishes three failures, each needing a different fix:
 
-- **refused** - the provider rejected the credential. Fix or replace the key.
-- **blocked** - the credential was accepted and the account then said no: an API
-  switched off, an empty balance, a model this key was never granted. The key is
-  fine; the account needs changing, and the command that changes it is printed
-  with the error.
-- **unknown** - the question never arrived (offline, proxy, timeout). Nothing is
-  wrong with the key; try again.
+- **refused**: the provider rejected the credential. Fix or replace the key.
+- **blocked**: the key was accepted but the account said no (API disabled,
+  empty balance, model not granted). The fix command is printed with the error.
+- **unknown**: the request never arrived (offline, proxy, timeout). Try again.
 
 ```
 $ zen models test vertex:gemini-embedding-001
@@ -873,38 +744,22 @@ error 1 of 1 did not answer
         see what else there is: zen models ls --embeddings
 ```
 
-To take another model instead, list what the account serves, test one, and put
-its ref in `agents.yaml` or the flag that needs it:
-
-```sh
-zen models ls --embeddings
-zen models test openai:text-embedding-3-small
-```
-
-`zen models browse [provider]` is the interactive way in: arrow keys through
-the providers and their models, `/` to filter, `tab` to cycle roles, `enter`
-for one model in full, `t` to ask it one question, `p` to pick it. The picked
-ref is printed on stdout, so `ref="$(zen models browse)"` works too.
-
-### Setting up each provider
-
-The shape is the same everywhere - `zen key add <provider>`, then answer the
-prompt. Open the one you need for its specifics.
+#### Provider setup
 
 <details>
-<summary><strong>OpenAI</strong> - one secret, exported as <code>OPENAI_API_KEY</code></summary>
+<summary><strong>OpenAI</strong></summary>
 
 ```sh
 zen key add openai
 ```
 
-`openai` is the default provider, so a reference with no prefix comes here:
-`gpt-5.4-mini` and `openai:gpt-5.4-mini` are the same model.
+`openai` is the default provider: `gpt-5.4-mini` and `openai:gpt-5.4-mini` are
+the same model.
 
 </details>
 
 <details>
-<summary><strong>Anthropic</strong> - one secret, exported as <code>ANTHROPIC_API_KEY</code></summary>
+<summary><strong>Anthropic</strong></summary>
 
 ```sh
 zen key add anthropic
@@ -914,10 +769,10 @@ zen run --model anthropic:claude-sonnet-4-5 "summarise this repo"
 </details>
 
 <details>
-<summary><strong>OpenRouter</strong> - one secret, exported as <code>OPENROUTER_API_KEY</code></summary>
+<summary><strong>OpenRouter</strong></summary>
 
-One credential for many vendors' models. The model id keeps its own vendor
-prefix, after the `openrouter:` one:
+One credential for many vendors' models. The model id keeps its vendor prefix
+after `openrouter:`:
 
 ```sh
 zen key add openrouter
@@ -928,19 +783,17 @@ zen run --model openrouter:anthropic/claude-haiku-4.5 "summarise this repo"
 </details>
 
 <details>
-<summary><strong>Google AI Studio</strong> - one secret, exported as <code>GEMINI_API_KEY</code></summary>
+<summary><strong>Google AI Studio</strong></summary>
 
-One key and nothing else to configure: the shortest way to a working Gemini
-model.
+One key, nothing else to configure: the shortest path to Gemini.
 
 ```sh
 zen key add google
 zen check                         # google:gemini-3.5-flash now resolves
 ```
 
-The same Gemini models are also served by Vertex AI, under a different
-credential. Both can be configured at once - they are separate entries for
-separate services, and the prefix on the model reference decides which is used:
+The same models are also served by Vertex AI under a different credential. Both
+can be configured at once; the prefix decides which is used:
 
 ```sh
 zen run --model google:gemini-3.5-flash "summarise this repo"
@@ -950,75 +803,66 @@ zen run --model vertex:gemini-3.5-flash "summarise this repo"
 </details>
 
 <details>
-<summary><strong>Vertex AI</strong> - a service-account file, or an express-mode key</summary>
+<summary><strong>Vertex AI</strong></summary>
 
-Vertex accepts two kinds of credential, and you never declare which one you are
-giving: if the value is a path to a file that exists it is treated as a
-service-account key, otherwise as an API key. The name you give the entry has no
-bearing on this - `vertex/express` is just an entry called `express`, exactly as
-`vertex/prod` is one called `prod`, and either name can hold either kind.
+Vertex accepts two kinds of credential, detected automatically: a path to an
+existing file is treated as a service-account key, anything else as an API key.
+Entry names (`vertex/prod`, `vertex/express`) are just labels and can hold
+either kind.
 
-**A service-account JSON file** is the usual one, and what production normally
-runs on. Give its path, not its contents. Run the command with nothing piped and
-it asks:
+**Service-account JSON** (the usual choice for production). Give the path, not
+the contents:
 
 ```sh
 zen key add vertex --gcp-location us-central1
 # Paste the key, or a path to the file: /Users/you/keys/vertex-sa.json
-```
 
-The prompt is read by `zen`, not by your shell, so give a full path there - `~`
-is not expanded. In a script, pipe the path in instead:
-
-```sh
+# in a script:
 echo ~/keys/vertex-sa.json | zen key add vertex --gcp-location us-central1
 ```
 
-The file is copied into `~/.zenera/neo/keys/`, where only you can read it, so
-moving or cleaning up the original later cannot break it.
+The prompt is read by `zen`, not your shell, so `~` is not expanded there; give
+a full path. The file is copied into `~/.zenera/neo/keys/`, so moving the
+original later breaks nothing.
 
-- `--gcp-location <region>` is worth setting, because the file says which project
-  it belongs to but never which region to call. It takes a concrete region, or
-  one of the endpoints that route across regions: `us` and `eu` pool capacity
-  while keeping processing inside that territory, and `global` takes whatever is
-  free and promises no residency. `global` costs about ten seconds of cold start
-  on the first request each process makes; a named region answers in about two.
-- Which models a location serves varies per model and is not guessable. In one
-  project, `gemini-embedding-2` answered at `us` but 404'd at `us-central1`,
-  while `gemini-2.5-flash` did the opposite. New models often reach `global`,
-  `us` and `eu` first. `zen models test vertex:<model>` is what settles it -
-  `zen key add` only establishes that the credential itself works.
-- `--gcp-project <id>` is only needed when the `project_id` inside the file is
-  not the project you want to bill:
+- **`--gcp-location`** is worth setting: the file names the project but not the
+  region. Use a concrete region, or a multi-region endpoint: `us` and `eu` pool
+  capacity while keeping processing in that territory; `global` uses whatever
+  is free, with no residency guarantee, and costs about ten seconds of cold
+  start on each process's first request (a named region answers in about two).
+- **Model availability varies by location** and can't be guessed. In one
+  project `gemini-embedding-2` worked at `us` but returned 404 at
+  `us-central1`, while `gemini-2.5-flash` did the opposite. New models often
+  reach `global`, `us` and `eu` first. `zen models test vertex:<model>` settles
+  it.
+- **`--gcp-project`** is needed only to bill a project other than the file's
+  `project_id`:
 
     ```sh
     echo ~/keys/vertex-sa.json \
       | zen key add vertex --gcp-project other-project --gcp-location europe-west4
     ```
 
-**An express-mode API key** is the alternative: a single secret, stored under
-`VERTEX_API_KEY`. It is the Vertex console's way of granting access without a
-service account, and it needs neither a project nor a region, so `--gcp-project`
-and `--gcp-location` mean nothing there and are not stored.
+**Express-mode API key**: a single secret stored as `VERTEX_API_KEY`. It needs
+no project or region, so those flags don't apply:
 
 ```sh
-zen key add vertex               # paste the key at the prompt; no flags apply
+zen key add vertex
 ```
 
-**An existing `gcloud` login counts too.** If you have run
-`gcloud auth application-default login`, Vertex works with nothing stored at
-all: `zen key ls` shows that login as `adc`, marked `~` because it came from
-outside the keyring. Anything already set in `GOOGLE_APPLICATION_CREDENTIALS`,
-`VERTEX_API_KEY` or `GEMINI_API_KEY` is listed the same way and wins over the
-keyring, so it is always visible which credential a run will actually use.
+**An existing `gcloud` login also works.** After
+`gcloud auth application-default login`, Vertex works with nothing stored:
+`zen key ls` shows it as `adc`, marked `~` because it comes from outside the
+keyring. Anything already in `GOOGLE_APPLICATION_CREDENTIALS`, `VERTEX_API_KEY`
+or `GEMINI_API_KEY` is listed the same way and takes precedence.
 
 </details>
 
 <details>
-<summary><strong>Exa</strong> - one secret, exported as <code>EXA_API_KEY</code></summary>
+<summary><strong>Exa</strong> (web search)</summary>
 
-Not a model provider: this is what backs the search tool an agent reaches for
-when it has to look something up on the web.
+Not a model provider: Exa backs the search tool agents use to look things up on
+the web.
 
 ```sh
 zen key add exa
@@ -1027,120 +871,129 @@ zen key add exa
 </details>
 
 <details>
-<summary><strong>More than one key for the same provider</strong></summary>
+<summary><strong>Several keys for one provider</strong></summary>
 
-Entries are named, so a provider can hold several, one of which is active:
+Entries are named; one per provider is active:
 
 ```sh
 zen key add openai/work         # a second entry
-zen key use openai/work         # the one that runs will use
+zen key use openai/work         # make it active
 zen key ls --check              # everything stored, and whether it still works
-zen key show vertex/default     # masked - --reveal prints the secret
+zen key show vertex/default     # masked; --reveal prints the secret
 zen key env openai              # shell exports, for other tools
 zen key rm openai/work
 ```
 
-It is the same for Vertex, where holding several at once is the ordinary case:
+Common with Vertex:
 
 ```sh
 echo ~/keys/prod-sa.json | zen key add vertex/prod --gcp-location us-central1
 echo ~/keys/dev-sa.json  | zen key add vertex/dev  --gcp-location global
-zen key add vertex/express      # the express key, same provider
-
-zen key use vertex/dev          # which one the next run uses
+zen key add vertex/express
+zen key use vertex/dev
 ```
 
-`zen key ls` marks the active entry with `*`, and anything it found outside the
-keyring - in your environment, or in a `gcloud` login - with `~`, so it is always
-clear where a working provider actually comes from.
+`zen key ls` marks the active entry with `*` and anything found outside the
+keyring with `~`.
 
 </details>
 
 <details>
-<summary><strong>Every model through a Bifrost gateway</strong></summary>
+<summary><strong>All models through a Bifrost gateway</strong></summary>
 
-With one virtual key in place of every vendor key:
+One virtual key instead of every vendor key:
 
 ```sh
 zen key add bifrost --url https://bifrost.example.com
 zen key mode bifrost            # every run goes through the gateway
-zen key mode direct             # back to the vendor keys
+zen key mode direct             # back to vendor keys
 ```
 
-`agents.yaml` does not change. Each model keeps its own vendor's protocol and
-is sent to the gateway's matching endpoint - `vertex:gemini-3.5-flash` reaches
-`/genai` as `vertex/gemini-3.5-flash` - so thinking and cache accounting
-survive the trip. The whole story - variables, the sandbox, `zen models`, known
-limits - is in
-[docs/gateway.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/gateway.md).
+`agents.yaml` doesn't change. Each model keeps its vendor's protocol and is sent
+to the gateway's matching endpoint (`vertex:gemini-3.5-flash` reaches `/genai`
+as `vertex/gemini-3.5-flash`), so thinking and cache accounting survive. Full
+details: [docs/gateway.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/gateway.md).
 
 </details>
 
-## Cache - work you have already paid for
+### Sandbox
 
-Embedding a paragraph, parsing a document, asking a provider what it serves: all
-of these are slow or costly, and all of them give the same answer every time. So
-the answers are kept in `~/.zenera/neo/cache/<kind>/`, under a key built from
-every input that produced them. Change any input and the key changes, so you get
-a fresh answer rather than a stale one. That is why entries are never
-invalidated: one that no longer matches anything is simply never read again.
+When a project grants command-line tools, agents run them in an isolated
+container. `zen run` prepares it automatically; these commands make setup,
+diagnostics and cleanup explicit.
 
+```sh
+zen sandbox status                    # engine, project image and active containers
+zen sandbox up                        # prepare the environment for this project
+zen sandbox pull                      # pull or build this project's image only
+zen sandbox status --project my-app   # inspect a named project from anywhere
+zen sandbox top                       # live memory and CPU: host, VM, each container
+zen sandbox top --once                # printed once (also with --json or when piped)
+zen sandbox disk                      # storage used by the engine and known projects
+zen sandbox clean                     # remove containers created by zen
+zen sandbox clean --idle              # only those no live run is using
 ```
+
+`status`, `up` and `pull` act on the current project or `--project <name|dir>`;
+`--image <ref>` picks an image explicitly. `top`, `disk` and `clean` are
+machine-wide.
+
+`top` annotates each figure with a short explanation (`--brief` hides them;
+`--interval <seconds>` sets the refresh rate). On macOS it also explains why
+Activity Monitor shows "Virtual Machine Service for vfkit" holding many
+gigabytes: it compares what macOS attributes to the VM with what is in use
+inside it, and names the command that reclaims the difference.
+
+### Cache
+
+Embedding text, parsing documents, listing a provider's models: these are slow
+or costly and always give the same answer. So results are kept in
+`~/.zenera/neo/cache/<kind>/`, keyed on every input that produced them. Change
+an input and the key changes, so entries never need invalidating; stale ones
+are simply never read again.
+
+```sh
 zen cache ls                          # what is kept, by kind
-zen cache ls --kind vectors           # and what is in one of them
-zen cache prune --older-than 30d      # drop what has gone unread for a month
+zen cache ls --kind vectors           # contents of one kind
+zen cache prune --older-than 30d      # drop entries unread for a month
 zen cache prune --max-size 2GB        # or keep it under a ceiling
-zen cache clear --kind docs-parse     # throw one kind away
+zen cache clear --kind docs-parse     # discard one kind
 ```
 
-Age means when an entry was last _read_, not when it was written, so a vector
-that a weekly rebuild keeps using never counts as old.
+Age is measured from the last _read_, so an entry a weekly rebuild keeps using
+never counts as old. Nothing is evicted automatically: every removal is one you
+ask for. Nothing in the cache is precious either; deleting an entry only means
+paying for that work again.
 
-Nothing is ever evicted automatically. A store that quietly deletes things is
-only noticed once it has deleted the wrong one, so every removal is something
-you ask for. Nothing in the cache is precious either: every entry is work that
-can be done again, and the only cost of deleting one is paying for it a second
-time.
+## Ecosystem
 
-## The library underneath
-
-This is a shell over
-[`@zenera/neo`](https://www.npmjs.com/package/@zenera/neo) - agents, models,
-tools, skills, memory and a running record of everything that happened. Use it
-directly when you want the runtime inside your own application rather than on a
-terminal:
+The CLI is a shell over [`@zenera/neo`](https://www.npmjs.com/package/@zenera/neo),
+the runtime for agents, models, tools, skills, memory and run records. Use it
+directly to embed the runtime in your own application:
 [its README](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md).
+
+| Package                                                                                         | What it is                                                   |
+| :---------------------------------------------------------------------------------------------- | :----------------------------------------------------------- |
+| **`@zenera/cli`**                                                                               | `zen`: agent projects on the command line                    |
+| [`@zenera/neo`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md)     | the runtime: agents, models, tools, skills, memory           |
+| [`@zenera/faker`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker`: a mock API from an OpenAPI/Swagger document     |
+| [`@zenera/rag`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md)     | `zen rag`: indexing and search for documents and API schemas |
+| [`@zenera/view`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/view/README.md)   | `zen view`: a live local viewer for a folder                 |
 
 ## Documentation
 
-- [docs/specification.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/specification.md)
-    - writing the specification the project implements.
-- [docs/projects.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/projects.md)
-    - what the project folder contains, file by file.
-- [docs/agents-yaml.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/agents-yaml.md)
-    - every key in the configuration file.
-- [docs/knowledge.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/knowledge.md)
-    - building a searchable document index.
-- [docs/integrations.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/integrations.md)
-    - making an API description searchable and mockable.
-- [docs/memory.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/memory.md)
-    - what agents keep between sessions.
-- [docs/finetuning.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/finetuning.md)
-    - building a dataset, writing rubrics, and tuning the project on them.
-- [docs/gateway.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/gateway.md)
-    - every model through a Bifrost gateway, with one virtual key.
-
-## The rest of the family
-
-| Package                                                                                         | What it is                                                    |
-| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| **`@zenera/cli`**                                                                               | `zen` - agent projects on the command line                    |
-| [`@zenera/neo`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md)     | the runtime - agents, models, tools, skills, memory           |
-| [`@zenera/faker`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` - a mock API from an openapi/swagger document     |
-| [`@zenera/rag`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md)     | `zen rag` - indexing and search for documents and API schemas |
-| [`@zenera/view`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/view/README.md)   | `zen view` - a live local viewer for a folder                 |
+| Guide                                                                                         | Covers                                                       |
+| :-------------------------------------------------------------------------------------------- | :----------------------------------------------------------- |
+| [specification.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/specification.md) | Writing the specification the project implements.            |
+| [projects.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/projects.md)           | The project folder, file by file.                            |
+| [agents-yaml.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/agents-yaml.md)     | Every key in the configuration file.                         |
+| [knowledge.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/knowledge.md)         | Building a searchable document index.                        |
+| [integrations.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/integrations.md)   | Making an API description searchable and mockable.           |
+| [memory.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/memory.md)               | What agents keep between sessions.                           |
+| [finetuning.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/finetuning.md)       | Datasets, rubrics, and tuning the project on them.           |
+| [gateway.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/gateway.md)             | Every model through a Bifrost gateway, with one virtual key. |
 
 ## License
 
-Early days and moving fast - issues, questions and pull requests are welcome.
+Early days and moving fast: issues, questions and pull requests are welcome.
 [MIT](LICENSE).

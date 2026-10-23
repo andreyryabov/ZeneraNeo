@@ -132,6 +132,98 @@ question with none left means you rejected them all, and it asks you what would
 fit rather than inventing a fifth. Send `/spec-sync-project` afterwards - the
 specification has changed, and the project has not yet caught up.
 
+## A worked example
+
+From a few sentences to a working two-agent system, with no hand-written wiring.
+
+```sh
+zen init repo-notes && cd repo-notes
+zen open
+```
+
+Replace `SPECIFICATION.md` with what you want. This is the entire input - no
+YAML, no prompt files:
+
+```markdown
+# Specification
+
+## Purpose
+
+Read a codebase and leave a short written note about it in the workspace.
+
+## Agents
+
+- `reader` - explores the workspace and forms a picture of it. May read files
+  and list directories, and nothing else. Hands off to `writer`.
+- `writer` - turns that picture into `NOTES.md`. May write to the workspace.
+
+## Done means
+
+- `NOTES.md` exists, is Markdown, and is under 40 lines.
+- Every claim in it comes from a file that was actually read.
+```
+
+Run `zen meta run /spec-sync-project` (or send `/spec-sync-project` in the
+editor's chat). It writes `agents.yaml`, which says who exists and what each may
+use:
+
+```yaml
+default: reader
+model: openai:gpt-5.4-mini
+
+agents:
+    - name: reader
+      description: Reads the workspace and summarises what is in it.
+      system: agents/prompts/reader.md
+      tools: [files:read_file, files:list_dir, files:find_files]
+      handoffs: [writer]
+
+    - name: writer
+      description: Turns a summary into a file on disk.
+      system: agents/prompts/writer.md
+      tools: [files:*]
+      handoffs: [reader] # a hand-off does not return by itself; give it a way back
+```
+
+It also writes one prompt file per agent.
+
+`agents/prompts/reader.md`:
+
+```markdown
+You explore a codebase and describe it plainly: what it is, how it is laid out,
+how it is built and tested. Read before you conclude. When you have a picture,
+hand off to `writer`.
+```
+
+`agents/prompts/writer.md`:
+
+```markdown
+You write the summary you were handed to `NOTES.md`, in Markdown, under 40
+lines. Then say where you put it and stop.
+```
+
+What each key means is in [agents-yaml.md](agents-yaml.md#agents). The file is
+validated strictly at load: an unknown tool, a hand-off to nobody, a missing
+prompt file each fails immediately and names the offending key, instead of
+surfacing three turns into a run as a confused model
+([errors caught at load](agents-yaml.md#errors-caught-at-load)).
+
+Check it, then point it at a real directory:
+
+```sh
+zen check                                  # validates every file it names
+cd ~/code/some-repo
+zen run repo-notes "summarise this repo"   # the current directory is the workspace
+zen inspect --project repo-notes --open    # what it actually did
+```
+
+`repo-notes` is now a command like any other, usable from any directory.
+Commit the folder, and whoever clones it runs `zen init repo-notes` once: an
+existing project is registered, not rebuilt, and nothing in it is touched.
+
+Two complete projects built this way, each from a specification alone, are in
+[`examples/projects/`](../examples/projects/).
+
 ## Writing a specification an agent can implement
 
 The scaffolded file has the headings worth keeping:

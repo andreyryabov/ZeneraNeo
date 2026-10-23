@@ -37,6 +37,28 @@ Only `agents.yaml` is required, and only `agents:` is required inside it.
 `SPECIFICATION.md` and `scripts/_setup.sh` are conventions the tooling knows
 about rather than files the loader reads.
 
+The `zen` CLI adds a few more conventions around the same folder:
+
+```
+my-project/
+    dataset/                         evaluation cases and rubrics
+    finetune/                        tuning status and per-case feedback
+    sandbox/Dockerfile               the container commands run in
+    .spec-sync/                      what the last sync with the specification applied
+    .env                             this project's environment - git-ignored
+    sessions/                        one workspace, memory and trajectory each
+        <id>/
+            workspace/               what the agents can read and write
+            runs/<id>/               input, output, state, report.html, graph.mmd, meta
+```
+
+Everything outside `sessions/` is the system; everything inside it is what
+happened when it ran. Model credentials live in `$HOME`, never in the project,
+so there is no secret to strip before sharing. `zen init` also writes `.vscode/`
+and a `.github/` tree with the brief, prompts and skills a coding agent needs to
+keep the project matching its specification; `zen check --fix` refreshes them
+after an upgrade and touches nothing that describes your project.
+
 The config file is found by looking for these names, in order:
 
 1. `agents.yaml`
