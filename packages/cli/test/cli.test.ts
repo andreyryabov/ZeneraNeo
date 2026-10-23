@@ -801,7 +801,7 @@ describe('the waiting border', () => {
 
     it('rounds the corners without a seam, because the ring has no end', () => {
         // A crest two cells past the start has its tail on the last cells of
-        // the ring — the left side, which is drawn bottom to top.
+        // the ring - the left side, which is drawn bottom to top.
         expect(toneAt(span - 1, 1, span)).toBe(brightest - 1);
         expect(toneAt(0, span, span)).toBe(brightest);
     });
@@ -1437,7 +1437,7 @@ describe('the model probe', () => {
     });
 
     // The whole point of asking: a credential that works, spent on a model id
-    // that does not. Nothing short of the call says so — and the answer is
+    // that does not. Nothing short of the call says so - and the answer is
     // `blocked` rather than `dead`, because a new key would be refused for
     // exactly the same reason and the fix is a different model.
     it('calls an unserved model id blocked, and points at the listing', async () => {
@@ -1512,7 +1512,7 @@ describe('the model probe', () => {
     });
 
     // The registry refuses a knob the adapter never sends, and the OpenAI
-    // adapters have no output cap — so a probe that capped every vendor was
+    // adapters have no output cap - so a probe that capped every vendor was
     // refused before it asked anything.
     describe('building the chat model it asks', () => {
         beforeEach(() => {
@@ -1827,7 +1827,7 @@ describe('the project check', () => {
 
     /**
      * Pointing `assets:` at the project itself hands every agent the sessions
-     * directory — every transcript of every run, including the one reading it.
+     * directory - every transcript of every run, including the one reading it.
      */
     it('warns when assets would include the project’s own files', async () => {
         const dir = project({
@@ -2104,7 +2104,7 @@ describe('when a project was last used', () => {
 // What is worth asserting about a scaffold is that the project it produces is
 // one `zen check` passes, that the specification it writes describes that
 // project and not a different one, and that what is meant to be run can be.
-// Everything else — which files, in what order — is the scaffold's business
+// Everything else - which files, in what order - is the scaffold's business
 // and changes with it.
 // ---------------------------------------------------------------------------
 
@@ -2217,8 +2217,8 @@ describe('the scaffold', () => {
     });
 
     /**
-     * `--check` answers the question `zen check` cannot reach — an index is not
-     * something `agents.yaml` declares — so it has to say what is missing
+     * `--check` answers the question `zen check` cannot reach - an index is not
+     * something `agents.yaml` declares - so it has to say what is missing
      * without paying the download and the embedding to find out.
      */
     it('answers --check without doing the work, and refuses a flag it does not know', () => {
@@ -2276,7 +2276,7 @@ describe('the scaffold', () => {
 
     /**
      * A file the project needs and git must never see. It cannot be stored
-     * under its own name — this repository ignores `.env` too — so the one
+     * under its own name - this repository ignores `.env` too - so the one
      * thing worth pinning is that it arrives with the dot on.
      */
     it('writes a .env, and ignores it', () => {
@@ -2301,7 +2301,7 @@ describe('the scaffold', () => {
     /**
      * The record `/spec-sync-project` works from: two directories the project
      * commits, empty because what marks a completed pass is the manifest
-     * inside them, and the script that writes it — executable, and at the path
+     * inside them, and the script that writes it - executable, and at the path
      * the prompt tells the agent to run.
      */
     it('makes room for the spec-sync record, and ships the script that writes it', () => {
@@ -2462,7 +2462,7 @@ describe("a project's .env", () => {
 // The pre-flight
 //
 // Every process is injected, so what is under test is the order of the
-// questions and what each answer leads to — which is the whole of this module.
+// questions and what each answer leads to - which is the whole of this module.
 // Each successful case uses its own image so it gets its own memo entry; a run
 // only ever asks these questions once.
 // ---------------------------------------------------------------------------
@@ -2650,7 +2650,7 @@ describe('the podman pre-flight', () => {
     // The connection, which is a concurrency limit in disguise
     //
     // The default `ssh://` connection is made fresh by every podman process,
-    // and sshd refuses new ones past `MaxStartups` — ten — so a batch wider
+    // and sshd refuses new ones past `MaxStartups` - ten - so a batch wider
     // than that loses calls at random. The machine forwards a second endpoint
     // that one long-lived connection carries for everybody; these pin down
     // that it is found, used, and never allowed to become a failure of its own.
@@ -2939,7 +2939,7 @@ describe('the disk report', () => {
 // `zen check` is the one command that both reads and runs: a Dockerfile that
 // does not build is a broken project, and only building it says so. The engine
 // is injected here, so what these cases pin down is when it is asked and what
-// each answer is reported as — in particular that a machine with no podman on
+// each answer is reported as - in particular that a machine with no podman on
 // it still gets a passing report, because that is the machine most likely to
 // be running the check.
 //
@@ -3126,7 +3126,7 @@ describe('the sandbox check', () => {
     /**
      * The pin `zen init` wrote is never rewritten afterwards, so the only thing
      * standing between an upgraded host and a container holding an older `zen`
-     * is this reading — which is why it does not need the engine.
+     * is this reading - which is why it does not need the engine.
      */
     describe('the `@zenera/*` pin in the Dockerfile', () => {
         const dockerfile = (install: string): string =>
@@ -3465,7 +3465,7 @@ describe('where a listing comes from', () => {
 
     it('ignores a cache written by a version that is not this one', async () => {
         // The version is part of the key, so an entry from another one is not
-        // read and rejected — it is simply never looked for.
+        // read and rejected - it is simply never looked for.
         new Cache(CATALOG_KIND).put(cacheKey(99, 'openrouter'), {
             provider: 'openrouter',
             fetchedAt: new Date().toISOString(),
@@ -3477,7 +3477,7 @@ describe('where a listing comes from', () => {
 });
 
 // In a gateway mode a run reaches only what the gateway serves, so that is the
-// whole catalog — split back into the providers a ref can name.
+// whole catalog - split back into the providers a ref can name.
 describe('listing through a gateway', () => {
     const kept = { ...process.env };
     let root: string;
@@ -3710,7 +3710,7 @@ describe('which model the meta agent runs on', () => {
     });
 
     // `.env` only fills gaps, so by the time the variable is read the two
-    // sources are indistinguishable — unless the shell's value was kept from
+    // sources are indistinguishable - unless the shell's value was kept from
     // before the file was folded in, which is the only reason it is.
     it('tells the shell apart from the project file', () => {
         expect(chooseModel({ shell: 'x', env: 'x' })).toEqual({ ref: 'x', from: 'shell' });
@@ -3865,7 +3865,7 @@ describe('wiring a zen key into copilot', () => {
     });
 
     // Copilot offers its tools as OpenAI custom tools, which only the responses
-    // API accepts — a completions model refuses the very first call.
+    // API accepts - a completions model refuses the very first call.
     it('picks the wire api the model can actually serve', () => {
         expect(wireApi('openai', 'gpt-5-mini')).toBe('responses');
         expect(wireApi('openai', 'o4-mini')).toBe('responses');
