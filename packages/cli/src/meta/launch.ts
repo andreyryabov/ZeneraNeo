@@ -236,7 +236,10 @@ export interface Launch {
 export async function launch(opts: Launch): Promise<Outcome> {
     const shown = opts.sink ?? windowSink();
     const sink = opts.log ? tee(shown, opts.log) : shown;
-    const width = opts.width ?? Math.max(40, (process.stderr.columns ?? 100) - 4);
+    // Without a terminal nothing wraps, and a cut line is lost from the log too.
+    const width =
+        opts.width ??
+        (process.stderr.isTTY ? Math.max(40, (process.stderr.columns ?? 100) - 4) : Infinity);
     const start = opts.spawn ?? nodeSpawn;
     const out: Outcome = { answer: '', exitCode: 0, events: [] };
 
