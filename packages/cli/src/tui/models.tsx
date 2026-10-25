@@ -18,6 +18,7 @@
 import { Box, render, Text, useApp, useInput, useStdout } from 'ink';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
+import type { Provider } from '@zenera/engine';
 import {
     byGroup,
     isPartner,
@@ -28,7 +29,6 @@ import {
     type CatalogEntry,
     type Role,
 } from '../catalog.ts';
-import type { Provider } from '../keys.ts';
 import { ago } from '../term.ts';
 import { resolveTheme, type Theme } from './theme.ts';
 import { clip, scrollTop, wrap } from './wrap.ts';

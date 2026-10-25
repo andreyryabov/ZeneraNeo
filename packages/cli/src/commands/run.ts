@@ -1,3 +1,5 @@
+import * as Projects from '@zenera/engine';
+import { display } from '@zenera/engine';
 import type { AgentEvent, Input } from '@zenera/neo';
 import { usageByModel } from '@zenera/neo';
 import { writeFile } from 'node:fs/promises';
@@ -8,10 +10,8 @@ import type { Command, Context } from '../command.ts';
 import * as Engine from '../engine.ts';
 import { agentEventLog } from '../eventlog.ts';
 import { duration, Narrator, stopMark, summary } from '../narrate.ts';
-import * as Projects from '../projects.ts';
 import { readBatch, readRequest } from '../request.ts';
 import { target, type Target } from '../resolve.ts';
-import { display } from '../session.ts';
 import {
     bold,
     cyan,

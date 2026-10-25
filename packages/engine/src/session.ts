@@ -1,10 +1,10 @@
 import { claimLock, ownLock } from '@zenera/neo';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
+import { EngineError, EXIT, invalidError, usageError } from './errors.ts';
 import { readJson, writeJson } from './home.ts';
 import { isStamp, stamp, stampInstant } from './ids.ts';
 import { isBusy, runIds, sessionIds, sessionsDir } from './projects.ts';
-import { CliError, EXIT, invalidError, usageError } from './term.ts';
 
 // ---------------------------------------------------------------------------
 // Sessions and runs
@@ -36,10 +36,17 @@ export function sessionPaths(projectDir: string, id: string): SessionPaths {
     if (!isStamp(id)) {
         throw usageError(`"${id}" is not a session id`, 'ids look like 20260825-143012-a7f3');
     }
-    const dir = join(sessionsDir(projectDir), id);
+    return sessionPathsAt(join(sessionsDir(projectDir), id));
+}
+
+/**
+ * The same layout, rooted wherever a host keeps its sessions and named however
+ * it names them: a server stores one per user and thread, not per project.
+ */
+export function sessionPathsAt(dir: string): SessionPaths {
     const data = join(dir, '.data');
     return {
-        id,
+        id: basename(dir),
         dir,
         workspace: join(dir, 'workspace'),
         data,
@@ -70,7 +77,11 @@ export interface SessionMeta {
 // ---------------------------------------------------------------------------
 
 export function createSession(projectDir: string, id: string, workspace: string): SessionPaths {
-    const p = sessionPaths(projectDir, id);
+    return createSessionAt(sessionPaths(projectDir, id).dir, workspace);
+}
+
+export function createSessionAt(dir: string, workspace: string): SessionPaths {
+    const p = sessionPathsAt(dir);
     mkdirSync(p.data, { recursive: true });
     mkdirSync(p.runs, { recursive: true });
     mkdirSync(resolve(workspace), { recursive: true });
@@ -155,7 +166,7 @@ export function acquire(p: SessionPaths): Held {
         p.lock,
         ownLock(),
         (held) =>
-            new CliError(
+            new EngineError(
                 `session ${p.id} is already running (pid ${held.pid})`,
                 EXIT.failed,
                 'wait for it, or start another with --new',
@@ -234,7 +245,7 @@ export function runPathsAt(dir: string): {
     const full = resolve(dir);
     const runId = basename(full);
     const sessionDir = dirname(dirname(full));
-    const wrong = (): CliError =>
+    const wrong = (): EngineError =>
         usageError(
             `${display(full)} is not a run directory`,
             'runs live at <project>/sessions/<session>/runs/<run>',

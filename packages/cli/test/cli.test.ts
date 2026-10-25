@@ -1,3 +1,26 @@
+import {
+    ambient,
+    assertUsable,
+    auditModels,
+    checkRegion,
+    credentialFor,
+    credentials,
+    dirSize,
+    envNames,
+    envOf,
+    isStamp,
+    KeyStore,
+    lastUsedAt,
+    loadProjectEnv,
+    mask,
+    parseRef,
+    projectMounts,
+    sessionPaths,
+    stamp,
+    stampInstant,
+    type KeyEntry,
+    type Provider,
+} from '@zenera/engine';
 import type {
     Embedder,
     EmbeddingRequest,
@@ -26,7 +49,6 @@ import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { extract, split } from '../src/args.ts';
-import { auditModels, credentialFor } from '../src/audit.ts';
 import { bannerLines, NEO_BANNER } from '../src/banner.ts';
 import { Cache, cacheKey } from '../src/cache.ts';
 import {
@@ -46,23 +68,8 @@ import {
 } from '../src/catalog.ts';
 import { ALIASES, COMMANDS, EXTERNAL, type External } from '../src/commands/index.ts';
 import { cliManifest, versionOf } from '../src/commands/version.ts';
-import { loadProjectEnv } from '../src/env.ts';
 import { hasExternal, loadExternal } from '../src/external.ts';
 import { History, historyPath, MAX_ENTRIES } from '../src/history.ts';
-import { isStamp, stamp, stampInstant } from '../src/ids.ts';
-import {
-    ambient,
-    assertUsable,
-    checkRegion,
-    credentials,
-    envNames,
-    envOf,
-    KeyStore,
-    mask,
-    parseRef,
-    type KeyEntry,
-    type Provider,
-} from '../src/keys.ts';
 import { classify, probe, probeChat, probeModels } from '../src/liveness.ts';
 import {
     absorb,
@@ -103,11 +110,9 @@ import {
     sharedEndpoint,
     type OwnedContainer,
 } from '../src/podman.ts';
-import { dirSize, lastUsedAt, projectMounts } from '../src/projects.ts';
 import { parseRequest, readRequest } from '../src/request.ts';
 import { chooseWorkspace } from '../src/resolve.ts';
 import { scaffold } from '../src/scaffold.ts';
-import { sessionPaths } from '../src/session.ts';
 import * as term from '../src/term.ts';
 import { bytes, CliError, cut, EXIT, keysIn, pad, table } from '../src/term.ts';
 import { formatInline, formatMarkdown } from '../src/tui/markdown.ts';

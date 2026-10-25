@@ -6,11 +6,19 @@
 // a dependency. `test/meta-boundary.test.ts` holds the line.
 // ---------------------------------------------------------------------------
 
+export {
+    envOf,
+    paths,
+    PROVIDERS,
+    readJson,
+    writeJson,
+    type KeyEntry,
+    type KeyStore,
+    type Provider,
+} from '@zenera/engine';
 export { invokedAs, parse } from '../args.ts';
 export { loadCatalogs } from '../catalog.ts';
 export type { EventLine } from '../eventlog.ts';
-export { paths, readJson, writeJson } from '../home.ts';
-export { envOf, PROVIDERS, type KeyEntry, type KeyStore, type Provider } from '../keys.ts';
 export { PROVIDER_NAMES, splitRef } from '../modelref.ts';
 export { duration } from '../narrate.ts';
 export { rankModels } from '../rank.ts';

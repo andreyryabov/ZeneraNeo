@@ -13,9 +13,9 @@ import {
 } from '@zenera/neo';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { invalidError, usageError } from './errors.ts';
 import { paths, readJson, writeJson } from './home.ts';
 import { isStamp } from './ids.ts';
-import { invalidError, usageError } from './term.ts';
 
 // ---------------------------------------------------------------------------
 // Projects

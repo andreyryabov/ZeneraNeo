@@ -13,39 +13,16 @@ import { styleText } from 'node:util';
 // so there is no flag to thread through and no piped output to garble.
 // ---------------------------------------------------------------------------
 
-export const EXIT = {
-    ok: 0,
-    failed: 1,
-    usage: 2,
-    invalid: 3,
-    credentials: 4,
-    sandbox: 5,
-} as const;
-
-export type ExitCode = (typeof EXIT)[keyof typeof EXIT];
-
-/**
- * An error that already knows what it means. Anything else reaching the top is
- * a bug and exits `failed`, which is the distinction a script needs: a wrong
- * invocation and a wrong answer are not the same failure.
- */
-export class CliError extends Error {
-    readonly code: ExitCode;
-    readonly hint?: string;
-
-    constructor(message: string, code: ExitCode = EXIT.failed, hint?: string) {
-        super(message);
-        this.name = 'CliError';
-        this.code = code;
-        this.hint = hint;
-    }
-}
-
-export const usageError = (m: string, hint?: string): CliError => new CliError(m, EXIT.usage, hint);
-export const invalidError = (m: string, hint?: string): CliError =>
-    new CliError(m, EXIT.invalid, hint);
-export const credentialError = (m: string, hint?: string): CliError =>
-    new CliError(m, EXIT.credentials, hint);
+// The engine raises these too, so `instanceof CliError` holds for its errors.
+import { usageError } from '@zenera/engine';
+export {
+    EngineError as CliError,
+    credentialError,
+    EXIT,
+    invalidError,
+    usageError,
+    type ExitCode,
+} from '@zenera/engine';
 
 // ---------------------------------------------------------------------------
 // Light and dark

@@ -22,6 +22,39 @@
 // must not let a `CliError` escape into a request handler.
 // ---------------------------------------------------------------------------
 
+export {
+    assertNotEmpty,
+    assertOwner,
+    assertPrivate,
+    assertUsable,
+    describe,
+    ensureDir,
+    ensureHome,
+    envNames,
+    envOf,
+    form,
+    home,
+    isOwner,
+    isProvider,
+    keyId,
+    KeyStore,
+    mask,
+    OWNERS,
+    parseRef,
+    paths,
+    PROVIDERS,
+    readJson,
+    SERVICES,
+    SHAPES,
+    writeJson,
+    type CredentialForm,
+    type KeyCheck,
+    type KeyEntry,
+    type KeyOwner,
+    type Liveness,
+    type Provider,
+    type Service,
+} from '@zenera/engine';
 export { extract, invokedAs, one, parse, split, type Parsed, type Split } from './args.ts';
 export { bannerArt, printBanner, type BannerText } from './banner.ts';
 export {
@@ -54,33 +87,6 @@ export {
     type Role,
 } from './catalog.ts';
 export type { Command, Context } from './command.ts';
-export { assertPrivate, ensureDir, ensureHome, home, paths, readJson, writeJson } from './home.ts';
-export {
-    assertNotEmpty,
-    assertOwner,
-    assertUsable,
-    describe,
-    envNames,
-    envOf,
-    form,
-    isOwner,
-    isProvider,
-    keyId,
-    KeyStore,
-    mask,
-    OWNERS,
-    parseRef,
-    PROVIDERS,
-    SERVICES,
-    SHAPES,
-    type CredentialForm,
-    type KeyCheck,
-    type KeyEntry,
-    type KeyOwner,
-    type Liveness,
-    type Provider,
-    type Service,
-} from './keys.ts';
 export { probe, probeAll } from './liveness.ts';
 export {
     engineDisk,

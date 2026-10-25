@@ -1,4 +1,5 @@
 import { TextInput } from '@inkjs/ui';
+import { display } from '@zenera/engine';
 import {
     addUsage,
     isCheckpoint,
@@ -13,7 +14,6 @@ import React, { useCallback, useContext, useEffect, useRef, useState } from 'rea
 import * as Engine from '../engine.ts';
 import { History } from '../history.ts';
 import { format } from '../narrate.ts';
-import { display } from '../session.ts';
 import { CliError } from '../term.ts';
 import { hostUrls, hyperlink, hyperlinks, linkBlock, mountsOf, type Mounts } from './links.ts';
 import { resolveTheme, THEMES, type Kind, type Theme } from './theme.ts';

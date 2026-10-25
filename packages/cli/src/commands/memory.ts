@@ -1,3 +1,4 @@
+import { KeyStore, loadProjectEnv } from '@zenera/engine';
 import {
     ALL_AGENTS,
     buildMemoryReport,
@@ -32,8 +33,6 @@ import { writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
-import { loadProjectEnv } from '../env.ts';
-import { KeyStore } from '../keys.ts';
 import { project as resolveProject } from '../resolve.ts';
 import {
     ago,

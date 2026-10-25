@@ -1,3 +1,13 @@
+import * as Projects from '@zenera/engine';
+import {
+    assertOwner,
+    ensureHome,
+    isProvider,
+    KeyStore,
+    loadProjectEnv,
+    PROVIDERS,
+    type Provider,
+} from '@zenera/engine';
 import { gatewayOf, readProjectConfig } from '@zenera/neo';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -8,10 +18,7 @@ import type { ParseArgsConfig } from 'node:util';
 import { parse } from '../args.ts';
 import { matching, projectNames, type Candidate } from '../candidates.ts';
 import type { Command, Context } from '../command.ts';
-import { loadProjectEnv } from '../env.ts';
 import { copilotEventLog } from '../eventlog.ts';
-import { ensureHome } from '../home.ts';
-import { assertOwner, isProvider, KeyStore, PROVIDERS, type Provider } from '../keys.ts';
 import { probeChat, probeModel } from '../liveness.ts';
 import {
     answerBox,
@@ -62,7 +69,6 @@ import {
 } from '../meta/index.ts';
 import { splitRef } from '../modelref.ts';
 import { duration } from '../narrate.ts';
-import * as Projects from '../projects.ts';
 import { project as resolveProject } from '../resolve.ts';
 import { TEMPLATES } from '../scaffold.ts';
 import {

@@ -54,6 +54,7 @@
         "@google/genai": "^2.30.0",
         "@inkjs/ui": "^2.0.0",
         "@openrouter/sdk": "^1.4.25",
+        "@zenera/engine": "^1.1.36",
         "@zenera/neo": "^1.1.36",
         "@zenera/view": "^1.1.36",
         "google-auth-library": "^10.0.0",

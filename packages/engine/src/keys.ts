@@ -2,8 +2,8 @@ import { EXA_API_KEY_ENV, GATEWAY_KEY_ENV, GATEWAY_URL_ENV } from '@zenera/neo';
 import { chmodSync, copyFileSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
+import { credentialError, EngineError, EXIT, usageError } from './errors.ts';
 import { assertPrivate, ensureDir, paths, readJson, writeJson } from './home.ts';
-import { CliError, EXIT, credentialError, usageError } from './term.ts';
 
 // ---------------------------------------------------------------------------
 // The keyring
@@ -803,6 +803,10 @@ export function assertUsable(store: KeyStore): void {
 
 export function assertNotEmpty(store: KeyStore): void {
     if (store.entries.length === 0) {
-        throw new CliError('the keyring is empty', EXIT.credentials, 'add one: zen key add openai');
+        throw new EngineError(
+            'the keyring is empty',
+            EXIT.credentials,
+            'add one: zen key add openai',
+        );
     }
 }

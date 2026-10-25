@@ -1,19 +1,23 @@
+import {
+    listSessions,
+    openDir,
+    readRunMeta,
+    Registry,
+    runIds,
+    runPaths,
+    sessionIds,
+    sessionPaths,
+    sessionsDir,
+    // Run ids are timestamps by construction, so the newest id *is* the last-run
+    // time — no file has to be opened to learn it.
+    stampInstant,
+    summarize,
+    type ProjectSummary,
+    type RunSummary,
+} from '@zenera/engine';
 import { join } from 'node:path';
 import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
-// Run ids are timestamps by construction, so the newest id *is* the last-run
-// time — no file has to be opened to learn it.
-import { stampInstant } from '../ids.ts';
-import {
-    openDir,
-    Registry,
-    runIds,
-    sessionIds,
-    sessionsDir,
-    summarize,
-    type ProjectSummary,
-} from '../projects.ts';
-import { listSessions, readRunMeta, runPaths, sessionPaths, type RunSummary } from '../session.ts';
 import {
     ago,
     bold,

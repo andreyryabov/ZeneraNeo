@@ -1,4 +1,4 @@
-import type { Provider } from './keys.ts';
+import type { Provider } from '@zenera/engine';
 
 // ---------------------------------------------------------------------------
 // Model refs as people type them
