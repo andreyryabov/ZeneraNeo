@@ -1,3 +1,4 @@
+import { buildSandbox, sessionPaths } from '@zenera/engine';
 import { parseConfig, type AgentEvent } from '@zenera/neo';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -12,9 +13,7 @@ import {
     prepareMemories,
 } from '../src/batch.ts';
 import { BatchProgress } from '../src/progress.ts';
-import { type BatchItem, parseBatch, readBatch } from '../src/request.ts';
-import { buildSandbox } from '../src/sandbox.ts';
-import { sessionPaths } from '../src/session.ts';
+import { parseBatch, readBatch, type BatchItem } from '../src/request.ts';
 
 /**
  * A batch pays for every mistake once per item, so the file is read strictly

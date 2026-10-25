@@ -1,4 +1,13 @@
 import {
+    envOf,
+    SHAPES,
+    type KeyCheck,
+    type KeyEntry,
+    type KeyStore,
+    type Provider,
+    type Service,
+} from '@zenera/engine';
+import {
     createModel,
     EXA_BASE_URL,
     GATEWAY_KEY_HEADER,
@@ -10,15 +19,6 @@ import {
     type Model,
     type ProviderSpec,
 } from '@zenera/neo';
-import {
-    envOf,
-    SHAPES,
-    type KeyCheck,
-    type KeyEntry,
-    type KeyStore,
-    type Provider,
-    type Service,
-} from './keys.ts';
 
 // ---------------------------------------------------------------------------
 // Liveness

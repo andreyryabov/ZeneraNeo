@@ -1,5 +1,5 @@
+import * as Projects from '@zenera/engine';
 import { existsSync } from 'node:fs';
-import * as Projects from './projects.ts';
 
 // ---------------------------------------------------------------------------
 // What a completion offers

@@ -1,9 +1,15 @@
+import {
+    isBusy,
+    isProjectDir,
+    Registry,
+    sessionIds,
+    sessionsDir,
+    type ResolvedBuild,
+} from '@zenera/engine';
 import { pidAlive, runProcess, SandboxError, type ProcResult } from '@zenera/neo';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
-import type { ResolvedBuild } from './image.ts';
-import { isBusy, isProjectDir, Registry, sessionIds, sessionsDir } from './projects.ts';
 import { CliError, confirm, dim, EXIT, isInteractive, note, progress } from './term.ts';
 
 // ---------------------------------------------------------------------------

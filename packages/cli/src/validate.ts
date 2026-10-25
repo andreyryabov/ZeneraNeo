@@ -1,4 +1,18 @@
 import {
+    SHAPES,
+    auditModels,
+    credentialFor,
+    envNames,
+    form,
+    resolveBuild,
+    type DeclaredRole,
+    type KeyStore,
+    type Liveness,
+    type ModelIssue,
+    type ResolvedBuild,
+    type Service,
+} from '@zenera/engine';
+import {
     EXA_GROUP,
     FileSkillProvider,
     SANDBOX_MOUNT,
@@ -30,9 +44,6 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { auditModels, credentialFor, type DeclaredRole, type ModelIssue } from './audit.ts';
-import { resolveBuild, type ResolvedBuild } from './image.ts';
-import { SHAPES, envNames, form, type KeyStore, type Liveness, type Service } from './keys.ts';
 import { probeModels, type ModelTarget } from './liveness.ts';
 import { BuildError, ensurePodmanReady } from './podman.ts';
 import { ownVersion, staleShared } from './scaffold.ts';

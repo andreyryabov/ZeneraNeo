@@ -1,8 +1,8 @@
+import { isProjectDir, Registry, sessionIds, sessionsDir } from '@zenera/engine';
 import { runProcess } from '@zenera/neo';
 import { cpus as hostCpus, platform as hostPlatform, totalmem } from 'node:os';
 import { basename, join } from 'node:path';
 import { idleContainers, ownedContainers, type OwnedContainer } from './podman.ts';
-import { isProjectDir, Registry, sessionIds, sessionsDir } from './projects.ts';
 import { ago, bytes } from './term.ts';
 import { wrap } from './tui/wrap.ts';
 

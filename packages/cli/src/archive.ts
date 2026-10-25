@@ -1,3 +1,4 @@
+import { ENV_FILE } from '@zenera/engine';
 import { createWriteStream, lstatSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -5,7 +6,6 @@ import type { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import * as yauzl from 'yauzl';
 import * as yazl from 'yazl';
-import { ENV_FILE } from './env.ts';
 import { invalidError, usageError } from './term.ts';
 
 // ---------------------------------------------------------------------------

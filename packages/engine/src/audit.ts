@@ -16,7 +16,14 @@ import {
     type KeyOwner,
     type KeyStore,
 } from './keys.ts';
-import { bold, dim } from './term.ts';
+
+/** How a host emphasises a name and dims a fix; plain text by default. */
+export interface IssueStyle {
+    bold: (s: string) => string;
+    dim: (s: string) => string;
+}
+
+const PLAIN: IssueStyle = { bold: (s) => s, dim: (s) => s };
 
 // ---------------------------------------------------------------------------
 // The credential audit
@@ -197,7 +204,7 @@ export function auditModels(projectDir: string, store: KeyStore): ModelIssue[] {
  * noise, so the fix is part of the sentence rather than something to go and
  * look up.
  */
-export function describeIssue(issue: ModelIssue): string {
+export function describeIssue(issue: ModelIssue, { bold, dim }: IssueStyle = PLAIN): string {
     const what = `${bold(issue.name)} (${issue.provider}${issue.role === 'embedding' ? ', embedding' : ''})`;
     if (issue.reason === 'missing') {
         const fix = issue.add ? `zen key add ${issue.add}` : `set ${issue.env}`;

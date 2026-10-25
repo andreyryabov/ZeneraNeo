@@ -1,4 +1,21 @@
 import {
+    display,
+    KeyStore,
+    listRuns,
+    listSessions,
+    loadProjectEnv,
+    newestRun,
+    readRunMeta,
+    requireSession,
+    runPaths,
+    runPathsAt,
+    sessionIds,
+    sessionPaths,
+    type RunMeta,
+    type RunPaths,
+    type SessionPaths,
+} from '@zenera/engine';
+import {
     assertState,
     buildRunReport,
     FilePayloadStore,
@@ -20,24 +37,7 @@ import { pathToFileURL } from 'node:url';
 import { parse } from '../args.ts';
 import { buildDiagnostic, parseRecordedRequest, pickModel } from '../ask.ts';
 import type { Command } from '../command.ts';
-import { loadProjectEnv } from '../env.ts';
-import { KeyStore } from '../keys.ts';
-import { sessionIds } from '../projects.ts';
 import { project as resolveProject } from '../resolve.ts';
-import {
-    display,
-    listRuns,
-    listSessions,
-    newestRun,
-    readRunMeta,
-    requireSession,
-    runPaths,
-    runPathsAt,
-    sessionPaths,
-    type RunMeta,
-    type RunPaths,
-    type SessionPaths,
-} from '../session.ts';
 import {
     nodeDetail,
     parseNodeIds,

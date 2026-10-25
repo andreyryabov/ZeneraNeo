@@ -1,4 +1,14 @@
 import {
+    current as currentProject,
+    dirSize,
+    isProjectDir,
+    open as openProject,
+    Registry,
+    resolveBuild,
+    sessionIds,
+    type ResolvedBuild,
+} from '@zenera/engine';
+import {
     readProjectConfig,
     sandboxLimits,
     type ProjectConfig,
@@ -6,7 +16,6 @@ import {
 } from '@zenera/neo';
 import { parse } from '../args.ts';
 import type { Command } from '../command.ts';
-import { resolveBuild, type ResolvedBuild } from '../image.ts';
 import {
     engineDisk,
     ensurePodmanReady,
@@ -19,14 +28,6 @@ import {
     type OwnedContainer,
     type PodmanStatus,
 } from '../podman.ts';
-import {
-    current as currentProject,
-    dirSize,
-    isProjectDir,
-    open as openProject,
-    Registry,
-    sessionIds,
-} from '../projects.ts';
 import { layout, ResourceSampler, type Line, type Tone } from '../resources.ts';
 import {
     ago,

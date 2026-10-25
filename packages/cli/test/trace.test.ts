@@ -1,3 +1,4 @@
+import { runPathsAt } from '@zenera/engine';
 import { zeroUsage, type Payload, type TokenUsage, type TrajectoryNode } from '@zenera/neo';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,7 +13,6 @@ import {
     replayableCalls,
     wholeParts,
 } from '../src/commands/inspect.ts';
-import { runPathsAt } from '../src/session.ts';
 import { CliError, choose, deferBanner, plain } from '../src/term.ts';
 import {
     parseNodeIds,

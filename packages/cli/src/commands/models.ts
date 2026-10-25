@@ -14,6 +14,15 @@
 
 import { createEmbedder, GATEWAY_NAME, gatewayOf, ModelRegistry, type Gateway } from '@zenera/neo';
 
+import {
+    ensureHome,
+    envNames,
+    form,
+    isProvider,
+    KeyStore,
+    PROVIDERS,
+    type Provider,
+} from '@zenera/engine';
 import { parse } from '../args.ts';
 import {
     byGroup,
@@ -30,8 +39,6 @@ import {
     type Role,
 } from '../catalog.ts';
 import type { Command, Context } from '../command.ts';
-import { ensureHome } from '../home.ts';
-import { envNames, form, isProvider, KeyStore, PROVIDERS, type Provider } from '../keys.ts';
 import { probeChat, probeModel, type ModelProbe, type ModelTarget } from '../liveness.ts';
 import { compareModels } from '../rank.ts';
 import {

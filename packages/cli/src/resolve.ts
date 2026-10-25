@@ -1,15 +1,15 @@
-import { existsSync } from 'node:fs';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
-import { stamp } from './ids.ts';
-import * as Projects from './projects.ts';
+import * as Projects from '@zenera/engine';
 import {
     createSession,
     listSessions,
     readSessionMeta,
     requireSession,
     sessionPaths,
+    stamp,
     type SessionPaths,
-} from './session.ts';
+} from '@zenera/engine';
+import { existsSync } from 'node:fs';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import * as term from './term.ts';
 import { ago, bold, cyan, dim, usageError, yellow } from './term.ts';
 

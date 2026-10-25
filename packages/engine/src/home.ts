@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } fro
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { CliError, EXIT } from './term.ts';
+import { EngineError, EXIT } from './errors.ts';
 
 // ---------------------------------------------------------------------------
 // The home directory
@@ -71,7 +71,7 @@ export function assertPrivate(path: string): void {
     const open = mode & 0o077;
     if (open !== 0) {
         const octal = (mode & 0o777).toString(8).padStart(3, '0');
-        throw new CliError(
+        throw new EngineError(
             `permissions ${octal} on ${path} are too open`,
             EXIT.credentials,
             `run: chmod 600 ${path}`,
@@ -96,7 +96,7 @@ export async function readJson<T>(path: string, fallback: T): Promise<T> {
     try {
         return JSON.parse(text) as T;
     } catch {
-        throw new CliError(`${path} is not valid JSON`, EXIT.invalid, 'fix or delete the file');
+        throw new EngineError(`${path} is not valid JSON`, EXIT.invalid, 'fix or delete the file');
     }
 }
 

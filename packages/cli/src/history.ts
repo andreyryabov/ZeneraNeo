@@ -1,3 +1,4 @@
+import { sessionsDir } from '@zenera/engine';
 import { randomUUID } from 'node:crypto';
 import {
     appendFileSync,
@@ -8,7 +9,6 @@ import {
     writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { sessionsDir } from './projects.ts';
 
 // ---------------------------------------------------------------------------
 // The prompt's history

@@ -27,8 +27,8 @@ import {
     type Gateway,
 } from '@zenera/neo';
 
+import { PROVIDERS, type KeyCheck, type Provider } from '@zenera/engine';
 import { Cache, cacheKey } from './cache.ts';
-import { PROVIDERS, type KeyCheck, type Provider } from './keys.ts';
 import { classify } from './liveness.ts';
 import { compareModels } from './rank.ts';
 

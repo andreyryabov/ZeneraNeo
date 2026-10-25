@@ -1,11 +1,9 @@
+import { buildSandbox, sessionPaths, stamp, type SandboxSetup } from '@zenera/engine';
 import { DEFAULT_SANDBOX_IMAGE, runProcess, type ProjectConfig } from '@zenera/neo';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { stamp } from '../src/ids.ts';
-import { buildSandbox, type SandboxSetup } from '../src/sandbox.ts';
-import { sessionPaths } from '../src/session.ts';
 
 // ---------------------------------------------------------------------------
 // Credentials, all the way into a real container.

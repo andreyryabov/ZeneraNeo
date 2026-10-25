@@ -1,7 +1,7 @@
+import { paths } from '@zenera/engine';
 import { parse } from '../args.ts';
 import { clear, items, kinds, sweep, type CacheKind, type Swept } from '../cache.ts';
 import type { Command } from '../command.ts';
-import { paths } from '../home.ts';
 import {
     ago,
     bold,
