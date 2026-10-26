@@ -17,6 +17,8 @@
 [![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
 [![CI](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml)
 
+[Why `zen`](#why-use-zen) · [Install](#install) · [Quickstart](#quickstart) · [Run](#run-it-your-way) · [Improve](#the-self-improving-loop) · [Evaluate](#evaluate-and-fine-tune) · [Share](#share-a-project) · [Commands](#commands-at-a-glance)
+
 </div>
 
 # `@zenera/cli`
@@ -36,9 +38,9 @@ existing knowledge. Agent runs can search project knowledge, use persistent
 memory, and execute commands in a container. Their traces, outputs, timing, and
 token usage are available to inspect.
 
-> **About this project:** ZeneraNeo is an open-source side project for
-> experimentation and chore work. It is not the official Zenera AI Platform
-> and has no support or stability promises.
+> Part of [ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo). This is an
+> open-source side project for experimentation and chore work - **not** the
+> official Zenera AI Platform. It carries no support or stability promises.
 
 <details>
 <summary><strong>Contents</strong></summary>
