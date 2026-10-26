@@ -70,7 +70,7 @@ Use any text editor, or the command line:
 
 ```sh
 curl -fsSL -o SPECIFICATION.md \
-  https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/examples/projects/01-docs-rag/SPECIFICATION.md
+  https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/examples/projects/01-docs-rag/SPECIFICATION.md
 ```
 
 From a clone of this repository, copy it instead:

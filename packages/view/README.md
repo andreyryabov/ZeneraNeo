@@ -1,6 +1,6 @@
 <div align="center"> 
   <img
-    src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/zenera-logo-with-media-queries.svg"
+    src="https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/docs/imgs/zenera-logo-with-media-queries.svg"
     alt="Zenera Logo"
     width="20"
   />
@@ -9,12 +9,12 @@
 <br>
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-view-with-media-queries.svg" alt="ZENERA VIEW" width="747">
+  <img src="https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/docs/imgs/banner-view-with-media-queries.svg" alt="ZENERA VIEW" width="747">
 
 [![npm](https://img.shields.io/npm/v/@zenera/view.svg)](https://www.npmjs.com/package/@zenera/view)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/andreyryabov/ZeneraNeo/blob/main/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/zenera-ai/ZeneraNeo/blob/main/LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
-[![CI](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml)
+[![CI](https://github.com/zenera-ai/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/zenera-ai/ZeneraNeo/actions/workflows/ci.yml)
 
 [Install](#install) · [Use](#use) · [How it works](#how-it-works) · [Safety](#safety) · [Family](#the-rest-of-the-family) · [License](#license)
 
@@ -25,8 +25,8 @@
 **A live local viewer for a folder. Markdown with tables and Mermaid diagrams,
 highlighted code, directory listings - redrawn in place as the files change.**
 
-> Part of [ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo). It ships with
-> [`zen`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)
+> Part of [ZeneraNeo](https://github.com/zenera-ai/ZeneraNeo). It ships with
+> [`zen`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/cli/README.md)
 > as the `view` **subcommand**, and works just as well as a library on its own.
 
 ## Why
@@ -121,10 +121,10 @@ one path is pushed at most once per `throttleMs`.
 
 | Package                                                                                         | What it is                                                    |
 | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| [`@zenera/cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` - agent projects on the command line                    |
-| [`@zenera/neo`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md)     | the runtime - agents, models, tools, skills, memory           |
-| [`@zenera/faker`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` - a mock API from an openapi/swagger document     |
-| [`@zenera/rag`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md)     | `zen rag` - indexing and search for documents and API schemas |
+| [`@zenera/cli`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` - agent projects on the command line                    |
+| [`@zenera/neo`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/neo/README.md)     | the runtime - agents, models, tools, skills, memory           |
+| [`@zenera/faker`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` - a mock API from an openapi/swagger document     |
+| [`@zenera/rag`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/rag/README.md)     | `zen rag` - indexing and search for documents and API schemas |
 | **`@zenera/view`**                                                                              | `zen view` - a live local viewer for a folder                 |
 
 ## License

@@ -1,6 +1,6 @@
 <div align="center"> 
   <img
-    src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/zenera-logo-with-media-queries.svg"
+    src="https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/docs/imgs/zenera-logo-with-media-queries.svg"
     alt="Zenera Logo"
     width="20"
   />
@@ -9,12 +9,12 @@
 <br>
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-rag-with-media-queries.svg" alt="ZENERA RAG" width="702">
+  <img src="https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/docs/imgs/banner-rag-with-media-queries.svg" alt="ZENERA RAG" width="702">
 
 [![npm](https://img.shields.io/npm/v/@zenera/rag.svg)](https://www.npmjs.com/package/@zenera/rag)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/andreyryabov/ZeneraNeo/blob/main/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/zenera-ai/ZeneraNeo/blob/main/LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
-[![CI](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml)
+[![CI](https://github.com/zenera-ai/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/zenera-ai/ZeneraNeo/actions/workflows/ci.yml)
 
 [Install](#install) · [API schemas](#api-schemas---zen-rag-schema) · [Documents](#documents---zen-rag-docs) · [From code](#from-code---an-index-is-a-toolset) · [Family](#the-rest-of-the-family) · [License](#license)
 
@@ -27,9 +27,9 @@ for agentic RAG.
 Full-text, semantic, hybrid and graph search combine with
 precise inspection and filtering so agents can verify every answer.**
 
-> Part of [ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo). It ships no
+> Part of [ZeneraNeo](https://github.com/zenera-ai/ZeneraNeo). It ships no
 > binary of its own: installing it adds a `rag` **subcommand** to
-> [`zen`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md),
+> [`zen`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/cli/README.md),
 > so indexing, retrieval and agent tools fit one developer workflow.
 
 ## Complete retrieval for agentic systems
@@ -536,7 +536,7 @@ Rebuild an index as content changes without repeating work for unchanged files
 or passages. Interrupted builds resume, and shared content is reused across
 indexes to keep large documentation and schema collections practical to update.
 
-Use [`zen cache`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)
+Use [`zen cache`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/cli/README.md)
 to inspect and manage reusable indexing data when needed.
 
 ## From code - an index is a toolset
@@ -593,11 +593,11 @@ passage, read around it, then edit the file the passage came from.
 
 | Package                                                                                         | What it is                                                    |
 | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| [`@zenera/cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` - agent projects on the command line                    |
-| [`@zenera/neo`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md)     | the runtime - agents, models, tools, skills, memory           |
-| [`@zenera/faker`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` - a mock API from an openapi/swagger document     |
+| [`@zenera/cli`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` - agent projects on the command line                    |
+| [`@zenera/neo`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/neo/README.md)     | the runtime - agents, models, tools, skills, memory           |
+| [`@zenera/faker`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` - a mock API from an openapi/swagger document     |
 | **`@zenera/rag`**                                                                               | `zen rag` - indexing and search for documents and API schemas |
-| [`@zenera/view`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/view/README.md)   | `zen view` - a live local viewer for a folder                 |
+| [`@zenera/view`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/view/README.md)   | `zen view` - a live local viewer for a folder                 |
 
 ## License
 

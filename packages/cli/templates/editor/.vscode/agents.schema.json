@@ -1,6 +1,6 @@
 {
     "$schema": "http://json-schema.org/draft-07/schema#",
-    "$id": "https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/packages/cli/templates/editor/.vscode/agents.schema.json",
+    "$id": "https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/packages/cli/templates/editor/.vscode/agents.schema.json",
     "title": "Zenera Neo agents.yaml",
     "description": "Who exists in this project, what they may reach for, and which model answers for them. Written by `zen init` and replaced by every `zen init` and `zen open`, so it describes the version of `zen` in hand. The runtime is the authority: `zen check` reads the project the way a run does.",
     "type": "object",

@@ -1,6 +1,6 @@
 <div align="center"> 
   <img
-    src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/zenera-logo-with-media-queries.svg"
+    src="https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/docs/imgs/zenera-logo-with-media-queries.svg"
     alt="Zenera Logo"
     width="20"
   />
@@ -12,7 +12,7 @@
 <img src="docs/imgs/banner-neo-dark.svg#gh-dark-mode-only" alt="ZENERA NEO" width="720">
 <img src="docs/imgs/banner-neo-light.svg#gh-light-mode-only" alt="ZENERA NEO" width="720">
 
-[![CI](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml)
+[![CI](https://github.com/zenera-ai/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/zenera-ai/ZeneraNeo/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
 [![OpenAI · Anthropic · Gemini · OpenRouter · vLLM](https://img.shields.io/badge/models-OpenAI%20%C2%B7%20Anthropic%20%C2%B7%20Gemini%20%C2%B7%20OpenRouter%20%C2%B7%20vLLM-8957e5.svg)](#packages)

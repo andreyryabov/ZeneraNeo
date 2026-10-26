@@ -97,7 +97,7 @@ Pushing the tag is what publishes. Until then nothing has left the machine.
 this machine using npm login`, exactly where the new package's turn comes up. Publish
 > that first version by hand (below), then add the trusted publisher on npmjs.com -
 > _package → Settings → Trusted Publisher → GitHub Actions_, repository
-> `andreyryabov/ZeneraNeo`, workflow `release.yml`, environment `npm` - and every later
+> `zenera-ai/ZeneraNeo`, workflow `release.yml`, environment `npm` - and every later
 > release goes through CI like the rest.
 
 Every package has a `prepack: tsc -b`, so a stale or missing `dist` cannot be published.

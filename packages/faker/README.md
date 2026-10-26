@@ -1,6 +1,6 @@
 <div align="center"> 
   <img
-    src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/zenera-logo-with-media-queries.svg"
+    src="https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/docs/imgs/zenera-logo-with-media-queries.svg"
     alt="Zenera Logo"
     width="20"
   />
@@ -9,12 +9,12 @@
 <br>
 
 <div align="center">
-<img src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-faker-with-media-queries.svg" alt="ZENERA FAKER" width="837">
+<img src="https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/docs/imgs/banner-faker-with-media-queries.svg" alt="ZENERA FAKER" width="837">
 
 [![npm](https://img.shields.io/npm/v/@zenera/faker.svg)](https://www.npmjs.com/package/@zenera/faker)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/andreyryabov/ZeneraNeo/blob/main/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/zenera-ai/ZeneraNeo/blob/main/LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
-[![CI](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml)
+[![CI](https://github.com/zenera-ai/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/zenera-ai/ZeneraNeo/actions/workflows/ci.yml)
 
 [Install](#install) · [Use](#use) · [Commands](#commands) · [Credentials](#credentials) · [Family](#the-rest-of-the-family) · [License](#license)
 
@@ -25,9 +25,9 @@
 **A mock HTTP server for swagger/OpenAPI documents. Point it at a spec and it
 serves it - the response bodies are written, once, by a model.**
 
-> Part of [ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo). It ships no
+> Part of [ZeneraNeo](https://github.com/zenera-ai/ZeneraNeo). It ships no
 > binary of its own: installing it adds a `faker` **subcommand** to
-> [`zen`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md),
+> [`zen`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/cli/README.md),
 > which is also where the credentials already are.
 
 ## What you get
@@ -187,11 +187,11 @@ Environment variables still win over the keyring, exactly as they do for `zen`.
 
 | Package                                                                                       | What it is                                                    |
 | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| [`@zenera/cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)   | `zen` - agent projects on the command line                    |
-| [`@zenera/neo`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md)   | the runtime - agents, models, tools, skills, memory           |
+| [`@zenera/cli`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/cli/README.md)   | `zen` - agent projects on the command line                    |
+| [`@zenera/neo`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/neo/README.md)   | the runtime - agents, models, tools, skills, memory           |
 | **`@zenera/faker`**                                                                           | `zen faker` - a mock API from an openapi/swagger document     |
-| [`@zenera/rag`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md)   | `zen rag` - indexing and search for documents and API schemas |
-| [`@zenera/view`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/view/README.md) | `zen view` - a live local viewer for a folder                 |
+| [`@zenera/rag`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/rag/README.md)   | `zen rag` - indexing and search for documents and API schemas |
+| [`@zenera/view`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/view/README.md) | `zen view` - a live local viewer for a folder                 |
 
 ## License
 

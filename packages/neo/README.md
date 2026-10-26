@@ -1,6 +1,6 @@
 <div align="center"> 
   <img
-    src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/zenera-logo-with-media-queries.svg"
+    src="https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/docs/imgs/zenera-logo-with-media-queries.svg"
     alt="Zenera Logo"
     width="20"
   />
@@ -10,14 +10,14 @@
 
 <div align="center">
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-neo-dark.svg">
-  <img src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-neo-with-media-queries.svg" alt="ZENERA NEO" width="720">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/docs/imgs/banner-neo-dark.svg">
+  <img src="https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/docs/imgs/banner-neo-with-media-queries.svg" alt="ZENERA NEO" width="720">
 </picture>
 
 [![npm](https://img.shields.io/npm/v/@zenera/neo.svg)](https://www.npmjs.com/package/@zenera/neo)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/andreyryabov/ZeneraNeo/blob/main/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/zenera-ai/ZeneraNeo/blob/main/LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
-[![CI](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml)
+[![CI](https://github.com/zenera-ai/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/zenera-ai/ZeneraNeo/actions/workflows/ci.yml)
 
 [Install](#install) · [Use](#use) · [Entry points](#entry-points) · [Documentation](#documentation) · [Family](#the-rest-of-the-family) · [License](#license)
 
@@ -28,7 +28,7 @@
 **A multi-agent runtime for Node.js: agents, models, tools, skills, memory and
 an append-only trajectory.**
 
-> Part of [ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo). This is an
+> Part of [ZeneraNeo](https://github.com/zenera-ai/ZeneraNeo). This is an
 > open-source side project for experimentation and chore work - **not** the
 > official Zenera AI Platform. It carries no support or stability promises.
 
@@ -176,10 +176,10 @@ of surfacing three turns into a run as a confused model.
 
 ## Documentation
 
-[docs/projects.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/projects.md) ·
-[docs/agents-yaml.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/agents-yaml.md)
+[docs/projects.md](https://github.com/zenera-ai/ZeneraNeo/blob/main/docs/projects.md) ·
+[docs/agents-yaml.md](https://github.com/zenera-ai/ZeneraNeo/blob/main/docs/agents-yaml.md)
 · and
-[`examples/sdk/`](https://github.com/andreyryabov/ZeneraNeo/tree/main/examples/sdk) for
+[`examples/sdk/`](https://github.com/zenera-ai/ZeneraNeo/tree/main/examples/sdk) for
 eight worked demos, from a single agent to a project loaded entirely from a
 folder.
 
@@ -187,11 +187,11 @@ folder.
 
 | Package                                                                                         | What it is                                                    |
 | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| [`@zenera/cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` - agent projects on the command line                    |
+| [`@zenera/cli`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` - agent projects on the command line                    |
 | **`@zenera/neo`**                                                                               | the runtime - agents, models, tools, skills, memory           |
-| [`@zenera/faker`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` - a mock API from an openapi/swagger document     |
-| [`@zenera/rag`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md)     | `zen rag` - indexing and search for documents and API schemas |
-| [`@zenera/view`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/view/README.md)   | `zen view` - a live local viewer for a folder                 |
+| [`@zenera/faker`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` - a mock API from an openapi/swagger document     |
+| [`@zenera/rag`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/rag/README.md)     | `zen rag` - indexing and search for documents and API schemas |
+| [`@zenera/view`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/view/README.md)   | `zen view` - a live local viewer for a folder                 |
 
 `@zenera/rag` also exports tools you can hand straight to `loadProject`, so an
 agent can search an API it has never read.

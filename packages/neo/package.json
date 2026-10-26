@@ -19,13 +19,13 @@
         "access": "public"
     },
     "author": "Andrey Ryabov",
-    "homepage": "https://github.com/andreyryabov/ZeneraNeo#readme",
+    "homepage": "https://github.com/zenera-ai/ZeneraNeo#readme",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/andreyryabov/ZeneraNeo.git",
+        "url": "git+https://github.com/zenera-ai/ZeneraNeo.git",
         "directory": "packages/neo"
     },
-    "bugs": "https://github.com/andreyryabov/ZeneraNeo/issues",
+    "bugs": "https://github.com/zenera-ai/ZeneraNeo/issues",
     "type": "module",
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",

@@ -77,7 +77,7 @@ turns gateway mode on without the keyring - and `zen key mode`/`ls`/`check`
 report and probe it (`bifrost/$BIFROST_API_KEY`), with nothing stored. In this
 mode `zen models` lists only
 what the gateway serves - see `models.md`. The full guide is
-[docs/gateway.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/gateway.md).
+[docs/gateway.md](https://github.com/zenera-ai/ZeneraNeo/blob/main/docs/gateway.md).
 
 ### Vertex takes either shape
 

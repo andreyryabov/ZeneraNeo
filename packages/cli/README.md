@@ -1,21 +1,21 @@
 <div align="center">
   <img
-    src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/zenera-logo-with-media-queries.svg"
+    src="https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/docs/imgs/zenera-logo-with-media-queries.svg"
     alt="Zenera"
     width="24"
   />
   <div>Powered By Zenera</div>
   <br>
   <img
-    src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-cli-with-media-queries.svg"
+    src="https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/docs/imgs/banner-cli-with-media-queries.svg"
     alt="ZENERA CLI"
     width="720"
   />
 
 [![npm](https://img.shields.io/npm/v/@zenera/cli.svg)](https://www.npmjs.com/package/@zenera/cli)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/andreyryabov/ZeneraNeo/blob/main/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/zenera-ai/ZeneraNeo/blob/main/LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
-[![CI](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/andreyryabov/ZeneraNeo/actions/workflows/ci.yml)
+[![CI](https://github.com/zenera-ai/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/zenera-ai/ZeneraNeo/actions/workflows/ci.yml)
 
 [Why `zen`](#why-use-zen) · [Install](#install) · [Quickstart](#quickstart) · [Run](#run-it-your-way) · [Improve](#the-self-improving-loop) · [Evaluate](#evaluate-and-fine-tune) · [Share](#share-a-project) · [Commands](#commands-at-a-glance)
 
@@ -23,7 +23,7 @@
 
 # `@zenera/cli`
 
-**The CLI for [ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo): build, run, and improve specialist AI agent systems from your terminal.**
+**The CLI for [ZeneraNeo](https://github.com/zenera-ai/ZeneraNeo): build, run, and improve specialist AI agent systems from your terminal.**
 
 The `zen` command is the everyday interface to ZeneraNeo. Describe a recurring
 job, use the meta-agent to shape its agent system, run it against your files and
@@ -38,7 +38,7 @@ existing knowledge. Agent runs can search project knowledge, use persistent
 memory, and execute commands in a container. Their traces, outputs, timing, and
 token usage are available to inspect.
 
-> Part of [ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo). This is an
+> Part of [ZeneraNeo](https://github.com/zenera-ai/ZeneraNeo). This is an
 > open-source side project for experimentation and chore work - **not** the
 > official Zenera AI Platform. It carries no support or stability promises.
 
@@ -122,7 +122,7 @@ zen inspect
 The meta-agent can ask for clarification in `SPECIFICATION-FEEDBACK.md` rather
 than silently guessing. After you answer, apply that feedback with
 `zen meta run my-project /spec-apply-feedback`. For the full workflow, see the
-[specification-driven projects guide](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/specification.md).
+[specification-driven projects guide](https://github.com/zenera-ai/ZeneraNeo/blob/main/docs/specification.md).
 
 ## Run it your way
 
@@ -157,7 +157,7 @@ can find what went wrong and improve the instruction that caused it:
 This makes improvement repeatable and reviewable instead of accumulating
 one-off prompt patches. The meta-agent can also analyze a run and recommend
 which instruction to change. See the
-[specification-driven workflow](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/specification.md).
+[specification-driven workflow](https://github.com/zenera-ai/ZeneraNeo/blob/main/docs/specification.md).
 
 ## Evaluate and fine-tune
 
@@ -177,7 +177,7 @@ zen meta finetune
 Fine-tuning here improves the agent system—its prompts, skills, instructions,
 and memory practices—not model weights. Dataset cases and results provide a
 repeatable way to check that changes improve the work rather than just reword
-the prompts. Read the [fine-tuning guide](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/finetuning.md)
+the prompts. Read the [fine-tuning guide](https://github.com/zenera-ai/ZeneraNeo/blob/main/docs/finetuning.md)
 for dataset and rubric guidance.
 
 ## Share a project
@@ -232,22 +232,22 @@ provide the runtime and optional capabilities that work alongside it:
 
 | Package                                                                                         | What it is                                                    |
 | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| [`@zenera/cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` — agent projects on the command line                    |
-| [`@zenera/neo`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md)     | The runtime — agents, models, tools, skills, and memory       |
-| [`@zenera/faker`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` — mock APIs from OpenAPI or Swagger documents     |
-| [`@zenera/rag`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md)     | `zen rag` — indexing and search for documents and API schemas |
-| [`@zenera/view`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/view/README.md)   | `zen view` — a live local viewer for a folder                 |
+| [`@zenera/cli`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` — agent projects on the command line                    |
+| [`@zenera/neo`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/neo/README.md)     | The runtime — agents, models, tools, skills, and memory       |
+| [`@zenera/faker`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` — mock APIs from OpenAPI or Swagger documents     |
+| [`@zenera/rag`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/rag/README.md)     | `zen rag` — indexing and search for documents and API schemas |
+| [`@zenera/view`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/view/README.md)   | `zen view` — a live local viewer for a folder                 |
 
 `@zenera/rag` also exports tools that can be passed to `loadProject`, allowing
 an agent to search an API schema it has not read beforehand.
 
 ## Learn more
 
-- [ZeneraNeo repository and overview](https://github.com/andreyryabov/ZeneraNeo)
-- [Specification-driven projects](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/specification.md)
-- [Agent configuration reference](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/agents-yaml.md)
-- [Memory](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/memory.md) · [Knowledge and retrieval](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/knowledge.md) · [Fine-tuning](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/finetuning.md)
-- [Examples](https://github.com/andreyryabov/ZeneraNeo/tree/main/examples/projects)
+- [ZeneraNeo repository and overview](https://github.com/zenera-ai/ZeneraNeo)
+- [Specification-driven projects](https://github.com/zenera-ai/ZeneraNeo/blob/main/docs/specification.md)
+- [Agent configuration reference](https://github.com/zenera-ai/ZeneraNeo/blob/main/docs/agents-yaml.md)
+- [Memory](https://github.com/zenera-ai/ZeneraNeo/blob/main/docs/memory.md) · [Knowledge and retrieval](https://github.com/zenera-ai/ZeneraNeo/blob/main/docs/knowledge.md) · [Fine-tuning](https://github.com/zenera-ai/ZeneraNeo/blob/main/docs/finetuning.md)
+- [Examples](https://github.com/zenera-ai/ZeneraNeo/tree/main/examples/projects)
 
 ## License
 

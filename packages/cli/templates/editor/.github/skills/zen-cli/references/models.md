@@ -58,7 +58,7 @@ stderr with a `⇄ bifrost mode` line, `browse` carries the same badge on every
 screen, and `--json` adds a `gateway` field. `zen models` then does go to the
 network, since one request covers every provider; `test` asks through the
 gateway too. The full guide is
-[docs/gateway.md](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/gateway.md).
+[docs/gateway.md](https://github.com/zenera-ai/ZeneraNeo/blob/main/docs/gateway.md).
 
 ## Testing a model
 

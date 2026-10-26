@@ -54,7 +54,7 @@ that Faker will serve:
 mkdir -p mock-apis/specs
 for f in calendar mail; do
   curl -fsSL -o "mock-apis/specs/$f.yaml" \
-    "https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/examples/mock-apis/specs/$f.yaml"
+    "https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/examples/mock-apis/specs/$f.yaml"
 done
 ```
 

@@ -11,7 +11,7 @@ Answer questions about the Hugging Face Transformers documentation from an index
 
 ## Setup
 
-Download `https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/examples/projects/common/markdown-documentation-transformers.zip`
+Download `https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/examples/projects/common/markdown-documentation-transformers.zip`
 into `.tmp/`, unzip it, create an index and store it in `assets/docs-db`. It skips when that index
 can already answer, and re-embeds it from its own `sources/` when the index is present but its
 vectors are not.
