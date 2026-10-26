@@ -225,6 +225,22 @@ Install either package separately to use its command:
 npm install --global @zenera/rag @zenera/faker
 ```
 
+## The rest of the family
+
+`@zenera/cli` is the command-line front end for ZeneraNeo. The other packages
+provide the runtime and optional capabilities that work alongside it:
+
+| Package                                                                                         | What it is                                                    |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| [`@zenera/cli`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` — agent projects on the command line                    |
+| [`@zenera/neo`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/neo/README.md)     | The runtime — agents, models, tools, skills, and memory       |
+| [`@zenera/faker`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` — mock APIs from OpenAPI or Swagger documents     |
+| [`@zenera/rag`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/rag/README.md)     | `zen rag` — indexing and search for documents and API schemas |
+| [`@zenera/view`](https://github.com/andreyryabov/ZeneraNeo/blob/main/packages/view/README.md)   | `zen view` — a live local viewer for a folder                 |
+
+`@zenera/rag` also exports tools that can be passed to `loadProject`, allowing
+an agent to search an API schema it has not read beforehand.
+
 ## Learn more
 
 - [ZeneraNeo repository and overview](https://github.com/andreyryabov/ZeneraNeo)
@@ -232,7 +248,6 @@ npm install --global @zenera/rag @zenera/faker
 - [Agent configuration reference](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/agents-yaml.md)
 - [Memory](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/memory.md) · [Knowledge and retrieval](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/knowledge.md) · [Fine-tuning](https://github.com/andreyryabov/ZeneraNeo/blob/main/docs/finetuning.md)
 - [Examples](https://github.com/andreyryabov/ZeneraNeo/tree/main/examples/projects)
-- [Zenera RAG](https://github.com/andreyryabov/ZeneraNeo/tree/main/packages/rag) · [Zenera Faker](https://github.com/andreyryabov/ZeneraNeo/tree/main/packages/faker)
 
 ## License
 
