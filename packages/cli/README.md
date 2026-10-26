@@ -5,7 +5,7 @@
     width="24"
   />
   <div>Powered By Zenera</div>
-  <p><strong>ZeneraNeo's command-line interface</strong></p>
+  <br>
   <img
     src="https://raw.githubusercontent.com/andreyryabov/ZeneraNeo/main/docs/imgs/banner-cli-with-media-queries.svg"
     alt="ZENERA CLI"
