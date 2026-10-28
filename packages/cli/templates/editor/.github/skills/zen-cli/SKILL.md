@@ -1,6 +1,6 @@
 ---
 name: zen-cli
-description: How to drive this project from the terminal with `zen` - running it, validating it, credentials, the sandbox, run reports, and the `faker` and `rag` modules.
+description: How to drive this project from the terminal with `zen` - running it, validating it, credentials, the sandbox, run reports, and the `gym` and `rag` modules.
 ---
 
 # The `zen` command line
@@ -33,7 +33,7 @@ zen version
 
 zen meta     <run|prompts|resume|model|dataset> [project] [args]
 
-zen faker    <serve|build|cache> [spec...]
+zen gym      <serve|build|cache|model> [spec...]
 zen rag      schema <index|restore|ready|search|list|grep|trace|show|stats> [spec...]
 zen rag      docs <index|restore|ready|search|list|grep|show|stats> [path...]
 ```
@@ -61,7 +61,7 @@ guess a flag, and do not read them all.
 | The evaluation dataset: cases, drift, notes, drawing a sample       | [dataset.md](./references/dataset.md) (and `zen-dataset` skill) |
 | Tuning the prose on the dataset: workers, applies, STATUS.md        | [finetune.md](./references/finetune.md)                         |
 | Sharing a project: archives, what travels, importing one safely     | [export.md](./references/export.md)                             |
-| `zen faker` - a mock API from an OpenAPI/Swagger document           | [faker.md](./references/faker.md)                               |
+| `zen gym` - a mock API from an OpenAPI/Swagger document             | [gym.md](./references/gym.md)                                   |
 | `zen rag` - searching an API description, or a pile of markdown     | [rag.md](./references/rag.md)                                   |
 
 ## The short version

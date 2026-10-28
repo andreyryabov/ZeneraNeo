@@ -21,7 +21,7 @@ import { Checks } from '../src/validate.ts';
 // ---------------------------------------------------------------------------
 
 const here = dirname(fileURLToPath(import.meta.url));
-const MODEL = process.env.ZENERA_FAKER_MODEL ?? 'vertex:gemini-3.5-flash';
+const MODEL = process.env.ZENERA_GYM_MODEL ?? 'vertex:gemini-3.5-flash';
 
 const hasKey = (): boolean =>
     Boolean(
@@ -47,7 +47,7 @@ describe.runIf(enabled)('a generator, for real', () => {
     let operation: Operation;
 
     beforeAll(async () => {
-        root = mkdtempSync(join(tmpdir(), 'faker-live-'));
+        root = mkdtempSync(join(tmpdir(), 'gym-live-'));
         const image = await ensureImage({ root });
         box = new Box({ root, image, timeout: 60 });
         const checks = new Checks();

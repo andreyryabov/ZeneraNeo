@@ -9,9 +9,9 @@
 <br>
 
 <div align="center">
-<img src="https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/docs/imgs/banner-faker-with-media-queries.svg" alt="ZENERA FAKER" width="837">
+<img src="https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/docs/imgs/banner-gym-with-media-queries.svg" alt="ZENERA GYM" width="738">
 
-[![npm](https://img.shields.io/npm/v/@zenera/faker.svg)](https://www.npmjs.com/package/@zenera/faker)
+[![npm](https://img.shields.io/npm/v/@zenera/gym.svg)](https://www.npmjs.com/package/@zenera/gym)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/zenera-ai/ZeneraNeo/blob/main/LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](https://nodejs.org)
 [![CI](https://github.com/zenera-ai/ZeneraNeo/actions/workflows/ci.yml/badge.svg)](https://github.com/zenera-ai/ZeneraNeo/actions/workflows/ci.yml)
@@ -20,13 +20,17 @@
 
 </div>
 
-# @zenera/faker
+# @zenera/gym
 
-**A mock HTTP server for swagger/OpenAPI documents. Point it at a spec and it
-serves it - the response bodies are written, once, by a model.**
+**Simulated API environments for agent training and evaluation. Point Gym at
+a Swagger/OpenAPI spec and it serves it - the response bodies are written,
+once, by a model.**
+
+Gym currently provides the API simulation layer, not a training loop, task
+scoring, or rewards.
 
 > Part of [ZeneraNeo](https://github.com/zenera-ai/ZeneraNeo). It ships no
-> binary of its own: installing it adds a `faker` **subcommand** to
+> binary of its own: installing it adds a `gym` **subcommand** to
 > [`zen`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/cli/README.md),
 > which is also where the credentials already are.
 
@@ -45,17 +49,17 @@ serves it - the response bodies are written, once, by a model.**
 Node.js 24+ and [podman](https://podman.io). Install it alongside the CLI:
 
 ```sh
-npm i -g @zenera/cli @zenera/faker
+npm i -g @zenera/cli @zenera/gym
 zen key add openai          # the keyring `zen` already uses
 ```
 
 The first start builds one image; every start after that reuses it. `zen --help`
-lists `faker` whether or not it is installed, and says what to run if not.
+lists `gym` whether or not it is installed, and says what to run if not.
 
 ## Use
 
 ```sh
-zen faker serve api/openapi.yaml --port 8787
+zen gym serve api/openapi.yaml --port 8787
 curl -s localhost:8787/users/12324
 # { "user_id": 12324, "email": "brooke.hoffman@example.org", ... }
 ```
@@ -64,18 +68,16 @@ More than one document at a time is fine, and the same request answers the same
 way every time when you pin a seed:
 
 ```sh
-zen faker serve specs/*.yaml --seed 42
+zen gym serve specs/*.yaml --seed 42
 ```
 
 Warm it up before a demo or a test run, so no request pays for a model turn:
 
 ```sh
-zen faker build api/openapi.yaml     # write every generator now and exit
-zen faker cache ls                   # what has been generated
-zen faker cache clear                # throw it away
+zen gym build api/openapi.yaml     # write every generator now and exit
+zen gym cache ls                   # what has been generated
+zen gym cache clear                # throw it away
 ```
-
-`zen mock` is the same command under a shorter noun.
 
 A path key with a query string on it — `/x/{id}?action=retry`, which some
 vendors write when they need two `post`s under one path — is read for what
@@ -85,7 +87,7 @@ apart. Call one without it and the 404 says which queries the path answers to.
 
 ## How a body is produced
 
-The first time an operation is called, the faker asks a model to write a
+The first time an operation is called, Gym asks a model to write a
 **Python generator** for it - one file, taking a JSON input path and a JSON
 output path. That file is then run against sample requests it makes up, and
 judged twice: against the operation's response schema, and against the echo
@@ -101,7 +103,7 @@ attempt in it with its diagnostics and its whole source, and the `501` that the
 request gets links to it, in the log line and in the body. The next attempt
 overwrites `gen.py`, and a generator that merely hung leaves no traceback, so
 the code is the only evidence there is. If it passes, the generator is kept in
-this machine's shared cache under `~/.zenera/neo/cache/faker-generator/`, keyed
+this machine's shared cache under `~/.zenera/neo/cache/gym-generator/`, keyed
 by the operation's shape, and every later request is just
 `podman exec python3 gen.py in.json out.json` - no model, no tokens. The store
 is the machine's, so the same document served from another directory costs
@@ -117,7 +119,7 @@ A list endpoint is the one place a mock can hang a real client. Given
 nothing it shouldn't, and hands back `abc` again - so the client asks for the
 same page forever.
 
-The faker reads the document for this. Where an operation has a paging
+Gym reads the document for this. Where an operation has a paging
 parameter (`cursor`, `page`, `offset`, `page_token`, …) in query or request body
 and a response property that carries the next one (`next`, `next_cursor`, `has_more`, …),
 three things happen, all in the operation's own names:
@@ -125,7 +127,7 @@ three things happen, all in the operation's own names:
 - the model is told to fabricate **between 1 and 10 pages** in total, to build the token
   out of the paging parameter rather than the seed, and to end the list - null,
   absent, or `has_more: false` (and empty items) where the schema leaves no other room;
-- the generator is then **walked**: the faker calls it with no cursor, follows
+- the generator is then **walked**: Gym calls it with no cursor, follows
   the token it gets back, and rejects the file if the token repeats, cycles, or
   never runs out. The diagnostics say which, and the model gets another go;
 - at request time, pagination is tracked and bounded: a token identical to the one
@@ -136,7 +138,7 @@ three things happen, all in the operation's own names:
 
 Only paginated operations are affected. Their cache keys changed once, so they
 are written again on first use; everything else keeps the key it had.
-`GET /__faker/routes` reports the shape that was recognised, per operation.
+`GET /__gym/routes` reports the shape that was recognised, per operation.
 
 Plenty of documents describe the envelope and never write down the parameter
 that reads it back. The first two steps cannot help there - nothing static can
@@ -147,29 +149,29 @@ paging parameter from query parameters or request body, since a client only send
 ## Commands
 
 ```
-zen faker serve <spec...>    Serve them. Generators are written on demand.
-zen faker build <spec...>    Write every generator now and exit.
-zen faker cache ls | clear   What has been generated, or throw it away.
-zen faker model [ref]        Show or set the model it uses.
+zen gym serve <spec...>    Serve them. Generators are written on demand.
+zen gym build <spec...>    Write every generator now and exit.
+zen gym cache ls | clear   What has been generated, or throw it away.
+zen gym model [ref]        Show or set the model it uses.
 ```
 
-The model is looked for in this order: `--model`, `ZENERA_FAKER_MODEL`, what
-`zen faker model <provider>:<id>` stored, then the best one your keys can buy.
-The stored one lives beside the keyring in `~/.zenera/neo/faker.json`, so it is
-remembered between runs and across projects; `zen faker model --clear` forgets
+The model is looked for in this order: `--model`, `ZENERA_GYM_MODEL`, what
+`zen gym model <provider>:<id>` stored, then the best one your keys can buy.
+The stored one lives beside the keyring in `~/.zenera/neo/gym.json`, so it is
+remembered between runs and across projects; `zen gym model --clear` forgets
 it.
 
 Useful options: `--port`, `--host` (reachable only from this machine by
 default), `--model`, `--seed` (same request, same answer), `--rebuild`,
 `--attempts`, `--concurrency`, `--timeout`, `--cache <dir>` (the container's
-workspace), `--quiet`. `zen help faker` prints the full table.
+workspace), `--quiet`. `zen help gym` prints the full table.
 
 `GET /` is a contents page: every operation the mock is serving, grouped by the
 document it came from, with its parameters and the shape of its answer. Each
 one has a **Run** button, which opens a form — a box per parameter, required
 ones marked, a body prefilled with something the mock will accept — and shows
-the status, the time and the answer. `GET /__faker/routes` is the same thing as
-JSON; `GET /__faker/health` is a health check. A document that declares `/`
+the status, the time and the answer. `GET /__gym/routes` is the same thing as
+JSON; `GET /__gym/health` is a health check. A document that declares `/`
 itself keeps it.
 
 ## Credentials
@@ -185,11 +187,11 @@ Environment variables still win over the keyring, exactly as they do for `zen`.
 
 ## The rest of the family
 
-| Package                                                                                       | What it is                                                    |
-| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Package                                                                                    | What it is                                                    |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
 | [`@zenera/cli`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/cli/README.md)   | `zen` - agent projects on the command line                    |
 | [`@zenera/neo`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/neo/README.md)   | the runtime - agents, models, tools, skills, memory           |
-| **`@zenera/faker`**                                                                           | `zen faker` - a mock API from an openapi/swagger document     |
+| **`@zenera/gym`**                                                                          | `zen gym` - a mock API from an openapi/swagger document       |
 | [`@zenera/rag`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/rag/README.md)   | `zen rag` - indexing and search for documents and API schemas |
 | [`@zenera/view`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/view/README.md) | `zen view` - a live local viewer for a folder                 |
 

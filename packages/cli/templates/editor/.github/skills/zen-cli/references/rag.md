@@ -34,7 +34,7 @@ zen rag schema index <spec...> [--embedding <ref>] [-o <dir>] [--batch <n>]
 zen rag schema index openapi.yaml --embedding openai:text-embedding-3-small
 ```
 
-Unlike the faker, `$ref`s are **bundled, not dereferenced**: component names are
+Unlike the gym, `$ref`s are **bundled, not dereferenced**: component names are
 the node ids and the cycles between them are the edges. `discriminator` is kept -
 it is what turns a `oneOf` into a tagged union a compiler can narrow.
 

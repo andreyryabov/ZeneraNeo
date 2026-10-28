@@ -18,7 +18,7 @@ import { called, type Operation, type ParamSpec } from './spec.ts';
 // called.
 // ---------------------------------------------------------------------------
 
-const BRAND = { head: 'Zenera', accent: 'Faker', subtitle: 'Mock API Server' };
+const BRAND = { head: 'Zenera', accent: 'Gym', subtitle: 'Agent Environments' };
 
 export function indexPage(operations: readonly Operation[]): string {
     const documents = group(operations);
@@ -38,13 +38,13 @@ export function indexPage(operations: readonly Operation[]): string {
 <header>
 ${banner()}
 <p class="caption">${esc(BRAND.subtitle)}</p>
-<p class="meta">${operations.length} operation${operations.length === 1 ? '' : 's'} &middot; ${documents.length} document${documents.length === 1 ? '' : 's'} &middot; <a href="/__faker/routes">routes</a> &middot; <a href="/__faker/health">health</a></p>
+<p class="meta">${operations.length} operation${operations.length === 1 ? '' : 's'} &middot; ${documents.length} document${documents.length === 1 ? '' : 's'} &middot; <a href="/__gym/routes">routes</a> &middot; <a href="/__gym/health">health</a></p>
 </header>
 <main>
 ${documents.map((d) => document(d, at)).join('\n') || '<p class="empty">No operations are being served.</p>'}
 </main>
 ${DIALOG}
-<script type="application/json" id="faker-ops">${descriptors}</script>
+<script type="application/json" id="gym-ops">${descriptors}</script>
 <script>${SCRIPT}</script>
 </body>
 </html>
@@ -339,7 +339,7 @@ const DIALOG = `<dialog id="run">
 // Values from the document reach the dialog as text nodes rather than markup:
 // the page escapes what it prints, and this has to do the same by construction.
 const SCRIPT = `
-const specs = JSON.parse(document.getElementById('faker-ops').textContent);
+const specs = JSON.parse(document.getElementById('gym-ops').textContent);
 const dialog = document.getElementById('run');
 const title = document.getElementById('run-title');
 const slots = document.getElementById('run-fields');
@@ -484,7 +484,7 @@ document.getElementById('run-cancel').addEventListener('click', () => dialog.clo
 `;
 
 // The two schemes are the terminal's two, and the accent is the same mint the
-// `zen faker` banner is painted in on both.
+// `zen gym` banner is painted in on both.
 const CSS = `
 :root {
   color-scheme: dark light;

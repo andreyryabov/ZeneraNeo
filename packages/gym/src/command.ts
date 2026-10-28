@@ -27,7 +27,7 @@ import { createModel } from '@zenera/neo';
 import { rmSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { CONTAINER_PREFIX, GENERATORS } from './box.ts';
-import { FAKER_KIND, type GeneratorMeta } from './cache.ts';
+import { GYM_KIND, type GeneratorMeta } from './cache.ts';
 import { reason } from './generate.ts';
 import { formatDumpPath } from './logger.ts';
 import { listen } from './server.ts';
@@ -43,18 +43,18 @@ import {
 import { called, type Operation } from './spec.ts';
 
 // ---------------------------------------------------------------------------
-// zen faker — a mock API from a specification
+// zen gym — a mock API from a specification
 //
 // A command in another package rather than a binary of its own: one thing to
 // install, one keyring, one name to remember. `zen` loads this module only when
-// somebody types `zen faker`, so nothing here is on the path of `zen list`.
+// somebody types `zen gym`, so nothing here is on the path of `zen list`.
 //
 // That it stays up is not a problem for the frame — `run` simply does not
 // resolve until a signal arrives, and the process lives as long as the answer
 // takes, which is what every other command already means.
 // ---------------------------------------------------------------------------
 
-const USAGE = 'zen faker <serve|build|cache|model> [spec...]';
+const USAGE = 'zen gym <serve|build|cache|model> [spec...]';
 
 interface Flags {
     port?: string;
@@ -97,7 +97,7 @@ const OPTIONS = {
 } as const;
 
 export const command: Command = {
-    summary: 'A mock API from an openapi/swagger document.',
+    summary: 'Simulated API environments for agent training and evaluation.',
     usage: USAGE,
     details: [
         'Commands',
@@ -114,7 +114,7 @@ export const command: Command = {
             ['  --host <h>', dim('Default 127.0.0.1. Anything else is reachable off-machine.')],
             ['  --model <ref>', dim('Which model writes the generators, for this run only.')],
             ['  --image <ref>', dim('Skip the baked image and use this one.')],
-            ['  --cache <dir>', dim("The container's workspace. Default ~/.zenera/neo/faker.")],
+            ['  --cache <dir>', dim("The container's workspace. Default ~/.zenera/neo/gym.")],
             ['  --seed <n>', dim('Answer the same request the same way every time.')],
             ['  --attempts <n>', dim('Tries per generator before giving up. Default 5.')],
             ['  --concurrency <n>', dim('Generators written at once. Default 4.')],
@@ -130,7 +130,7 @@ export const command: Command = {
         '',
         dim(
             `The model is looked for in this order: ${cyan('--model')}, ${cyan(MODEL_ENV)}, ` +
-                `${cyan('zen faker model')}, then the best one your keys can buy.`,
+                `${cyan('zen gym model')}, then the best one your keys can buy.`,
         ),
         dim(`Credentials come from the ${cyan('zen')} keyring — try ${cyan('zen key ls')}.`),
     ],
@@ -157,7 +157,7 @@ export const command: Command = {
 // ---------------------------------------------------------------------------
 
 async function serve(args: readonly string[], ctx: Context): Promise<void> {
-    const { values, positionals } = parse<Flags>(args, OPTIONS, 'zen faker serve <spec...>');
+    const { values, positionals } = parse<Flags>(args, OPTIONS, 'zen gym serve <spec...>');
     const loud = !values.quiet && !ctx.json;
     const setup = await start(values, positionals, ctx, 'serve');
     if (loud) {
@@ -227,7 +227,7 @@ function until(signals: readonly NodeJS.Signals[]): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function warm(args: readonly string[], ctx: Context): Promise<void> {
-    const { values, positionals } = parse<Flags>(args, OPTIONS, 'zen faker build <spec...>');
+    const { values, positionals } = parse<Flags>(args, OPTIONS, 'zen gym build <spec...>');
     const loud = !values.quiet && !ctx.json;
     const setup = await start(values, positionals, ctx, 'build');
     if (loud) {
@@ -290,8 +290,8 @@ const mark = (status: string): string =>
 // ---------------------------------------------------------------------------
 
 async function cache(args: readonly string[], ctx: Context): Promise<void> {
-    const { values, positionals } = parse<Flags>(args, OPTIONS, 'zen faker cache <ls|clear>');
-    const root = values.cache ? resolve(ctx.cwd, values.cache) : paths.faker();
+    const { values, positionals } = parse<Flags>(args, OPTIONS, 'zen gym cache <ls|clear>');
+    const root = values.cache ? resolve(ctx.cwd, values.cache) : paths.gym();
     const sub = positionals[0] ?? 'ls';
 
     if (sub === 'ls') {
@@ -319,13 +319,13 @@ async function cache(args: readonly string[], ctx: Context): Promise<void> {
     }
 
     if (sub === 'clear') {
-        clearCache({ kind: FAKER_KIND });
+        clearCache({ kind: GYM_KIND });
         // The workspace is scratch — whatever a hit was copied into it is
         // written again from the cache, or by the model.
         rmSync(join(root, GENERATORS), { recursive: true, force: true });
         // The container is named after its configuration, so a stale one would
         // otherwise sit there stopped forever with nothing pointing at it.
-        // `zn-<key>-<digest>` is the shape, and this one's key is `faker`.
+        // `zn-<key>-<digest>` is the shape, and this one's key is `gym`.
         const mine = (await ownedContainers()).filter((c) => c.name.startsWith(CONTAINER_PREFIX));
         if (mine.length > 0) {
             await removeContainers(mine.map((c) => c.name));
@@ -334,7 +334,7 @@ async function cache(args: readonly string[], ctx: Context): Promise<void> {
         return;
     }
 
-    throw usageError(`unknown cache command "${sub}"`, 'zen faker cache <ls|clear>');
+    throw usageError(`unknown cache command "${sub}"`, 'zen gym cache <ls|clear>');
 }
 
 type Listed = GeneratorMeta & { key: string };
@@ -345,7 +345,7 @@ type Listed = GeneratorMeta & { key: string };
  * as a row with nothing in it.
  */
 function listGenerators(): Listed[] {
-    const { rows } = cacheItems(FAKER_KIND);
+    const { rows } = cacheItems(GYM_KIND);
     return rows
         .map((row) => ({ key: row.key, ...(row.value as { meta?: GeneratorMeta })?.meta }))
         .sort((a, b) => a.key.localeCompare(b.key));
@@ -360,7 +360,7 @@ function listGenerators(): Listed[] {
 // surprises you is not "which model" but "why that one".
 // ---------------------------------------------------------------------------
 
-const MODEL_USAGE = 'zen faker model [ref|--clear]';
+const MODEL_USAGE = 'zen gym model [ref|--clear]';
 
 async function model(args: readonly string[], ctx: Context): Promise<void> {
     const { values, positionals } = parse<Flags>(args, OPTIONS, MODEL_USAGE);
@@ -404,7 +404,7 @@ async function model(args: readonly string[], ctx: Context): Promise<void> {
     }
     note(`${cyan(chosen.ref)} ${dim(`from ${SOURCE_LABELS[chosen.from]}`)}`);
     if (chosen.from === 'default') {
-        note(dim(`set one: zen faker model <provider>:<id>`));
+        note(dim(`set one: zen gym model <provider>:<id>`));
     }
 }
 

@@ -50,12 +50,12 @@ The project keeps copies of both OpenAPI contracts in the `mock-apis/spec`:
 `mock-apis/specs/calendar.yaml` and `mock-apis/specs/mail.yaml`. The mock server is already started (you do not run it):
 
 ```sh
-zen faker serve \
+zen gym serve \
   mock-apis/specs/calendar.yaml \
   mock-apis/specs/mail.yaml \
   --host 0.0.0.0 \
   --port 8787 \
-  --requests-dir .tmp/faker-requests
+  --requests-dir .tmp/gym-requests
 ```
 
 Implement small, readable integrations in the generated project that use the
@@ -76,11 +76,11 @@ fields or silently substitute an endpoint when a call fails.
 - The mock service is started separately with both OpenAPI documents. It is not
   part of the generated project's lifecycle.
 - Default both API base URLs to `http://host.containers.internal:8787`.
-- The sandbox needs network access to the mock service. The host running Faker
+- The sandbox needs network access to the mock service. The host running Gym
   must listen on an address reachable from the sandbox.
 - Give the coordinator `sandbox:*` so it can invoke the generated integration
   scripts.
-- Faker fabricates deterministic, schema-valid responses and caches generated
+- Gym fabricates deterministic, schema-valid responses and caches generated
   response generators. The mock does not maintain mailbox or calendar state.
   Never treat generated availability as real, or claim a create/send response
   proves durable storage or delivery.

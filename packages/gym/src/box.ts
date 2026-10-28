@@ -16,7 +16,7 @@ import { join } from 'node:path';
 // ---------------------------------------------------------------------------
 // Where generators run
 //
-// One container for the whole process, offline, with the faker's own directory
+// One container for the whole process, offline, with the gym's own directory
 // bind-mounted at /workspace. That single mount is what makes the file contract
 // work in both directions: the host writes `input.json` and reads
 // `output.json`, the generator sees the same two paths from inside, and neither
@@ -31,10 +31,10 @@ export const GENERATORS = 'generators';
 const IO = 'io';
 const ENTRY = 'gen.py';
 
-/** Every faker container's name starts with this; `cache clear` relies on it. */
-export const CONTAINER_PREFIX = 'zn-faker-';
-/** `zn-faker-<pid>-<digest>`; a name without the pid predates per-process containers. */
-const OWNED_BY = /^zn-faker-(\d+)-[0-9a-f]+$/;
+/** Every gym container's name starts with this; `cache clear` relies on it. */
+export const CONTAINER_PREFIX = 'zn-gym-';
+/** `zn-gym-<pid>-<digest>`; a name without the pid predates per-process containers. */
+const OWNED_BY = /^zn-gym-(\d+)-[0-9a-f]+$/;
 
 /** Pause before the one retry of an engine failure, long enough for a concurrent rm to finish. */
 const ENGINE_RETRY_MS = 300;
@@ -103,7 +103,7 @@ export class Box {
             // of the configuration, so two servers on the same --cache shared
             // one container, and each start (`fresh`) or exit (`dispose`)
             // removed it from under the other: `exited 125, no such container`.
-            key: `faker-${this.#owner}`,
+            key: `gym-${this.#owner}`,
             image: opts.image,
             // The one line that keeps model-written code from calling home.
             network: 'none',
@@ -112,7 +112,7 @@ export class Box {
             // Deliberately NOT persisted, unlike `zen`'s sandbox. A container's
             // name is a hash of its configuration, which includes the host
             // path but not the directory behind it — so a cache directory that
-            // is deleted and recreated (`zen faker cache clear`, or any rm -rf)
+            // is deleted and recreated (`zen gym cache clear`, or any rm -rf)
             // gets a stopped container reattached whose bind mount still points
             // at the old inode. Everything written here is then invisible
             // inside, and every generator fails with "can't open file".
@@ -134,7 +134,7 @@ export class Box {
 
     /**
      * Removes this process's container if a previous owner of the pid left one,
-     * and every faker container whose owning process is gone. Belt to
+     * and every gym container whose owning process is gone. Belt to
      * `persist: false`'s braces: a hard kill never runs `dispose`, and the
      * leftover is exactly the stale-mount trap above. A container whose owner
      * is alive is another server's, and is never touched.
@@ -281,12 +281,12 @@ export class Box {
             fault === 'missing-file'
                 ? `the generator is on the host but not inside ${name}, so its bind mount is stale ` +
                   `(the --cache directory was deleted and recreated while the server ran). ` +
-                  `Restart \`zen faker serve\`.`
+                  `Restart \`zen gym serve\`.`
                 : fault === 'no-python'
-                  ? `the image has no python3. Rebuild it: \`zen faker serve --rebuild …\`, or pass a working --image.`
+                  ? `the image has no python3. Rebuild it: \`zen gym serve --rebuild …\`, or pass a working --image.`
                   : `${name} was removed or stopped while this server was using it, twice in a row. ` +
-                    `Usual causes: \`zen sandbox clean\` or \`zen faker cache clear\` run meanwhile, ` +
-                    `a ${this.#engine} machine restart, or an older \`zen faker\` (before per-process ` +
+                    `Usual causes: \`zen sandbox clean\` or \`zen gym cache clear\` run meanwhile, ` +
+                    `a ${this.#engine} machine restart, or an older \`zen gym\` (before per-process ` +
                     `containers) started on the same --cache. Check \`${this.#engine} ps -a --filter ` +
                     `name=${CONTAINER_PREFIX}\` and \`${this.#engine} machine list\`; the next request ` +
                     `recreates the container.`;

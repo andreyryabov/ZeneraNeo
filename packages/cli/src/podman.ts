@@ -677,9 +677,9 @@ export function idleContainers(
         if (c.state !== 'running') {
             return true;
         }
-        const faker = /^faker-(\d+)$/.exec(c.key ?? '');
-        if (faker) {
-            return !pidAlive(Number(faker[1]));
+        const gym = /^gym-(\d+)$/.exec(c.key ?? '');
+        if (gym) {
+            return !pidAlive(Number(gym[1]));
         }
         const dir = c.key === undefined ? undefined : owners.get(c.key);
         return dir !== undefined && !isBusy(dir);

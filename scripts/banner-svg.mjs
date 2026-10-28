@@ -140,7 +140,7 @@ function trim(rows) {
     return rows.map((row) => row.slice(from, to));
 }
 
-function svg(rows, theme, label) {
+function svg(rows, theme, label, darkTheme) {
     const paths = new Map();
     rows.forEach((row, r) => {
         row.forEach((cell, c) => {
@@ -159,11 +159,19 @@ function svg(rows, theme, label) {
     const width = Math.max(...rows.map((row) => row.length)) * W;
     const height = rows.length * H;
     const body = [...paths]
-        .map(([role, d]) => `  <path fill="${theme[role]}" d="${d.join('')}"/>`)
+        .map(
+            ([role, d]) =>
+                `  <path${darkTheme ? ` class="${role}"` : ''} fill="${theme[role]}" d="${d.join('')}"/>`,
+        )
         .join('\n');
 
+    const style = darkTheme
+        ? `<style>@media (prefers-color-scheme: dark) { ${Object.entries(darkTheme)
+              .map(([role, color]) => `.${role} { fill: ${color}; }`)
+              .join(' ')} }</style>\n`
+        : '';
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="${label}">
-${body}
+${style}${body}
 </svg>
 `;
 }
@@ -173,11 +181,14 @@ const WORDMARKS = [
     { file: 'banner-neo', accent: 'orange', text: NEO_BANNER },
     { file: 'banner-cli', accent: 'orange', text: { ...NEO_BANNER, accent: 'CLI' } },
     { file: 'banner-rag', accent: 'green', text: { ...NEO_BANNER, accent: 'Rag' } },
-    { file: 'banner-faker', accent: 'violet', text: { ...NEO_BANNER, accent: 'Faker' } },
+    { file: 'banner-gym', accent: 'violet', text: { ...NEO_BANNER, accent: 'Gym' } },
     { file: 'banner-view', accent: 'pink', text: { ...NEO_BANNER, accent: 'View' } },
 ];
 
-for (const { file, accent, text } of WORDMARKS) {
+const selected = process.argv.slice(2);
+for (const { file, accent, text } of WORDMARKS.filter(
+    ({ file }) => !selected.length || selected.includes(file),
+)) {
     const rows = trim(bannerLines(text, 999).slice(0, 6).map(cells));
     if (!rows.some((row) => row.some((cell) => cell.role))) {
         throw new Error('banner came back uncoloured — run with FORCE_COLOR=3');
@@ -188,6 +199,13 @@ for (const { file, accent, text } of WORDMARKS) {
         const theme = { ...head, ...ACCENTS[accent][name] };
         writeFileSync(join(OUT, `${file}-${name}.svg`), svg(rows, theme, label));
     }
+    writeFileSync(
+        join(OUT, `${file}-with-media-queries.svg`),
+        svg(rows, { ...HEAD.light, ...ACCENTS[accent].light }, label, {
+            ...HEAD.dark,
+            ...ACCENTS[accent].dark,
+        }),
+    );
     // Three quarters of the drawing, which is where the strokes stay crisp.
     const cols = Math.max(...rows.map((row) => row.length));
     console.log(`${file}: width="${Math.round((cols * W * 3) / 4)}"`);

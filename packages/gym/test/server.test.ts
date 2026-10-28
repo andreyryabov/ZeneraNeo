@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Box } from '../src/box.ts';
-import { Cache, FAKER_KIND } from '../src/cache.ts';
+import { Cache, GYM_KIND } from '../src/cache.ts';
 import { Router } from '../src/router.ts';
 import { listen, type Listening, type ServerOptions } from '../src/server.ts';
 import { loadSpec } from '../src/spec.ts';
@@ -87,7 +87,7 @@ describe('the server', () => {
     });
 
     beforeEach(() => {
-        root = mkdtempSync(join(tmpdir(), 'faker-'));
+        root = mkdtempSync(join(tmpdir(), 'gym-'));
         lastInput = undefined;
     });
 
@@ -105,8 +105,14 @@ describe('the server', () => {
 
     it('reports whether the generator came out of the cache', async () => {
         await boot(echoing);
-        expect((await fetch(`${base}/users/1`)).headers.get('x-faker-cache')).toBe('miss');
-        expect((await fetch(`${base}/users/2`)).headers.get('x-faker-cache')).toBe('hit');
+        for (const [id, status] of [
+            [1, 'miss'],
+            [2, 'hit'],
+        ] as const) {
+            const res = await fetch(`${base}/users/${id}`);
+            expect(res.headers.get('x-gym-cache')).toBe(status);
+            expect(res.headers.get('x-gym-operation')).toBe('getUserById');
+        }
     });
 
     it('rejects a path parameter of the wrong type before generating anything', async () => {
@@ -205,8 +211,15 @@ describe('the server', () => {
 
     it('lists what it serves', async () => {
         await boot(echoing);
-        const routes = (await (await fetch(`${base}/__faker/routes`)).json()) as unknown[];
+        const routes = (await (await fetch(`${base}/__gym/routes`)).json()) as unknown[];
         expect(routes).toHaveLength(4);
+    });
+
+    it('serves the health diagnostic', async () => {
+        await boot(echoing);
+        const health = await fetch(`${base}/__gym/health`);
+        expect(health.status).toBe(200);
+        expect(await health.json()).toEqual({ ok: true, operations: 4 });
     });
 
     it('answers the root with a contents page grouped by document', async () => {
@@ -215,6 +228,8 @@ describe('the server', () => {
         expect(res.status).toBe(200);
         expect(res.headers.get('content-type')).toMatch(/text\/html/);
         const page = await res.text();
+        expect(page).toContain('<title>Zenera Gym</title>');
+        expect(page).toContain('/__gym/routes');
         expect(page).toContain('petstore.yaml');
         expect(page).toContain('/users/{user_id}');
         expect(page).toContain('One user by id.');
@@ -228,7 +243,7 @@ describe('the server', () => {
         expect(buttons).toHaveLength(4);
         // The dialog is built from these, and nothing in them may close the
         // script element it travels in.
-        const descriptors = /<script type="application\/json" id="faker-ops">(.*?)<\/script>/s.exec(
+        const descriptors = /<script type="application\/json" id="gym-ops">(.*?)<\/script>/s.exec(
             page,
         );
         expect(descriptors).not.toBeNull();
@@ -247,11 +262,11 @@ describe('the server', () => {
 
         const retry = await at('?action=retry_profile_realization');
         expect(retry.status).toBe(200);
-        expect(retry.headers.get('x-faker-operation')).toBe('RetryDeviceGroupRealization');
+        expect(retry.headers.get('x-gym-operation')).toBe('RetryDeviceGroupRealization');
         expect(await retry.json()).toEqual({ state: 'retry_profile_realization' });
 
         const apply = await at('?action=apply_profile');
-        expect(apply.headers.get('x-faker-operation')).toBe('ApplyDeviceGroupProfile');
+        expect(apply.headers.get('x-gym-operation')).toBe('ApplyDeviceGroupProfile');
 
         // Not a 405: the method is defined here, the query was not.
         const bare = await at('');
@@ -290,7 +305,7 @@ describe('a looping page token', () => {
         const checks = new Checks();
         const cacheDir = join(root, 'store');
         const operations = await loadSpec(join(here, 'specs', 'paged.yaml'));
-        const store = new Store(FAKER_KIND, { dir: cacheDir });
+        const store = new Store(GYM_KIND, { dir: cacheDir });
         for (const operation of operations) {
             store.put(operation.key, {
                 source: '# written before the rule existed',
@@ -313,7 +328,7 @@ describe('a looping page token', () => {
     };
 
     beforeEach(() => {
-        root = mkdtempSync(join(tmpdir(), 'faker-'));
+        root = mkdtempSync(join(tmpdir(), 'gym-'));
         log = [];
     });
 
@@ -441,14 +456,14 @@ describe('a container engine that cannot run anything', () => {
     let log: string[];
     let asked: number;
 
-    const GONE = 'Error: no container with name or ID "zn-faker-1-abc" found: no such container';
+    const GONE = 'Error: no container with name or ID "zn-gym-1-abc" found: no such container';
 
     const boot = async (engine: Runner): Promise<void> => {
         const box = new Box({ root, image: 'stub', exec: engine });
         const checks = new Checks();
         const cacheDir = join(root, 'store');
         const operations = await loadSpec(join(here, 'specs', 'petstore.yaml'));
-        const store = new Store(FAKER_KIND, { dir: cacheDir });
+        const store = new Store(GYM_KIND, { dir: cacheDir });
         for (const operation of operations) {
             store.put(operation.key, { source: '# fine', meta: { model: 'stub' } });
         }
@@ -486,7 +501,7 @@ describe('a container engine that cannot run anything', () => {
             });
 
     beforeEach(() => {
-        root = mkdtempSync(join(tmpdir(), 'faker-'));
+        root = mkdtempSync(join(tmpdir(), 'gym-'));
         log = [];
         asked = 0;
     });
@@ -540,18 +555,18 @@ describe('a container engine that cannot run anything', () => {
 
 describe('one container per server', () => {
     it('is named after its process, and sweeps only the containers of dead ones', async () => {
-        const root = mkdtempSync(join(tmpdir(), 'faker-'));
+        const root = mkdtempSync(join(tmpdir(), 'gym-'));
         const calls: string[][] = [];
         const engine: Runner = (_bin, args) => {
             calls.push([...args]);
             const stdout =
                 args[0] === 'ps'
                     ? [
-                          `zn-faker-${process.pid}-0123456789`,
+                          `zn-gym-${process.pid}-0123456789`,
                           // pid 1 is always alive; 999999 is past macOS's pid max
-                          'zn-faker-1-aaaaaaaaaa',
-                          'zn-faker-999999-bbbbbbbbbb',
-                          'zn-faker-cccccccccc',
+                          'zn-gym-1-aaaaaaaaaa',
+                          'zn-gym-999999-bbbbbbbbbb',
+                          'zn-gym-cccccccccc',
                       ].join('\n')
                     : '';
             return Promise.resolve({
@@ -564,13 +579,14 @@ describe('one container per server', () => {
         };
         try {
             const box = new Box({ root, image: 'stub', exec: engine });
-            expect(box.sandbox.name).toMatch(new RegExp(`^zn-faker-${process.pid}-[0-9a-f]+$`));
+            expect(box.sandbox.name).toMatch(new RegExp(`^zn-gym-${process.pid}-[0-9a-f]+$`));
             await box.fresh();
             const rm = calls.find((c) => c[0] === 'rm')!;
+            expect(calls.find((c) => c[0] === 'ps')).toContain('name=^zn-gym-');
             expect(rm).toContain(box.sandbox.name);
-            expect(rm).toContain('zn-faker-999999-bbbbbbbbbb');
-            expect(rm).not.toContain('zn-faker-1-aaaaaaaaaa');
-            expect(rm).not.toContain('zn-faker-cccccccccc');
+            expect(rm).toContain('zn-gym-999999-bbbbbbbbbb');
+            expect(rm).not.toContain('zn-gym-1-aaaaaaaaaa');
+            expect(rm).not.toContain('zn-gym-cccccccccc');
         } finally {
             rmSync(root, { recursive: true, force: true });
         }

@@ -216,13 +216,13 @@ The CLI can expose commands supplied by sibling Zenera packages:
 
 - **`@zenera/rag`** adds `zen rag` for indexing and searching documents and API
   schemas.
-- **`@zenera/faker`** adds `zen faker` for building and serving mock APIs from
+- **`@zenera/gym`** adds `zen gym` for building and serving mock APIs from
   OpenAPI or Swagger specifications.
 
 Install either package separately to use its command:
 
 ```sh
-npm install --global @zenera/rag @zenera/faker
+npm install --global @zenera/rag @zenera/gym
 ```
 
 ## The rest of the family
@@ -230,13 +230,13 @@ npm install --global @zenera/rag @zenera/faker
 `@zenera/cli` is the command-line front end for ZeneraNeo. The other packages
 provide the runtime and optional capabilities that work alongside it:
 
-| Package                                                                                         | What it is                                                    |
-| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| [`@zenera/cli`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` — agent projects on the command line                    |
-| [`@zenera/neo`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/neo/README.md)     | The runtime — agents, models, tools, skills, and memory       |
-| [`@zenera/faker`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` — mock APIs from OpenAPI or Swagger documents     |
-| [`@zenera/rag`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/rag/README.md)     | `zen rag` — indexing and search for documents and API schemas |
-| [`@zenera/view`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/view/README.md)   | `zen view` — a live local viewer for a folder                 |
+| Package                                                                                    | What it is                                                    |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| [`@zenera/cli`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/cli/README.md)   | `zen` — agent projects on the command line                    |
+| [`@zenera/neo`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/neo/README.md)   | The runtime — agents, models, tools, skills, and memory       |
+| [`@zenera/gym`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/gym/README.md)   | `zen gym` — mock APIs from OpenAPI or Swagger documents       |
+| [`@zenera/rag`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/rag/README.md)   | `zen rag` — indexing and search for documents and API schemas |
+| [`@zenera/view`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/view/README.md) | `zen view` — a live local viewer for a folder                 |
 
 `@zenera/rag` also exports tools that can be passed to `loadProject`, allowing
 an agent to search an API schema it has not read beforehand.

@@ -219,7 +219,7 @@ async function status(
     const found = await podmanStatus({ image });
     const all = found.ready ? await ownedContainers(found.engine) : [];
     // A container belongs to a session, and a session belongs to a project, so
-    // a report about one project must not list another's — or the faker's,
+    // a report about one project must not list another's — or the gym's,
     // which wears the same label and belongs to no project at all.
     const containers = project ? ofProject(project.dir, all) : all;
     const idle = all.length > 0 ? idleContainers(all, await sessionOwners()) : [];
@@ -662,10 +662,10 @@ function projectRows(projects: readonly ProjectDisk[], loose: readonly OwnedCont
         ]);
     }
     if (loose.length > 0) {
-        // Containers whose session directory is gone, and faker's, which are
+        // Containers whose session directory is gone, and gym's, which are
         // labelled the same way and belong to no project at all.
         const size = loose.reduce((n, c) => n + (c.size ?? 0), 0);
-        const fakers = loose.filter((c) => c.key?.startsWith('faker-')).length;
+        const gyms = loose.filter((c) => c.key?.startsWith('gym-')).length;
         rows.push([
             dim('(unclaimed)'),
             dim('—'),
@@ -673,8 +673,8 @@ function projectRows(projects: readonly ProjectDisk[], loose: readonly OwnedCont
             dim(String(loose.length)),
             dim(bytes(size)),
             dim(
-                fakers === loose.length
-                    ? `zen faker ${fakers === 1 ? 'server' : 'servers'}, no project`
+                gyms === loose.length
+                    ? `zen gym ${gyms === 1 ? 'server' : 'servers'}, no project`
                     : 'no session owns these',
             ),
         ]);

@@ -6,12 +6,12 @@ calendar and mail APIs to create an event and send a confirmation.
 
 This example demonstrates two integrations described by OpenAPI specs in
 [`examples/mock-apis/specs`](../../mock-apis/specs): the project uses those
-specs to understand the API contracts, and `zen faker` serves them as mock
+specs to understand the API contracts, and `zen gym` serves them as mock
 HTTP APIs. The generated project contains the integration code that calls the
 mock endpoints.
 
-**Why Faker?** Real mail and calendar services need accounts, credentials and
-send real messages. `zen faker` stands in for them: it serves the same API
+**Why Gym?** Real mail and calendar services need accounts, credentials and
+send real messages. `zen gym` stands in for them: it serves the same API
 contracts locally, so you can build and test the integrations - request shapes,
 error handling, confirmation before writes - without touching real data or
 sending anything.
@@ -21,7 +21,7 @@ project is built from [SPECIFICATION.md](SPECIFICATION.md).
 
 ## Before you start
 
-- Node.js 24+, then `npm i -g @zenera/cli @zenera/faker`
+- Node.js 24+, then `npm i -g @zenera/cli @zenera/gym`
 - Podman, which is what `zen run` runs the agent in
 - An OpenAI key for the agent and the mock-response generators
 
@@ -48,7 +48,7 @@ cd api-integration
 ## 3. Start both mock APIs
 
 First, from the root of `api-integration`, download the two OpenAPI specs
-that Faker will serve:
+that Gym will serve:
 
 ```sh
 mkdir -p mock-apis/specs
@@ -68,26 +68,26 @@ api-integration/
         └── mail.yaml
 ```
 
-Then run the Faker server from `@zenera/faker`, also from the root of
+Then run the Gym server from `@zenera/gym`, also from the root of
 `api-integration`:
 
 ```sh
-zen faker serve \
+zen gym serve \
   mock-apis/specs/calendar.yaml \
   mock-apis/specs/mail.yaml \
   --host 0.0.0.0 \
   --port 8787 \
-  --requests-dir .tmp/faker-requests
+  --requests-dir .tmp/gym-requests
 ```
 
-Faker serves both specs from one mock server. The first request to an operation
-may take a little longer while Faker writes and validates that operation's
+Gym serves both specs from one mock server. The first request to an operation
+may take a little longer while Gym writes and validates that operation's
 response generator; later calls use its cache. Keep this command running while
 you try the project.
 
 This command stays running in that terminal. To check it from your host, open
 `http://localhost:8787/` in a browser, or check
-`http://localhost:8787/__faker/health`. The root page lists the mock API
+`http://localhost:8787/__gym/health`. The root page lists the mock API
 operations and lets you try them.
 
 There are two different addresses here:
@@ -149,7 +149,7 @@ proposed time and recipients in the same run.
 
 ## What this mock does - and does not - prove
 
-Faker generates deterministic, schema-valid response bodies; it does not
+Gym generates deterministic, schema-valid response bodies; it does not
 provide a stateful calendar or mailbox. A generated event is not guaranteed to
 appear in a later calendar search, and a generated send response does not mean
 an email was delivered. The coordinator must describe these as mock API
@@ -164,4 +164,4 @@ and end-to-end side effects.
 
 - [API integration guide](../../../docs/integrations.md)
 - [Project creation guide](../../../docs/projects.md)
-- [Mock API package](../../../packages/faker/README.md)
+- [Mock API package](../../../packages/gym/README.md)

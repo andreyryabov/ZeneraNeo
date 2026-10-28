@@ -42,7 +42,7 @@ nothing but the convenience of being listed.
     projects.json      index of known projects - a cache, never the truth
     keys.json          credential index, mode 0600
     keys/              file-shaped credentials (Google ADC), mode 0700
-    faker/             the mock server's container workspace - scratch
+    gym/             the mock server's container workspace - scratch
     cache/             work already done (§4.2), one file per object
 ```
 
@@ -142,9 +142,9 @@ two.
 
 And, when the package providing it is installed:
 
-| Command | Package         | Does                                         |
-| ------- | --------------- | -------------------------------------------- |
-| `faker` | `@zenera/faker` | A mock API from an openapi/swagger document. |
+| Command | Package       | Does                                         |
+| ------- | ------------- | -------------------------------------------- |
+| `gym`   | `@zenera/gym` | A mock API from an openapi/swagger document. |
 
 Global flags: `-h/--help`, `-v/--version`, `--json`, `-C <dir>`.
 
@@ -156,7 +156,7 @@ point, and a flag says that better than a command does.
 
 ### 4.1 Commands from another package
 
-A sibling package - `@zenera/faker`, and whatever follows it - adds a command to
+A sibling package - `@zenera/gym`, and whatever follows it - adds a command to
 `zen` instead of installing a binary of its own. One thing to install, one
 keyring, one name to remember, and the alternative was a family of programs
 that share their whole vocabulary and differ only in what they do with it.

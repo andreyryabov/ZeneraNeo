@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Box } from '../src/box.ts';
-import { Cache, FAKER_KIND } from '../src/cache.ts';
+import { Cache, GYM_KIND } from '../src/cache.ts';
 import { build, BuildFailed, reason, unfence } from '../src/generate.ts';
 import { loadSpec, type Operation } from '../src/spec.ts';
 import { Checks } from '../src/validate.ts';
@@ -100,7 +100,7 @@ describe('the build loop', () => {
     let checks: Checks;
 
     beforeEach(async () => {
-        root = mkdtempSync(join(tmpdir(), 'faker-'));
+        root = mkdtempSync(join(tmpdir(), 'gym-'));
         const ops = await loadSpec(join(here, 'specs', 'petstore.yaml'));
         operation = ops.find((o) => o.operationId === 'getUserById')!;
         checks = new Checks();
@@ -189,7 +189,7 @@ describe('the build loop', () => {
     });
 
     it('feeds stderr back when the file will not run', async () => {
-        const { box } = boxWith(() => ({ crash: 'NameError: fakerr is not defined' }));
+        const { box } = boxWith(() => ({ crash: 'NameError: gymr is not defined' }));
         const model = fakeModel(['# broken']);
 
         await expect(build(operation, { model, box, checks, attempts: 2 })).rejects.toThrow(
@@ -283,7 +283,7 @@ describe('the pagination walk', () => {
     let checks: Checks;
 
     beforeEach(async () => {
-        root = mkdtempSync(join(tmpdir(), 'faker-'));
+        root = mkdtempSync(join(tmpdir(), 'gym-'));
         const ops = await loadSpec(join(here, 'specs', 'paged.yaml'));
         operation = ops.find((o) => o.operationId === 'listMachines')!;
         checks = new Checks();
@@ -387,7 +387,7 @@ describe('the cache', () => {
     let operation: Operation;
 
     beforeEach(async () => {
-        root = mkdtempSync(join(tmpdir(), 'faker-'));
+        root = mkdtempSync(join(tmpdir(), 'gym-'));
         const ops = await loadSpec(join(here, 'specs', 'petstore.yaml'));
         operation = ops.find((o) => o.operationId === 'getUserById')!;
     });
@@ -454,7 +454,7 @@ describe('the cache', () => {
             cacheDir: cacheDir(),
         }).ensure(operation);
 
-        const { rows } = cacheItems(FAKER_KIND, { dir: cacheDir() });
+        const { rows } = cacheItems(GYM_KIND, { dir: cacheDir() });
         const mine = rows.find((r) => r.key === operation.key)!;
         const meta = (mine.value as { meta: Record<string, unknown> }).meta;
         expect(meta.model).toBe('stub');
