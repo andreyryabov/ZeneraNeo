@@ -13,12 +13,13 @@ Six packages are published from this repository:
 
 The repository root is `private: true` and is never published.
 
-Nothing lists those four by hand: [scripts/release.mjs](scripts/release.mjs) takes every
+Nothing lists them by hand: [scripts/release.mjs](scripts/release.mjs) takes every
 directory under `packages/` whose `package.json` is not `private`, and sorts them so a
 package comes after the siblings it depends on. `node scripts/release.mjs workspaces`
 prints that list as `-w` flags (`--paths` for bare directories), and the pack and publish
-commands use it. To publish a new package, drop `"private": true` from it - and publish its
-first version by hand, because CI's credential does not exist until the package does.
+commands use it. To publish a new package, drop `"private": true` from it and follow
+[Adding a new package](#adding-a-new-package) - its first version is published by hand,
+because CI's credential does not exist until the package does.
 
 ## The strategy in one paragraph
 
@@ -94,22 +95,46 @@ Pushing the tag is what publishes. Until then nothing has left the machine.
 > provenance statement automatically - the repository is public, so npm accepts it.
 >
 > **A package npm has never seen has no trusted publisher, so its first version cannot be
-> published by CI.** The run fails with `npm error code ENEEDAUTH … You need to authorize
-this machine using npm login`, exactly where the new package's turn comes up. Publish
-> that first version by hand (below), then add the trusted publisher on npmjs.com -
-> _package → Settings → Trusted Publisher → GitHub Actions_, repository
-> `zenera-ai/ZeneraNeo`, workflow `release.yml`, environment `npm` - and every later
-> release goes through CI like the rest.
+> published by CI.** The run fails with `npm error code ENEEDAUTH`
+> (`You need to authorize this machine using npm login`) exactly where the new package's
+> turn comes up - and the publish loop stops there, so every package after it in the
+> order is left unpublished too. See [Adding a new package](#adding-a-new-package).
 
 Every package has a `prepack: tsc -b`, so a stale or missing `dist` cannot be published.
 None ships `src`, and the `.js.map` / `.d.ts.map` files are excluded with it - their
 `../src/*.ts` references would not resolve inside the tarball. Maps are still emitted into
 `dist` for local work; they are only kept out of the published files.
 
+## Adding a new package
+
+A new package's first version cannot come from CI (see above), and it has to exist on npm
+**before** the tag is pushed - otherwise CI publishes the packages ahead of it, dies on it,
+and leaves the rest of the release unpublished. Its first version is the next release, so
+bootstrap it between cutting the tag and pushing it:
+
+```bash
+npm view @zenera/<new> version               # E404: npm has never seen it
+npm run release:check
+npm run release -- patch                     # commits + tags vX.Y.Z; nothing pushed yet
+npm login                                    # once per machine; 2FA prompts for an OTP
+npm publish -w packages/<new> --access public
+```
+
+Then, on npmjs.com: _@zenera/<new> → Settings → Trusted Publisher → GitHub Actions_,
+repository `andreyryabov/ZeneraNeo`, workflow `release.yml`, environment `npm`. Now push
+the tag (`git push origin vX.Y.Z`); CI skips the package as already published and
+releases the rest. Every later release goes through CI like the others.
+
+- Publish from the release commit, so the new package carries the tagged version and
+  ranges. Until CI publishes its siblings a few minutes later, its `@zenera/*` ranges
+  point at versions not on npm yet - harmless, nothing installs it directly in that window.
+- Forgot, and CI already died on `ENEEDAUTH`? Publish it by hand from the tag
+  (`git switch --detach vX.Y.Z`), add the trusted publisher, then re-run the workflow
+  with the same tag - it finishes the rest.
+
 ## Publishing by hand
 
-When CI cannot ([release:publish](package.json) is the same command), and to bootstrap a
-brand-new package:
+When CI cannot ([release:publish](package.json) is the same command):
 
 ```bash
 npm login                                    # once per machine; 2FA prompts for an OTP
@@ -147,6 +172,7 @@ Never move a tag that CI has already consumed.
 - [ ] breaking changes → `major`; new surface → `minor`; fixes → `patch`
 - [ ] `npm run release:check` passes
 - [ ] `npm run release -- <bump>`
+- [ ] a package new to npm? publish it by hand now - [Adding a new package](#adding-a-new-package)
 - [ ] `git push --follow-tags` - exactly one new tag
 - [ ] the `Release` workflow is green and every version appears on npmjs.com
 - [ ] `npm i -g @zenera/cli@latest && zn --version` from outside the repo
