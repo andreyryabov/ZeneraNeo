@@ -121,7 +121,7 @@ npm publish -w packages/<new> --access public
 ```
 
 Then, on npmjs.com: _@zenera/<new> → Settings → Trusted Publisher → GitHub Actions_,
-repository `andreyryabov/ZeneraNeo`, workflow `release.yml`, environment `npm`. Now push
+repository `zenera-ai/ZeneraNeo`, workflow `release.yml`, environment `npm`. Now push
 the tag (`git push origin vX.Y.Z`); CI skips the package as already published and
 releases the rest. Every later release goes through CI like the others.
 

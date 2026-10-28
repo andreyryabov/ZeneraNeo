@@ -2,7 +2,7 @@
 
 **Runs a [`@zenera/neo`](../neo/README.md) project the way `zen run` does - for any host, not only the terminal.**
 
-> Part of [ZeneraNeo](https://github.com/andreyryabov/ZeneraNeo). `zen` is built on it; a server
+> Part of [ZeneraNeo](https://github.com/zenera-ai/ZeneraNeo). `zen` is built on it; a server
 > embedding agent projects uses the same code.
 
 `@zenera/neo` is the runtime. This package is the wiring around it that makes a project folder
