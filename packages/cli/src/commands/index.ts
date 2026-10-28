@@ -60,7 +60,6 @@ export const ALIASES: Record<string, string> = {
     mem: 'memory',
     edit: 'open',
     code: 'open',
-    mock: 'faker',
     pack: 'export',
     archive: 'export',
     unpack: 'import',
@@ -93,12 +92,12 @@ export interface External {
 }
 
 export const EXTERNAL: Record<string, External> = {
-    faker: {
-        package: '@zenera/faker',
-        summary: 'A mock API from an openapi/swagger document.',
-        usage: 'zen faker <serve|build|cache> [spec...]',
-        install: 'npm i -g @zenera/faker',
-        banner: { head: 'Zenera', accent: 'Faker', subtitle: 'Mock API Server', hue: 'mint' },
+    gym: {
+        package: '@zenera/gym',
+        summary: 'Simulated API environments for agent training and evaluation.',
+        usage: 'zen gym <serve|build|cache|model> [spec...]',
+        install: 'npm i -g @zenera/gym',
+        banner: { head: 'Zenera', accent: 'Gym', subtitle: 'Agent Environments', hue: 'mint' },
     },
     rag: {
         package: '@zenera/rag',

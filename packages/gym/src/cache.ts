@@ -28,9 +28,9 @@ import type { Checks } from './validate.ts';
 // the model could not write for should not re-ask on every request.
 // ---------------------------------------------------------------------------
 
-export const FAKER_KIND = 'faker-generator';
+export const GYM_KIND = 'gym-generator';
 
-/** What is kept about a generator besides the code, for `zen faker cache ls`. */
+/** What is kept about a generator besides the code, for `zen gym cache ls`. */
 export interface GeneratorMeta {
     operationId?: string;
     method?: string;
@@ -121,7 +121,7 @@ export class Cache {
 
     constructor(opts: CacheOptions) {
         this.#opts = opts;
-        this.#store = new Store(FAKER_KIND, { dir: opts.cacheDir, mode: 0o600 });
+        this.#store = new Store(GYM_KIND, { dir: opts.cacheDir, mode: 0o600 });
         this.#dumpDir = opts.dumpDir ?? join(opts.box.root, 'builds');
         this.#slots = Math.max(1, opts.concurrency ?? DEFAULT_CONCURRENCY);
     }

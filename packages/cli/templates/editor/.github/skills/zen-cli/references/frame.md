@@ -37,7 +37,7 @@ Not listed in help, but they work.
 | `validate`, `doctor` | `check`   |
 | `report`             | `inspect` |
 | `edit`, `code`       | `open`    |
-| `mock`               | `faker`   |
+| `mock`               | `gym`     |
 
 ## stdout is the answer, stderr is the narration
 
@@ -103,7 +103,7 @@ A real environment variable always beats the keyring.
     projects.json         the registry: name -> directory
     keys.json             credentials (0600)
     keys/                 key files, for providers that hold a file
-    faker/                generator cache for `zen faker`
+    gym/                generator cache for `zen gym`
 
 <project>/
     zenera.json           { version, name }

@@ -141,6 +141,6 @@ The frame does **not** materialise the keyring for you - each command that needs
 a credential opens the store itself. If `zen key ls` shows a key as live and a
 command still says `provider "openai": no api key - set OPENAI_API_KEY`, the
 credential is fine and the command is at fault. Everything that runs a model
-(`run`, `check`, `models`, `faker`, `rag`) already does this.
+(`run`, `check`, `models`, `gym`, `rag`) already does this.
 
 Exit code `4` means no usable credential for what was asked.

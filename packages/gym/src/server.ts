@@ -193,7 +193,7 @@ async function handle(
         const shouldDump = Boolean(
             opts.requestsDir &&
             url.pathname !== '/' &&
-            !url.pathname.startsWith('/__faker/') &&
+            !url.pathname.startsWith('/__gym/') &&
             meta.operationId,
         );
         if (shouldDump) {
@@ -208,7 +208,7 @@ async function handle(
         }
     };
 
-    if (url.pathname.startsWith('/__faker/')) {
+    if (url.pathname.startsWith('/__gym/')) {
         introspect(url.pathname, res, opts);
         await finish(200, { note: 'introspection' });
         return;
@@ -271,7 +271,7 @@ async function handle(
     }
 
     const { operation, pathParams } = match;
-    res.setHeader('x-faker-operation', operation.operationId);
+    res.setHeader('x-gym-operation', operation.operationId);
 
     /** The container could not run anything: say so, and never blame the generator. */
     const sandboxDown = async (
@@ -388,7 +388,7 @@ async function handle(
         end();
         return;
     }
-    res.setHeader('x-faker-cache', generator.cached ? 'hit' : 'miss');
+    res.setHeader('x-gym-cache', generator.cached ? 'hit' : 'miss');
     let cacheStatus: 'hit' | 'miss' | 'regenerated' = generator.cached ? 'hit' : 'miss';
 
     const input: GeneratorInput = {
@@ -501,7 +501,7 @@ async function handle(
             });
 
             cacheStatus = 'regenerated';
-            res.setHeader('x-faker-cache', 'regenerated');
+            res.setHeader('x-gym-cache', 'regenerated');
             opts.onRequest?.(
                 formatRegenerated(
                     urlKey,
@@ -743,7 +743,7 @@ function seedFor(
 }
 
 function introspect(pathname: string, res: ServerResponse, opts: ServerOptions): void {
-    if (pathname === '/__faker/routes') {
+    if (pathname === '/__gym/routes') {
         send(
             res,
             200,
@@ -760,7 +760,7 @@ function introspect(pathname: string, res: ServerResponse, opts: ServerOptions):
         );
         return;
     }
-    if (pathname === '/__faker/health') {
+    if (pathname === '/__gym/health') {
         send(res, 200, { ok: true, operations: opts.router.operations.length });
         return;
     }

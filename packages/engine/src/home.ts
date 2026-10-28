@@ -29,7 +29,7 @@ export const paths = {
     projects: (): string => join(home(), 'projects.json'),
     keys: (): string => join(home(), 'keys.json'),
     keyDir: (): string => join(home(), 'keys'),
-    faker: (): string => join(home(), 'faker'),
+    gym: (): string => join(home(), 'gym'),
     /** what the meta agent runs on, which is a choice about a tool, not a project */
     meta: (): string => join(home(), 'meta.json'),
     /** work already done and worth keeping: vectors, parses, model listings */

@@ -66,7 +66,7 @@ import {
     sampleByProvider,
     type CatalogEntry,
 } from '../src/catalog.ts';
-import { ALIASES, COMMANDS, EXTERNAL, type External } from '../src/commands/index.ts';
+import { COMMANDS, EXTERNAL, type External } from '../src/commands/index.ts';
 import { cliManifest, versionOf } from '../src/commands/version.ts';
 import { hasExternal, loadExternal } from '../src/external.ts';
 import { History, historyPath, MAX_ENTRIES } from '../src/history.ts';
@@ -208,18 +208,18 @@ describe('commands in another package', () => {
         expect(hasExternal(absent)).toBe(false);
     });
 
-    it('finds the faker, which this workspace has', () => {
-        expect(hasExternal(EXTERNAL.faker)).toBe(true);
+    it('finds the gym, which this workspace has', () => {
+        expect(hasExternal(EXTERNAL.gym)).toBe(true);
     });
 
     it('finds the rag package, which this workspace also has', () => {
         expect(hasExternal(EXTERNAL.rag)).toBe(true);
     });
 
-    it('routes mock to the faker', () => {
-        expect(ALIASES.mock).toBe('faker');
-        expect(COMMANDS[ALIASES.mock]).toBeUndefined();
-        expect(EXTERNAL[ALIASES.mock]).toBeDefined();
+    it('registers gym directly as an external command', () => {
+        expect(EXTERNAL.gym.package).toBe('@zenera/gym');
+        expect(EXTERNAL.gym.usage).toContain('|model>');
+        expect(COMMANDS.gym).toBeUndefined();
     });
 
     /**
@@ -2867,19 +2867,19 @@ describe('the disk report', () => {
                     { name: 'zn-old', state: 'exited', key: 'x' },
                     running('20260901-132913-2eac'),
                     running('20990101-000000-none'),
-                    running(`faker-${process.pid}`),
-                    running('faker-999999'),
+                    running(`gym-${process.pid}`),
+                    running('gym-999999'),
                 ];
                 // No lock in the session: its run exited without cleaning up.
                 expect(idleContainers(all, owners).map((c) => c.name)).toEqual([
                     'zn-old',
                     'zn-20260901-132913-2eac',
-                    'zn-faker-999999',
+                    'zn-gym-999999',
                 ]);
                 writeFileSync(join(dir, '.lock'), JSON.stringify({ pid: process.pid }));
                 expect(idleContainers(all, owners).map((c) => c.name)).toEqual([
                     'zn-old',
-                    'zn-faker-999999',
+                    'zn-gym-999999',
                 ]);
             } finally {
                 rmSync(dir, { recursive: true, force: true });

@@ -141,7 +141,7 @@ export interface MachineView {
 export interface ContainerView {
     name: string;
     id: string;
-    kind: 'zen' | 'faker' | 'other';
+    kind: 'zen' | 'gym' | 'other';
     project?: string;
     orphaned: boolean;
     /** percent of one core */
@@ -174,7 +174,7 @@ export interface ResourceView {
     totals: {
         running: number;
         zen: number;
-        faker: number;
+        gym: number;
         other: number;
         orphaned: number;
         memory: number;
@@ -592,7 +592,7 @@ export function viewOf(now: Sample, before?: Sample): ResourceView {
         const prior = before?.stats.find((p) => p.id === s.id);
         const span = prior ? s.systemNano - prior.systemNano : 0;
         const measured = prior !== undefined && span > 0;
-        const kind = !own ? 'other' : own.key?.startsWith('faker-') ? 'faker' : 'zen';
+        const kind = !own ? 'other' : own.key?.startsWith('gym-') ? 'gym' : 'zen';
         return {
             name: s.name,
             id: s.id,
@@ -635,7 +635,7 @@ export function viewOf(now: Sample, before?: Sample): ResourceView {
         totals: {
             running: containers.length,
             zen: containers.filter((c) => c.kind === 'zen').length,
-            faker: containers.filter((c) => c.kind === 'faker').length,
+            gym: containers.filter((c) => c.kind === 'gym').length,
             other: containers.filter((c) => c.kind === 'other').length,
             orphaned: containers.filter((c) => c.orphaned).length,
             memory: containers.reduce((n, c) => n + c.memory, 0),
@@ -1104,7 +1104,7 @@ function containerHead(l: Lines, v: ResourceView, o: LayoutOptions): void {
     const t = v.totals;
     const kinds = [
         t.zen ? `${t.zen} zen` : '',
-        t.faker ? `${t.faker} faker` : '',
+        t.gym ? `${t.gym} gym` : '',
         t.other ? `${t.other} other` : '',
     ]
         .filter(Boolean)
@@ -1124,7 +1124,7 @@ function containerHead(l: Lines, v: ResourceView, o: LayoutOptions): void {
     );
     l.intro(
         'Running ones only: a stopped container keeps its files but uses no memory or cpu. ' +
-            'zen makes one per session; zen faker servers and anything else in podman are listed too.',
+            'zen makes one per session; zen gym servers and anything else in podman are listed too.',
     );
     if (t.running === 0) {
         return;
@@ -1245,7 +1245,7 @@ const COLUMNS: readonly Column[] = [
         width: 14,
         align: 'left',
         keep: 5,
-        cell: (c) => [sp(clipTo(c.project ?? (c.kind === 'faker' ? '(faker)' : '—'), 14))],
+        cell: (c) => [sp(clipTo(c.project ?? (c.kind === 'gym' ? '(gym)' : '—'), 14))],
     },
 ];
 

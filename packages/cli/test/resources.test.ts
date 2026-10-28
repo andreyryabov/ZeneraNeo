@@ -9,6 +9,7 @@ import {
     parsePs,
     parseStats,
     ResourceSampler,
+    viewOf,
     type Line,
     type Owners,
 } from '../src/resources.ts';
@@ -221,6 +222,16 @@ function sampler(opts: Parameters<typeof fakeHost>[0] = {}): ResourceSampler {
 }
 
 describe('a view of two samples', () => {
+    it('reports agent environment containers as gym', async () => {
+        const sample = await sampler().sample();
+        sample.owned[0]!.key = `gym-${process.pid}`;
+        sample.owned[1]!.key = 'gym-999999';
+        const view = viewOf(sample);
+        expect(view.containers.filter((c) => c.kind === 'gym')).toHaveLength(2);
+        expect(view.totals.gym).toBe(2);
+        expect(view.totals.zen).toBe(0);
+    });
+
     it('measures cpu over the interval once there are two samples', async () => {
         const s = sampler();
         const first = await s.next();

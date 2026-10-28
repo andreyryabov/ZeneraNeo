@@ -591,13 +591,13 @@ passage, read around it, then edit the file the passage came from.
 
 ## The rest of the family
 
-| Package                                                                                         | What it is                                                    |
-| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| [`@zenera/cli`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/cli/README.md)     | `zen` - agent projects on the command line                    |
-| [`@zenera/neo`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/neo/README.md)     | the runtime - agents, models, tools, skills, memory           |
-| [`@zenera/faker`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/faker/README.md) | `zen faker` - a mock API from an openapi/swagger document     |
-| **`@zenera/rag`**                                                                               | `zen rag` - indexing and search for documents and API schemas |
-| [`@zenera/view`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/view/README.md)   | `zen view` - a live local viewer for a folder                 |
+| Package                                                                                    | What it is                                                    |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| [`@zenera/cli`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/cli/README.md)   | `zen` - agent projects on the command line                    |
+| [`@zenera/neo`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/neo/README.md)   | the runtime - agents, models, tools, skills, memory           |
+| [`@zenera/gym`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/gym/README.md)   | `zen gym` - a mock API from an openapi/swagger document       |
+| **`@zenera/rag`**                                                                          | `zen rag` - indexing and search for documents and API schemas |
+| [`@zenera/view`](https://github.com/zenera-ai/ZeneraNeo/blob/main/packages/view/README.md) | `zen view` - a live local viewer for a folder                 |
 
 ## License
 

@@ -2,14 +2,14 @@
 
 Six packages are published from this repository:
 
-| package                             | what it is                         | installed as             |
-| ----------------------------------- | ---------------------------------- | ------------------------ |
-| [`@zenera/neo`](packages/neo)       | the library                        | a dependency             |
-| [`@zenera/engine`](packages/engine) | runs a project: keys, sandbox, run | a dependency of the CLI  |
-| [`@zenera/view`](packages/view)     | the live file viewer (`zen view`)  | a dependency of the CLI  |
-| [`@zenera/cli`](packages/cli)       | the `zen` command                  | `npm i -g @zenera/cli`   |
-| [`@zenera/faker`](packages/faker)   | the `zen faker` subcommand         | `npm i -g @zenera/faker` |
-| [`@zenera/rag`](packages/rag)       | the `zen rag` subcommand + tools   | `npm i -g @zenera/rag`   |
+| package                             | what it is                         | installed as            |
+| ----------------------------------- | ---------------------------------- | ----------------------- |
+| [`@zenera/neo`](packages/neo)       | the library                        | a dependency            |
+| [`@zenera/engine`](packages/engine) | runs a project: keys, sandbox, run | a dependency of the CLI |
+| [`@zenera/view`](packages/view)     | the live file viewer (`zen view`)  | a dependency of the CLI |
+| [`@zenera/cli`](packages/cli)       | the `zen` command                  | `npm i -g @zenera/cli`  |
+| [`@zenera/gym`](packages/gym)       | the `zen gym` subcommand           | `npm i -g @zenera/gym`  |
+| [`@zenera/rag`](packages/rag)       | the `zen rag` subcommand + tools   | `npm i -g @zenera/rag`  |
 
 The repository root is `private: true` and is never published.
 
@@ -131,6 +131,12 @@ releases the rest. Every later release goes through CI like the others.
 - Forgot, and CI already died on `ENEEDAUTH`? Publish it by hand from the tag
   (`git switch --detach vX.Y.Z`), add the trusted publisher, then re-run the workflow
   with the same tag - it finishes the rest.
+
+## First Gym publication
+
+Bootstrap `@zenera/gym` using [Adding a new package](#adding-a-new-package):
+publish `packages/gym` from the release commit, configure its trusted publisher,
+then push the tag so CI releases the matching CLI and remaining packages.
 
 ## Publishing by hand
 

@@ -57,14 +57,14 @@ const DEFAULT_MODEL: Record<Provider, string> = {
 // ---------------------------------------------------------------------------
 
 /** The variable a shell or a CI job names it with — a zen ref. */
-export const MODEL_ENV = 'ZENERA_FAKER_MODEL';
+export const MODEL_ENV = 'ZENERA_GYM_MODEL';
 
 export type ModelSource = 'flag' | 'env' | 'store' | 'default';
 
 export const SOURCE_LABELS: Record<ModelSource, string> = {
     flag: '--model',
     env: MODEL_ENV,
-    store: 'zen faker model',
+    store: 'zen gym model',
     default: 'recommended',
 };
 
@@ -73,18 +73,18 @@ export interface ModelChoice {
     from: ModelSource;
 }
 
-export interface FakerFile {
+export interface GymFile {
     version: 1;
     model?: string;
 }
 
-const EMPTY: FakerFile = { version: 1 };
+const EMPTY: GymFile = { version: 1 };
 
-const settingsPath = (): string => join(home(), 'faker.json');
+const settingsPath = (): string => join(home(), 'gym.json');
 
-export const readSettings = (): Promise<FakerFile> => readJson<FakerFile>(settingsPath(), EMPTY);
+export const readSettings = (): Promise<GymFile> => readJson<GymFile>(settingsPath(), EMPTY);
 
-export function writeSettings(file: FakerFile): void {
+export function writeSettings(file: GymFile): void {
     ensureHome();
     writeJson(settingsPath(), file);
 }
@@ -156,7 +156,7 @@ export async function open(opts: SetupOptions): Promise<Setup> {
     }
     const model = createModel(choice.ref);
 
-    const root = resolve(opts.cwd, opts.cache ?? paths.faker());
+    const root = resolve(opts.cwd, opts.cache ?? paths.gym());
     mkdirSync(root, { recursive: true, mode: 0o700 });
 
     // Podman is asked about before the image is built, so a machine without a

@@ -9,7 +9,7 @@ import { Printer } from '../../src/schema/typescript.ts';
 // Specs, and the graph they become
 //
 // The assertions worth having here are the ones a shape check cannot make:
-// that a component keeps its *name* (the faker's dereferencing loses it and
+// that a component keeps its *name* (the gym's dereferencing loses it and
 // that is why this package has its own loader), that a type used both ways is
 // marked `both` rather than whichever side was read last, and that a document
 // which refers to itself terminates.

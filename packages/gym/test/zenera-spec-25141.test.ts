@@ -4,8 +4,8 @@ import { loadSpec } from '../src/spec.ts';
 describe('one-off spec dump', () => {
     it('prints operation metadata', async () => {
         const files = [
-            'packages/faker/test/specs/petstore.yaml',
-            'packages/faker/test/specs/paged.yaml',
+            'packages/gym/test/specs/petstore.yaml',
+            'packages/gym/test/specs/paged.yaml',
         ];
         for (const file of files) {
             const spec: any = await loadSpec(file);

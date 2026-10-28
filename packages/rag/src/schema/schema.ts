@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Schemas, made uniform — without losing their names
 //
-// Three dialects arrive here and one leaves, the same conversion the faker
+// Three dialects arrive here and one leaves, the same conversion the gym
 // does. What is deliberately *not* done here is dereferencing: a `$ref` is
 // left as the string it is, because a component's name is this package's
 // primary key. `#/components/schemas/ResetPasswordPayload` is the edge that
@@ -32,7 +32,7 @@ const LIST = ['allOf', 'anyOf', 'oneOf', 'prefixItems'] as const;
 
 /**
  * Annotations that cost tokens and change no meaning. `discriminator` is
- * conspicuously absent — the faker drops it, and here it is the whole reason a
+ * conspicuously absent — the gym drops it, and here it is the whole reason a
  * `oneOf` can be printed as a TypeScript tagged union rather than a bare one.
  */
 const DROP = new Set(['externalDocs', 'xml', 'x-internal']);

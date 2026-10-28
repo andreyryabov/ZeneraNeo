@@ -41,7 +41,7 @@ export function imageTag(base = BASE_IMAGE): string {
         .update(JSON.stringify([base, [...REQUIREMENTS].sort()]))
         .digest('hex')
         .slice(0, 12);
-    return `localhost/zenera-faker:${digest}`;
+    return `localhost/zenera-gym:${digest}`;
 }
 
 function containerfile(base: string): string {

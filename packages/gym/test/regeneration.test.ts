@@ -12,7 +12,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Box } from '../src/box.ts';
-import { Cache, FAKER_KIND } from '../src/cache.ts';
+import { Cache, GYM_KIND } from '../src/cache.ts';
 import { Router } from '../src/router.ts';
 import { listen, type Listening } from '../src/server.ts';
 import { loadSpec } from '../src/spec.ts';
@@ -63,7 +63,7 @@ function engineWith(
     };
 }
 
-describe('faker logging, markdown dump, error distinction and regeneration', () => {
+describe('gym logging, markdown dump, error distinction and regeneration', () => {
     let root: string;
     let live: Listening;
     let base: string;
@@ -104,7 +104,7 @@ describe('faker logging, markdown dump, error distinction and regeneration', () 
         });
         const checks = new Checks();
         const cacheDir = join(root, 'store');
-        const store = new Store(FAKER_KIND, { dir: cacheDir });
+        const store = new Store(GYM_KIND, { dir: cacheDir });
         for (const op of operations) {
             store.put(op.key, {
                 source: '# initial code\ndef handler(): pass',
@@ -136,7 +136,7 @@ describe('faker logging, markdown dump, error distinction and regeneration', () 
     };
 
     beforeEach(() => {
-        root = mkdtempSync(join(tmpdir(), 'faker-test-'));
+        root = mkdtempSync(join(tmpdir(), 'gym-test-'));
         log = [];
         lastPromptText = '';
         modelCalls = 0;
@@ -255,6 +255,7 @@ describe('faker logging, markdown dump, error distinction and regeneration', () 
         shouldFail = true;
         const res3 = await fetch(`${base}/users/999`);
         expect(res3.status).toBe(200);
+        expect(res3.headers.get('x-gym-cache')).toBe('regenerated');
         expect(await res3.json()).toEqual({
             user_id: 999,
             email: 'user999@example.com',
@@ -383,7 +384,7 @@ describe('faker logging, markdown dump, error distinction and regeneration', () 
         expect(log.at(-1)).not.toContain('↳ dump:');
 
         // Query to introspection
-        const resHealth = await fetch(`${base}/__faker/health`);
+        const resHealth = await fetch(`${base}/__gym/health`);
         expect(resHealth.status).toBe(200);
         expect(log.at(-1)).not.toContain('↳ dump:');
 
