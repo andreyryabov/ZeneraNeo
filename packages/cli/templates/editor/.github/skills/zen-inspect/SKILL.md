@@ -37,6 +37,10 @@ the outcome, batch selected evidence nodes, and expand backwards only for a
 specific unresolved criterion or anomaly. Labels locate evidence; exact
 arguments, returned facts and success claims require the relevant payload.
 Stop when the evidence is sufficient, not after opening every node.
+Start with supporting or contradicting results; select decision nodes only
+after identifying a remaining evidence gap or material attribution question.
+Keep each retrieved node part and its output location, and search that copy
+for all quotations rather than fetching it once per phrase.
 
 `ask` is the last resort, not the first move: it spends a model call to ask the
 run's own model why it did what it did. Open the node first - most questions are
@@ -283,6 +287,11 @@ return you nothing. Ask for it, or for any single part, by name:
 zen inspect node n11 --part thinking --part text --dir <run dir>
 zen inspect node n11 --full --dir <run dir>
 ```
+
+Those are explicit deep-inspection options, not whole-run audit defaults.
+Prefer `--part call` for LLM tool arguments and `--part text` for its public
+answer. Open `thinking` only when unresolved attribution would change a
+recommendation; self-explanations do not prove causation.
 
 An `llm_call` carries two more parts read out of its request, held back the
 same way: `tools`, the tool names that call was offered, one per line, and
