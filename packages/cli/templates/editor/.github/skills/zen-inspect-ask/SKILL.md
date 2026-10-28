@@ -26,6 +26,12 @@ zen inspect ask <llm-node-id> --question-file <question file> --dir <run-dir>
 Each non-interactive call is a **fresh replay**. It does not remember your
 previous question. A follow-up must restate what it builds on.
 
+For a whole-run audit, **zen-analyze-run** owns the replay budget: default
+zero, at most two invocations including retries and second opinions. Its
+budget and uncertainty gate take precedence over the retry suggestions below.
+Do not replay a healthy run or ask about a cause already established by
+recorded evidence.
+
 ## 1. Rule out the cheap causes first
 
 A "why didn't you" question is only about instructions if the model could have
@@ -242,18 +248,21 @@ only a finding once the sentence is confirmed.
     ```sh
     zen inspect node n9 --part request --dir <run-dir> | grep -F 'Do not fork a sequence'
     ```
+    Reuse a request already retrieved; fetch it once and check all quotes
+    against that copy. A match in a project file alone does not prove delivery.
     A quote that is not there is invented - discard the answer, not just the
-    quote. Ask once more; if it invents again, ask another model (step 4).
+    quote. Retry only within the caller's budget; otherwise report that
+    attribution remains unresolved.
 2. **Find every copy.** The blocker often exists twice - once in a house rule,
    once in a skill with a softer tail. Grep the whole request for a distinctive
    phrase of it, then grep the project's `agents/` tree for the file to edit.
 3. **Check it is the project's file.** `fork-instructions.md`,
    `memory-instructions.md`, `tools-instructions.md` are zen's own copies; load
    **zen-instructions** before changing where that rule lives.
-4. **Second opinion when the self-report is thin.** The model that made the
-   call rationalises; another model reading the same replay often names the
-   conflict more plainly: `--model <ref>`. Ask the identical question: the same
-   question file.
+4. **Second opinion only when justified.** A thin answer or `no instruction -
+my own default` does not itself justify more replay. In a whole-run audit,
+   use a second opinion only after an invented quote, and within the two-call
+   total budget: `--model <ref>`, the identical question file.
 5. **Reproduce.** After the edit, rerun the case and check the graph: the
    `tools` header row shows `fork x1` or `memory_search x1` where it did not
    before. The answer predicted a fix; the graph confirms it.

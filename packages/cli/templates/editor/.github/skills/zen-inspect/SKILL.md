@@ -32,6 +32,12 @@ dereference: having seen the shape and spotted the loop, you open the three
 nodes that explain it, whole and untruncated. The index is cheap and you only
 pay for what you open.
 
+For a whole-run audit, follow **zen-analyze-run**: reuse the graph, begin with
+the outcome, batch selected evidence nodes, and expand backwards only for a
+specific unresolved criterion or anomaly. Labels locate evidence; exact
+arguments, returned facts and success claims require the relevant payload.
+Stop when the evidence is sufficient, not after opening every node.
+
 `ask` is the last resort, not the first move: it spends a model call to ask the
 run's own model why it did what it did. Open the node first - most questions are
 answered by reading what it was given.

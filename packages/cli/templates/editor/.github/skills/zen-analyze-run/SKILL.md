@@ -34,7 +34,8 @@ diff since the last one. Work from it:
 Without a brief:
 
 - If it is a run id (`20260825-143012-a7f3`) rather than a path, turn it into
-  the directory once: `zen inspect graph --run <id> --json | jq -r .dir`.
+  the directory once: `zen inspect graph --run <id> --no-style`. Keep that
+  graph and its `%% dir` row; do not fetch the graph again in §3.
 - If the directory has no `state.json` (`test -f <dir>/state.json`), **stop**
   and say the run cannot be analyzed - it never got far enough to save state.
 
@@ -42,7 +43,7 @@ Every `zen inspect` call below carries `--dir <run dir>`. Never run a bare
 `zen inspect`, `zen inspect node` or `zen inspect ask`: without a run named they
 read whichever run is newest, and that changes under you.
 
-**What right means - settle it now, before reading the run.** The run's own
+**What right means - settle it before grading.** The run's own
 `input.md` says what was asked, never what a right answer is.
 
 - **Explicit dataset case**: Words `case=<id> rev=<n>` after the run, or a run
@@ -54,8 +55,12 @@ read whichever run is newest, and that changes under you.
 - **Ad-hoc run matching a dataset case**: When no `case=<id>` was passed and
   there is no brief, if `dataset/` exists (`test -d dataset`), check once
   whether `input.md` matches a case (`zen meta dataset ls --grep "<distinctive phrase from input.md>" --json`).
-  If one case's `input` matches `input.md`, load it with `zen meta dataset show <id>`
-  and grade against its rubric (`r1`, `r2`, ...) and `expected`.
+  Match the full input, ignoring only surrounding whitespace, not a similar
+  topic. The JSON list includes each case's input, rubric and revision: reuse
+  it rather than fetching it again. Use a rubric only for one unambiguous exact
+  match; record its case id and revision and say this is the current dataset
+  revision, not necessarily the one at run time. With zero or multiple exact
+  matches, state that and use the grounding standard; never guess a case.
 - **No matching dataset rubric**: The standard is **grounding**. Break
   `input.md` into its distinct sub-questions or requirements (`q1`, `q2`, ...):
   the run must answer each one, and every specific claim in `output.md` - a
@@ -67,7 +72,8 @@ read whichever run is newest, and that changes under you.
 do not find out what the right answer is, you check the run against the
 standard above using its nodes. So, during an analysis:
 
-- The only commands that reach outside the run are `zen memory search`,
+- Besides reading project instructions and the dataset commands above, the
+  only commands that reach outside the run are `zen memory search`,
   `zen rag docs search` and `zen rag schema search` - to check whether
   something the run needed was findable.
 - You run on the host, in the project root - not in the run's sandbox. A path
@@ -92,8 +98,6 @@ loads go out together. Two steps, before reading anything:
    that same response**, side by side. Never one skill per response.
     - **zen-inspect** - the graph format, `node`, `--part`, and the diagnosis
       table
-    - **zen-inspect-ask** - how to choose the node and word the question for
-      `ask`
     - **zen-cli** - the commands and their `--json` shapes
     - **zen-memory** - when the grep printed a `memory:` line. What "used
       correctly" and "saved correctly" mean is there and in
@@ -104,15 +108,17 @@ loads go out together. Two steps, before reading anything:
       shape carries, what it costs, and the table of graph signatures in its §7.
 
 Load **zen-instructions** before you say where a proposed rule should live.
+Load **zen-inspect-ask** only if a replay passes the gate in §5.
 
-## 3. Read — Start from the End & Minimize `zen inspect`
+## 3. Read - end first, inspect selectively
 
 `zen inspect` spawns a CLI process and parses trajectory blobs; `zen inspect ask`
-spends a full LLM replay call. **Minimize both.** Never inspect all nodes, and
-never walk the graph top-down opening nodes one by one.
+spends a full LLM replay call. **Minimize both.** Do not open every node by
+default or walk the graph top-down opening nodes one by one. Evidence needed
+for rubric compliance takes priority over an inspection budget.
 
-With a brief, steps 1-3 are already in your prompt: read them there without
-running a command.
+With a brief, the graph, run files and project standards are already in your
+prompt: reuse them. Node payloads and full skill bodies may not be included.
 
 1. **Read the end and the header first (`output.md`, `meta.json`, and `zen inspect graph --dir <run dir> --no-style`)**:
     - In `meta.json` and `output.md`: see what was asked (`input.md`), how the
@@ -128,32 +134,32 @@ running a command.
     - Note which agents have `memory_commit` (a `memory:` binding not
       `access: read`) and which can write files - they are who §4 expects to
       commit.
-3. **Inspect nodes backwards from the end, in a single batched command**:
+3. **Trace evidence backwards from the end, in small batches**:
     - **Check what the graph labels and `%%` header already prove without opening nodes**:
         - If `%% memory` says `recall 0 (0 nodes) · search 0 · grep 0 · load 0 · commit 0`,
           that header alone proves no memory search or commit happened - do not
           open nodes just to confirm `search 0` or `commit 0`.
-        - If a `tool_call` node label in the flowchart already shows the command or
-          subject (`n5["n5 run_command zen rag docs search ..."]`), you do not
-          need to open `n5` unless its label was truncated.
-    - **Fast-path for a healthy run**: Start at `final_output` and the
-      `tool_result` / `memory_op` nodes that immediately feed it. If `output.md`
-      satisfies every rubric item (`r1..rN`), the `%%` header shows clean tool
-      and memory counts (recalled/searched before research, committed new
-      paid-for work, no `ERROR` nodes or loops), open **only** the 1-3
-      `tool_result` or `memory_op` nodes needed to verify grounding and commit
-      quality, in **one** batched command (`zen inspect node n6 n9 --dir <run dir>`),
-      and skip §5 (`zen inspect ask`) completely.
-    - **When something went wrong, batch all needed node IDs into ONE call**:
-      Trace backwards from `final_output` (or from the failing `ERROR` /
-      ungrounded claim / missed step) to collect every node ID you need to
-      inspect, and open them together in a **single** `zen inspect node`
-      invocation (e.g., `zen inspect node n4..n10 --dir <run dir>` or
-      `zen inspect node n4 n6 n9 n10 --dir <run dir>`). Never run multiple
-      separate `zen inspect node` commands when one batched call can fetch them.
-    - **Never open `--part request` by default**: In a run with a brief, all
-      prompts, house rules, and skills are already in your prompt. Open parts of
-      `request` only when specifically needed:
+        - Labels locate evidence; they are lossy summaries, not proof of exact
+          arguments, successful execution, returned facts or commit contents.
+          Open the relevant payload when a grade depends on those details.
+    - **Start with the outcome**: Map each rubric item (`r1..rN`) or
+      requirement (`q1..qN`) to the final answer and its supporting results,
+      including results returned by branches. Batch the terminal evidence
+      nodes together, for example `zen inspect node n6 n9 --dir <run dir>`.
+      Reuse `output.md`; do not open `final_output` just to read it again.
+    - **Expand only for a named gap or anomaly**: Open predecessors only to
+      resolve missing support, errors, repeats, suspicious latency, memory
+      reuse or commit quality. Batch independent ids known now; use ranges
+      only when every node in the range is needed. A later batch is allowed
+      when earlier results reveal a new dependency. Keep already-read evidence
+      and never fetch the same part again.
+    - **Stop when evidence is sufficient**: Every criterion must be graded,
+      grounding checked, and each applicable audit area supported. A simple
+      healthy run may need only 1-3 evidence nodes and zero replays, but that is
+      not a cap: do not skip required evidence or call uninspected work `ok`.
+      Counts alone do not prove memory relevance, ordering or quality.
+    - **Never open `--part request` by default**. Open targeted parts only
+      when specifically needed, and retain them for quote verification:
         - which tools the call was offered: `--part tools`
         - the conversation it saw, one clipped line per message: `--part messages`
         - the JSON itself, for `jq`: `--part request --raw` (one node, one part)
@@ -175,15 +181,16 @@ names a script path or says "saved" is not a commit. Both memory areas are
 
 ### Correctness & Rubric Compliance - first (Start at the End)
 
-Grade against the standard from §1, starting from `output.md` and the graph
-labels, and opening only the specific `tool_result` nodes needed to verify
-claims:
+Grade against the standard from §1, starting from `output.md` and the graph.
+Reuse evidence across criteria; open only the payloads needed to verify them:
 
 - **With a dataset rubric (`r1`, `r2`, ...)**: Grade every rubric line with the
   node that proves it:
-    - `pass` - the run shows it: a line naming a call passes by that call in the
-      graph with sensible arguments (check the graph label first; open the node
-      only if the label is truncated), not by the answer claiming it was made. A
+    - `pass` - the run shows it: an answer-content criterion may be proved by
+      `output.md` (cite its `final_output` id from the graph); a criterion about
+      execution needs the recorded call and, when success matters, its result,
+      not the answer claiming it was made. Exact arguments require the payload,
+      not just the graph label. A
       line about behaviour ("sorts on the server") passes by that behaviour in
       whatever language or tool the run used.
     - `fail` - the run shows the opposite, or gives no evidence for it.
@@ -196,9 +203,17 @@ claims:
   distinct sub-questions or requirements (`q1`, `q2`, ...). Grade each one
   (`pass` / `fail`) by checking that `output.md` answered it and that every
   specific claim in that section came from a `tool_result` node in the run.
-  A sub-question or claim with no source node is an ungrounded hallucination
-  (`fail`), and the run is wrong. Compare `output.md` with `expected`, when
-  there is one.
+  An unanswered requirement is an omission (`fail`); an unsupported factual
+  claim is a grounding failure (`fail`), not proof the claim is false. Include
+  factual claims outside the requirement sections too. Compare `output.md`
+  with `expected`, when there is one.
+
+Do not treat rubric compliance as a substitute for grounding where the project
+requires it. Record every criterion, grade, short reason and evidence once in
+the compliance table of §6. Do not invent dataset ids for derived `qN` rows.
+If needed payloads are pruned or unavailable, state the evidence limitation;
+never silently pass the item or label a valid criterion `invalid` for that
+reason. An unproven item is `fail` under this grading contract.
 
 Any `fail` or hallucination makes the run wrong, and that is the first
 finding of the report - every cost finding below comes second to it. A
@@ -209,7 +224,7 @@ too: Kind `specification` in §6.
 
 Use the `%% memory` header line first (`recall N · search · grep · load · commit`).
 If `recall 0 · search 0 · grep 0 · load 0`, you already know from the header
-alone that no memory lookup occurred before research—do not open nodes to check
+alone that no memory lookup occurred before research - do not open nodes to check
 steps 2-3. Otherwise work through these with node ids:
 
 1. **Before research.** Find the first research call in the flowchart - a
@@ -224,10 +239,12 @@ steps 2-3. Otherwise work through these with node ids:
    cost is the inefficiency.
 3. **Searches after a recall.** A `memory_search` straight after a recall that
    returned the same nodes is a wasted call. Count it.
-4. **`recall 0 nodes` (and `search 0`) before a research phase.** Run
-   `zen memory search "<the user's request>"` once yourself (pass `--dir` if a
-   run memory path is separate). A hit means the agent skipped memory or its
-   query/mask missed it; no hit means memory was empty on it.
+4. **`recall 0 nodes` (and `search 0`) before a long research phase.** If
+   checking findability would change the finding, run
+   `zen memory search "<the user's request>"` once against the run's named
+   memory (`--dir <memory dir>`). Today's results are only a findability
+   probe: memory may have changed since the run. Do not claim a hit was
+   available then, or memory was empty then, without historical evidence.
 5. **Wrong channel.** Any `run_command` or file tool touching `/memory` breaks
    `agents/memory-instructions.md`.
 
@@ -333,14 +350,26 @@ elapsed time, not tokens. Then:
 
 ## 5. Ask the model why - `zen inspect ask`
 
-Reading the nodes tells you **what** the run did. Only the model that made a
-choice can tell you **why**, and `zen inspect ask` is how you ask it: it replays
+Reading the nodes tells you **what** the run did. When a material decision
+remains unexplained, `zen inspect ask` replays
 one recorded `llm_call` - the exact system prompt, messages and tool schemas
 that model saw - and puts your question at the end. The answer quotes the
 instruction, skill or tool description behind the choice, which is the
-sentence you will propose to change.
+sentence you may propose to change. Its account is testimony, not proof of
+causation.
 
-For each costly choice found in section 4, run:
+**Default: zero replays. Hard limit: two `ask` invocations per run**, including
+retries and second opinions. This limit overrides the retry/second-opinion
+suggestions in **zen-inspect-ask** for a whole-run audit. Healthy runs need none.
+Do not ask once per finding, rubric failure or decision node.
+
+Ask only when reading selected evidence and available instruction text leaves
+an uncertainty whose resolution would change a high-impact recommendation.
+Missing tools, missing skills, absent instructions or a visible ordering defect
+do not need a replay. Distinguish an observed defect from a suspected cause;
+do not claim a rule caused a decision just because both are present.
+
+If that gate passes, load **zen-inspect-ask** and run:
 
 ```sh
 zen inspect ask <llm-node-id> --question-file <question file> --dir <run dir>
@@ -384,7 +413,8 @@ Before asking, rule out the cheap causes from the nodes (zen-inspect-ask
 prompt, the skill was not loaded, the context was compacted. Any of these is
 the finding on its own - asking about it gets an invented reason.
 
-Ask whenever it applies:
+When a replay is justified, use this table to choose the decision node; these
+are candidates, not required questions:
 
 | The run...                                             | Ask the `llm` that...                       | About                                                               |
 | ------------------------------------------------------ | ------------------------------------------- | ------------------------------------------------------------------- |
@@ -412,58 +442,117 @@ them, made the workspace the first place to look?
 zen inspect ask n6 --question-file .tmp/ask/<run-id>/n6-memory.md --dir <run dir>
 ```
 
-Ask at most six questions, the costliest findings first. Verify every quote in
-an answer by grepping it in that node's recorded request (`zen inspect node
-<id> --part request --dir <run dir> | grep -F '<quote>'`); an answer whose quote
-is not there is discarded, not reported. If the run recorded no requests, `ask`
-refuses - say so and grade from the nodes alone.
+Use the remaining budget only for another distinct, high-impact uncertainty,
+or one retry/second opinion when the first replay fabricated a quote. A thin
+answer or `no instruction - my own default` does not warrant another replay.
+
+Verify every quoted instruction against that call's recorded request, reusing
+parts already retrieved. If needed, fetch it once with `zen inspect node <id>
+--part request --raw --dir <run dir>` and search all candidate quotes locally.
+A match in a project file or brief alone does not prove the model received it.
+Discard an answer containing an invented quote; when requests are unavailable
+or the budget is exhausted, report the uncertainty and grade observed behaviour
+without further replay.
 
 ## 6. Report
 
-Answer in this shape, and nothing else. Every claim carries node ids.
+Output only the Markdown report, with these four top-level `##` headings in
+this order. No scratchpad, investigation transcript, self-check narration or
+closing offer. Use plain language in the overview and node ids for evidence in
+the detail. Metadata and aggregate counts may cite `meta.json` or `graph header`
+instead of inventing a node id. Keep table cells to one short sentence; escape
+literal pipes and put long quotations in numbered details, not table cells.
 
-**Run** - id, directory, agent (and the one it started as), outcome
-(`stopReason` or the error), elapsed, tokens in / out, nodes, llm calls.
+### Heading: `## 1. Executive Overview & Conclusion`
 
-**Health** - one word, `healthy`, `degraded` or `unhealthy`, and one sentence
-saying why. Then:
+Start with the health and decision, before identifiers or tables:
 
-| Area           | Rating                  | Evidence (node ids) |
-| -------------- | ----------------------- | ------------------- |
-| Correctness    | ok / wrong              |                     |
-| Memory - used  | ok / weak / wrong / n/a |                     |
-| Memory - saved | ok / weak / wrong / n/a |                     |
-| Delegation     | ok / weak / wrong / n/a |                     |
-| Forking        | ok / weak / wrong / n/a |                     |
-| Tool use       | ok / weak / wrong / n/a |                     |
-| Cost and time  | ok / weak / wrong / n/a |                     |
+- **Health** - `healthy`, `degraded` or `unhealthy`, with one sentence saying
+  why. Healthy means correct and no material workflow defect; degraded means
+  correct but material workflow waste or policy failures; unhealthy means
+  wrong, incomplete or blocked. For infrastructure failures, say `void` in the
+  verdict and that compliance was not graded, rather than blaming the prose.
+- **Conclusion** - `Needs improvement: yes` or `no`, the main reason, and the
+  highest-priority next action. Name whether the action concerns instructions,
+  the specification or infrastructure. If evidence is insufficient, say
+  `undetermined` rather than claiming the run needs no improvement.
+- **Standard and compliance** - case id and revision (and how matched), or
+  `Grounding: derived requirements, no dataset rubric`. Show separate
+  `pass`, `fail` and `invalid` counts; exclude invalid items from the valid-item
+  denominator. Any fail means `wrong`; invalid is not a pass and does not
+  count against the run. Mention grounding failures even if all rubric items
+  passed. With `void`, give no compliance score.
+- **Run** - id, directory, end/start agent, outcome (`stopReason` or error),
+  elapsed, tokens in / out, nodes and LLM calls. Do not equate correctness,
+  health and the tuning loop's `done`: a correct run can still need tuning.
 
-Evidence must be the node that shows the rating. `Correctness` names, per
-rubric line or requirement, `r1 pass n12` and so on, and says which standard
-§1 settled on. `Memory - saved` rated `ok`
-names `memory_op` commit nodes, or says `commit 0` and that §4 found nothing
-paid for; rated otherwise, it names the nodes that bought each missed item.
-`Memory - used` names the recall or search and the call that acted on it. An
-`llm` call or the final output is never evidence that something was saved.
+Then give the compact health table:
 
-**Errors** - what went wrong, each with its node ids and what the model did
-next.
+| Area           | Rating                  | Key evidence |
+| -------------- | ----------------------- | ------------ |
+| Correctness    | ok / wrong              |              |
+| Memory - used  | ok / weak / wrong / n/a |              |
+| Memory - saved | ok / weak / wrong / n/a |              |
+| Delegation     | ok / weak / wrong / n/a |              |
+| Forking        | ok / weak / wrong / n/a |              |
+| Tool use       | ok / weak / wrong / n/a |              |
+| Cost and time  | ok / weak / wrong / n/a |              |
 
-**Inefficiencies** - what was wasted, each with an estimate of the cost: llm
-calls, tool calls, tokens or seconds that a better choice would have saved.
-A missed commit costs the next run: price it as the calls, tokens and seconds
-of the nodes that bought the item, and say so.
+Keep Correctness to a summary; its per-item evidence belongs in the following
+table. Memory-saved `ok` names commit nodes or says `commit 0; no durable
+items` with the checked scope. Otherwise cite the nodes that bought missed
+items. Memory-used names the lookup and the action using it. An LLM claim of
+saving is never a commit. For `void`, replace the rating table with the
+infrastructure error and its evidence.
 
-**Why** - for each question asked: the node, the question in one line, and the
-answer's `steered-by` / `should-have-applied` / `exception` lines, each marked
-`verified` or `unverified`.
+**Rubric & Grounding Compliance** - one row for every dataset rubric id,
+including invalid items; never merge or omit criteria. With no rubric, use
+derived `q1`, `q2`, ... rows and only `pass` / `fail`. Keep the criterion's
+meaning intact rather than weakening it in a paraphrase.
 
-**Sources of trouble** - every piece of text that steered the run wrong, or the
-place where the text that should have steered it is missing. Find each one:
-grep a distinctive phrase of it in the recorded request, then grep the same
-phrase in `agents.yaml` and under `agents/` to find the file it came from. Text
-found in the request but nowhere in the project is zen's own - a built-in tool
-description or a house rule zen composes.
+| ID       | Criterion                 | Grade                 | Evidence and short reason                           |
+| -------- | ------------------------- | --------------------- | --------------------------------------------------- |
+| r1 or q1 | Requirement being checked | pass / fail / invalid | Node id and proof, contradiction or missing support |
+
+For missing evidence, cite the final answer or decision being checked, name
+what evidence is absent and distinguish an omission, unsupported claim and
+unavailable payload. For invalid criteria, cite the rubric id and link it to a
+`specification` improvement. For `void`, write `Not graded - infrastructure
+failure` instead of this table.
+
+### Heading: `## 2. What Went Well`
+
+Summarize successful requirements and grounded work, plus effective tool,
+memory, delegation or boundary choices worth preserving. Group passing
+criteria by theme and cite their ids and nodes rather than repeating every
+table row. Prefer at most three bullets; do not invent positives.
+
+### Heading: `## 3. What Went Wrong`
+
+Use the following subheadings, writing `None.` when empty:
+
+- **Correctness & Rubric Failures** - every failed `rN` / `qN`, plus grounding
+  failures, first. Give the requirement, what was missing or contradicted,
+  the decision/result nodes and consequence. Include tool errors and what the
+  model did next. A failure to find recorded support is not proof of falsehood.
+- **Workflow, Memory & Cost** - other material defects and avoidable work.
+  Separate observations from estimated savings and current-run waste from
+  future-run reuse costs. Price a missed commit using the acquisition nodes;
+  that is a potential repeat cost, not guaranteed savings. Do not double-count
+  overlapping sequences or invent precision; say when savings are unknown.
+  In a tuning loop, summarize what improved or regressed since the last try.
+- **Root Causes & Evidence** - number distinct sources of trouble. Reuse
+  recorded prompt/request evidence to verify that cited text reached the model;
+  search the project for its editable owner. Clearly label an unverified cause
+  as a hypothesis. A current file or brief alone proves wording, not delivery.
+
+For each replay actually used, include only the node, a one-line question and
+verified `steered-by` / `should-have-applied` / `exception` / `conflict` findings
+relevant to the recommendation. Do not dump replay answers. If none was needed,
+say `No replay needed.` If attribution remains unresolved, say so.
+
+Summarize the source list in this compact table; put exact quotations below it
+under the matching source number:
 
 | #   | Kind | Location | Text | Caused (node ids) |
 | --- | ---- | -------- | ---- | ----------------- |
@@ -478,12 +567,20 @@ description or a house rule zen composes.
   `agents/skills/search/SKILL.md › description`. For a tool, its name and
   where it is defined: the `tools:` entry in `agents.yaml`, the project file
   that implements it, or `zen built-in`.
-- **Text** - the sentence quoted verbatim, or `missing` with the place it
-  should have been.
-- **Caused** - what the model did because of it, with the node ids.
+- **Text** - a short label pointing to the exact quote below, or `missing`
+  with the place it should have been.
+- **Caused** - the observed behaviour and node ids; label suspected causal
+  links rather than presenting them as proven.
 
-**Improvements** - one per source above, ranked by what it would save, most
-first. For each:
+### Heading: `## 4. What Could Be Improved`
+
+Rank correctness fixes before efficiency changes, then by expected impact.
+Link every failed criterion to an improvement, or explicitly explain why no
+supported instruction fix can be proposed (missing evidence, an upstream
+defect, or a specification issue). Do not manufacture a prompt rule to satisfy
+this linkage. Every invalid rubric line needs a `specification` improvement
+naming its id and exact rewrite. Combine criteria sharing one cause rather
+than adding duplicate rules. For each improvement give:
 
 - the source's `#` and the file to change
 - how it misled the model - ambiguous, contradicted by another source, an
@@ -493,14 +590,17 @@ first. For each:
   action it can take, not an adjective
 - what the graph of the next run should show if it worked - `fork x1` in the
   `tools` row, a `memory_search` before the first `run_command`, one
-  `memory_op` commit
+  `memory_op` commit - and which failed criteria must pass on recheck. Do not
+  hard-code this run's node ids as the next run's expected ids.
+
+When nothing warrants a change, write `No instruction changes needed.`
+In a tuning loop, keep the actionable list identical to §7 `improvements`.
+Smaller cost observations below §7's threshold stay in section 3, not here.
 
 `agents/fork-instructions.md`, `agents/memory-instructions.md` and
 `agents/tools-instructions.md` are zen's own copies, and so is every built-in
 tool description. Never propose editing them; propose the project's policy
 file or prompt, or say the change belongs upstream in zen.
-
-**Went well** - at most three lines.
 
 ## 7. Feedback for the tuning loop
 
@@ -547,7 +647,7 @@ section.
 
 ```json
 {
-    "verdict": "right",
+    "verdict": "wrong",
     "rubric": { "r1": "pass", "r2": "fail", "r3": "invalid" },
     "done": false,
     "summary": "The agent answered right: ...\n\nIt took the long way: ...\n\nMemory: ...",
@@ -622,7 +722,10 @@ section.
   for this case's data is not an improvement - what a case needs to know about
   its own data is memory's job. A procedure only some kinds of request need
   is a skill (`kind: skill`), not a sentence in a prompt every request reads.
-- Your **Improvements** in the report and `improvements` here are the same list.
+- The report's **What Could Be Improved** and `improvements` here are the same
+  actionable list. The compliance table and `rubric` must contain the same
+  dataset ids and grades; copy grades, do not grade twice. Derived `qN` rows
+  are report-only, never additional dataset rubric keys.
 - Never edit `agents/` or any other file of the project yourself: the loop
   applies every case's improvements together, and undoes an edit made here.
 
