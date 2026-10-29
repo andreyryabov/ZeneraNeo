@@ -46,9 +46,11 @@
     },
     "dependencies": {
         "@apidevtools/swagger-parser": "^12.0.0",
+        "@zenera/cli": "^1.1.40",
+        "@zenera/neo": "^1.1.40",
+        "@zenera/rag": "^1.1.40",
         "ajv": "^8.17.1",
         "ajv-formats": "^3.0.1",
-        "@zenera/cli": "^1.1.40",
-        "@zenera/neo": "^1.1.40"
+        "randexp": "^0.5.3"
     }
 }

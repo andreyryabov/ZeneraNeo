@@ -5,10 +5,11 @@ import { pagingOf, type Paging } from './paging.ts';
 import { normalize, type Dialect, type Schema } from './schema.ts';
 
 /**
- * Version of generator prompt rules and environment contracts.
- * Bumping this invalidates cached Python generators and triggers regeneration.
+ * Version of the handler contract: the prompt rules and the `ctx` runtime.
+ * Bumping it gives every operation a new cache key, so nothing written to an
+ * older contract is ever run against a newer one.
  */
-export const GENERATOR_RULES_VERSION = 2;
+export const GENERATOR_RULES_VERSION = 3;
 
 // ---------------------------------------------------------------------------
 // Documents, flattened

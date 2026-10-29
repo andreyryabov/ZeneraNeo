@@ -1,7 +1,6 @@
 import {
     credentialError,
     ensureHome,
-    ensurePodmanReady,
     envNames,
     home,
     invalidError,
@@ -17,19 +16,22 @@ import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Box } from './box.ts';
 import { Cache, type CacheOptions } from './cache.ts';
-import { ensureImage } from './image.ts';
+import { Catalog } from './catalog.ts';
 import { Router } from './router.ts';
 import { loadSpecs, SpecError } from './spec.ts';
+import { statePath, WorldStore } from './store.ts';
+import { NO_STORY, openStory, type Story } from './story.ts';
+import { World, type WorldEvent } from './synth.ts';
 import { Checks } from './validate.ts';
 
 // ---------------------------------------------------------------------------
 // Assembly
 //
 // The order here is the whole point and it is the same order `zen run` uses:
-// credentials before anything that needs one, the container engine before the
-// image, the image before the box, and the documents last — so the failure a
-// user sees is the first thing that was actually wrong rather than whatever
-// happened to be checked first.
+// credentials before anything that needs one, then the documents, then the
+// story, and the world last because its file is named after the story — so the
+// failure a user sees is the first thing that was actually wrong rather than
+// whatever happened to be checked first.
 // ---------------------------------------------------------------------------
 
 /**
@@ -37,9 +39,12 @@ import { Checks } from './validate.ts';
  * recommends (`RECOMMENDED` in `packages/cli/src/meta/model.ts`). Every ref names its
  * provider: the shorthand reads the first segment as a *provider name*, so a
  * bare `gemini-3.8-flash` would be asked of OpenAI.
+ *
+ * Gym's agents call tools, and OpenAI's reasoning models take tools only over
+ * the Responses API, so that is the one named.
  */
 const DEFAULT_MODEL: Record<Provider, string> = {
-    openai: 'openai:gpt-5.6-sol',
+    openai: 'openai/responses:gpt-5.6-sol',
     anthropic: 'anthropic:claude-opus-5',
     google: 'google:gemini-3.8-flash',
     vertex: 'vertex:gemini-3.8-flash',
@@ -112,18 +117,23 @@ export async function chooseModel(
 export interface SetupOptions {
     specs: readonly string[];
     cwd: string;
-    /** where generators and the container's workspace live */
+    /** where handlers, worlds and reports live */
     cache?: string;
     model?: string;
-    image?: string;
+    /** the story of the world: documents, or a `zen rag docs` index */
+    story?: string;
+    /** the world's SQLite file; derived from the story when unset */
+    state?: string;
+    /** start from an empty world */
+    reset?: boolean;
     attempts?: number;
     /** how many generators may be written at once */
     concurrency?: number;
     rebuild?: boolean;
     ephemeral?: boolean;
     timeout?: number;
-    onImageBuild?: (tag: string) => void;
     events?: Pick<CacheOptions, 'onStart' | 'onAttempt' | 'onReady' | 'onFail'>;
+    onWorld?: (event: WorldEvent) => void;
 }
 
 export interface Setup {
@@ -133,7 +143,11 @@ export interface Setup {
     box: Box;
     model: Model;
     choice: ModelChoice;
-    image: string;
+    catalog: Catalog;
+    story: Story;
+    world: World;
+    /** the world's SQLite file */
+    state: string;
     root: string;
     close(): Promise<void>;
 }
@@ -159,23 +173,46 @@ export async function open(opts: SetupOptions): Promise<Setup> {
     const root = resolve(opts.cwd, opts.cache ?? paths.gym());
     mkdirSync(root, { recursive: true, mode: 0o700 });
 
-    // Podman is asked about before the image is built, so a machine without a
-    // container engine says so instead of failing halfway through a build.
-    await ensurePodmanReady({ image: opts.image, yes: true });
-    const image = opts.image ?? (await ensureImage({ root, onBuild: opts.onImageBuild }));
-
-    const operations = await loadSpecs(opts.specs.map((s) => resolve(opts.cwd, s)));
+    const files = opts.specs.map((s) => resolve(opts.cwd, s));
+    const operations = await loadSpecs(files);
     if (operations.length === 0) {
         throw invalidError('the specification declares no operations');
     }
     const router = new Router(operations);
     const checks = new Checks();
-    const box = new Box({ root, image, timeout: opts.timeout });
-    await box.fresh();
+    const catalog = await Catalog.open(files);
+
+    const story = opts.story ? await openStory(opts.story, opts.cwd) : NO_STORY;
+    const state = statePath({
+        root,
+        state: opts.state ? resolve(opts.cwd, opts.state) : undefined,
+        storyDigest: story.digest || undefined,
+    });
+    const store = new WorldStore(state);
+    if (opts.reset) {
+        store.reset();
+    }
+    const world = new World({
+        model,
+        story,
+        catalog,
+        store,
+        reportDir: join(root, 'reports'),
+        onMade: opts.onWorld,
+    });
+    const box = new Box({
+        root,
+        db: store.path,
+        timeout: opts.timeout,
+        synthesize: world.synthesize,
+    });
     const cache = new Cache({
         box,
         checks,
         model,
+        catalog,
+        world,
+        operations,
         attempts: opts.attempts,
         concurrency: opts.concurrency,
         rebuild: opts.rebuild,
@@ -183,7 +220,25 @@ export async function open(opts: SetupOptions): Promise<Setup> {
         ...opts.events,
     });
 
-    return { router, checks, cache, box, model, choice, image, root, close: () => box.dispose() };
+    return {
+        router,
+        checks,
+        cache,
+        box,
+        model,
+        choice,
+        catalog,
+        story,
+        world,
+        state,
+        root,
+        close: async () => {
+            await box.dispose();
+            world.close();
+            store.close();
+            story.close();
+        },
+    };
 }
 
 /**

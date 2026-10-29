@@ -10,11 +10,9 @@ import {
     json,
     KeyStore,
     note,
-    ownedContainers,
     parse,
     paths,
     red,
-    removeContainers,
     table,
     usageError,
     write,
@@ -26,7 +24,7 @@ import {
 import { createModel } from '@zenera/neo';
 import { rmSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
-import { CONTAINER_PREFIX, GENERATORS } from './box.ts';
+import { GENERATORS } from './box.ts';
 import { GYM_KIND, type GeneratorMeta } from './cache.ts';
 import { reason } from './generate.ts';
 import { formatDumpPath } from './logger.ts';
@@ -60,7 +58,8 @@ interface Flags {
     port?: string;
     host?: string;
     model?: string;
-    image?: string;
+    story?: string;
+    state?: string;
     cache?: string;
     attempts?: string;
     concurrency?: string;
@@ -70,6 +69,7 @@ interface Flags {
     'regen-limit'?: string;
     'requests-dir'?: string;
     rebuild?: boolean;
+    reset?: boolean;
     'no-cache'?: boolean;
     clear?: boolean;
     quiet?: boolean;
@@ -81,7 +81,8 @@ const OPTIONS = {
     port: { type: 'string' },
     host: { type: 'string' },
     model: { type: 'string' },
-    image: { type: 'string' },
+    story: { type: 'string' },
+    state: { type: 'string' },
     cache: { type: 'string' },
     attempts: { type: 'string' },
     concurrency: { type: 'string' },
@@ -91,6 +92,7 @@ const OPTIONS = {
     'regen-limit': { type: 'string' },
     'requests-dir': { type: 'string' },
     rebuild: { type: 'boolean' },
+    reset: { type: 'boolean' },
     'no-cache': { type: 'boolean' },
     clear: { type: 'boolean' },
     quiet: { type: 'boolean' },
@@ -102,8 +104,8 @@ export const command: Command = {
     details: [
         'Commands',
         ...table([
-            ['  serve <spec...>', dim('Serve the documents. Generators are written on demand.')],
-            ['  build <spec...>', dim('Write every generator now and exit.')],
+            ['  serve <spec...>', dim('Serve the documents. Handlers are written on demand.')],
+            ['  build <spec...>', dim('Write every handler now and exit.')],
             ['  cache ls|clear', dim('What has been generated, or throw it away.')],
             ['  model [ref]', dim('Show or set the model it uses. Remembered between runs.')],
         ]),
@@ -112,13 +114,18 @@ export const command: Command = {
         ...table([
             ['  --port <n>', dim('Default 8787.')],
             ['  --host <h>', dim('Default 127.0.0.1. Anything else is reachable off-machine.')],
-            ['  --model <ref>', dim('Which model writes the generators, for this run only.')],
-            ['  --image <ref>', dim('Skip the baked image and use this one.')],
-            ['  --cache <dir>', dim("The container's workspace. Default ~/.zenera/neo/gym.")],
+            ['  --model <ref>', dim('Which model writes handlers and content, for this run only.')],
+            ['  --story <path>', dim('The story the world follows: documents, or a docs index.')],
+            ['  --state <file>', dim('The world database. Default: one per story, shared.')],
+            ['  --reset', dim('Start from an empty world.')],
+            [
+                '  --cache <dir>',
+                dim('Where handlers, worlds and reports live. Default ~/.zenera/neo/gym.'),
+            ],
             ['  --seed <n>', dim('Answer the same request the same way every time.')],
-            ['  --attempts <n>', dim('Tries per generator before giving up. Default 5.')],
-            ['  --concurrency <n>', dim('Generators written at once. Default 4.')],
-            ['  --timeout <s>', dim('Seconds one generator may take. Default 30.')],
+            ['  --attempts <n>', dim('Failed tests per handler before giving up. Default 5.')],
+            ['  --concurrency <n>', dim('Handlers written at once. Default 4.')],
+            ['  --timeout <s>', dim('Seconds one handler may run, agent time aside. Default 30.')],
             ['  --max-body <n>', dim('Largest request body accepted, in bytes.')],
             ['  --regen-limit <n>', dim('Maximum regenerations per URL on error. Default 3.')],
             ['  --requests-dir <dir>', dim('Where to save request/response .md files.')],
@@ -192,9 +199,10 @@ async function serve(args: readonly string[], ctx: Context): Promise<void> {
         if (host !== '127.0.0.1' && host !== 'localhost') {
             note(yellow(`bound to ${host} — this mock is reachable from the network`));
         }
-        note(dim(`generators: ${setup.root}/${GENERATORS}`));
+        note(dim(`world: ${setup.state}`));
+        note(dim(`handlers: ${setup.root}/${GENERATORS}`));
         note(dim(`request logs: ${requestsDir ?? `${setup.root}/requests`}`));
-        note(dim(`failed builds: ${setup.root}/builds`));
+        note(dim(`agent runs: ${setup.root}/reports  failed builds: ${setup.root}/builds`));
     }
     // The address is the answer; the rest was narration.
     write(`http://${host}:${listener.port}`);
@@ -238,10 +246,6 @@ async function warm(args: readonly string[], ctx: Context): Promise<void> {
     try {
         for (const operation of setup.router.operations) {
             const id = `${operation.method.toUpperCase()} ${called(operation)}`;
-            if (!operation.success.schema) {
-                results.push({ operation: id, status: 'skipped', detail: 'no response body' });
-                continue;
-            }
             try {
                 const generator = await setup.cache.ensure(operation);
                 results.push({ operation: id, status: generator.cached ? 'cached' : 'built' });
@@ -321,15 +325,9 @@ async function cache(args: readonly string[], ctx: Context): Promise<void> {
     if (sub === 'clear') {
         clearCache({ kind: GYM_KIND });
         // The workspace is scratch — whatever a hit was copied into it is
-        // written again from the cache, or by the model.
+        // written again from the cache, or by the model. Worlds are not
+        // touched: they are data, and `serve --reset` is how one is emptied.
         rmSync(join(root, GENERATORS), { recursive: true, force: true });
-        // The container is named after its configuration, so a stale one would
-        // otherwise sit there stopped forever with nothing pointing at it.
-        // `zn-<key>-<digest>` is the shape, and this one's key is `gym`.
-        const mine = (await ownedContainers()).filter((c) => c.name.startsWith(CONTAINER_PREFIX));
-        if (mine.length > 0) {
-            await removeContainers(mine.map((c) => c.name));
-        }
         note(`${green('cleared')} ${dim(paths.cache())}`);
         return;
     }
@@ -492,20 +490,27 @@ async function start(
         cwd: ctx.cwd,
         cache: values.cache,
         model: values.model,
-        image: values.image,
+        story: values.story,
+        state: values.state,
+        reset: values.reset,
         attempts: number(values.attempts, 'attempts'),
         concurrency: number(values.concurrency, 'concurrency'),
         timeout: number(values.timeout, 'timeout'),
         rebuild: values.rebuild,
         ephemeral: values['no-cache'],
-        onImageBuild: loud
-            ? (tag) => note(`${dim('building')} ${tag} ${dim('— once, then cached')}`)
+        onWorld: loud
+            ? (e) =>
+                  note(
+                      `  ${e.fallback ? yellow('sampled') : green('world')} ${dim(`${e.made} × ${e.collection} in ${e.durationMs}ms`)}` +
+                          (e.fallback ? ` ${dim(e.fallback)}` : '') +
+                          (e.report ? `\n${formatDumpPath('agent run', e.report)}` : ''),
+                  )
             : undefined,
         events: {
             onStart: loud
                 ? ({ operation }) =>
                       note(
-                          `${dim('writing a generator for')} ${operation.method.toUpperCase()} ${called(operation)}`,
+                          `${dim('writing a handler for')} ${operation.method.toUpperCase()} ${called(operation)}`,
                       )
                 : undefined,
             onAttempt: loud
@@ -533,6 +538,13 @@ async function start(
     });
     if (loud) {
         note(dim(`model ${setup.choice.ref} from ${SOURCE_LABELS[setup.choice.from]}`));
+        note(
+            dim(
+                values.story
+                    ? `story ${values.story} · world ${setup.state}`
+                    : `no story · world ${setup.state}`,
+            ),
+        );
     }
     return setup;
 }

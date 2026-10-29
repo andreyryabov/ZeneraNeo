@@ -19,6 +19,7 @@ export type ErrorKind =
     | 'GENERATOR_SCHEMA_MISMATCH'
     | 'GENERATOR_BUILD_FAILED'
     | 'SANDBOX_UNAVAILABLE'
+    | 'WORLD_AGENT_FAILED'
     | 'SERVER_INTERNAL_ERROR'
     | 'REGENERATION_LIMIT_HIT'
     | 'REGENERATION_FAILED'
@@ -281,8 +282,8 @@ export async function saveRequestDump(dir: string, data: RequestDumpData): Promi
 // The request dump answers "what did this call do". This one answers "why is
 // there nothing to call", which is a longer story: every attempt the judge
 // threw out, what was wrong with it, and the file itself — because the next
-// attempt overwrites `gen.py`, and a generator that merely hung leaves no
-// traceback behind, so the code is the only evidence there will ever be.
+// test overwrites `handler.ts`, and a handler that merely hung leaves no
+// stack behind, so the code is the only evidence there will ever be.
 //
 // One file per build, rewritten as the attempts go by rather than one file per
 // attempt: the path is then stable enough to be handed to the request that was
@@ -308,8 +309,10 @@ export interface BuildDumpData {
     regeneration?: boolean;
     model?: string;
     attempts: readonly BuildAttempt[];
-    /** the attempts ran out — no generator was produced */
+    /** the attempts ran out — no handler was produced */
     gaveUp?: boolean;
+    /** the agent's HTML run report */
+    report?: string;
 }
 
 export async function saveBuildDump(dir: string, data: BuildDumpData): Promise<string> {
@@ -333,6 +336,7 @@ export async function saveBuildDump(dir: string, data: BuildDumpData): Promise<s
         `- **Started**: ${data.started.toISOString()}`,
         `- **Model**: ${data.model ? `\`${data.model}\`` : '_Unknown_'}`,
         `- **Outcome**: ${outcome}`,
+        ...(data.report ? [`- **Agent run**: [${data.report}](file://${data.report})`] : []),
         '',
     ];
 
@@ -351,9 +355,9 @@ export async function saveBuildDump(dir: string, data: BuildDumpData): Promise<s
                 ? a.diagnostics.map((d) => (d.trimStart().startsWith('-') ? d : `- ${d}`))
                 : ['_No diagnostics._']),
             '',
-            '### Generator',
+            '### Handler',
             '',
-            '```python',
+            '```ts',
             a.source,
             '```',
             '',

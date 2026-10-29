@@ -53,6 +53,7 @@ The project keeps copies of both OpenAPI contracts in the `mock-apis/spec`:
 zen gym serve \
   mock-apis/specs/calendar.yaml \
   mock-apis/specs/mail.yaml \
+  --story mock-apis/stories/northwind-launch.md \
   --host 0.0.0.0 \
   --port 8787 \
   --requests-dir .tmp/gym-requests
@@ -80,10 +81,9 @@ fields or silently substitute an endpoint when a call fails.
   must listen on an address reachable from the sandbox.
 - Give the coordinator `sandbox:*` so it can invoke the generated integration
   scripts.
-- Gym fabricates deterministic, schema-valid responses and caches generated
-  response generators. The mock does not maintain mailbox or calendar state.
-  Never treat generated availability as real, or claim a create/send response
-  proves durable storage or delivery.
+- Gym simulates a stateful mailbox and calendar that follow a story: writes are
+  visible to later reads, but nothing is delivered or booked for real. Never
+  claim a create/send response proves real booking or delivery.
 - No document index, persistent memory, real credentials, or real mail/calendar
   account is in scope.
 
@@ -104,7 +104,7 @@ fields or silently substitute an endpoint when a call fails.
 ## Out of scope
 
 - Accessing real accounts or sending real email.
-- Persistent state between API calls or runs.
+- Persistent state in the project itself between runs.
 - Automatically accepting or declining invitations, changing existing events,
   or deleting events.
 - Resolving conflicts by moving or cancelling other meetings.

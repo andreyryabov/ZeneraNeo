@@ -3,10 +3,11 @@ import type { Model } from '@zenera/neo';
 import { join } from 'node:path';
 import type { Box } from './box.ts';
 import type { GeneratorInput } from './envelope.ts';
-import { build, BuildFailed, regenerate } from './generate.ts';
-import { saveBuildDump, type BuildAttempt } from './logger.ts';
-import type { ExampleRequest } from './prompt.ts';
+import type { Catalog } from './catalog.ts';
+import { build, BuildFailed, type BuildOptions } from './generate.ts';
+import { saveBuildDump, type BuildAttempt, type ExampleRequest } from './logger.ts';
 import { GENERATOR_RULES_VERSION, type Operation } from './spec.ts';
+import type { World } from './synth.ts';
 import type { Checks } from './validate.ts';
 
 // ---------------------------------------------------------------------------
@@ -66,6 +67,12 @@ export interface CacheOptions {
     box: Box;
     checks: Checks;
     model: Model;
+    catalog: Catalog;
+    world: World;
+    /** every operation being served, so a handler can be written knowing its siblings */
+    operations: readonly Operation[];
+    /** where HTML reports of agent runs go. Default `<box root>/reports` */
+    reportDir?: string;
     attempts?: number;
     /**
      * How many generators may be written at once. A client that walks every
@@ -112,6 +119,7 @@ export class Cache {
     readonly #opts: CacheOptions;
     readonly #store: CacheStore;
     readonly #dumpDir: string;
+    readonly #reportDir: string;
     readonly #records = new Map<string, BuildRecord>();
     readonly #live = new Map<string, Promise<Generator>>();
     readonly #settled = new Set<string>();
@@ -123,6 +131,7 @@ export class Cache {
         this.#opts = opts;
         this.#store = new Store(GYM_KIND, { dir: opts.cacheDir, mode: 0o600 });
         this.#dumpDir = opts.dumpDir ?? join(opts.box.root, 'builds');
+        this.#reportDir = opts.reportDir ?? join(opts.box.root, 'reports');
         this.#slots = Math.max(1, opts.concurrency ?? DEFAULT_CONCURRENCY);
     }
 
@@ -171,38 +180,12 @@ export class Cache {
     }
 
     async regenerate(operation: Operation, ctx: CacheRegenerateContext): Promise<Generator> {
-        const { box, model, checks, ephemeral } = this.#opts;
+        const { box } = this.#opts;
         await this.#enter();
         this.#opts.onStart?.({ operation });
         try {
-            const built = await regenerate(operation, {
-                model,
-                box,
-                checks,
-                attempts: this.#opts.attempts,
-                currentSource: ctx.currentSource,
-                failingInput: ctx.failingInput,
-                fault: ctx.fault,
-                stderr: ctx.stderr,
-                examples: ctx.examples,
-                onAttempt: (attempt, diagnostics, source, limit) =>
-                    this.#rejected(operation, attempt, diagnostics, source, limit, true),
-            });
-            if (!ephemeral) {
-                this.#store.put(operation.key, {
-                    source: built.source,
-                    meta: {
-                        operationId: operation.operationId,
-                        method: operation.method,
-                        path: operation.path,
-                        source: operation.source,
-                        model: model.id,
-                        attempts: built.attempts,
-                        rulesVersion: GENERATOR_RULES_VERSION,
-                        createdAt: new Date().toISOString(),
-                    },
-                } satisfies Stored);
-            }
+            const built = await build(operation, this.#builder(operation, true), ctx);
+            this.#keep(operation, built.source, built.attempts);
             this.#opts.onReady?.({ operation, cached: false, attempts: built.attempts });
             const gen: Generator = { key: operation.key, source: built.source, cached: false };
             this.#settled.add(operation.key);
@@ -221,8 +204,44 @@ export class Cache {
         }
     }
 
+    #builder(operation: Operation, regeneration: boolean): BuildOptions {
+        const { box, model, checks, catalog, world, operations } = this.#opts;
+        return {
+            model,
+            box,
+            checks,
+            catalog,
+            world,
+            operations,
+            attempts: this.#opts.attempts,
+            reportDir: this.#reportDir,
+            sourceOf: (other) => this.getSource(other.key),
+            onAttempt: (attempt, diagnostics, source, limit) =>
+                this.#rejected(operation, attempt, diagnostics, source, limit, regeneration),
+        };
+    }
+
+    #keep(operation: Operation, source: string, attempts: number): void {
+        if (this.#opts.ephemeral) {
+            return;
+        }
+        this.#store.put(operation.key, {
+            source,
+            meta: {
+                operationId: operation.operationId,
+                method: operation.method,
+                path: operation.path,
+                source: operation.source,
+                model: this.#opts.model.id,
+                attempts,
+                rulesVersion: GENERATOR_RULES_VERSION,
+                createdAt: new Date().toISOString(),
+            },
+        } satisfies Stored);
+    }
+
     async #make(operation: Operation): Promise<Generator> {
-        const { box, model, checks, rebuild, ephemeral } = this.#opts;
+        const { box, rebuild } = this.#opts;
         // Read before queueing: a cache hit costs nothing and must not wait
         // behind somebody else's model call.
         const source = rebuild ? undefined : await this.#read(box, operation.key);
@@ -235,29 +254,8 @@ export class Cache {
         await this.#enter();
         this.#opts.onStart?.({ operation });
         try {
-            const built = await build(operation, {
-                model,
-                box,
-                checks,
-                attempts: this.#opts.attempts,
-                onAttempt: (attempt, diagnostics, source, limit) =>
-                    this.#rejected(operation, attempt, diagnostics, source, limit, false),
-            });
-            if (!ephemeral) {
-                this.#store.put(operation.key, {
-                    source: built.source,
-                    meta: {
-                        operationId: operation.operationId,
-                        method: operation.method,
-                        path: operation.path,
-                        source: operation.source,
-                        model: model.id,
-                        attempts: built.attempts,
-                        rulesVersion: GENERATOR_RULES_VERSION,
-                        createdAt: new Date().toISOString(),
-                    },
-                } satisfies Stored);
-            }
+            const built = await build(operation, this.#builder(operation, false));
+            this.#keep(operation, built.source, built.attempts);
             this.#opts.onReady?.({ operation, cached: false, attempts: built.attempts });
             await this.#finished(operation);
             return { key: operation.key, source: built.source, cached: false };
@@ -273,9 +271,9 @@ export class Cache {
 
     /**
      * An attempt the judge threw out. The report is rewritten with the file
-     * still in it before the next attempt overwrites `gen.py` — for a timeout
-     * that source is the only evidence there will ever be, since a generator
-     * that hangs leaves no traceback behind.
+     * still in it before the next test overwrites `handler.ts` — for a timeout
+     * that source is the only evidence there will ever be, since a handler
+     * that hangs leaves no stack behind.
      */
     async #rejected(
         operation: Operation,
@@ -302,7 +300,7 @@ export class Cache {
     }
 
     /** A report that cannot be written is not worth failing a build over. */
-    async #report(record: BuildRecord, gaveUp = false): Promise<void> {
+    async #report(record: BuildRecord, gaveUp = false, report?: string): Promise<void> {
         try {
             record.path = await saveBuildDump(this.#dumpDir, {
                 started: record.started,
@@ -315,6 +313,7 @@ export class Cache {
                 model: this.#opts.model.id,
                 attempts: record.attempts,
                 gaveUp,
+                report,
             });
         } catch {
             // no report, then — the narration still says what failed
@@ -333,7 +332,7 @@ export class Cache {
             return undefined;
         }
         if (error instanceof BuildFailed) {
-            await this.#report(record, true);
+            await this.#report(record, true, error.report);
             error.dump = record.path;
         }
         return record.path;

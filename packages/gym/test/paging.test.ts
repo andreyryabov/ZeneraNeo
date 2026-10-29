@@ -68,13 +68,13 @@ describe('recognising a paged operation', () => {
         expect(op.paging).toBeUndefined();
     });
 
-    // The identity pins down cache keys for GENERATOR_RULES_VERSION = 2.
+    // The identity pins down cache keys for GENERATOR_RULES_VERSION = 3.
     // Changing the shape or rules version produces new keys and invalidates the cache.
     it('leaves the cache key of an unpaged operation exactly as it was', async () => {
         const ops = await load('petstore');
-        expect(ops.get('getUserById')!.key).toBe('472baeeee67019e0');
-        expect(ops.get('createUser')!.key).toBe('5c131edebd565ced');
-        expect((await load('paged')).get('listTags')!.key).toBe('d09f9b284f0ec063');
+        expect(ops.get('getUserById')!.key).toBe('f6b598e6bacd7a8d');
+        expect(ops.get('createUser')!.key).toBe('7019fdd0bddf6fab');
+        expect((await load('paged')).get('listTags')!.key).toBe('c809cc16ea7a1da3');
     });
 });
 

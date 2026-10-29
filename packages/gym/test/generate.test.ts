@@ -1,597 +1,310 @@
 import { cacheItems } from '@zenera/cli/lib';
-import { SANDBOX_MOUNT, type Model, type ProcResult, type Runner } from '@zenera/neo';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Box } from '../src/box.ts';
-import { Cache, GYM_KIND } from '../src/cache.ts';
-import { build, BuildFailed, reason, unfence } from '../src/generate.ts';
-import { loadSpec, type Operation } from '../src/spec.ts';
-import { Checks } from '../src/validate.ts';
+import type { Model } from '@zenera/neo';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { GYM_KIND } from '../src/cache.ts';
+import { build, BuildFailed, reason, unfence, type BuildOptions } from '../src/generate.ts';
+import {
+    call,
+    GET_USER,
+    GET_USER_CONSTANT,
+    GET_USER_NO_EMAIL,
+    op,
+    rig,
+    say,
+    scripted,
+    writes,
+    type Rig,
+} from './helpers.ts';
 
-const here = dirname(fileURLToPath(import.meta.url));
-
-// ---------------------------------------------------------------------------
-// Stubs
-//
-// Neither podman nor a model is started. The seam for the first is
-// `SandboxOptions.exec`, the same one `packages/neo/test/sandbox.test.ts` uses;
-// the seam for the second is that `Model` is an interface with one method.
-// ---------------------------------------------------------------------------
-
-const ok = (stdout = ''): ProcResult => ({
-    code: 0,
-    stdout,
-    stderr: '',
-    truncated: false,
-    timedOut: false,
+const options = (r: Rig, model: Model, attempts = 3): BuildOptions => ({
+    model,
+    box: r.box,
+    checks: r.checks,
+    catalog: r.catalog,
+    world: r.world,
+    operations: r.operations,
+    sourceOf: (o) => r.cache.getSource(o.key),
+    attempts,
 });
 
-/** What a generator "does" on a given attempt. */
-type Behaviour = (input: Record<string, unknown>, attempt: number) => unknown | Crash;
-
-interface Crash {
-    crash: string;
-}
-
-const isCrash = (v: unknown): v is Crash =>
-    typeof v === 'object' && v !== null && 'crash' in (v as Crash);
-
-/**
- * Stands in for the container. The script the box builds names two paths under
- * the mount, and the mount *is* the root directory — so translating one to the
- * other is the whole of the emulation.
- */
-function fakeEngine(root: string, behave: Behaviour): { exec: Runner; runs: number } {
-    const state = { runs: 0 };
-    const exec: Runner = (_bin, args, opts) => {
-        if (args[0] === 'container' || args[0] === 'run' || args[0] === 'start') {
-            return Promise.resolve(ok('running'));
-        }
-        const script = opts?.input ?? '';
-        const [, inPath, outPath] = script.split(/\s+/).slice(-3);
-        const host = (p: string): string => join(root, p.slice(SANDBOX_MOUNT.length + 1));
-
-        state.runs += 1;
-        const input = JSON.parse(readFileSync(host(inPath), 'utf8')) as Record<string, unknown>;
-        const answer = behave(input, state.runs);
-        if (isCrash(answer)) {
-            return Promise.resolve({ ...ok(), code: 1, stderr: answer.crash });
-        }
-        writeFileSync(host(outPath), JSON.stringify(answer));
-        return Promise.resolve(ok());
-    };
-    return {
-        exec,
-        get runs() {
-            return state.runs;
-        },
-    };
-}
-
-function fakeModel(answers: readonly string[]): Model & { seen: string[] } {
-    const seen: string[] = [];
-    let at = 0;
-    return {
-        id: 'stub',
-        seen,
-        generate: (req) => {
-            const last = req.messages.at(-1);
-            seen.push(
-                typeof last?.content === 'string'
-                    ? last.content
-                    : JSON.stringify(last?.content ?? ''),
-            );
-            return Promise.resolve({
-                text: answers[Math.min(at++, answers.length - 1)],
-                toolCalls: [],
-            });
-        },
-    };
-}
-
-// ---------------------------------------------------------------------------
-
-describe('the build loop', () => {
-    let root: string;
-    let operation: Operation;
-    let checks: Checks;
-
-    beforeEach(async () => {
-        root = mkdtempSync(join(tmpdir(), 'gym-'));
-        const ops = await loadSpec(join(here, 'specs', 'petstore.yaml'));
-        operation = ops.find((o) => o.operationId === 'getUserById')!;
-        checks = new Checks();
+describe('the handler agent', () => {
+    let r: Rig | undefined;
+    afterEach(async () => {
+        await r?.close();
+        r = undefined;
     });
 
-    afterEach(() => rmSync(root, { recursive: true, force: true }));
-
-    const boxWith = (behave: Behaviour) => {
-        const engine = fakeEngine(root, behave);
-        return { box: new Box({ root, image: 'stub', exec: engine.exec }), engine };
-    };
-
-    it('accepts a generator whose output validates and echoes the request', async () => {
-        const { box } = boxWith((input) => ({
-            user_id: Number((input.pathParams as Record<string, unknown>).user_id),
-            email: 'a@b.com',
-        }));
-        const model = fakeModel(['# fine']);
-
-        const built = await build(operation, { model, box, checks });
-        expect(built.attempts).toBe(1);
-        expect(model.seen).toHaveLength(1);
+    it('keeps the first handler the judge passes', async () => {
+        const model = scripted({ builder: writes(GET_USER) });
+        r = await rig('petstore.yaml', model);
+        const built = await build(op(r, 'getUserById'), options(r, model));
+        expect(built).toMatchObject({ source: GET_USER.trim(), attempts: 1 });
+        // A pass ends the run: nobody waits on a closing remark.
+        expect(model.builder).toHaveLength(1);
     });
 
-    it('rejects output that does not match the response schema, and says why', async () => {
-        // `email` is required; the first answer forgets it.
-        const { box } = boxWith((input, attempt) =>
-            attempt <= 2
-                ? { user_id: Number((input.pathParams as Record<string, unknown>).user_id) }
-                : {
-                      user_id: Number((input.pathParams as Record<string, unknown>).user_id),
-                      email: 'a@b.com',
-                  },
-        );
-        const model = fakeModel(['# first', '# second']);
+    it('is briefed in TypeScript, with the world and the siblings', async () => {
+        const model = scripted({ builder: writes(GET_USER) });
+        r = await rig('petstore.yaml', model);
+        await build(op(r, 'getUserById'), options(r, model));
+        const brief = model.builder[0]!.brief;
+        expect(brief).toContain('OPERATION  GET /users/{user_id}');
+        expect(brief).toContain('export interface User');
+        expect(brief).toContain('RELATED OPERATIONS');
+        expect(brief).toContain('createUser');
+        expect(brief).toContain('THE WORLD SO FAR');
+    });
 
-        const built = await build(operation, { model, box, checks });
+    it('hands every problem back, and a fix is tested again', async () => {
+        const model = scripted({ builder: writes(GET_USER_NO_EMAIL, GET_USER) });
+        r = await rig('petstore.yaml', model);
+        const built = await build(op(r, 'getUserById'), options(r, model));
         expect(built.attempts).toBe(2);
-        expect(model.seen[1]).toContain('email');
+        const verdict = model.builder[1]!.results.at(-1)!.content;
+        expect(verdict).toContain('"ok":false');
+        expect(verdict).toContain('email');
     });
 
     // The rule schema validation cannot see: a body can be perfectly shaped
     // and still be about somebody else.
-    it('rejects a generator that ignores the request and invents an id', async () => {
-        const { box } = boxWith(() => ({ user_id: 999, email: 'a@b.com' }));
-        const model = fakeModel(['# constant']);
-
-        await expect(build(operation, { model, box, checks, attempts: 2 })).rejects.toBeInstanceOf(
-            BuildFailed,
+    it('rejects a handler that ignores the request and answers about someone else', async () => {
+        const model = scripted({ builder: writes(GET_USER_CONSTANT, GET_USER_CONSTANT) });
+        r = await rig('petstore.yaml', model);
+        const failed = await build(op(r, 'getUserById'), options(r, model, 2)).catch(
+            (e: unknown) => e,
         );
-        expect(model.seen[1]).toContain('echo the path parameter');
-    });
-
-    // A loose path parameter and a patterned property: echoing the probe's value
-    // would break the schema, so no generator could pass both.
-    it('does not demand an echo the response schema forbids', async () => {
-        const spec = join(root, 'mail.yaml');
-        writeFileSync(
-            spec,
-            [
-                'openapi: 3.0.3',
-                'info: { title: Mail, version: 1.0.0 }',
-                'paths:',
-                '    /messages/{id}:',
-                '        get:',
-                '            operationId: getMessage',
-                '            parameters:',
-                '                - { name: id, in: path, required: true, schema: { type: string } }',
-                '            responses:',
-                "                '200':",
-                '                    description: the message',
-                '                    content:',
-                '                        application/json:',
-                '                            schema:',
-                '                                type: object',
-                '                                required: [id]',
-                '                                properties:',
-                "                                    id: { type: string, pattern: '^[0-9a-f]{16}$' }",
-            ].join('\n'),
-        );
-        const [getMessage] = await loadSpec(spec);
-        const { box } = boxWith(() => ({ id: '0123456789abcdef' }));
-
-        const built = await build(getMessage, { model: fakeModel(['# fine']), box, checks });
-        expect(built.attempts).toBe(1);
-    });
-
-    it('feeds stderr back when the file will not run', async () => {
-        const { box } = boxWith(() => ({ crash: 'NameError: gymr is not defined' }));
-        const model = fakeModel(['# broken']);
-
-        await expect(build(operation, { model, box, checks, attempts: 2 })).rejects.toThrow(
-            /could not write a generator/,
-        );
-        expect(model.seen[1]).toContain('NameError');
+        expect(failed).toBeInstanceOf(BuildFailed);
+        expect((failed as BuildFailed).diagnostics.join('\n')).toContain('echo the path parameter');
     });
 
     it('gives up after the attempt limit rather than looping', async () => {
-        const { box } = boxWith(() => ({ crash: 'boom' }));
-        const model = fakeModel(['# broken']);
-
-        await expect(build(operation, { model, box, checks, attempts: 3 })).rejects.toBeInstanceOf(
-            BuildFailed,
+        const broken = 'export default () => { throw new Error("boom"); };';
+        const model = scripted({ builder: writes(broken, broken, broken, broken) });
+        r = await rig('petstore.yaml', model);
+        const failed = await build(op(r, 'getUserById'), options(r, model, 2)).catch(
+            (e: unknown) => e,
         );
-        expect(model.seen).toHaveLength(3);
+        expect(failed).toBeInstanceOf(BuildFailed);
+        expect((failed as BuildFailed).diagnostics.join('\n')).toContain('boom');
+        const tests = model.builder
+            .flatMap((t) => t.req.messages)
+            .filter((m) => m.role === 'assistant' && JSON.stringify(m).includes('test_handler'));
+        expect(tests.length).toBeLessThanOrEqual(2);
     });
 
-    // The next attempt overwrites gen.py, so whoever wants to know why one
-    // hung has to be handed the file while it still exists.
-    it('hands the rejected file to onAttempt before writing over it', async () => {
-        const { box } = boxWith(() => ({ crash: 'boom' }));
-        const model = fakeModel(['# broken']);
-        const seen: { attempt: number; source: string; limit: number }[] = [];
-
-        await expect(
-            build(operation, {
-                model,
-                box,
-                checks,
-                attempts: 2,
-                onAttempt: (attempt, _diagnostics, source, limit) => {
-                    seen.push({ attempt, source, limit });
-                },
-            }),
-        ).rejects.toBeInstanceOf(BuildFailed);
-        expect(seen).toEqual([
-            { attempt: 1, source: '# broken', limit: 2 },
-            { attempt: 2, source: '# broken', limit: 2 },
-        ]);
-    });
-
-    it('varies the probes, so a generator cannot pass by hard-coding one id', async () => {
-        const seen: unknown[] = [];
-        const { box } = boxWith((input) => {
-            seen.push((input.pathParams as Record<string, unknown>).user_id);
-            return {
-                user_id: Number((input.pathParams as Record<string, unknown>).user_id),
-                email: 'a@b.com',
-            };
+    it('starts again when the agent stops without passing', async () => {
+        let runs = 0;
+        const model = scripted({
+            builder: (turn) => {
+                if (turn.call === 1) {
+                    runs++;
+                }
+                return runs === 1
+                    ? say('I think it is fine.')
+                    : call('test_handler', { source: GET_USER });
+            },
         });
-        await build(operation, { model: fakeModel(['# fine']), box, checks });
-        expect(new Set(seen).size).toBeGreaterThan(1);
+        r = await rig('petstore.yaml', model);
+        await expect(build(op(r, 'getUserById'), options(r, model))).resolves.toMatchObject({
+            source: GET_USER.trim(),
+        });
+        expect(model.builder.at(-1)!.brief).toContain('has not passed test_handler');
     });
 
-    // Not for progress — nothing renders the deltas. A non-streaming call sends
-    // nothing for a minute while the model thinks and the connection gets
-    // closed upstream.
-    it('streams when the adapter can, and falls back when it cannot', async () => {
-        const { box } = boxWith((input) => ({
-            user_id: Number((input.pathParams as Record<string, unknown>).user_id),
-            email: 'a@b.com',
-        }));
-        const plain = fakeModel(['# fine']);
-        const streaming: Model = {
-            id: 'streamer',
-            generate: () => Promise.reject(new Error('should have streamed')),
-            stream: () => Promise.resolve({ text: '# fine', toolCalls: [] }),
-        };
+    // Judging writes content into a copy: probe traffic must not become part
+    // of the world real requests see.
+    it('judges in a copy of the world', async () => {
+        const model = scripted({ builder: writes(GET_USER) });
+        r = await rig('petstore.yaml', model);
+        await build(op(r, 'getUserById'), options(r, model));
+        expect(r.store.collections()).toEqual([]);
+    });
 
-        await expect(build(operation, { model: streaming, box, checks })).resolves.toMatchObject({
+    it('can read the handlers its siblings already have', async () => {
+        const model = scripted({
+            builder: (turn) =>
+                turn.call === 1
+                    ? call('read_handler', { operationId: 'getUserById' })
+                    : call('test_handler', { source: GET_USER }),
+        });
+        r = await rig('petstore.yaml', model);
+        vi.spyOn(r.cache, 'getSource').mockResolvedValue(GET_USER);
+        await build(op(r, 'getSelf'), options(r, model)).catch(() => undefined);
+        expect(model.builder[1]!.results[0]!.content).toContain("ctx.lookup('users'");
+    });
+
+    it('rejects pages that answer with the token they were given', async () => {
+        const looping = `export default () => ({ results: [], cursor: 'same', has_more: true });`;
+        const model = scripted({ builder: writes(looping, looping) });
+        r = await rig('paged.yaml', model);
+        const failed = await build(op(r, 'listMachines'), options(r, model, 1)).catch(
+            (e: unknown) => e,
+        );
+        expect((failed as BuildFailed).diagnostics.join('\n')).toMatch(
+            /the token the request sent|never run out|cycle/,
+        );
+    });
+
+    it('accepts pages made with ctx.page', async () => {
+        const paged = `
+export default async function handle(req: any, ctx: any) {
+    const all = await ctx.ensure('machines', { type: 'Machine', min: 5, count: 5 });
+    const p = ctx.page(all, { token: req.query.cursor, size: req.query.page_size });
+    return { results: p.items, cursor: p.nextToken, has_more: p.hasMore };
+}`;
+        const model = scripted({ builder: writes(paged) });
+        r = await rig('paged.yaml', model);
+        await expect(build(op(r, 'listMachines'), options(r, model))).resolves.toMatchObject({
             attempts: 1,
         });
-        await expect(build(operation, { model: plain, box, checks })).resolves.toMatchObject({
-            attempts: 1,
-        });
-    });
-});
-
-// ---------------------------------------------------------------------------
-// The walk
-//
-// Termination is not a property of any one response, so none of the checks
-// above can see it. These generators all validate, all echo, and all hang a
-// client that follows the cursor.
-// ---------------------------------------------------------------------------
-
-describe('the pagination walk', () => {
-    let root: string;
-    let operation: Operation;
-    let checks: Checks;
-
-    beforeEach(async () => {
-        root = mkdtempSync(join(tmpdir(), 'gym-'));
-        const ops = await loadSpec(join(here, 'specs', 'paged.yaml'));
-        operation = ops.find((o) => o.operationId === 'listMachines')!;
-        checks = new Checks();
-    });
-
-    afterEach(() => rmSync(root, { recursive: true, force: true }));
-
-    /** Reads the requested page out of the cursor, the way a good file would. */
-    const paging =
-        (answer: (page: number) => unknown): Behaviour =>
-        (input) => {
-            const asked = (input.query as Record<string, unknown>).cursor;
-            return answer(typeof asked === 'string' && /^\d+$/.test(asked) ? Number(asked) : 0);
-        };
-
-    const boxWith = (behave: Behaviour) =>
-        new Box({ root, image: 'stub', exec: fakeEngine(root, behave).exec });
-
-    it('accepts a cursor that counts up and runs out', async () => {
-        const box = boxWith(
-            paging((page) => ({
-                results: [{ id: `m${page}` }],
-                cursor: page >= 2 ? null : String(page + 1),
-                has_more: page < 2,
-            })),
-        );
-        await expect(
-            build(operation, { model: fakeModel(['# fine']), box, checks }),
-        ).resolves.toMatchObject({ attempts: 1 });
-    });
-
-    // The reported bug, exactly: it validates, it echoes nothing it should not,
-    // and every client that walks it goes round forever.
-    it('rejects a generator that answers with the cursor it was given', async () => {
-        const box = boxWith(() => ({
-            results: [{ id: 'm1' }],
-            cursor: '8fde793bf007fcf0',
-            has_more: true,
-        }));
-        const model = fakeModel(['# looping']);
-
-        await expect(build(operation, { model, box, checks, attempts: 2 })).rejects.toBeInstanceOf(
-            BuildFailed,
-        );
-        expect(model.seen[1]).toContain('never advances');
-        expect(model.seen[1]).toContain('8fde793bf007fcf0');
-    });
-
-    it('rejects cursors that go round in a circle', async () => {
-        const box = boxWith(
-            paging((page) => ({ results: [], cursor: page === 1 ? '2' : '1', has_more: true })),
-        );
-        const model = fakeModel(['# circling']);
-
-        await expect(build(operation, { model, box, checks, attempts: 2 })).rejects.toBeInstanceOf(
-            BuildFailed,
-        );
-        expect(model.seen[1]).toContain('cycle');
-    });
-
-    it('rejects pages that never run out', async () => {
-        const box = boxWith(paging((page) => ({ results: [], cursor: String(page + 1) })));
-        const model = fakeModel(['# endless']);
-
-        await expect(build(operation, { model, box, checks, attempts: 2 })).rejects.toBeInstanceOf(
-            BuildFailed,
-        );
-        expect(model.seen[1]).toContain('never run out');
-    });
-
-    // A generator that mints its token out of the seed looks fine for one
-    // request and is a fixed point under the server's own seeding.
-    it('holds the seed still, so a token built from it cannot pass', async () => {
-        const seeds: unknown[] = [];
-        const box = boxWith((input) => {
-            seeds.push(input.seed);
-            return { results: [], cursor: `s${String(input.seed)}`, has_more: true };
-        });
-        const model = fakeModel(['# seeded']);
-
-        await expect(build(operation, { model, box, checks, attempts: 1 })).rejects.toBeInstanceOf(
-            BuildFailed,
-        );
-        // The first two runs are the ordinary probes; the rest are the walk.
-        expect(new Set(seeds.slice(2)).size).toBe(1);
-    });
-
-    it('says nothing about pagination for an operation that does not page', async () => {
-        const ops = await loadSpec(join(here, 'specs', 'paged.yaml'));
-        const tags = ops.find((o) => o.operationId === 'listTags')!;
-        const engine = fakeEngine(root, () => ({ tags: ['a'] }));
-        const box = new Box({ root, image: 'stub', exec: engine.exec });
-
-        await build(tags, { model: fakeModel(['# fine']), box, checks });
-        expect(engine.runs).toBe(2);
     });
 });
 
 describe('the cache', () => {
-    let root: string;
-    let operation: Operation;
-
-    beforeEach(async () => {
-        root = mkdtempSync(join(tmpdir(), 'gym-'));
-        const ops = await loadSpec(join(here, 'specs', 'petstore.yaml'));
-        operation = ops.find((o) => o.operationId === 'getUserById')!;
-    });
-
-    afterEach(() => rmSync(root, { recursive: true, force: true }));
-
-    // Never the machine's own store: these tests must not read what a person
-    // has cached, and must not leave anything behind in it either.
-    const cacheDir = (): string => join(root, 'store');
-
-    const good: Behaviour = (input) => ({
-        user_id: Number((input.pathParams as Record<string, unknown>).user_id ?? 1),
-        email: 'a@b.com',
+    let r: Rig | undefined;
+    afterEach(async () => {
+        await r?.close();
+        r = undefined;
     });
 
     it('builds once for however many callers arrive at the same time', async () => {
-        const engine = fakeEngine(root, good);
-        const box = new Box({ root, image: 'stub', exec: engine.exec });
-        const model = fakeModel(['# fine']);
-        const generate = vi.spyOn(model, 'generate');
-        const cache = new Cache({ box, checks: new Checks(), model, cacheDir: cacheDir() });
-
-        const all = await Promise.all(Array.from({ length: 10 }, () => cache.ensure(operation)));
-        expect(generate).toHaveBeenCalledTimes(1);
+        const model = scripted({ builder: writes(GET_USER) });
+        r = await rig('petstore.yaml', model);
+        const all = await Promise.all(
+            Array.from({ length: 10 }, () => r!.cache.ensure(op(r!, 'getUserById'))),
+        );
+        expect(model.builder).toHaveLength(1);
         expect(new Set(all.map((g) => g.source)).size).toBe(1);
     });
 
     it('reads what is cached on a later start instead of asking again', async () => {
-        const engine = fakeEngine(root, good);
-        const first = new Cache({
-            box: new Box({ root, image: 'stub', exec: engine.exec }),
-            checks: new Checks(),
-            model: fakeModel(['# fine']),
-            cacheDir: cacheDir(),
-        });
-        await first.ensure(operation);
+        const first = scripted({ builder: writes(GET_USER) });
+        r = await rig('petstore.yaml', first);
+        await r.cache.ensure(op(r, 'getUserById'));
 
-        const model = fakeModel(['# should not be asked']);
-        const generate = vi.spyOn(model, 'generate');
-        const second = new Cache({
-            box: new Box({ root, image: 'stub', exec: engine.exec }),
-            checks: new Checks(),
-            model,
-            cacheDir: cacheDir(),
+        const second = scripted({});
+        const again = await rig('petstore.yaml', second, {
+            root: r.root,
+            cacheDir: join(r.root, 'store'),
         });
-
-        const got = await second.ensure(operation);
-        expect(got.cached).toBe(true);
-        expect(generate).not.toHaveBeenCalled();
-        // A hit is copied back into the box, because the container can only
-        // run what is under its mount.
-        expect(readFileSync(join(root, 'generators', operation.key, 'gen.py'), 'utf8')).toContain(
-            '# fine',
-        );
+        try {
+            const got = await again.cache.ensure(op(again, 'getUserById'));
+            expect(got.cached).toBe(true);
+            expect(second.builder).toHaveLength(0);
+            // A hit is copied back into the box, which runs only what is on its disk.
+            expect(readFileSync(again.box.sourceOf(got.key), 'utf8')).toContain(
+                "ctx.lookup('users'",
+            );
+        } finally {
+            await again.box.dispose();
+        }
     });
 
     it('records what wrote it', async () => {
-        const engine = fakeEngine(root, good);
-        const box = new Box({ root, image: 'stub', exec: engine.exec });
-        await new Cache({
-            box,
-            checks: new Checks(),
-            model: fakeModel(['# fine']),
-            cacheDir: cacheDir(),
-        }).ensure(operation);
-
-        const { rows } = cacheItems(GYM_KIND, { dir: cacheDir() });
-        const mine = rows.find((r) => r.key === operation.key)!;
-        const meta = (mine.value as { meta: Record<string, unknown> }).meta;
-        expect(meta.model).toBe('stub');
-        expect(meta.operationId).toBe('getUserById');
+        const model = scripted({ builder: writes(GET_USER) });
+        r = await rig('petstore.yaml', model);
+        await r.cache.ensure(op(r, 'getUserById'));
+        const { rows } = cacheItems(GYM_KIND, { dir: join(r.root, 'store') });
+        const meta = (rows[0]!.value as { meta: Record<string, unknown> }).meta;
+        expect(meta).toMatchObject({
+            model: 'scripted',
+            operationId: 'getUserById',
+            rulesVersion: 3,
+        });
     });
 
     it('does not re-ask a model that already gave up', async () => {
-        const engine = fakeEngine(root, () => ({ crash: 'boom' }));
-        const box = new Box({ root, image: 'stub', exec: engine.exec });
-        const model = fakeModel(['# broken']);
-        const generate = vi.spyOn(model, 'generate');
-        const cache = new Cache({
-            box,
-            checks: new Checks(),
-            model,
-            attempts: 1,
-            cacheDir: cacheDir(),
-        });
-
-        await expect(cache.ensure(operation)).rejects.toBeInstanceOf(BuildFailed);
-        await expect(cache.ensure(operation)).rejects.toBeInstanceOf(BuildFailed);
-        expect(generate).toHaveBeenCalledTimes(1);
+        const broken = 'export default () => { throw new Error("boom"); };';
+        const model = scripted({ builder: writes(broken, broken, broken) });
+        r = await rig('petstore.yaml', model, { attempts: 1 });
+        await expect(r.cache.ensure(op(r, 'getUserById'))).rejects.toBeInstanceOf(BuildFailed);
+        const asked = model.builder.length;
+        await expect(r.cache.ensure(op(r, 'getUserById'))).rejects.toBeInstanceOf(BuildFailed);
+        expect(model.builder).toHaveLength(asked);
     });
 
-    // Without this the only account of a build that timed out is one line of
-    // narration, and the file that hung is gone.
     it('writes one report per failed build, source and all', async () => {
-        const engine = fakeEngine(root, () => ({ crash: 'boom' }));
-        const box = new Box({ root, image: 'stub', exec: engine.exec });
+        const broken = 'export default () => { throw new Error("boom"); };';
+        const model = scripted({ builder: writes(broken, broken) });
         let failure: { error: Error; dump?: string } | undefined;
-        const cache = new Cache({
-            box,
-            checks: new Checks(),
-            model: fakeModel(['# broken']),
+        r = await rig('petstore.yaml', model, {
             attempts: 2,
-            cacheDir: cacheDir(),
             onFail: (e) => {
                 failure = e;
             },
         });
-
-        await expect(cache.ensure(operation)).rejects.toBeInstanceOf(BuildFailed);
-        const dump = failure!.dump!;
-        expect(dump.startsWith(join(root, 'builds'))).toBe(true);
-        expect((failure!.error as BuildFailed).dump).toBe(dump);
-
-        const report = readFileSync(dump, 'utf8');
+        await expect(r.cache.ensure(op(r, 'getUserById'))).rejects.toBeInstanceOf(BuildFailed);
+        const report = readFileSync(failure!.dump!, 'utf8');
         expect(report).toContain('getUserById');
         expect(report).toContain('gave up after 2 of 2');
-        expect(report).toContain('## Attempt 1 of 2');
         expect(report).toContain('## Attempt 2 of 2');
-        expect(report).toContain('# broken');
+        expect(report).toContain('```ts');
         expect(report).toContain('boom');
     });
 
-    // A rate limit is about this minute, not about this operation. Remembering
-    // it would leave the route permanently 500 until the process restarts.
+    // A rate limit is about this minute, not about this operation.
     it('forgets a transient failure and tries again on the next request', async () => {
-        const engine = fakeEngine(root, good);
-        const box = new Box({ root, image: 'stub', exec: engine.exec });
         let calls = 0;
-        const model: Model = {
-            id: 'flaky',
-            generate: () => {
-                calls += 1;
-                return calls === 1
-                    ? Promise.reject(Object.assign(new Error('429 rate limited'), { status: 429 }))
-                    : Promise.resolve({ text: '# fine', toolCalls: [] });
+        const model = scripted({
+            builder: (turn) => {
+                calls++;
+                if (calls === 1) {
+                    throw Object.assign(new Error('429 rate limited'), { status: 429 });
+                }
+                return writes(GET_USER)(turn);
             },
-        };
-        const cache = new Cache({ box, checks: new Checks(), model, cacheDir: cacheDir() });
-
-        await expect(cache.ensure(operation)).rejects.toThrow(/rate limited/);
-        await expect(cache.ensure(operation)).resolves.toMatchObject({ cached: false });
-        expect(calls).toBe(2);
+        });
+        r = await rig('petstore.yaml', model);
+        await expect(r.cache.ensure(op(r, 'getUserById'))).rejects.toThrow(/rate limited/);
+        await expect(r.cache.ensure(op(r, 'getUserById'))).resolves.toMatchObject({
+            cached: false,
+        });
     });
 
-    it('writes no more than `concurrency` generators at once', async () => {
-        const engine = fakeEngine(root, good);
-        const box = new Box({ root, image: 'stub', exec: engine.exec });
+    it('writes no more than `concurrency` handlers at once', async () => {
         let inFlight = 0;
         let peak = 0;
-        const model: Model = {
-            id: 'slow',
-            generate: async () => {
-                inFlight += 1;
+        const model = scripted({
+            builder: async () => {
+                inFlight++;
                 peak = Math.max(peak, inFlight);
-                await new Promise((r) => setTimeout(r, 5));
-                inFlight -= 1;
-                return { text: '# fine', toolCalls: [] };
+                await new Promise((res) => setTimeout(res, 5));
+                inFlight--;
+                return say('giving up');
             },
-        };
-        const cache = new Cache({
-            box,
-            checks: new Checks(),
-            model,
-            concurrency: 2,
-            cacheDir: cacheDir(),
         });
-
-        const many = await loadSpec(join(here, 'specs', 'petstore.yaml'));
-        await Promise.all(many.filter((o) => o.success.schema).map((o) => cache.ensure(o)));
+        r = await rig('petstore.yaml', model, { concurrency: 2, attempts: 1 });
+        await Promise.allSettled(r.operations.map((o) => r!.cache.ensure(o)));
         expect(peak).toBeLessThanOrEqual(2);
     });
 });
 
 describe('unfencing an answer', () => {
-    it('leaves a bare file alone', () => {
-        expect(unfence('import sys\n')).toBe('import sys');
+    it('leaves a bare module alone', () => {
+        expect(unfence('export default () => 1;\n')).toBe('export default () => 1;');
     });
 
     it('strips a fence the model added anyway', () => {
-        expect(unfence('```python\nimport sys\n```')).toBe('import sys');
+        expect(unfence('```ts\nexport default () => 1;\n```')).toBe('export default () => 1;');
     });
 });
 
 describe('reporting why something failed', () => {
-    // `fetch failed` is undici's word for a dozen different problems and the
-    // only place the real one appears is `cause`.
     it('unwraps the cause chain, which is where the real reason hides', () => {
         const inner = Object.assign(new Error('connect ETIMEDOUT 1.2.3.4:443'), {
             code: 'ETIMEDOUT',
         });
-        const outer = new Error('fetch failed', { cause: inner });
-        expect(reason(outer)).toBe('fetch failed — ETIMEDOUT connect ETIMEDOUT 1.2.3.4:443');
+        expect(reason(new Error('fetch failed', { cause: inner }))).toBe(
+            'fetch failed — ETIMEDOUT connect ETIMEDOUT 1.2.3.4:443',
+        );
     });
 
     it('names the status a provider answered with', () => {
         expect(reason(Object.assign(new Error('Rate limit reached'), { status: 429 }))).toBe(
             '429 Rate limit reached',
         );
-    });
-
-    it('carries the diagnostics when the model simply could not do it', async () => {
-        const ops = await loadSpec(join(here, 'specs', 'petstore.yaml'));
-        const failed = new BuildFailed(ops[0], ['- the file exited 1.']);
-        expect(reason(failed)).toContain('the file exited 1.');
     });
 
     it('survives a cause that points back at itself', () => {

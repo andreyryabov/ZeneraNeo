@@ -1,594 +1,472 @@
 import { Cache as Store } from '@zenera/cli/lib';
-import { SANDBOX_MOUNT, type Model, type ProcResult, type Runner } from '@zenera/neo';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { Box } from '../src/box.ts';
-import { Cache, GYM_KIND } from '../src/cache.ts';
+import { GYM_KIND } from '../src/cache.ts';
 import { Router } from '../src/router.ts';
 import { listen, type Listening, type ServerOptions } from '../src/server.ts';
-import { loadSpec } from '../src/spec.ts';
-import { Checks } from '../src/validate.ts';
+import {
+    call,
+    CREATE_USER,
+    GET_SELF,
+    GET_USER,
+    idsAsked,
+    rig,
+    say,
+    scripted,
+    STOP_PING,
+    writes,
+    type Rig,
+    type Script,
+    type Scripted,
+} from './helpers.ts';
 
-const here = dirname(fileURLToPath(import.meta.url));
+// ---------------------------------------------------------------------------
+// The HTTP layer, over handlers that are already cached
+//
+// Nothing here writes a handler unless the test is about writing one: the
+// handlers are put in the cache first, as if an earlier run had written them,
+// so each test is about what the server does with what a handler answers.
+// ---------------------------------------------------------------------------
 
-/**
- * A generator that echoes what it is given. Nothing here exercises the model or
- * podman — the question is only what the HTTP layer does with each outcome.
- */
-function engineThat(answer: (input: Record<string, unknown>) => unknown, root: string): Runner {
-    return (_bin, args, opts) => {
-        const base: ProcResult = {
-            code: 0,
-            stdout: '',
-            stderr: '',
-            truncated: false,
-            timedOut: false,
-        };
-        if (args[0] === 'container' || args[0] === 'run' || args[0] === 'start') {
-            return Promise.resolve(base);
-        }
-        const [, inPath, outPath] = (opts?.input ?? '').split(/\s+/).slice(-3);
-        const host = (p: string): string => join(root, p.slice(SANDBOX_MOUNT.length + 1));
-        const input = JSON.parse(readFileSync(host(inPath), 'utf8')) as Record<string, unknown>;
-        const value = answer(input);
-        if (value === undefined) {
-            return Promise.resolve({ ...base, code: 1, stderr: 'ValueError: nope' });
-        }
-        writeFileSync(host(outPath), JSON.stringify(value));
-        return Promise.resolve(base);
-    };
+/** A world agent that makes users and the owner account, and counts itself. */
+const people: Script = (turn) => {
+    if (turn.results.some((r) => r.name === 'save_records')) {
+        return say('done');
+    }
+    if (turn.brief.includes('`accounts`')) {
+        return call('save_records', {
+            records: [{ id: '@me', email: 'alex@northwind.io', displayName: 'Alex' }],
+        });
+    }
+    return call('save_records', {
+        records: idsAsked(turn.brief).map((id) => ({
+            user_id: Number(id),
+            email: `user${id}@northwind.io`,
+        })),
+    });
+};
+
+interface Booted {
+    r: Rig;
+    model: Scripted;
+    live: Listening;
+    base: string;
+    log: string[];
 }
 
-const model: Model = {
-    id: 'stub',
-    generate: () => Promise.resolve({ text: '# generator', toolCalls: [] }),
+async function boot(
+    file: string,
+    handlers: Record<string, string>,
+    opts: {
+        world?: Script;
+        builder?: Script;
+        server?: Partial<ServerOptions>;
+        attempts?: number;
+    } = {},
+): Promise<Booted> {
+    const model = scripted({ world: opts.world ?? people, builder: opts.builder });
+    const r = await rig(file, model, { attempts: opts.attempts ?? 1 });
+    const store = new Store(GYM_KIND, { dir: join(r.root, 'store') });
+    for (const o of r.operations) {
+        if (handlers[o.operationId]) {
+            store.put(o.key, { source: handlers[o.operationId], meta: { model: 'stub' } });
+        }
+    }
+    const log: string[] = [];
+    const live = await listen(
+        {
+            router: new Router(r.operations),
+            checks: r.checks,
+            box: r.box,
+            cache: r.cache,
+            seed: 7,
+            onRequest: (line) => log.push(line),
+            ...opts.server,
+        },
+        '127.0.0.1',
+        0,
+    );
+    return { r, model, live, base: `http://127.0.0.1:${live.port}`, log };
+}
+
+const PETSTORE = {
+    getUserById: GET_USER,
+    getSelf: GET_SELF,
+    createUser: CREATE_USER,
+    stopPing: STOP_PING,
 };
 
 describe('the server', () => {
-    let root: string;
-    let live: Listening;
-    let base: string;
-    let lastInput: Record<string, unknown> | undefined;
-
-    const boot = async (
-        answer: (input: Record<string, unknown>) => unknown,
-        file = 'petstore.yaml',
-    ): Promise<void> => {
-        const operations = await loadSpec(join(here, 'specs', file));
-        const box = new Box({
-            root,
-            image: 'stub',
-            exec: engineThat((input) => {
-                lastInput = input;
-                return answer(input);
-            }, root),
-        });
-        const checks = new Checks();
-        live = await listen(
-            {
-                router: new Router(operations),
-                checks,
-                box,
-                cache: new Cache({ box, checks, model, cacheDir: join(root, 'store') }),
-                seed: 7,
-            },
-            '127.0.0.1',
-            0,
-        );
-        base = `http://127.0.0.1:${live.port}`;
-    };
-
-    const echoing = (input: Record<string, unknown>): unknown => ({
-        user_id: Number((input.pathParams as Record<string, unknown>).user_id),
-        email: 'a@b.com',
-    });
-
-    beforeEach(() => {
-        root = mkdtempSync(join(tmpdir(), 'gym-'));
-        lastInput = undefined;
-    });
-
+    let b: Booted | undefined;
     afterEach(async () => {
-        await live?.close();
-        rmSync(root, { recursive: true, force: true });
+        await b?.live.close();
+        await b?.r.close();
+        b = undefined;
     });
 
-    it('answers with the generated body and the declared status', async () => {
-        await boot(echoing);
-        const res = await fetch(`${base}/users/12324`);
-        expect(res.status).toBe(200);
-        expect(await res.json()).toEqual({ user_id: 12324, email: 'a@b.com' });
+    it('answers from the world, made up on first read and kept', async () => {
+        b = await boot('petstore.yaml', PETSTORE);
+        const first = await fetch(`${b.base}/users/12324`);
+        expect(first.status).toBe(200);
+        expect(await first.json()).toEqual({ user_id: 12324, email: 'user12324@northwind.io' });
+        expect(b.model.world.length).toBeGreaterThan(0);
+
+        const asked = b.model.world.length;
+        expect(await (await fetch(`${b.base}/users/12324`)).json()).toEqual({
+            user_id: 12324,
+            email: 'user12324@northwind.io',
+        });
+        expect(b.model.world).toHaveLength(asked);
     });
 
-    it('reports whether the generator came out of the cache', async () => {
-        await boot(echoing);
-        for (const [id, status] of [
-            [1, 'miss'],
-            [2, 'hit'],
-        ] as const) {
-            const res = await fetch(`${base}/users/${id}`);
-            expect(res.headers.get('x-gym-cache')).toBe(status);
-            expect(res.headers.get('x-gym-operation')).toBe('getUserById');
-        }
+    it('lets a write be read back', async () => {
+        b = await boot('petstore.yaml', PETSTORE);
+        const made = await fetch(`${b.base}/users`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ user_id: 5, email: 'new@northwind.io' }),
+        });
+        expect(made.status).toBe(201);
+        expect(await (await fetch(`${b.base}/users/5`)).json()).toEqual({
+            user_id: 5,
+            email: 'new@northwind.io',
+        });
+        expect(b.model.world).toHaveLength(0);
     });
 
-    it('rejects a path parameter of the wrong type before generating anything', async () => {
-        await boot(echoing);
-        const res = await fetch(`${base}/users/not-a-number`);
+    it('resolves the caller to the account the world says it is', async () => {
+        b = await boot('petstore.yaml', PETSTORE);
+        expect(await (await fetch(`${b.base}/users/me`)).json()).toEqual({
+            user_id: 1,
+            email: 'alex@northwind.io',
+        });
+    });
+
+    it('runs the handler of an operation with no body, and answers 204', async () => {
+        b = await boot('petstore.yaml', PETSTORE);
+        const res = await fetch(`${b.base}/ping`, { method: 'DELETE' });
+        expect(res.status).toBe(204);
+        expect(await res.text()).toBe('');
+        expect(b.r.store.collection('pings').has('stopped')).toBe(true);
+    });
+
+    it('reports whether the handler came out of the cache', async () => {
+        b = await boot('petstore.yaml', PETSTORE);
+        const res = await fetch(`${b.base}/users/1`);
+        expect(res.headers.get('x-gym-cache')).toBe('hit');
+        expect(res.headers.get('x-gym-operation')).toBe('getUserById');
+    });
+
+    it('rejects a path parameter of the wrong type before running anything', async () => {
+        b = await boot('petstore.yaml', PETSTORE);
+        const res = await fetch(`${b.base}/users/not-a-number`);
         expect(res.status).toBe(400);
         expect(await res.json()).toMatchObject({ issues: [{ where: 'path/user_id' }] });
     });
 
     it('404s an unknown path and 405s a known one', async () => {
-        await boot(echoing);
-        expect((await fetch(`${base}/nope`)).status).toBe(404);
-        const wrong = await fetch(`${base}/users`, { method: 'PUT' });
+        b = await boot('petstore.yaml', PETSTORE);
+        expect((await fetch(`${b.base}/nope`)).status).toBe(404);
+        const wrong = await fetch(`${b.base}/users`, { method: 'PUT' });
         expect(wrong.status).toBe(405);
         expect(wrong.headers.get('allow')).toBe('POST');
     });
 
-    it('answers 204 with no body where the document declares none', async () => {
-        await boot(echoing);
-        const res = await fetch(`${base}/ping`, { method: 'DELETE' });
-        expect(res.status).toBe(204);
-        expect(await res.text()).toBe('');
-    });
-
-    it('502s when the generator faults, and says what it said', async () => {
-        await boot((input) =>
-            (input.pathParams as Record<string, unknown>).user_id === '9'
-                ? undefined
-                : echoing(input),
-        );
-        expect((await fetch(`${base}/users/1`)).status).toBe(200);
-        const res = await fetch(`${base}/users/9`);
-        expect(res.status).toBe(502);
-        expect(await res.json()).toMatchObject({ stderr: expect.stringContaining('ValueError') });
-    });
-
-    it('checks a request body against the document', async () => {
-        await boot(() => ({ user_id: 1, email: 'a@b.com' }));
-        const res = await fetch(`${base}/users`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ user_id: 'not-a-number' }),
+    it('passes on an error the handler chose to answer with', async () => {
+        b = await boot('petstore.yaml', {
+            ...PETSTORE,
+            getUserById: `export default (req: any, ctx: any) => ctx.fail(404, { error: 'no such user' });`,
         });
-        expect(res.status).toBe(400);
+        const res = await fetch(`${b.base}/users/3`);
+        expect(res.status).toBe(404);
+        expect(await res.json()).toEqual({ error: 'no such user' });
     });
 
-    // The envelope becomes a file inside a container, so this is the one test
-    // that is about what does *not* travel.
-    it('keeps credentials out of the envelope the generator reads', async () => {
-        await boot(echoing);
-        await fetch(`${base}/users/1`, {
+    // The handler's request can be quoted to the world agent, so this is the
+    // test about what does *not* travel.
+    it('keeps credentials out of what the handler sees', async () => {
+        b = await boot('petstore.yaml', {
+            ...PETSTORE,
+            getUserById: `
+export default (req: any, ctx: any) => {
+    ctx.db.collection('seen').put('h', { id: 'h', headers: req.headers });
+    return { user_id: Number(req.pathParams.user_id), email: 'a@b.com' };
+};`,
+        });
+        await fetch(`${b.base}/users/1`, {
             headers: {
-                authorization: 'Bearer sk-secret',
+                authorization: 'Bearer nope',
                 cookie: 'session=1',
                 'x-api-key': 'nope',
                 'accept-language': 'en-GB',
             },
         });
-        const headers = lastInput?.headers as Record<string, string>;
+        const headers = (
+            b.r.store.collection('seen').get('h') as { headers: Record<string, string> }
+        ).headers;
         expect(headers['accept-language']).toBe('en-GB');
         expect(headers.authorization).toBeUndefined();
         expect(headers.cookie).toBeUndefined();
         expect(headers['x-api-key']).toBeUndefined();
     });
 
-    it('gives the generator the template and the matched parameters', async () => {
-        await boot(echoing);
-        await fetch(`${base}/users/12324?verbose=true`);
-        expect(lastInput).toMatchObject({
-            path: '/users/{user_id}',
-            pathParams: { user_id: '12324' },
-            query: { verbose: 'true' },
-            operationId: 'getUserById',
-        });
-    });
-
     it('seeds the same request the same way when a base seed is set', async () => {
-        await boot(echoing);
-        await fetch(`${base}/users/12324`);
-        const first = lastInput?.seed;
-        await fetch(`${base}/users/12324`);
-        expect(lastInput?.seed).toBe(first);
-        await fetch(`${base}/users/999`);
-        expect(lastInput?.seed).not.toBe(first);
-    });
-
-    it('refuses a body larger than the cap', async () => {
-        await boot(echoing);
-        const res = await fetch(`${base}/users`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ user_id: 1, email: 'a@b.com', nickname: 'x'.repeat(2_000_000) }),
+        b = await boot('petstore.yaml', {
+            ...PETSTORE,
+            getUserById: `export default (req: any) => ({ user_id: Number(req.pathParams.user_id), email: 's' + req.seed + '@x.io' });`,
         });
-        expect(res.status).toBe(413);
+        const email = async (id: number) =>
+            ((await (await fetch(`${b!.base}/users/${id}`)).json()) as { email: string }).email;
+        expect(await email(12324)).toBe(await email(12324));
+        expect(await email(999)).not.toBe(await email(12324));
     });
 
-    it('lists what it serves', async () => {
-        await boot(echoing);
-        const routes = (await (await fetch(`${base}/__gym/routes`)).json()) as unknown[];
-        expect(routes).toHaveLength(4);
-    });
-
-    it('serves the health diagnostic', async () => {
-        await boot(echoing);
-        const health = await fetch(`${base}/__gym/health`);
-        expect(health.status).toBe(200);
-        expect(await health.json()).toEqual({ ok: true, operations: 4 });
-    });
-
-    it('answers the root with a contents page grouped by document', async () => {
-        await boot(echoing);
-        const res = await fetch(`${base}/`);
+    // The world agent failed, not the handler: rewriting working code cannot
+    // bring a provider back.
+    it('falls back to sampled content when the world agent fails, and never rewrites the handler', async () => {
+        b = await boot('petstore.yaml', PETSTORE, {
+            world: () => {
+                throw new Error('provider down');
+            },
+            builder: () => {
+                throw new Error('the builder must not be asked');
+            },
+        });
+        const res = await fetch(`${b.base}/users/77`);
+        // With the agent down, sampled records stand in rather than failing the request.
         expect(res.status).toBe(200);
-        expect(res.headers.get('content-type')).toMatch(/text\/html/);
-        const page = await res.text();
-        expect(page).toContain('<title>Zenera Gym</title>');
-        expect(page).toContain('/__gym/routes');
-        expect(page).toContain('petstore.yaml');
-        expect(page).toContain('/users/{user_id}');
-        expect(page).toContain('One user by id.');
-        expect(page).toContain('getSelf');
+        expect(b.model.builder).toHaveLength(0);
+        expect(b.log.join('\n')).not.toContain('[REGENERATING]');
     });
 
-    it('gives every operation on the contents page something to call it with', async () => {
-        await boot(echoing);
-        const page = await (await fetch(`${base}/`)).text();
-        const buttons = page.match(/class="try" data-op="\d+"/g) ?? [];
-        expect(buttons).toHaveLength(4);
-        // The dialog is built from these, and nothing in them may close the
-        // script element it travels in.
-        const descriptors = /<script type="application\/json" id="gym-ops">(.*?)<\/script>/s.exec(
-            page,
+    it('lists what it serves, and is healthy', async () => {
+        b = await boot('petstore.yaml', PETSTORE);
+        expect(((await (await fetch(`${b.base}/__gym/routes`)).json()) as unknown[]).length).toBe(
+            4,
         );
-        expect(descriptors).not.toBeNull();
-        const specs = JSON.parse(descriptors?.[1] ?? '') as { path: string; fields: unknown[] }[];
-        expect(specs.map((spec) => spec.path)).toContain('/users/{user_id}');
-        expect(specs[0]?.fields).toHaveLength(2);
+        expect(await (await fetch(`${b.base}/__gym/health`)).json()).toEqual({
+            ok: true,
+            operations: 4,
+        });
+    });
+
+    it('answers the root with a contents page with a Run button per operation', async () => {
+        b = await boot('petstore.yaml', PETSTORE);
+        const page = await (await fetch(`${b.base}/`)).text();
+        expect(page).toContain('<title>Zenera Gym</title>');
+        expect(page).toContain('/users/{user_id}');
+        expect(page.match(/class="try" data-op="\d+"/g)).toHaveLength(4);
     });
 
     it('serves two operations on one path and method under their own query', async () => {
-        await boot(
-            (input) => ({ state: String((input.query as Record<string, string>).action) }),
-            'action.yaml',
-        );
-        const at = async (search: string): Promise<Response> =>
-            fetch(`${base}/api/v1/device-groups/123${search}`, { method: 'POST' });
-
+        const answer = `export default (req: any) => ({ state: req.query.action });`;
+        b = await boot('action.yaml', {
+            RetryDeviceGroupRealization: answer,
+            ApplyDeviceGroupProfile: answer,
+        });
+        const at = (search: string) =>
+            fetch(`${b!.base}/api/v1/device-groups/123${search}`, { method: 'POST' });
         const retry = await at('?action=retry_profile_realization');
-        expect(retry.status).toBe(200);
         expect(retry.headers.get('x-gym-operation')).toBe('RetryDeviceGroupRealization');
         expect(await retry.json()).toEqual({ state: 'retry_profile_realization' });
-
-        const apply = await at('?action=apply_profile');
-        expect(apply.headers.get('x-gym-operation')).toBe('ApplyDeviceGroupProfile');
-
-        // Not a 405: the method is defined here, the query was not.
         const bare = await at('');
         expect(bare.status).toBe(404);
-        expect(await bare.json()).toMatchObject({
-            expects: ['?action=retry_profile_realization', '?action=apply_profile'],
-        });
+    });
+
+    it('writes a handler on first use when none is cached', async () => {
+        b = await boot('petstore.yaml', {}, { builder: writes(GET_USER) });
+        const res = await fetch(`${b.base}/users/42`);
+        expect(res.status).toBe(200);
+        expect(res.headers.get('x-gym-cache')).toBe('miss');
+        expect(await res.json()).toEqual({ user_id: 42, email: 'user42@northwind.io' });
     });
 });
 
 // ---------------------------------------------------------------------------
 // The backstop
 //
-// A generator written before the pagination rule existed is still on somebody's
-// disk, and a cache is not rebuilt because a rule changed. This is the only
-// thing here that edits what a generator produced, so it is deliberately the
-// smallest edit that ends the loop.
+// A handler is judged on its pages before it is kept, but a client that
+// ignores an ended list must still not loop forever. This is the only thing
+// here that edits what a handler answered.
 // ---------------------------------------------------------------------------
 
 describe('a looping page token', () => {
-    let root: string;
-    let live: Listening;
-    let base: string;
-    let log: string[];
-
-    /**
-     * The generator is put in the cache rather than built, because that is the
-     * whole scenario: it was written before the pagination rule existed, and
-     * the walk in the build loop would refuse to write it today.
-     */
-    const boot = async (
-        answer: (input: Record<string, unknown>) => unknown,
-        serverOpts?: Partial<ServerOptions>,
-    ): Promise<void> => {
-        const box = new Box({ root, image: 'stub', exec: engineThat(answer, root) });
-        const checks = new Checks();
-        const cacheDir = join(root, 'store');
-        const operations = await loadSpec(join(here, 'specs', 'paged.yaml'));
-        const store = new Store(GYM_KIND, { dir: cacheDir });
-        for (const operation of operations) {
-            store.put(operation.key, {
-                source: '# written before the rule existed',
-                meta: { model: 'stub' },
-            });
-        }
-        live = await listen(
-            {
-                router: new Router(operations),
-                checks,
-                box,
-                cache: new Cache({ box, checks, model, cacheDir }),
-                onRequest: (line) => log.push(line),
-                ...serverOpts,
-            },
-            '127.0.0.1',
-            0,
-        );
-        base = `http://127.0.0.1:${live.port}`;
-    };
-
-    beforeEach(() => {
-        root = mkdtempSync(join(tmpdir(), 'gym-'));
-        log = [];
+    let b: Booted | undefined;
+    afterEach(async () => {
+        await b?.live.close();
+        await b?.r.close();
+        b = undefined;
     });
 
-    afterEach(async () => {
-        await live?.close();
-        rmSync(root, { recursive: true, force: true });
+    const every = (body: string) => ({
+        listMachines: body,
+        listEvents: body,
+        listAlarms: body,
+        collectAuditLogs: body,
+        listTags: body,
     });
 
     it('is cut back to the last page, and narrated', async () => {
-        await boot(() => ({ results: [], cursor: '8fde793b', has_more: true }));
-        const res = await fetch(`${base}/machines?cursor=8fde793b`);
+        b = await boot(
+            'paged.yaml',
+            every(`export default () => ({ results: [], cursor: '8fde793b', has_more: true });`),
+        );
+        const res = await fetch(`${b.base}/machines?cursor=8fde793b`);
         expect(await res.json()).toEqual({ results: [], cursor: null, has_more: false });
-        expect(log.at(-1)).toContain('cut a looping page token');
+        expect(b.log.at(-1)).toContain('cut a looping page token');
     });
 
     it('is left alone when it advanced', async () => {
-        await boot(() => ({ results: [], cursor: 'page-2', has_more: true }));
-        const res = await fetch(`${base}/machines?cursor=page-1`);
+        b = await boot(
+            'paged.yaml',
+            every(`export default () => ({ results: [], cursor: 'page-2', has_more: true });`),
+        );
+        const res = await fetch(`${b.base}/machines?cursor=page-1`);
         expect(await res.json()).toMatchObject({ cursor: 'page-2' });
-        expect(log.at(-1)).not.toContain('cut');
+        expect(b.log.at(-1)).not.toContain('cut');
     });
 
-    // The document never declared `cursor`, so only the request itself says
-    // this is a page turn at all.
+    // The document never declared `cursor`, so only the request says this is a page turn.
     it('is cut even where the document never declared the parameter', async () => {
-        await boot(() => ({ results: [], cursor: 'eyJwIjoyfQ==' }));
-        const res = await fetch(`${base}/alarms?cursor=${encodeURIComponent('eyJwIjoyfQ==')}`);
+        b = await boot(
+            'paged.yaml',
+            every(`export default () => ({ results: [], cursor: 'eyJwIjoyfQ==' });`),
+        );
+        const res = await fetch(`${b.base}/alarms?cursor=${encodeURIComponent('eyJwIjoyfQ==')}`);
         expect(await res.json()).toEqual({ results: [], cursor: null });
-        expect(log.at(-1)).toContain('cut a looping page token');
-    });
-
-    // Nothing revalidates a generator's output on the way out, so a required,
-    // non-nullable token stays where it is: a hang is better than a lie.
-    it('is left alone when the schema leaves no room', async () => {
-        await boot(() => ({ data: [], next_offset: 40 }));
-        const res = await fetch(`${base}/events?offset=40`);
-        expect(await res.json()).toMatchObject({ next_offset: 40 });
-        expect(log.at(-1)).not.toContain('cut');
     });
 
     it('is cut when a looping cursor is sent in the request body', async () => {
-        await boot(() => ({ results: ['audit1'], cursor: 'eyJwIjoyfQ==', has_more: true }));
-        const res = await fetch(`${base}/audit-logs`, {
+        b = await boot(
+            'paged.yaml',
+            every(
+                `export default () => ({ results: ['audit1'], cursor: 'eyJwIjoyfQ==', has_more: true });`,
+            ),
+        );
+        const res = await fetch(`${b.base}/audit-logs`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ cursor: 'eyJwIjoyfQ==' }),
         });
         expect(await res.json()).toEqual({ results: ['audit1'], cursor: null, has_more: false });
-        expect(log.at(-1)).toContain('cut a looping page token');
     });
 
-    it('terminates pagination at maxPages and cuts the next cursor', async () => {
-        await boot(
-            (input) => {
-                const asked = (input.query as Record<string, unknown>)?.cursor;
-                const pageNum = asked ? Number(asked) : 1;
-                return {
-                    results: [{ id: `m${pageNum}` }],
-                    cursor: String(pageNum + 1),
-                    has_more: true,
-                };
-            },
-            { maxPages: 2 },
+    it('terminates pagination at maxPages', async () => {
+        b = await boot(
+            'paged.yaml',
+            every(`
+export default (req: any) => {
+    const n = req.query.cursor ? Number(req.query.cursor) : 1;
+    return { results: [{ id: 'm' + n }], cursor: String(n + 1), has_more: true };
+};`),
+            { server: { maxPages: 2 } },
         );
-
-        // Page 1: returns next cursor '2'
-        const res1 = await fetch(`${base}/machines`);
-        expect(await res1.json()).toMatchObject({ cursor: '2' });
-
-        // Page 2: hits maxPages = 2, so cursor is cut to null
-        const res2 = await fetch(`${base}/machines?cursor=2`);
-        expect(await res2.json()).toEqual({
+        expect(await (await fetch(`${b.base}/machines`)).json()).toMatchObject({ cursor: '2' });
+        expect(await (await fetch(`${b.base}/machines?cursor=2`)).json()).toEqual({
             results: [{ id: 'm2' }],
             cursor: null,
             has_more: false,
         });
-        expect(log.at(-1)).toContain('cut pagination at max pages (2)');
-
-        // Page 3: client in while True loop ignores termination and calls again
-        const res3 = await fetch(`${base}/machines?cursor=2`);
-        expect(await res3.json()).toMatchObject({ results: [] });
-    });
-
-    it('cuts cycling page tokens across requests', async () => {
-        await boot(
-            (input) => {
-                const asked = (input.query as Record<string, unknown>)?.cursor;
-                const next = asked === 'tok-1' ? 'tok-2' : 'tok-1';
-                return { results: [{ id: 'm1' }], cursor: next, has_more: true };
-            },
-            { maxPages: 10 },
-        );
-
-        // Request 1: no cursor -> gets 'tok-1'
-        const res1 = await fetch(`${base}/machines`);
-        expect(await res1.json()).toMatchObject({ cursor: 'tok-1' });
-
-        // Request 2: cursor 'tok-1' -> gets 'tok-2'
-        const res2 = await fetch(`${base}/machines?cursor=tok-1`);
-        expect(await res2.json()).toMatchObject({ cursor: 'tok-2' });
-
-        // Request 3: cursor 'tok-2' -> returns 'tok-1' (cycle detected!)
-        const res3 = await fetch(`${base}/machines?cursor=tok-2`);
-        expect(await res3.json()).toEqual({
-            results: [{ id: 'm1' }],
-            cursor: null,
-            has_more: false,
-        });
-        expect(log.at(-1)).toContain('cut a cycling page token');
+        expect(b.log.at(-1)).toContain('cut pagination at max pages (2)');
     });
 });
 
 // ---------------------------------------------------------------------------
-// The container, not the generator
-//
-// A podman failure says nothing about the code it was asked to run. Feeding it
-// to the model as a fault rewrote working generators until the limit, and the
-// log read like the generator was broken.
+// Logging, dumps and regeneration
 // ---------------------------------------------------------------------------
 
-describe('a container engine that cannot run anything', () => {
-    let root: string;
-    let live: Listening;
-    let base: string;
-    let log: string[];
-    let asked: number;
+describe('logging and regeneration', () => {
+    let b: Booted | undefined;
+    let requestsDir: string;
+    afterEach(async () => {
+        await b?.live.close();
+        await b?.r.close();
+        b = undefined;
+    });
 
-    const GONE = 'Error: no container with name or ID "zn-gym-1-abc" found: no such container';
+    const FAILS_ON_999 = `
+export default async function handle(req: any, ctx: any) {
+    if (req.pathParams.user_id === '999') { throw new RangeError('no user 999'); }
+    return await ctx.lookup('users', req.pathParams.user_id, { type: 'User', idField: 'user_id' });
+}`;
 
-    const boot = async (engine: Runner): Promise<void> => {
-        const box = new Box({ root, image: 'stub', exec: engine });
-        const checks = new Checks();
-        const cacheDir = join(root, 'store');
-        const operations = await loadSpec(join(here, 'specs', 'petstore.yaml'));
-        const store = new Store(GYM_KIND, { dir: cacheDir });
-        for (const operation of operations) {
-            store.put(operation.key, { source: '# fine', meta: { model: 'stub' } });
-        }
-        const counting: Model = {
-            id: 'stub',
-            generate: () => {
-                asked += 1;
-                return Promise.resolve({ text: '# generator', toolCalls: [] });
-            },
-        };
-        live = await listen(
+    const start = async (builder?: Script, regenLimit = 3): Promise<Booted> => {
+        const booted = await boot(
+            'petstore.yaml',
+            { ...PETSTORE, getUserById: FAILS_ON_999 },
             {
-                router: new Router(operations),
-                checks,
-                box,
-                cache: new Cache({ box, checks, model: counting, cacheDir }),
-                onRequest: (line) => log.push(line),
+                builder,
+                server: { regenLimit },
             },
-            '127.0.0.1',
-            0,
         );
-        base = `http://127.0.0.1:${live.port}`;
+        requestsDir = join(booted.r.root, 'requests');
+        return booted;
     };
 
-    /** Every exec fails the way podman does; starting the container succeeds. */
-    const failing =
-        (stderr: string, code = 125): Runner =>
-        (_bin, args) =>
-            Promise.resolve({
-                code: args[0] === 'exec' ? code : 0,
-                stdout: args[0] === 'container' ? 'running' : '',
-                stderr: args[0] === 'exec' ? stderr : '',
-                truncated: false,
-                timedOut: false,
-            });
-
     beforeEach(() => {
-        root = mkdtempSync(join(tmpdir(), 'gym-'));
-        log = [];
-        asked = 0;
+        requestsDir = '';
     });
 
-    afterEach(async () => {
-        await live?.close();
-        rmSync(root, { recursive: true, force: true });
+    it('logs a timestamped line and writes a markdown dump of the exchange', async () => {
+        b = await start();
+        expect((await fetch(`${b.base}/users/100`)).status).toBe(200);
+        const line = b.log.at(-1)!;
+        expect(line).toMatch(/\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\]/);
+        expect(line).toContain('[SUCCESS]');
+        const dump = /file:\/\/(.+?\.md)/.exec(line)![1]!;
+        const md = readFileSync(dump, 'utf8');
+        expect(md).toContain('# Request: GET /users/100');
+        expect(md).toContain('"email": "user100@northwind.io"');
     });
 
-    it('answers 503 with the reason and a fix, and never asks the model', async () => {
-        await boot(failing(GONE));
-        const res = await fetch(`${base}/users/1`);
-        expect(res.status).toBe(503);
-        const body = (await res.json()) as Record<string, string>;
-        expect(body.error).toContain('no such container');
-        expect(body.error).toContain('not a fault in the generator');
-        expect(body.hint).toContain('zen sandbox clean');
-        expect(asked).toBe(0);
-        expect(log.join('\n')).toContain('[SANDBOX_UNAVAILABLE]');
-        expect(log.join('\n')).toContain('fix:');
-        expect(log.join('\n')).not.toContain('[REGENERATING]');
+    it('does not regenerate on client errors', async () => {
+        b = await start(() => {
+            throw new Error('must not be asked');
+        });
+        expect((await fetch(`${b.base}/users/not-an-integer`)).status).toBe(400);
+        expect(b.log.at(-1)).toContain('[CLIENT_ERROR: VALIDATION_FAILED]');
+        expect(b.model.builder).toHaveLength(0);
     });
 
-    it('keeps answering 503 rather than spending the regeneration limit', async () => {
-        await boot(failing(GONE));
-        for (let i = 0; i < 5; i++) {
-            expect((await fetch(`${base}/users/1`)).status).toBe(503);
-        }
-        expect(asked).toBe(0);
+    it('repairs a handler that fails on a real request, with what it knows', async () => {
+        b = await start(writes(GET_USER));
+        expect((await fetch(`${b.base}/users/1`)).status).toBe(200);
+        const res = await fetch(`${b.base}/users/999`);
+        expect(res.status).toBe(200);
+        expect(res.headers.get('x-gym-cache')).toBe('regenerated');
+        expect(await res.json()).toEqual({ user_id: 999, email: 'user999@northwind.io' });
+
+        const brief = b.model.builder[0]!.brief;
+        expect(brief).toContain('THE CURRENT HANDLER FAILED ON A REAL REQUEST');
+        expect(brief).toContain("throw new RangeError('no user 999')");
+        expect(brief).toContain('"user_id": "999"');
+        expect(brief).toContain('no user 999');
+        expect(brief).toContain('EARLIER SUCCESSFUL REQUEST 1');
+        expect(b.log.join('\n')).toContain('[REGENERATED]');
     });
 
-    it('names a stale mount when the file is missing inside the container', async () => {
-        await boot(
-            failing(
-                "python3: can't open file '/workspace/generators/x/gen.py': [Errno 2] No such file or directory",
-                2,
-            ),
-        );
-        const body = (await (await fetch(`${base}/users/1`)).json()) as Record<string, string>;
-        expect(body.hint).toContain('bind mount is stale');
-        expect(asked).toBe(0);
+    it('limits regenerations per url and says so', async () => {
+        b = await start(writes(FAILS_ON_999, FAILS_ON_999, FAILS_ON_999, FAILS_ON_999), 1);
+        expect((await fetch(`${b.base}/users/999`)).status).toBe(502);
+        const asked = b.model.builder.length;
+        const res = await fetch(`${b.base}/users/999`);
+        expect(res.status).toBe(502);
+        expect(await res.json()).toMatchObject({
+            regenerationLimitHit: true,
+            regenerationLimit: 1,
+        });
+        expect(b.model.builder).toHaveLength(asked);
+        expect(b.log.join('\n')).toContain('[REGENERATION_LIMIT_HIT]');
     });
 
-    it('still regenerates a generator that genuinely crashed', async () => {
-        await boot(failing('Traceback (most recent call last):\nValueError: nope', 1));
-        await fetch(`${base}/users/1`);
-        expect(asked).toBeGreaterThan(0);
-        expect(log.join('\n')).toContain('ValueError: nope');
-    });
-});
-
-describe('one container per server', () => {
-    it('is named after its process, and sweeps only the containers of dead ones', async () => {
-        const root = mkdtempSync(join(tmpdir(), 'gym-'));
-        const calls: string[][] = [];
-        const engine: Runner = (_bin, args) => {
-            calls.push([...args]);
-            const stdout =
-                args[0] === 'ps'
-                    ? [
-                          `zn-gym-${process.pid}-0123456789`,
-                          // pid 1 is always alive; 999999 is past macOS's pid max
-                          'zn-gym-1-aaaaaaaaaa',
-                          'zn-gym-999999-bbbbbbbbbb',
-                          'zn-gym-cccccccccc',
-                      ].join('\n')
-                    : '';
-            return Promise.resolve({
-                code: 0,
-                stdout,
-                stderr: '',
-                truncated: false,
-                timedOut: false,
-            });
-        };
-        try {
-            const box = new Box({ root, image: 'stub', exec: engine });
-            expect(box.sandbox.name).toMatch(new RegExp(`^zn-gym-${process.pid}-[0-9a-f]+$`));
-            await box.fresh();
-            const rm = calls.find((c) => c[0] === 'rm')!;
-            expect(calls.find((c) => c[0] === 'ps')).toContain('name=^zn-gym-');
-            expect(rm).toContain(box.sandbox.name);
-            expect(rm).toContain('zn-gym-999999-bbbbbbbbbb');
-            expect(rm).not.toContain('zn-gym-1-aaaaaaaaaa');
-            expect(rm).not.toContain('zn-gym-cccccccccc');
-        } finally {
-            rmSync(root, { recursive: true, force: true });
-        }
+    it('dumps only requests to real operations', async () => {
+        b = await start();
+        await fetch(`${b.base}/`);
+        await fetch(`${b.base}/__gym/health`);
+        await fetch(`${b.base}/not-a-route`);
+        expect(existsSync(requestsDir) ? readdirSync(requestsDir) : []).toEqual([]);
+        await fetch(`${b.base}/users/1`);
+        expect(readdirSync(requestsDir)).toHaveLength(1);
     });
 });

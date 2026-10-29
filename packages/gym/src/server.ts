@@ -38,10 +38,11 @@ import { describeIssues, issues, type Checks, type Issue } from './validate.ts';
 // step, one generator.
 //
 // The rules that are not obvious from the code are the ones about what does not
-// travel. Request headers are filtered before the envelope is written, because
-// that envelope becomes a file inside a container. Request bodies never reach a
-// prompt at all — the build loop uses probes it made up. And the listener binds
-// to loopback unless somebody says otherwise in as many words.
+// travel. Request headers are filtered before a handler sees them, because the
+// request can be quoted to the world agent when it asks for content. Handlers
+// are written against probes the build loop made up, never against traffic.
+// And the listener binds to loopback unless somebody says otherwise in as many
+// words.
 // ---------------------------------------------------------------------------
 
 /** Headers that are none of a generator's business. */
@@ -344,19 +345,6 @@ async function handle(
         return;
     }
 
-    if (!operation.success.schema) {
-        res.statusCode = operation.success.status;
-        await finish(operation.success.status, {
-            operationId: operation.operationId,
-            routePath: operation.path,
-            pathParams,
-            requestBody: body,
-            note: 'no body declared',
-        });
-        res.end();
-        return;
-    }
-
     let generator;
     try {
         generator = await opts.cache.ensure(operation);
@@ -368,10 +356,11 @@ async function handle(
         const status = err instanceof BuildFailed ? 501 : 500;
         const detail = reason(err);
         const bodyObj = {
-            error: `no generator for ${operation.operationId}`,
+            error: `no handler for ${operation.operationId}`,
             detail,
             diagnostics: err instanceof BuildFailed ? err.diagnostics : undefined,
             report: err instanceof BuildFailed ? err.dump : undefined,
+            agentRun: err instanceof BuildFailed ? err.report : undefined,
         };
         const end = prepareSend(res, status, bodyObj);
         await finish(status, {
@@ -380,10 +369,10 @@ async function handle(
             pathParams,
             requestBody: body,
             errorKind: 'GENERATOR_BUILD_FAILED',
-            errorMessage: `no generator: ${detail}`,
+            errorMessage: `no handler: ${detail}`,
             buildDump: err instanceof BuildFailed ? err.dump : undefined,
             responseBody: bodyObj,
-            note: `no generator: ${detail}`,
+            note: `no handler: ${detail}`,
         });
         end();
         return;
@@ -415,7 +404,12 @@ async function handle(
 
     const responseValidator = opts.checks.for(operation).response;
     let schemaMismatch = false;
-    if (outcome.ok && responseValidator && !responseValidator(outcome.value)) {
+    if (
+        outcome.ok &&
+        outcome.status === undefined &&
+        responseValidator &&
+        !responseValidator(outcome.value)
+    ) {
         schemaMismatch = true;
         const desc = describeIssues(issues('', responseValidator.errors));
         outcome = {
@@ -425,6 +419,41 @@ async function handle(
             durationMs: outcome.durationMs,
             value: outcome.value,
         };
+    }
+
+    // The handler chose an HTTP error with `ctx.fail`: that is an answer, not a fault.
+    if (outcome.ok && outcome.status !== undefined) {
+        const end = prepareSend(res, outcome.status, outcome.value);
+        await finish(outcome.status, {
+            operationId: operation.operationId,
+            routePath: operation.path,
+            pathParams,
+            requestBody: body,
+            responseBody: outcome.value,
+            cacheStatus,
+            note: 'answered by the handler',
+        });
+        end();
+        return;
+    }
+
+    // The world agent failed, not the handler: rewriting working code cannot help.
+    if (!outcome.ok && outcome.agentFault) {
+        const bodyObj = { error: outcome.fault, retryable: true };
+        const end = prepareSend(res, 502, bodyObj);
+        await finish(502, {
+            operationId: operation.operationId,
+            routePath: operation.path,
+            pathParams,
+            requestBody: body,
+            errorKind: 'WORLD_AGENT_FAILED',
+            errorMessage: outcome.fault,
+            responseBody: bodyObj,
+            cacheStatus,
+            note: 'world agent failed',
+        });
+        end();
+        return;
     }
 
     if (!outcome.ok) {
@@ -513,7 +542,12 @@ async function handle(
 
             // Re-run the request with the newly regenerated generator
             outcome = await opts.box.run(operation.key, input);
-            if (outcome.ok && responseValidator && !responseValidator(outcome.value)) {
+            if (
+                outcome.ok &&
+                outcome.status === undefined &&
+                responseValidator &&
+                !responseValidator(outcome.value)
+            ) {
                 outcome = {
                     ok: false,
                     fault: 'output does not match response schema after regeneration',
@@ -587,6 +621,19 @@ async function handle(
         streamKey,
     );
     opts.history!.recordSuccess(operation.key, input, outcome.value);
+    if (!operation.success.schema) {
+        res.statusCode = operation.success.status;
+        await finish(operation.success.status, {
+            operationId: operation.operationId,
+            routePath: operation.path,
+            pathParams,
+            requestBody: body,
+            cacheStatus,
+            note: `${note} · no body declared`,
+        });
+        res.end();
+        return;
+    }
     const end = prepareSend(res, operation.success.status, outcome.value);
     await finish(operation.success.status, {
         operationId: operation.operationId,
@@ -704,9 +751,9 @@ async function readBody(req: IncomingMessage, max: number): Promise<unknown> {
 }
 
 /**
- * Headers reach the generator so it can vary on things like `accept-language`.
- * Credentials do not: the envelope is written to a file inside a container, and
- * a mock is exactly what people point a real bearer token at by accident.
+ * Headers reach the handler so it can vary on things like `accept-language`.
+ * Credentials do not: the request can be quoted to the world agent, and a mock
+ * is exactly what people point a real bearer token at by accident.
  */
 function safeHeaders(req: IncomingMessage): Record<string, string> {
     const out: Record<string, string> = {};
