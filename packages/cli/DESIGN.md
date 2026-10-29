@@ -42,7 +42,7 @@ nothing but the convenience of being listed.
     projects.json      index of known projects - a cache, never the truth
     keys.json          credential index, mode 0600
     keys/              file-shaped credentials (Google ADC), mode 0700
-    gym/             the mock server's container workspace - scratch
+    gym/             the mock server's handlers, worlds, indexes and reports
     cache/             work already done (§4.2), one file per object
 ```
 

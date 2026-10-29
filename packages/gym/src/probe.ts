@@ -1,4 +1,4 @@
-import type { GeneratorInput } from './envelope.ts';
+import type { HandlerRequest } from './runtime.ts';
 import type { Paging } from './paging.ts';
 import { properties, type Schema } from './schema.ts';
 import type { Operation, ParamSpec } from './spec.ts';
@@ -7,14 +7,14 @@ import type { Issue } from './validate.ts';
 // ---------------------------------------------------------------------------
 // Probes
 //
-// A generator is judged before it is trusted, and it is judged on inputs made
+// A handler is judged before it is trusted, and it is judged on inputs made
 // up here rather than on traffic. That is not only about cost: a probe built
 // from a request body would put whatever a caller sent into the next prompt,
 // and a mock server is exactly the kind of thing people point at with real
 // payloads by accident.
 //
 // Two probes, deliberately. One ordinary, one at the edges of whatever the
-// schema allows — a generator that hard-codes the first probe's id passes once
+// schema allows — a handler that hard-codes the first probe's id passes once
 // and fails the second, which is the mistake this catches.
 // ---------------------------------------------------------------------------
 
@@ -23,14 +23,13 @@ import type { Issue } from './validate.ts';
  *
  * Not the schema's maximum. `bounded` below answers an unbounded want with
  * `maximum - 1`, so a `page_size` declared `maximum: 1000` used to make every
- * probe ask for 999 fabricated objects — minutes of Faker inside a container
- * with a 30s budget, reported as "the file took longer than 30s" and blamed on
- * a generator that was doing exactly what it was told. A page is judged on its
+ * probe ask for 999 fabricated objects, and a handler that was doing exactly
+ * what it was told was blamed for being slow. A page is judged on its
  * shape, and three rows show it.
  */
 const PROBE_PAGE_SIZE = 3;
 
-export function probesFor(operation: Operation): GeneratorInput[] {
+export function probesFor(operation: Operation): HandlerRequest[] {
     const size = operation.paging?.size;
     return [0, 1].map((variant) => ({
         operationId: operation.operationId,
@@ -51,21 +50,23 @@ function values(
     where: 'path' | 'query',
     variant: number,
     size?: string,
-): Record<string, unknown> {
-    const out: Record<string, unknown> = {};
+): Record<string, string> {
+    // Text, as on the wire: a handler sees what a real request would give it.
+    const out: Record<string, string> = {};
     for (const p of params) {
         if (p.in !== where) {
             continue;
         }
         // An optional query parameter is present in one probe and absent in the
-        // other, so a generator cannot assume either.
+        // other, so a handler cannot assume either.
         if (!p.required && variant === 1) {
             continue;
         }
-        out[p.name] =
+        const value =
             p.name === size
                 ? bounded(p.schema, PROBE_PAGE_SIZE, true)
                 : sample(p.schema, variant, 0, p.schema);
+        out[p.name] = Array.isArray(value) ? value.join(',') : String(value);
     }
     return out;
 }
@@ -74,8 +75,8 @@ const NAMES = ['ada', 'grace', 'linus'];
 
 /**
  * A value the schema would accept. Not a faker — that job belongs to the
- * generator; this only has to be *valid*, so that a probe failure is the
- * generator's fault and never the probe's.
+ * handler; this only has to be *valid*, so that a probe failure is the
+ * handler's fault and never the probe's.
  */
 function sample(schema: Schema, variant: number, depth: number, root: Schema): unknown {
     if (depth > 4) {
@@ -197,7 +198,7 @@ function text(schema: Schema, variant: number): string {
             break;
     }
     // A `pattern` cannot be satisfied by guessing, so it is left to the
-    // parameter check to tell us the probe was wrong rather than the generator.
+    // parameter check to tell us the probe was wrong rather than the handler.
     const base = NAMES[variant % NAMES.length];
     const min = num(schema.minLength) ?? 0;
     return base.length >= min ? base : base.padEnd(min, 'x');
@@ -211,7 +212,7 @@ function text(schema: Schema, variant: number): string {
 // means anything in the answer it arrived with, so the pages have to be asked
 // for in order.
 //
-// The seed is held still across the whole walk on purpose. A generator that
+// The seed is held still across the whole walk on purpose. A handler that
 // mints its token out of `seed` rather than out of the request is the exact
 // mistake being looked for, and a still seed makes it a fixed point — visible
 // on the second page here instead of on somebody's client.
@@ -221,7 +222,7 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
     typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** The first page: an ordinary probe with the paging control taken back off. */
-export function walkStart(operation: Operation, paging: Paging): GeneratorInput {
+export function walkStart(operation: Operation, paging: Paging): HandlerRequest {
     const input = probesFor(operation)[0];
     if (paging.paramIn === 'body') {
         const body = isObject(input.body) ? { ...input.body } : {};
@@ -234,7 +235,7 @@ export function walkStart(operation: Operation, paging: Paging): GeneratorInput 
 }
 
 /** The same request again, asking for whatever the last answer pointed at. */
-export function nextPage(previous: GeneratorInput, paging: Paging, token: string): GeneratorInput {
+export function nextPage(previous: HandlerRequest, paging: Paging, token: string): HandlerRequest {
     if (paging.paramIn === 'body') {
         const body = isObject(previous.body) ? { ...previous.body } : {};
         body[paging.param] = token;
@@ -255,13 +256,13 @@ export function nextPage(previous: GeneratorInput, paging: Paging, token: string
 // mismatch there is a broken mock. A query parameter is usually a control
 // rather than content — `?source=realtime`, `?page_size=50`, `?cursor=…` — and
 // real APIs collide those names with unrelated response properties all the
-// time. Enforcing on them rejected working generators for a rule they were
+// time. Enforcing on them rejected working handlers for a rule they were
 // right to ignore. The prompt still asks for query echo where it is meaningful;
 // it is simply not a reason to throw the file away.
 // ---------------------------------------------------------------------------
 
 export function echoIssues(
-    input: GeneratorInput,
+    input: HandlerRequest,
     value: unknown,
     schema: Schema | undefined,
 ): Issue[] {

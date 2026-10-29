@@ -48,7 +48,11 @@ export class Router {
             if (clash) {
                 throw new SpecError(
                     `${id} is declared twice`,
-                    `${clash.source} and ${operation.source} both define it`,
+                    clash.source === operation.source
+                        ? `${operation.source} defines it twice`
+                        : `${clash.source} and ${operation.source} both define it — two versions ` +
+                              'of one API cannot be served by one process: name one of them, or run ' +
+                              'two processes on different ports with the same --world',
                 );
             }
             seen.set(id, operation);

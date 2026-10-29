@@ -5,8 +5,7 @@
 // OpenAPI 3.0 carries a Draft-4 derivative with its own `nullable`, and
 // OpenAPI 3.1 is honest 2020-12. Ajv can be asked to speak any of them, but
 // then every consumer downstream — the request check, the response check, the
-// prompt the model reads, the `jsonschema` call inside the generator — has to
-// be told which one it is looking at. So they are converted once, here, into
+// probes, the sampler — has to be told which one it is looking at. So they are converted once, here, into
 // 2020-12, and nothing below this file knows a dialect exists.
 //
 // The other job is cycles. `dereference` replaces every `$ref` with the object

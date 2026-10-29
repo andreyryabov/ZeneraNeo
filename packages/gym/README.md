@@ -23,8 +23,10 @@
 # @zenera/gym
 
 **Simulated API environments for agent training and evaluation. Point Gym at
-a Swagger/OpenAPI spec and it serves it - the response bodies are written,
-once, by a model.**
+OpenAPI/Swagger documents — and, if you like, a story about the world behind
+them and the documentation that goes with it — and it serves the API:
+stateful, consistent across endpoints and processes, and populated with
+content that follows the story.**
 
 Gym currently provides the API simulation layer, not a training loop, task
 scoring, or rewards.
@@ -36,143 +38,206 @@ scoring, or rewards.
 
 ## What you get
 
-- **A mock server from a spec** - point it at one or more swagger/OpenAPI
-  documents and every operation answers.
-- **Bodies written once** - a model writes a Python generator per operation,
-  checked against the response schema; after that no request costs a token.
-- **Stable answers** - pin a `--seed` and the same request returns the same body.
-- **Lists that end** - paging tokens are recognised, walked and cut, so a client
-  never loops forever.
+- **A mock server from documents** - name OpenAPI/Swagger files, directories or
+  patterns, and every operation answers.
+- **A world, not random bodies** - every answer comes from a shared world of
+  records. `GET /messages` lists what `GET /messages/{id}` returns, a `POST` is
+  visible to the next `GET`, and a `DELETE` deletes.
+- **A story it follows** - describe the people, the projects and what is going
+  on, and the mailbox, the calendar and everything else read like that place.
+- **Documentation it uses** - hand it a knowledge base, runbooks, an admin
+  guide; agents search it for realistic values and for what the API does.
+- **Several APIs, one world** - mail on one port and calendar on another, given
+  the same story, share one world: the meeting in an email is the meeting on
+  the calendar.
+- **Code written once** - an agent writes a TypeScript handler per operation,
+  judged before it is kept; after that a request is a function call, and the
+  only tokens spent are on content the world does not have yet.
+- **Large APIs** - thousands of operations load in seconds; nothing is written
+  until it is called.
+- **Lists that end** - paging is built in, judged, and cut at request time.
 
 ## Install
 
-Node.js 24+ and [podman](https://podman.io). Install it alongside the CLI:
+Node.js 24+. Install it alongside the CLI:
 
 ```sh
 npm i -g @zenera/cli @zenera/gym
 zen key add openai          # the keyring `zen` already uses
 ```
 
-The first start builds one image; every start after that reuses it. `zen --help`
-lists `gym` whether or not it is installed, and says what to run if not.
+No container engine is needed: handlers are TypeScript that Node runs as it is.
 
 ## Use
 
 ```sh
-zen gym serve api/openapi.yaml --port 8787
+zen gym serve api/openapi.yaml
 curl -s localhost:8787/users/12324
-# { "user_id": 12324, "email": "brooke.hoffman@example.org", ... }
 ```
 
-More than one document at a time is fine, and the same request answers the same
-way every time when you pin a seed:
+Three kinds of input, each a file, a directory or a quoted pattern, each
+repeatable:
+
+| Input               | What it is                                                               | How the agents get it           |
+| ------------------- | ------------------------------------------------------------------------ | ------------------------------- |
+| `spec…`, `--schema` | API documents (`.yaml`, `.yml`, `.json` declaring `swagger:`/`openapi:`) | a graph of operations and types |
+| `--story`           | the state of this world: who is who, what is happening                   | quoted whole, in every prompt   |
+| `--docs`            | reference material: a knowledge base, guides, runbooks                   | searched when needed            |
 
 ```sh
-zen gym serve specs/*.yaml --seed 42
+zen gym serve --schema 'specs/*.yaml' --story world.md --docs kb/ --docs 'runbooks/*.md'
 ```
 
-Warm it up before a demo or a test run, so no request pays for a model turn:
+A directory is walked, and only files that declare `swagger:` or `openapi:` are
+taken as API documents — so pointing `--schema` at a folder of mixed JSON, or at
+an index somebody built, finds the APIs in it. Quote patterns so the shell leaves
+them to Gym.
+
+Two APIs, two processes, one world:
 
 ```sh
-zen gym build api/openapi.yaml     # write every generator now and exit
-zen gym cache ls                   # what has been generated
-zen gym cache clear                # throw it away
+zen gym serve specs/mail.yaml     --story world.md --docs kb/ --port 8787
+zen gym serve specs/calendar.yaml --story world.md --docs kb/ --port 8788
 ```
 
-A path key with a query string on it — `/x/{id}?action=retry`, which some
-vendors write when they need two `post`s under one path — is read for what
-it means rather than taken verbatim: the path is the part before the `?`, and
-each pair after it becomes a required query value that tells those operations
-apart. Call one without it and the 404 says which queries the path answers to.
+[`examples/mock-apis`](https://github.com/zenera-ai/ZeneraNeo/tree/main/examples/mock-apis)
+has a story and a knowledge base for the mail and calendar specs beside it, and
+another for an NSX network.
 
-## How a body is produced
+Everything is indexed before the server listens, so no request waits on an
+index. Write every handler up front, before a demo or a test run:
 
-The first time an operation is called, Gym asks a model to write a
-**Python generator** for it - one file, taking a JSON input path and a JSON
-output path. That file is then run against sample requests it makes up, and
-judged twice: against the operation's response schema, and against the echo
-rule, which says that where a path or query parameter shares a name with a
-property in the response, the response has to carry the value that was asked
-for. `GET /users/12324` answering with somebody else's id validates perfectly
-and is still wrong.
+```sh
+zen gym build --schema 'specs/*.yaml' --story world.md --docs kb/
+```
 
-If it fails, the diagnostics go back to the model and it tries again, up to
-`--attempts` (five by default). A build that does not come good leaves a
-**report** in `<cache>/builds/` - one markdown file per build, every rejected
-attempt in it with its diagnostics and its whole source, and the `501` that the
-request gets links to it, in the log line and in the body. The next attempt
-overwrites `gen.py`, and a generator that merely hung leaves no traceback, so
-the code is the only evidence there is. If it passes, the generator is kept in
-this machine's shared cache under `~/.zenera/neo/cache/gym-generator/`, keyed
-by the operation's shape, and every later request is just
-`podman exec python3 gen.py in.json out.json` - no model, no tokens. The store
-is the machine's, so the same document served from another directory costs
-nothing the second time.
+## How an answer is produced
 
-Generators run in a container with **no network**, on an image baked once with
-`faker`, `exrex`, `jsonschema` and `python-dateutil`.
+Two agents, and a split between them that is the whole design.
+
+**The handler agent writes mechanics.** The first time an operation is called,
+an agent writes its **handler**: one TypeScript module, `export default async
+function handle(req, ctx)`. It is shown the operation as TypeScript types, the
+operations it must agree with (found by tracing its record type through the API
+graph, so they are found however far apart their paths are), where each type
+already lives, and the documentation about the operation. It can look further:
+`read_handler`, `trace_api`, `grep_api`, `list_api`, `describe_types`, the world's
+collections and the docs.
+
+A handler owns which type an operation is about, how the query filters it, what
+a write changes and how the list pages — and never the content. It names records
+by their schema type:
+
+```ts
+export default async function handle(req, ctx) {
+    const all = await ctx.ensure('Message', { hint: req.query.q });
+    const q = (req.query.q ?? '').toLowerCase();
+    const hits = all.filter((m) => `${m.subject} ${m.snippet}`.toLowerCase().includes(q));
+    const page = ctx.page(hits, { token: req.query.pageToken, size: req.query.maxResults });
+    return {
+        messages: page.items.map(({ id, threadId }) => ({ id, threadId })),
+        nextPageToken: page.nextToken ?? undefined,
+        resultSizeEstimate: hits.length,
+    };
+}
+```
+
+**Where types live is decided once.** The first handler to use a type binds it to
+a collection and an id field; every later handler is told the binding and held
+to it. So `listMessages` and `getMessage` read the same records, whichever was
+written first and whichever was rebuilt since.
+
+**The world agent writes content.** When a handler finds the world short —
+an inbox nobody has read yet, an id nobody has seen — `ctx.ensure` and
+`ctx.lookup` ask, and an agent writes the records: from the story, from the
+docs, and consistent with everything already in the world, checked against the
+schema type before anything can read them. On a first read it makes what the
+story says exists, however many that is. Records it refers to that do not exist
+yet — a label, a transport zone — it makes too, in their own collections.
+`me`, `primary` and the like resolve through `ctx.owner()`, the account the story
+says the API belongs to.
+
+Because content lives in the world and not in the code, one cached handler
+serves every story.
+
+**Nothing is kept until it is judged.** `test_handler` runs the module against
+probe requests in a throwaway copy of the world (content there is sampled from
+the schema, so judging costs no model calls) and checks every answer against the
+response schema, the **echo rule** (`GET /users/12324` must be about user
+12324), the paging walk, and the bindings. The first test that passes ends the
+build. A build that never passes leaves a report in `<cache>/builds/`, and every
+agent run leaves an HTML report in `<cache>/reports/`.
+
+Handlers run in a worker thread with an empty environment. A handler that
+throws or times out is repaired, up to `--regen-limit` times per URL; a failure
+of the world agent is never treated as a fault in the handler.
+
+## Worlds
+
+A world is one SQLite file under `<cache>/worlds/`. With `--story` and no
+`--world`, it is named after what the story says, so every process given the
+same story shares it; editing the story starts a new one, and Gym says so.
+`--world <name>` names one that survives story edits; `--world ./path.sqlite`
+puts it anywhere. Without either, there is one default world.
+
+```sh
+zen gym world ls             # every world, what it holds, when it was used
+zen gym world rm northwind   # delete one
+zen gym serve … --reset      # start the one in use from empty
+```
+
+Worlds are data, not cache: `zen gym cache clear` leaves them alone.
+
+## Docs and embeddings
+
+`--docs` are indexed into a directory Gym owns, keyed by their content and by the
+model that embeds them: a restart reuses the index, and an edit pays only for the
+chunks that changed. By default search is by wording (a full-text index), and no
+embedding model is called. `--embedding` adds search by meaning: `--embedding <ref>`
+names the model, and `--embedding on` (or `default`) takes the configured one —
+`ZENERA_GYM_EMBEDDING`, then `zen gym model --embedding <ref>`, then the first
+provider your keys offer. Those settings only answer which model; without the
+flag they turn nothing on. `--embedding off` (or `none`) is the default.
 
 ## Pages that end
 
-A list endpoint is the one place a mock can hang a real client. Given
-`?cursor=abc`, the honest-looking answer is a body that validates, echoes
-nothing it shouldn't, and hands back `abc` again - so the client asks for the
-same page forever.
+A list endpoint is the one place a mock can hang a real client. Where an
+operation has a paging parameter (`cursor`, `page`, `offset`, `page_token`, …) and
+a response property that carries the next one (`next`, `next_cursor`,
+`has_more`, …), the handler is told to page with `ctx.page`, whose token always
+advances and is absent on the last page; it is walked before it is kept; and at
+request time a repeated or cycling token is cut, and streams are capped to a
+random 1-10 pages. `GET /__gym/routes` reports the shape recognised.
 
-Gym reads the document for this. Where an operation has a paging
-parameter (`cursor`, `page`, `offset`, `page_token`, …) in query or request body
-and a response property that carries the next one (`next`, `next_cursor`, `has_more`, …),
-three things happen, all in the operation's own names:
-
-- the model is told to fabricate **between 1 and 10 pages** in total, to build the token
-  out of the paging parameter rather than the seed, and to end the list - null,
-  absent, or `has_more: false` (and empty items) where the schema leaves no other room;
-- the generator is then **walked**: Gym calls it with no cursor, follows
-  the token it gets back, and rejects the file if the token repeats, cycles, or
-  never runs out. The diagnostics say which, and the model gets another go;
-- at request time, pagination is tracked and bounded: a token identical to the one
-  just sent is **cut** (nulled or dropped), cycles are stopped, and streams are capped
-  to random 1-10 pages, returning empty results if a client loops past the end. The
-  request line narrates each cut. Nothing is invented in its place; a generator written
-  before this rule existed is still cached, and a cache is not rebuilt because a rule changed.
-
-Only paginated operations are affected. Their cache keys changed once, so they
-are written again on first use; everything else keeps the key it had.
-`GET /__gym/routes` reports the shape that was recognised, per operation.
-
-Plenty of documents describe the envelope and never write down the parameter
-that reads it back. The first two steps cannot help there - nothing static can
-see a parameter that is not declared - but the cut still applies: it takes the
-paging parameter from query parameters or request body, since a client only sends
-`cursor=X` because a body handed it X.
+A path key with a query string on it — `/x/{id}?action=retry` — is read for what
+it means: the path is the part before the `?`, and each pair after it becomes a
+required query value that tells those operations apart.
 
 ## Commands
 
 ```
-zen gym serve <spec...>    Serve them. Generators are written on demand.
-zen gym build <spec...>    Write every generator now and exit.
-zen gym cache ls | clear   What has been generated, or throw it away.
-zen gym model [ref]        Show or set the model it uses.
+zen gym serve [spec...]    Serve the APIs. Handlers are written on first use.
+zen gym build [spec...]    Index everything and write every handler, then exit.
+zen gym cache ls | clear   Handlers, bindings and indexes.
+zen gym world ls | rm      Worlds.
+zen gym model [ref]        Show or set the chat and embedding models.
 ```
+
+Useful options: `--schema`, `--story`, `--docs`, `--world`, `--reset`,
+`--embedding`, `--port`, `--host` (reachable only from this machine by default),
+`--model`, `--seed`, `--rebuild`, `--attempts`, `--concurrency`, `--timeout`,
+`--cache <dir>`, `--quiet`. `zen help gym` prints the full table.
 
 The model is looked for in this order: `--model`, `ZENERA_GYM_MODEL`, what
 `zen gym model <provider>:<id>` stored, then the best one your keys can buy.
-The stored one lives beside the keyring in `~/.zenera/neo/gym.json`, so it is
-remembered between runs and across projects; `zen gym model --clear` forgets
-it.
+Both agents call tools; OpenAI's reasoning models take tools over the Responses
+API (`openai/responses:<id>`), which is what the default names.
 
-Useful options: `--port`, `--host` (reachable only from this machine by
-default), `--model`, `--seed` (same request, same answer), `--rebuild`,
-`--attempts`, `--concurrency`, `--timeout`, `--cache <dir>` (the container's
-workspace), `--quiet`. `zen help gym` prints the full table.
+`GET /` is a contents page: every operation, grouped by document, with a **Run**
+button and a form per operation. `GET /__gym/routes` is the same as JSON;
+`GET /__gym/health` is a health check.
 
-`GET /` is a contents page: every operation the mock is serving, grouped by the
-document it came from, with its parameters and the shape of its answer. Each
-one has a **Run** button, which opens a form — a box per parameter, required
-ones marked, a body prefilled with something the mock will accept — and shows
-the status, the time and the answer. `GET /__gym/routes` is the same thing as
-JSON; `GET /__gym/health` is a health check. A document that declares `/`
-itself keeps it.
+See [DESIGN.md](DESIGN.md) for how the pieces fit together.
 
 ## Credentials
 

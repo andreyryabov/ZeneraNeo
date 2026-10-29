@@ -103,7 +103,7 @@ A real environment variable always beats the keyring.
     projects.json         the registry: name -> directory
     keys.json             credentials (0600)
     keys/                 key files, for providers that hold a file
-    gym/                generator cache for `zen gym`
+    gym/                handlers, worlds, docs indexes and agent reports for `zen gym`
 
 <project>/
     zenera.json           { version, name }

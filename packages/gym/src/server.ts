@@ -3,9 +3,9 @@ import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
-import { SandboxUnavailable, type Box, type Outcome } from './box.ts';
+import { WorkerUnavailable, type Box, type Outcome } from './box.ts';
 import { BuildFailed, type Cache } from './cache.ts';
-import type { GeneratorInput } from './envelope.ts';
+import type { HandlerRequest } from './runtime.ts';
 import { reason } from './generate.ts';
 import {
     formatLogLine,
@@ -35,16 +35,17 @@ import { describeIssues, issues, type Checks, type Issue } from './validate.ts';
 //
 // `node:http` and a switch. A framework would earn its place if there were
 // middleware to compose, and there is not: one route table, one validation
-// step, one generator.
+// step, one handler.
 //
 // The rules that are not obvious from the code are the ones about what does not
-// travel. Request headers are filtered before the envelope is written, because
-// that envelope becomes a file inside a container. Request bodies never reach a
-// prompt at all — the build loop uses probes it made up. And the listener binds
-// to loopback unless somebody says otherwise in as many words.
+// travel. Request headers are filtered before a handler sees them, because the
+// request can be quoted to the world agent when it asks for content. Handlers
+// are written against probes the build loop made up, never against traffic.
+// And the listener binds to loopback unless somebody says otherwise in as many
+// words.
 // ---------------------------------------------------------------------------
 
-/** Headers that are none of a generator's business. */
+/** Headers that are none of a handler's business. */
 const REDACTED = /^(authorization|cookie|set-cookie|proxy-authorization)$/i;
 const SECRETISH = /key|token|secret|password|credential/i;
 
@@ -273,15 +274,14 @@ async function handle(
     const { operation, pathParams } = match;
     res.setHeader('x-gym-operation', operation.operationId);
 
-    /** The container could not run anything: say so, and never blame the generator. */
-    const sandboxDown = async (
-        err: SandboxUnavailable,
+    /** The worker could not run anything: say so, and never blame the handler. */
+    const workerDown = async (
+        err: WorkerUnavailable,
         extra: { requestBody?: unknown; cacheStatus?: 'hit' | 'miss' | 'regenerated' } = {},
     ): Promise<void> => {
         const bodyObj = {
             error: err.message,
             hint: err.hint,
-            container: err.container,
             stderr: err.stderr,
         };
         res.setHeader('retry-after', '1');
@@ -291,12 +291,12 @@ async function handle(
             routePath: operation.path,
             pathParams,
             ...extra,
-            errorKind: 'SANDBOX_UNAVAILABLE',
+            errorKind: 'WORKER_UNAVAILABLE',
             errorMessage: err.message,
             hint: err.hint,
             stderr: err.stderr,
             responseBody: bodyObj,
-            note: 'container engine failed',
+            note: 'worker unavailable',
         });
         end();
     };
@@ -344,34 +344,22 @@ async function handle(
         return;
     }
 
-    if (!operation.success.schema) {
-        res.statusCode = operation.success.status;
-        await finish(operation.success.status, {
-            operationId: operation.operationId,
-            routePath: operation.path,
-            pathParams,
-            requestBody: body,
-            note: 'no body declared',
-        });
-        res.end();
-        return;
-    }
-
-    let generator;
+    let handler;
     try {
-        generator = await opts.cache.ensure(operation);
+        handler = await opts.cache.ensure(operation);
     } catch (err) {
-        if (err instanceof SandboxUnavailable) {
-            await sandboxDown(err, { requestBody: body });
+        if (err instanceof WorkerUnavailable) {
+            await workerDown(err, { requestBody: body });
             return;
         }
         const status = err instanceof BuildFailed ? 501 : 500;
         const detail = reason(err);
         const bodyObj = {
-            error: `no generator for ${operation.operationId}`,
+            error: `no handler for ${operation.operationId}`,
             detail,
             diagnostics: err instanceof BuildFailed ? err.diagnostics : undefined,
             report: err instanceof BuildFailed ? err.dump : undefined,
+            agentRun: err instanceof BuildFailed ? err.report : undefined,
         };
         const end = prepareSend(res, status, bodyObj);
         await finish(status, {
@@ -379,19 +367,19 @@ async function handle(
             routePath: operation.path,
             pathParams,
             requestBody: body,
-            errorKind: 'GENERATOR_BUILD_FAILED',
-            errorMessage: `no generator: ${detail}`,
+            errorKind: 'HANDLER_BUILD_FAILED',
+            errorMessage: `no handler: ${detail}`,
             buildDump: err instanceof BuildFailed ? err.dump : undefined,
             responseBody: bodyObj,
-            note: `no generator: ${detail}`,
+            note: `no handler: ${detail}`,
         });
         end();
         return;
     }
-    res.setHeader('x-gym-cache', generator.cached ? 'hit' : 'miss');
-    let cacheStatus: 'hit' | 'miss' | 'regenerated' = generator.cached ? 'hit' : 'miss';
+    res.setHeader('x-gym-cache', handler.cached ? 'hit' : 'miss');
+    let cacheStatus: 'hit' | 'miss' | 'regenerated' = handler.cached ? 'hit' : 'miss';
 
-    const input: GeneratorInput = {
+    const input: HandlerRequest = {
         operationId: operation.operationId,
         method: operation.method,
         path: operation.path,
@@ -406,8 +394,8 @@ async function handle(
     try {
         outcome = await opts.box.run(operation.key, input);
     } catch (err) {
-        if (err instanceof SandboxUnavailable) {
-            await sandboxDown(err, { requestBody: body, cacheStatus });
+        if (err instanceof WorkerUnavailable) {
+            await workerDown(err, { requestBody: body, cacheStatus });
             return;
         }
         throw err;
@@ -415,7 +403,12 @@ async function handle(
 
     const responseValidator = opts.checks.for(operation).response;
     let schemaMismatch = false;
-    if (outcome.ok && responseValidator && !responseValidator(outcome.value)) {
+    if (
+        outcome.ok &&
+        outcome.status === undefined &&
+        responseValidator &&
+        !responseValidator(outcome.value)
+    ) {
         schemaMismatch = true;
         const desc = describeIssues(issues('', responseValidator.errors));
         outcome = {
@@ -427,13 +420,48 @@ async function handle(
         };
     }
 
+    // The handler chose an HTTP error with `ctx.fail`: that is an answer, not a fault.
+    if (outcome.ok && outcome.status !== undefined) {
+        const end = prepareSend(res, outcome.status, outcome.value);
+        await finish(outcome.status, {
+            operationId: operation.operationId,
+            routePath: operation.path,
+            pathParams,
+            requestBody: body,
+            responseBody: outcome.value,
+            cacheStatus,
+            note: 'answered by the handler',
+        });
+        end();
+        return;
+    }
+
+    // The world agent failed, not the handler: rewriting working code cannot help.
+    if (!outcome.ok && outcome.agentFault) {
+        const bodyObj = { error: outcome.fault, retryable: true };
+        const end = prepareSend(res, 502, bodyObj);
+        await finish(502, {
+            operationId: operation.operationId,
+            routePath: operation.path,
+            pathParams,
+            requestBody: body,
+            errorKind: 'WORLD_AGENT_FAILED',
+            errorMessage: outcome.fault,
+            responseBody: bodyObj,
+            cacheStatus,
+            note: 'world agent failed',
+        });
+        end();
+        return;
+    }
+
     if (!outcome.ok) {
         const urlKey = url.pathname;
         const errorKind: ErrorKind = outcome.fault?.includes('longer than')
-            ? 'GENERATOR_TIMEOUT'
+            ? 'HANDLER_TIMEOUT'
             : schemaMismatch
-              ? 'GENERATOR_SCHEMA_MISMATCH'
-              : 'GENERATOR_FAULT';
+              ? 'HANDLER_SCHEMA_MISMATCH'
+              : 'HANDLER_FAULT';
 
         // Check regeneration limit for this URL
         if (opts.limiter!.isLimitHit(urlKey)) {
@@ -441,7 +469,7 @@ async function handle(
                 formatRegenLimitHit(urlKey, opts.limiter!.limit, operation.operationId),
             );
             const bodyObj = {
-                error: `the generator for ${operation.operationId} ${outcome.fault}`,
+                error: `the handler for ${operation.operationId} ${outcome.fault}`,
                 stderr: outcome.stderr || undefined,
                 regenerationLimitHit: true,
                 regenerationLimit: opts.limiter!.limit,
@@ -458,7 +486,7 @@ async function handle(
                 responseBody: bodyObj,
                 cacheStatus,
                 regenLimitHit: true,
-                note: 'generator faulted (limit hit)',
+                note: 'handler faulted (limit hit)',
             });
             end();
             return;
@@ -477,7 +505,7 @@ async function handle(
         );
 
         const regenStarted = Date.now();
-        let currentSource = generator.source;
+        let currentSource = handler.source;
         if (!currentSource?.trim()) {
             currentSource = (await opts.cache.getSource?.(operation.key)) ?? '';
         }
@@ -485,7 +513,7 @@ async function handle(
             try {
                 currentSource = await readFile(opts.box.sourceOf(operation.key), 'utf8');
             } catch {
-                currentSource = '# generator';
+                currentSource = '# handler';
             }
         }
 
@@ -495,7 +523,7 @@ async function handle(
             await opts.cache.regenerate(operation, {
                 currentSource,
                 failingInput: input,
-                fault: outcome.fault ?? 'generator faulted',
+                fault: outcome.fault ?? 'handler faulted',
                 stderr: outcome.stderr,
                 examples,
             });
@@ -511,9 +539,14 @@ async function handle(
                 ),
             );
 
-            // Re-run the request with the newly regenerated generator
+            // Re-run the request with the newly regenerated handler
             outcome = await opts.box.run(operation.key, input);
-            if (outcome.ok && responseValidator && !responseValidator(outcome.value)) {
+            if (
+                outcome.ok &&
+                outcome.status === undefined &&
+                responseValidator &&
+                !responseValidator(outcome.value)
+            ) {
                 outcome = {
                     ok: false,
                     fault: 'output does not match response schema after regeneration',
@@ -522,8 +555,8 @@ async function handle(
                 };
             }
         } catch (regenErr) {
-            if (regenErr instanceof SandboxUnavailable) {
-                await sandboxDown(regenErr, { requestBody: body, cacheStatus });
+            if (regenErr instanceof WorkerUnavailable) {
+                await workerDown(regenErr, { requestBody: body, cacheStatus });
                 return;
             }
             const detail = reason(regenErr);
@@ -552,7 +585,7 @@ async function handle(
 
         if (!outcome.ok) {
             const bodyObj = {
-                error: `the regenerated generator for ${operation.operationId} ${outcome.fault}`,
+                error: `the regenerated handler for ${operation.operationId} ${outcome.fault}`,
                 stderr: outcome.stderr || undefined,
                 regenerated: true,
             };
@@ -563,13 +596,13 @@ async function handle(
                 pathParams,
                 requestBody: body,
                 errorKind,
-                errorMessage: `regenerated generator ${outcome.fault}`,
+                errorMessage: `regenerated handler ${outcome.fault}`,
                 stderr: outcome.stderr,
                 responseBody: bodyObj,
                 cacheStatus,
                 regenerated: true,
                 regenAttempts: attempt,
-                note: 'regenerated generator faulted',
+                note: 'regenerated handler faulted',
             });
             end();
             return;
@@ -587,6 +620,19 @@ async function handle(
         streamKey,
     );
     opts.history!.recordSuccess(operation.key, input, outcome.value);
+    if (!operation.success.schema) {
+        res.statusCode = operation.success.status;
+        await finish(operation.success.status, {
+            operationId: operation.operationId,
+            routePath: operation.path,
+            pathParams,
+            requestBody: body,
+            cacheStatus,
+            note: `${note} · no body declared`,
+        });
+        res.end();
+        return;
+    }
     const end = prepareSend(res, operation.success.status, outcome.value);
     await finish(operation.success.status, {
         operationId: operation.operationId,
@@ -602,7 +648,7 @@ async function handle(
 }
 
 /**
- * The generator on disk was written before the pagination rule existed, and a
+ * The handler on disk was written before the pagination rule existed, and a
  * cache is not rebuilt just because the rule changed. A body offering back the
  * token it was handed is therefore still possible, and it is the one bug here
  * that costs the client rather than the mock: it hangs.
@@ -644,7 +690,7 @@ function check(
     const out: Issue[] = [];
 
     // Coercion rewrites what it is given, so the copies are validated and the
-    // originals are what reach the generator.
+    // originals are what reach the handler.
     if (!compiled.path({ ...pathParams })) {
         out.push(...issues('path', compiled.path.errors));
     }
@@ -704,9 +750,9 @@ async function readBody(req: IncomingMessage, max: number): Promise<unknown> {
 }
 
 /**
- * Headers reach the generator so it can vary on things like `accept-language`.
- * Credentials do not: the envelope is written to a file inside a container, and
- * a mock is exactly what people point a real bearer token at by accident.
+ * Headers reach the handler so it can vary on things like `accept-language`.
+ * Credentials do not: the request can be quoted to the world agent, and a mock
+ * is exactly what people point a real bearer token at by accident.
  */
 function safeHeaders(req: IncomingMessage): Record<string, string> {
     const out: Record<string, string> = {};

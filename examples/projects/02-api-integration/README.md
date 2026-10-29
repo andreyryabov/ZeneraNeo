@@ -48,13 +48,21 @@ cd api-integration
 ## 3. Start both mock APIs
 
 First, from the root of `api-integration`, download the two OpenAPI specs
-that Gym will serve:
+that Gym will serve, the story of the world behind them, and a small knowledge
+base the world draws on:
 
 ```sh
 mkdir -p mock-apis/specs
 for f in calendar mail; do
   curl -fsSL -o "mock-apis/specs/$f.yaml" \
     "https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/examples/mock-apis/specs/$f.yaml"
+done
+mkdir -p mock-apis/stories mock-apis/kb
+curl -fsSL -o mock-apis/stories/northwind-launch.md \
+  "https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/examples/mock-apis/stories/northwind-launch.md"
+for f in meetings release-process support; do
+  curl -fsSL -o "mock-apis/kb/$f.md" \
+    "https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/examples/mock-apis/kb/$f.md"
 done
 ```
 
@@ -63,9 +71,15 @@ The folder should now look like this:
 ```
 api-integration/
 └── mock-apis/
-    └── specs/
-        ├── calendar.yaml
-        └── mail.yaml
+    ├── kb/
+    │   ├── meetings.md
+    │   ├── release-process.md
+    │   └── support.md
+    ├── specs/
+    │   ├── calendar.yaml
+    │   └── mail.yaml
+    └── stories/
+        └── northwind-launch.md
 ```
 
 Then run the Gym server from `@zenera/gym`, also from the root of
@@ -73,17 +87,21 @@ Then run the Gym server from `@zenera/gym`, also from the root of
 
 ```sh
 zen gym serve \
-  mock-apis/specs/calendar.yaml \
-  mock-apis/specs/mail.yaml \
+  --schema mock-apis/specs \
+  --story mock-apis/stories/northwind-launch.md \
+  --docs mock-apis/kb \
   --host 0.0.0.0 \
   --port 8787 \
   --requests-dir .tmp/gym-requests
 ```
 
-Gym serves both specs from one mock server. The first request to an operation
-may take a little longer while Gym writes and validates that operation's
-response generator; later calls use its cache. Keep this command running while
-you try the project.
+Gym serves both specs from one mock server, over one world that follows the
+story: Alex Rivera's mailbox and calendar in the week of a product launch, with
+room names, release steps and escalation numbers taken from the knowledge base.
+The first start indexes the knowledge base. The first request to an operation takes longer while Gym writes and checks that
+operation's handler, and the first read of the inbox or a calendar takes longer
+while Gym writes its content; later calls are immediate. Keep this command
+running while you try the project.
 
 This command stays running in that terminal. To check it from your host, open
 `http://localhost:8787/` in a browser, or check
@@ -149,16 +167,17 @@ proposed time and recipients in the same run.
 
 ## What this mock does - and does not - prove
 
-Gym generates deterministic, schema-valid response bodies; it does not
-provide a stateful calendar or mailbox. A generated event is not guaranteed to
-appear in a later calendar search, and a generated send response does not mean
-an email was delivered. The coordinator must describe these as mock API
-responses, not real bookings, availability, or delivery.
+Gym keeps a simulated world: the meeting request in the mailbox is the one the
+story describes, free/busy reflects the calendar, and an event the coordinator
+creates shows up in later searches and free/busy queries. It is still a
+simulation - nobody receives the confirmation email and nothing is booked
+anywhere real - so the coordinator must describe results as mock API responses,
+not real bookings, availability, or delivery.
 
 That makes this a safe example for learning the API shapes, composing
-integrations, handling errors, and enforcing confirmation before writes. Use a
-stateful test service or a real integration environment to test persistence
-and end-to-end side effects.
+integrations, handling errors, and enforcing confirmation before writes. Start
+`zen gym serve` with `--reset` to put the world back the way the story has it.
+Use a real integration environment to test end-to-end side effects.
 
 ## See also
 

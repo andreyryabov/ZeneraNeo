@@ -12,10 +12,10 @@ import type { ParamSpec } from './spec.ts';
 // see it.
 //
 // What lives here is only the *recognition*: which query parameter turns the
-// page and which property carries the token for the next one. The generator
+// page and which property carries the token for the next one. The handler
 // still mints its own tokens — the host neither signs nor reads them — because
 // the alternative is the host guessing the shape of somebody's response body
-// and overwriting it, and then the generator is no longer the whole answer.
+// and overwriting it, and then the handler is no longer the whole answer.
 //
 // Names, not conventions: there is no `x-pagination` in any of the three
 // dialects, so this is a list of the words the world actually uses, matched
@@ -246,10 +246,10 @@ export function tokenOf(value: unknown, paging: Paging): string | undefined {
 }
 
 /**
- * A last line of defence, for the generator that is already on disk: a body
+ * A last line of defence, for the handler that is already on disk: a body
  * offering the very token it was given is cut back to "no more pages".
  *
- * Deliberately timid. Nothing re-validates a generator's output on the way to
+ * Deliberately timid. Nothing re-validates a handler's output on the way to
  * the client, so writing `null` into a required, non-nullable property would
  * trade a client that hangs for a mock that lies — and a hang is at least
  * obvious. Where the schema leaves no room, this changes nothing and says so.

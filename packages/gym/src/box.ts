@@ -1,327 +1,319 @@
-import {
-    SANDBOX_MOUNT,
-    SandboxError,
-    SandboxPool,
-    pidAlive,
-    runProcess,
-    type ExecResult,
-    type Runner,
-    type Sandbox,
-} from '@zenera/neo';
-import { randomUUID } from 'node:crypto';
-import { mkdirSync, rmSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { Worker } from 'node:worker_threads';
+import type { Bindings, HandlerRequest, SynthesisRequest, Use } from './runtime.ts';
+import type { FromWorker, ToWorker } from './worker.ts';
 
 // ---------------------------------------------------------------------------
-// Where generators run
+// Where handlers run
 //
-// One container for the whole process, offline, with the gym's own directory
-// bind-mounted at /workspace. That single mount is what makes the file contract
-// work in both directions: the host writes `input.json` and reads
-// `output.json`, the generator sees the same two paths from inside, and neither
-// side has to serialise anything through a pipe.
+// A worker thread, not a container. The code is TypeScript that Node runs as
+// it is, the world is a SQLite file the worker opens itself, and the only thing
+// that crosses back to this thread is a request for content an agent has to
+// write.
 //
-// Nothing the model wrote ever reaches an argument on this side. The generator
-// is invoked by a script built here out of paths derived here, and the script
-// itself travels on stdin — the same rule the sandbox tools follow.
+// What a thread does not give is a wall between the handler and the network.
+// The handler is written by the model this process asked, from documents the
+// user named, and it is judged before it is kept; the worker gets an empty
+// environment, so no credential is in reach either way.
 // ---------------------------------------------------------------------------
 
-export const GENERATORS = 'generators';
-const IO = 'io';
-const ENTRY = 'gen.py';
+export const HANDLERS = 'handlers';
+const ENTRY = 'handler.ts';
 
-/** Every gym container's name starts with this; `cache clear` relies on it. */
-export const CONTAINER_PREFIX = 'zn-gym-';
-/** `zn-gym-<pid>-<digest>`; a name without the pid predates per-process containers. */
-const OWNED_BY = /^zn-gym-(\d+)-[0-9a-f]+$/;
-
-/** Pause before the one retry of an engine failure, long enough for a concurrent rm to finish. */
-const ENGINE_RETRY_MS = 300;
+/** Asked when a handler wants content the world does not have yet. */
+export type SynthesizeHook = (
+    request: SynthesisRequest,
+    context: { db: string; probe: boolean; input: HandlerRequest },
+) => Promise<Record<string, unknown>[]>;
 
 export interface BoxOptions {
-    /** host directory mounted at /workspace; holds generators/ and io/ */
+    /** holds handlers/ */
     root: string;
-    image: string;
-    /** seconds one generator may take */
+    /** the live world every real request reads and writes */
+    db: string;
+    /** seconds one handler may run, not counting time spent waiting on an agent */
     timeout?: number;
-    engine?: string;
-    exec?: Runner;
-    /** the process the container belongs to; defaults to this one */
-    owner?: number;
+    synthesize?: SynthesizeHook;
+    /** where each type lives, as of now; asked on every run */
+    bindings?: () => Bindings;
+}
+
+export interface RunOptions {
+    /** another world to run against, e.g. a snapshot for judging */
+    db?: string;
+    /** the call is a judgement, not traffic: content is sampled, not written by an agent */
+    probe?: boolean;
+    /** bindings to run with instead of the current ones */
+    bindings?: Bindings;
 }
 
 /**
- * The container engine could not run the generator at all. Nothing is known
- * about the generator from this, so it must never be fed back to a model as a
- * fault in the code: rewriting a working file cannot bring a container back.
+ * The worker could not be started at all. This says nothing about the handler
+ * and must never be fed back to a model as a fault in its code.
  */
-export class SandboxUnavailable extends Error {
+export class WorkerUnavailable extends Error {
     readonly hint: string;
-    readonly container: string;
     readonly stderr?: string;
 
-    constructor(message: string, opts: { hint: string; container: string; stderr?: string }) {
+    constructor(message: string, opts: { hint: string; stderr?: string }) {
         super(message);
-        this.name = 'SandboxUnavailable';
+        this.name = 'WorkerUnavailable';
         this.hint = opts.hint;
-        this.container = opts.container;
         this.stderr = opts.stderr;
     }
 }
 
 export interface Outcome {
     ok: boolean;
-    /** parsed `output.json`, when the run produced one */
+    /** the body the handler answered with */
     value?: unknown;
+    /** set when the handler answered with `ctx.fail` rather than a body */
+    status?: number;
     /** what went wrong, in the words the build loop feeds back to the model */
     fault?: string;
     stderr?: string;
+    /** the handler failed because the world agent did, not because of its code */
+    agentFault?: boolean;
+    /** the collections the run touched, and as which types */
+    used?: Use[];
     durationMs: number;
+}
+
+interface Call {
+    settle: (o: Outcome) => void;
+    started: number;
+    /** milliseconds of handler time left */
+    left: number;
+    /** when the clock last started */
+    since?: number;
+    timer?: NodeJS.Timeout;
+    /** agent calls in flight; the clock is stopped while there are any */
+    waiting: number;
+    probe: boolean;
+    input: HandlerRequest;
+    /** why the world agent failed this call, when it did */
+    agentError?: string;
 }
 
 export class Box {
     readonly root: string;
-    readonly #pool: SandboxPool;
+    readonly db: string;
+    synthesize?: SynthesizeHook;
+    readonly #bindings: () => Bindings;
     readonly #timeout: number;
-    readonly #engine: string;
-    readonly #exec: Runner;
-    readonly #owner: number;
+    readonly #calls = new Map<number, Call>();
+    readonly #versions = new Map<string, string>();
+    #worker?: Worker;
+    #next = 0;
 
     constructor(opts: BoxOptions) {
         this.root = opts.root;
-        this.#timeout = opts.timeout ?? 30;
-        this.#engine = opts.engine ?? 'podman';
-        this.#exec = opts.exec ?? runProcess;
-        this.#owner = opts.owner ?? process.pid;
-        mkdirSync(join(opts.root, GENERATORS), { recursive: true });
-        mkdirSync(join(opts.root, IO), { recursive: true });
-
-        this.#pool = new SandboxPool({
-            root: opts.root,
-            // One container per process. The name is otherwise a pure function
-            // of the configuration, so two servers on the same --cache shared
-            // one container, and each start (`fresh`) or exit (`dispose`)
-            // removed it from under the other: `exited 125, no such container`.
-            key: `gym-${this.#owner}`,
-            image: opts.image,
-            // The one line that keeps model-written code from calling home.
-            network: 'none',
-            workdir: SANDBOX_MOUNT,
-            timeout: this.#timeout,
-            // Deliberately NOT persisted, unlike `zen`'s sandbox. A container's
-            // name is a hash of its configuration, which includes the host
-            // path but not the directory behind it — so a cache directory that
-            // is deleted and recreated (`zen gym cache clear`, or any rm -rf)
-            // gets a stopped container reattached whose bind mount still points
-            // at the old inode. Everything written here is then invisible
-            // inside, and every generator fails with "can't open file".
-            // `zen` persists to keep `pip install`s; the libraries here are
-            // baked into the image, so there is nothing to keep.
-            persist: false,
-            readOnly: false,
-            // Deliberately empty: the keyring is in this process's environment
-            // and none of it belongs in the container.
-            env: {},
-            engine: opts.engine,
-            exec: opts.exec,
-        });
+        this.db = opts.db;
+        this.#timeout = (opts.timeout ?? 30) * 1000;
+        this.synthesize = opts.synthesize;
+        this.#bindings = opts.bindings ?? (() => ({}));
+        mkdirSync(join(opts.root, HANDLERS), { recursive: true });
+        // Handlers are ES modules whatever the directory above them says.
+        writeFileSync(
+            join(opts.root, HANDLERS, 'package.json'),
+            '{ "type": "module", "private": true }\n',
+        );
     }
 
-    get sandbox(): Sandbox {
-        return this.#pool.for();
-    }
-
-    /**
-     * Removes this process's container if a previous owner of the pid left one,
-     * and every gym container whose owning process is gone. Belt to
-     * `persist: false`'s braces: a hard kill never runs `dispose`, and the
-     * leftover is exactly the stale-mount trap above. A container whose owner
-     * is alive is another server's, and is never touched.
-     */
-    async fresh(): Promise<void> {
-        const listed = await this.#exec(
-            this.#engine,
-            ['ps', '--all', '--filter', `name=^${CONTAINER_PREFIX}`, '--format', '{{.Names}}'],
-            { timeoutMs: 60_000 },
-        ).catch(() => undefined);
-        const orphans = (listed?.code === 0 ? listed.stdout.split('\n') : [])
-            .map((n) => n.trim())
-            .filter((name) => {
-                const pid = Number(OWNED_BY.exec(name)?.[1]);
-                return Number.isInteger(pid) && pid !== this.#owner && !pidAlive(pid);
-            });
-        await this.#exec(
-            this.#engine,
-            ['rm', '--force', '--volumes', this.sandbox.name, ...orphans],
-            { timeoutMs: 60_000 },
-        ).catch(() => undefined);
-    }
-
-    /** Host path of a generator's source file. */
+    /** Host path of a handler's source file. */
     sourceOf(key: string): string {
-        return join(this.root, GENERATORS, key, ENTRY);
+        return join(this.root, HANDLERS, key, ENTRY);
     }
 
     async write(key: string, source: string): Promise<void> {
-        mkdirSync(join(this.root, GENERATORS, key), { recursive: true });
+        mkdirSync(join(this.root, HANDLERS, key), { recursive: true });
         await writeFile(this.sourceOf(key), source, 'utf8');
+        this.#versions.set(key, hash(source));
     }
 
-    /**
-     * One generator, one input, one output. The io directory is removed
-     * afterwards whatever happened — a mock server left alone for a week must
-     * not fill a disk with request envelopes.
-     *
-     * Throws `SandboxUnavailable` when the engine, not the generator, failed.
-     */
-    async run(key: string, input: unknown): Promise<Outcome> {
-        const id = randomUUID();
-        const dir = join(this.root, IO, id);
-        mkdirSync(dir, { recursive: true });
-        const started = Date.now();
+    run(key: string, input: HandlerRequest, opts: RunOptions = {}): Promise<Outcome> {
+        const worker = this.#ensure();
+        const id = ++this.#next;
+        const message: ToWorker = {
+            type: 'run',
+            id,
+            file: this.sourceOf(key),
+            version: this.#versions.get(key) ?? this.#version(key),
+            db: opts.db ?? this.db,
+            input,
+            bindings: opts.bindings ?? this.#bindings(),
+        };
+        return new Promise<Outcome>((settle) => {
+            const call: Call = {
+                settle,
+                started: Date.now(),
+                left: this.#timeout,
+                waiting: 0,
+                probe: Boolean(opts.probe),
+                input,
+            };
+            this.#calls.set(id, call);
+            this.#tick(id, call);
+            worker.postMessage(message);
+        });
+    }
 
-        try {
-            await writeFile(join(dir, 'input.json'), JSON.stringify(input), 'utf8');
-
-            const script = [
-                `exec python3 ${inside(GENERATORS, key, ENTRY)}`,
-                inside(IO, id, 'input.json'),
-                inside(IO, id, 'output.json'),
-            ].join(' ');
-
-            let res = await this.#exec1(script);
-            if (engineFault(res)) {
-                // `exec` already brought a vanished container back once; a
-                // second fault is usually a concurrent rm still settling.
-                await new Promise((settle) => setTimeout(settle, ENGINE_RETRY_MS));
-                res = await this.#exec1(script);
-            }
-            const fault = engineFault(res);
-            if (fault) {
-                throw this.#unavailable(fault, res.stderr.trim() || res.stdout.trim());
-            }
-            const stderr = res.stderr.trim();
-
-            if (res.timed_out) {
-                return {
-                    ok: false,
-                    fault: `took longer than ${this.#timeout}s`,
-                    stderr,
-                    durationMs: Date.now() - started,
-                };
-            }
-            if (res.exit_code !== 0) {
-                return {
-                    ok: false,
-                    fault: `exited ${res.exit_code}`,
-                    stderr: stderr || res.stdout.trim(),
-                    durationMs: Date.now() - started,
-                };
-            }
-
-            let text: string;
-            try {
-                text = await readFile(join(dir, 'output.json'), 'utf8');
-            } catch {
-                return {
-                    ok: false,
-                    fault: 'wrote no output file',
-                    stderr,
-                    durationMs: Date.now() - started,
-                };
-            }
-            try {
-                return {
-                    ok: true,
-                    value: JSON.parse(text),
-                    stderr,
-                    durationMs: Date.now() - started,
-                };
-            } catch (err) {
-                return {
-                    ok: false,
-                    fault: `output.json is not JSON: ${err instanceof Error ? err.message : String(err)}`,
-                    stderr,
-                    durationMs: Date.now() - started,
-                };
-            }
-        } finally {
-            rmSync(dir, { recursive: true, force: true });
-        }
+    /** Closes the worker's handle on a borrowed world, so its file can be deleted. */
+    release(db: string): void {
+        this.#worker?.postMessage({ type: 'close', db } satisfies ToWorker);
     }
 
     async dispose(): Promise<void> {
-        await this.#pool.dispose();
+        const worker = this.#worker;
+        this.#worker = undefined;
+        this.#failAll('the server is shutting down');
+        await worker?.terminate();
     }
 
-    async #exec1(script: string): Promise<ExecResult> {
+    // -----------------------------------------------------------------------
+
+    #ensure(): Worker {
+        if (this.#worker) {
+            return this.#worker;
+        }
+        const entry = new URL(
+            import.meta.url.endsWith('.ts') ? './worker.ts' : './worker.js',
+            import.meta.url,
+        );
+        let worker: Worker;
         try {
-            return await this.sandbox.exec(script, { timeout: this.#timeout });
+            worker = new Worker(entry, { stdout: true, stderr: true, env: {} });
         } catch (err) {
-            if (err instanceof SandboxError) {
-                throw new SandboxUnavailable(
-                    `${this.#engine} could not run the generator: ${err.message}`,
-                    {
-                        hint:
-                            err.hint ??
-                            `check \`${this.#engine} ps -a --filter name=${CONTAINER_PREFIX}\``,
-                        container: this.sandbox.name,
-                    },
-                );
+            throw new WorkerUnavailable(
+                `could not start the handler worker: ${err instanceof Error ? err.message : String(err)}`,
+                { hint: 'Node.js 24 or later is required to run TypeScript handlers' },
+            );
+        }
+        // Handler chatter is not the server's log; read it so it never backs up.
+        worker.stdout.resume();
+        worker.stderr.resume();
+        worker.on('message', (m: FromWorker) => void this.#message(worker, m));
+        worker.on('error', (err) =>
+            this.#lost(worker, `the worker crashed: ${err.message}`, err.stack),
+        );
+        worker.on('exit', () => this.#lost(worker, 'the worker exited'));
+        this.#worker = worker;
+        return worker;
+    }
+
+    async #message(worker: Worker, m: FromWorker): Promise<void> {
+        const call = this.#calls.get(m.id);
+        if (!call) {
+            return;
+        }
+        if (m.type === 'done') {
+            this.#finish(m.id, call, {
+                used: m.used,
+                ...(m.ok
+                    ? { ok: true, value: m.value, status: m.status }
+                    : call.agentError
+                      ? { ok: false, fault: call.agentError, stderr: m.stderr, agentFault: true }
+                      : { ok: false, fault: m.fault, stderr: m.stderr }),
+                durationMs: Date.now() - call.started,
+            });
+            return;
+        }
+        // An agent is about to work: the handler's clock stops until it is done.
+        this.#pause(call);
+        call.waiting++;
+        let reply: ToWorker;
+        try {
+            if (!this.synthesize) {
+                throw new Error('this server has no world agent to make content with');
             }
-            throw err;
+            const records = await this.synthesize(m.request, {
+                db: m.db,
+                probe: call.probe,
+                input: call.input,
+            });
+            reply = { type: 'synthesized', id: m.id, call: m.call, records };
+        } catch (err) {
+            const error = err instanceof Error ? err.message : String(err);
+            call.agentError = `the world agent could not make ${m.request?.collection ?? 'content'}: ${error}`;
+            reply = { type: 'synthesized', id: m.id, call: m.call, error };
+        }
+        call.waiting--;
+        if (this.#calls.get(m.id) === call && this.#worker === worker) {
+            worker.postMessage(reply);
+            this.#tick(m.id, call);
         }
     }
 
-    #unavailable(fault: EngineFault, stderr: string): SandboxUnavailable {
-        const name = this.sandbox.name;
-        const first = stderr.split('\n')[0] ?? '';
-        const hint =
-            fault === 'missing-file'
-                ? `the generator is on the host but not inside ${name}, so its bind mount is stale ` +
-                  `(the --cache directory was deleted and recreated while the server ran). ` +
-                  `Restart \`zen gym serve\`.`
-                : fault === 'no-python'
-                  ? `the image has no python3. Rebuild it: \`zen gym serve --rebuild …\`, or pass a working --image.`
-                  : `${name} was removed or stopped while this server was using it, twice in a row. ` +
-                    `Usual causes: \`zen sandbox clean\` or \`zen gym cache clear\` run meanwhile, ` +
-                    `a ${this.#engine} machine restart, or an older \`zen gym\` (before per-process ` +
-                    `containers) started on the same --cache. Check \`${this.#engine} ps -a --filter ` +
-                    `name=${CONTAINER_PREFIX}\` and \`${this.#engine} machine list\`; the next request ` +
-                    `recreates the container.`;
-        return new SandboxUnavailable(
-            `${this.#engine} could not run the generator in ${name} — ${first || fault} ` +
-                `(an engine failure, not a fault in the generator; nothing was regenerated)`,
-            { hint, container: name, stderr: stderr || undefined },
+    #tick(id: number, call: Call): void {
+        if (call.waiting > 0 || call.timer) {
+            return;
+        }
+        call.since = Date.now();
+        call.timer = setTimeout(
+            () => {
+                call.timer = undefined;
+                this.#finish(id, call, {
+                    ok: false,
+                    fault: `took longer than ${this.#timeout / 1000}s`,
+                    durationMs: Date.now() - call.started,
+                });
+                // The only way to stop a synchronous loop is to stop its thread.
+                const worker = this.#worker;
+                this.#worker = undefined;
+                this.#failAll(
+                    'was interrupted: another handler timed out and the worker restarted',
+                );
+                void worker?.terminate();
+            },
+            Math.max(1, call.left),
         );
     }
+
+    #pause(call: Call): void {
+        if (call.timer) {
+            clearTimeout(call.timer);
+            call.timer = undefined;
+            call.left -= Date.now() - (call.since ?? Date.now());
+        }
+    }
+
+    #finish(id: number, call: Call, outcome: Outcome): void {
+        if (call.timer) {
+            clearTimeout(call.timer);
+            call.timer = undefined;
+        }
+        this.#calls.delete(id);
+        call.settle(outcome);
+    }
+
+    #lost(worker: Worker, why: string, stderr?: string): void {
+        if (this.#worker === worker) {
+            this.#worker = undefined;
+            this.#failAll(why, stderr);
+        }
+    }
+
+    #failAll(fault: string, stderr?: string): void {
+        for (const [id, call] of [...this.#calls]) {
+            this.#finish(id, call, {
+                ok: false,
+                fault,
+                stderr,
+                durationMs: Date.now() - call.started,
+            });
+        }
+    }
+
+    #version(key: string): string {
+        try {
+            return hash(readFileSync(this.sourceOf(key), 'utf8'));
+        } catch {
+            return 'missing';
+        }
+    }
 }
 
-type EngineFault = 'engine' | 'missing-file' | 'no-python';
-
-/**
- * A failure of the container rather than of the code in it. 125 is podman's
- * own exit code for "could not exec at all"; the other two are our command
- * line failing before a line of the generator ran.
- */
-function engineFault(res: ExecResult): EngineFault | undefined {
-    if (res.timed_out) {
-        return undefined;
-    }
-    if (res.exit_code === 125) {
-        return 'engine';
-    }
-    if (res.exit_code === 2 && /can't open file '\/workspace\/generators\//.test(res.stderr)) {
-        return 'missing-file';
-    }
-    if (res.exit_code === 127 && /python3: (not found|No such file)/.test(res.stderr)) {
-        return 'no-python';
-    }
-    return undefined;
-}
-
-/** A path inside the container. Every segment is derived here, never given. */
-function inside(...parts: string[]): string {
-    return [SANDBOX_MOUNT, ...parts].join('/');
-}
+const hash = (text: string): string => createHash('sha256').update(text).digest('hex').slice(0, 12);

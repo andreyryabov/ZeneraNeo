@@ -1,12 +1,15 @@
-import { Cache as Store, type CacheStore } from '@zenera/cli/lib';
+import { Cache as Store, paths, type CacheStore } from '@zenera/cli/lib';
 import type { Model } from '@zenera/neo';
 import { join } from 'node:path';
+import type { Bindings } from './bindings.ts';
 import type { Box } from './box.ts';
-import type { GeneratorInput } from './envelope.ts';
-import { build, BuildFailed, regenerate } from './generate.ts';
-import { saveBuildDump, type BuildAttempt } from './logger.ts';
-import type { ExampleRequest } from './prompt.ts';
-import { GENERATOR_RULES_VERSION, type Operation } from './spec.ts';
+import type { Binding, HandlerRequest } from './runtime.ts';
+import type { Catalog } from './catalog.ts';
+import { build, BuildFailed, type BuildOptions, type Built } from './generate.ts';
+import { saveBuildDump, type BuildAttempt, type ExampleRequest } from './logger.ts';
+import { CONTRACT_VERSION, type Operation } from './spec.ts';
+import { leaseOwner, WorldStore } from './store.ts';
+import type { World } from './synth.ts';
 import type { Checks } from './validate.ts';
 
 // ---------------------------------------------------------------------------
@@ -17,10 +20,10 @@ import type { Checks } from './validate.ts';
 // simply never asked for again — there is nothing to invalidate, which is the
 // part of a cache that is usually wrong.
 //
-// The generator itself lives in the machine's shared cache rather than beside
-// the container's workspace, so the same spec served from two directories is
+// The handler itself lives in the machine's shared cache rather than beside
+// the box's workspace, so the same spec served from two directories is
 // written once. The box root is scratch: a hit is copied back into it, because
-// the container can only run what is under its mount.
+// the worker imports a file, not a string.
 //
 // The in-flight map is the other half and matters more than it looks: ten
 // requests arriving together for an uncached operation must produce one build,
@@ -28,10 +31,10 @@ import type { Checks } from './validate.ts';
 // the model could not write for should not re-ask on every request.
 // ---------------------------------------------------------------------------
 
-export const GYM_KIND = 'gym-generator';
+export const GYM_KIND = 'gym-handler';
 
-/** What is kept about a generator besides the code, for `zen gym cache ls`. */
-export interface GeneratorMeta {
+/** What is kept about a handler besides the code, for `zen gym cache ls`. */
+export interface HandlerMeta {
     operationId?: string;
     method?: string;
     path?: string;
@@ -44,10 +47,16 @@ export interface GeneratorMeta {
 
 interface Stored {
     source: string;
-    meta: GeneratorMeta;
+    meta: HandlerMeta;
+    /**
+     * Where the handler stores each type it uses. Part of its identity, kept
+     * beside rather than in the key because it is only known once the handler
+     * is written: a hit whose bindings disagree with today's is a miss.
+     */
+    bindings?: Record<string, Binding>;
 }
 
-export interface Generator {
+export interface Handler {
     key: string;
     source: string;
     /** whether it came out of the cache rather than out of a model */
@@ -58,7 +67,7 @@ export interface CacheEvent {
     operation: Operation;
     attempt?: number;
     diagnostics?: readonly string[];
-    /** where the rejected generator was written down, when it was */
+    /** where the rejected handler was written down, when it was */
     dump?: string;
 }
 
@@ -66,9 +75,16 @@ export interface CacheOptions {
     box: Box;
     checks: Checks;
     model: Model;
+    catalog: Catalog;
+    world: World;
+    bindings: Bindings;
+    /** every operation being served, so a handler can be written knowing its siblings */
+    operations: readonly Operation[];
+    /** where HTML reports of agent runs go. Default `<box root>/reports` */
+    reportDir?: string;
     attempts?: number;
     /**
-     * How many generators may be written at once. A client that walks every
+     * How many handlers may be written at once. A client that walks every
      * route — which is exactly what people do to a new mock — would otherwise
      * open one model request per operation simultaneously and be rate limited
      * on all of them.
@@ -76,11 +92,11 @@ export interface CacheOptions {
     concurrency?: number;
     /** ignore what is cached and write fresh */
     rebuild?: boolean;
-    /** run generators but keep nothing */
+    /** run handlers but keep nothing */
     ephemeral?: boolean;
     /** keep them somewhere other than the shared store */
     cacheDir?: string;
-    /** where rejected generators are written down. Default `<box root>/builds` */
+    /** where rejected handlers are written down. Default `<box root>/builds` */
     dumpDir?: string;
     onStart?: (e: CacheEvent) => void;
     onAttempt?: (e: CacheEvent) => void;
@@ -90,13 +106,16 @@ export interface CacheOptions {
 
 export interface CacheRegenerateContext {
     currentSource: string;
-    failingInput: GeneratorInput;
+    failingInput: HandlerRequest;
     fault: string;
     stderr?: string;
     examples?: readonly ExampleRequest[];
 }
 
 const DEFAULT_CONCURRENCY = 4;
+/** Longer than any build; a crashed builder's lease lapses at once. */
+const BUILD_LEASE_MS = 20 * 60_000;
+const BUILD_POLL_MS = 500;
 
 /** One build's worth of rejected attempts, and where they are being written. */
 interface BuildRecord {
@@ -112,29 +131,35 @@ export class Cache {
     readonly #opts: CacheOptions;
     readonly #store: CacheStore;
     readonly #dumpDir: string;
+    readonly #reportDir: string;
     readonly #records = new Map<string, BuildRecord>();
-    readonly #live = new Map<string, Promise<Generator>>();
+    readonly #live = new Map<string, Promise<Handler>>();
     readonly #settled = new Set<string>();
     readonly #slots: number;
+    readonly #leaseFile: string;
+    readonly #owner = leaseOwner();
+    #leaseStore?: WorldStore;
     readonly #waiting: (() => void)[] = [];
     #running = 0;
 
     constructor(opts: CacheOptions) {
         this.#opts = opts;
         this.#store = new Store(GYM_KIND, { dir: opts.cacheDir, mode: 0o600 });
+        this.#leaseFile = join(opts.cacheDir ?? paths.cache(), GYM_KIND, 'leases.sqlite');
         this.#dumpDir = opts.dumpDir ?? join(opts.box.root, 'builds');
+        this.#reportDir = opts.reportDir ?? join(opts.box.root, 'reports');
         this.#slots = Math.max(1, opts.concurrency ?? DEFAULT_CONCURRENCY);
     }
 
     /**
-     * The generator for an operation, written if it does not exist yet. Callers
+     * The handler for an operation, written if it does not exist yet. Callers
      * that arrive during a build wait for that build rather than starting one.
      *
      * `cached` answers "did this call cost a model turn", which is what the
      * response header is for — so it is false for the caller that triggered the
      * build and for everyone who waited on it, and true from then on.
      */
-    ensure(operation: Operation): Promise<Generator> {
+    ensure(operation: Operation): Promise<Handler> {
         const already = this.#settled.has(operation.key);
         const running = this.#live.get(operation.key);
         if (running) {
@@ -170,41 +195,15 @@ export class Cache {
         return found?.source?.trim() ? found.source : undefined;
     }
 
-    async regenerate(operation: Operation, ctx: CacheRegenerateContext): Promise<Generator> {
-        const { box, model, checks, ephemeral } = this.#opts;
+    async regenerate(operation: Operation, ctx: CacheRegenerateContext): Promise<Handler> {
+        const { box } = this.#opts;
         await this.#enter();
         this.#opts.onStart?.({ operation });
         try {
-            const built = await regenerate(operation, {
-                model,
-                box,
-                checks,
-                attempts: this.#opts.attempts,
-                currentSource: ctx.currentSource,
-                failingInput: ctx.failingInput,
-                fault: ctx.fault,
-                stderr: ctx.stderr,
-                examples: ctx.examples,
-                onAttempt: (attempt, diagnostics, source, limit) =>
-                    this.#rejected(operation, attempt, diagnostics, source, limit, true),
-            });
-            if (!ephemeral) {
-                this.#store.put(operation.key, {
-                    source: built.source,
-                    meta: {
-                        operationId: operation.operationId,
-                        method: operation.method,
-                        path: operation.path,
-                        source: operation.source,
-                        model: model.id,
-                        attempts: built.attempts,
-                        rulesVersion: GENERATOR_RULES_VERSION,
-                        createdAt: new Date().toISOString(),
-                    },
-                } satisfies Stored);
-            }
+            const built = await build(operation, this.#builder(operation, true), ctx);
+            this.#keep(operation, built);
             this.#opts.onReady?.({ operation, cached: false, attempts: built.attempts });
-            const gen: Generator = { key: operation.key, source: built.source, cached: false };
+            const gen: Handler = { key: operation.key, source: built.source, cached: false };
             this.#settled.add(operation.key);
             this.#live.set(operation.key, Promise.resolve(gen));
             await this.#finished(operation);
@@ -221,8 +220,47 @@ export class Cache {
         }
     }
 
-    async #make(operation: Operation): Promise<Generator> {
-        const { box, model, checks, rebuild, ephemeral } = this.#opts;
+    #builder(operation: Operation, regeneration: boolean): BuildOptions {
+        const { box, model, checks, catalog, world, operations, bindings } = this.#opts;
+        return {
+            model,
+            box,
+            checks,
+            catalog,
+            world,
+            bindings,
+            operations,
+            attempts: this.#opts.attempts,
+            reportDir: this.#reportDir,
+            sourceOf: (other) => this.getSource(other.key),
+            onAttempt: (attempt, diagnostics, source, limit) =>
+                this.#rejected(operation, attempt, diagnostics, source, limit, regeneration),
+        };
+    }
+
+    #keep(operation: Operation, built: Built): void {
+        if (this.#opts.ephemeral) {
+            return;
+        }
+        const { source, attempts, bindings } = built;
+        this.#store.put(operation.key, {
+            source,
+            bindings,
+            meta: {
+                operationId: operation.operationId,
+                method: operation.method,
+                path: operation.path,
+                source: operation.source,
+                model: this.#opts.model.id,
+                attempts,
+                rulesVersion: CONTRACT_VERSION,
+                createdAt: new Date().toISOString(),
+            },
+        } satisfies Stored);
+    }
+
+    async #make(operation: Operation): Promise<Handler> {
+        const { box, rebuild } = this.#opts;
         // Read before queueing: a cache hit costs nothing and must not wait
         // behind somebody else's model call.
         const source = rebuild ? undefined : await this.#read(box, operation.key);
@@ -232,32 +270,30 @@ export class Cache {
             return { key: operation.key, source, cached: true };
         }
 
+        // Another process writing the same handler — same documents, other
+        // port — is waited for, and its handler read, rather than paid for twice.
+        const lease = `build:${operation.key}`;
+        while (!this.#leases().claim(lease, this.#owner, BUILD_LEASE_MS)) {
+            await new Promise((settle) => setTimeout(settle, BUILD_POLL_MS));
+            const theirs = await this.#read(box, operation.key);
+            if (theirs !== undefined) {
+                this.#opts.onReady?.({ operation, cached: true, attempts: 0 });
+                return { key: operation.key, source: theirs, cached: true };
+            }
+        }
+        try {
+            return await this.#write(operation);
+        } finally {
+            this.#leases().release(lease, this.#owner);
+        }
+    }
+
+    async #write(operation: Operation): Promise<Handler> {
         await this.#enter();
         this.#opts.onStart?.({ operation });
         try {
-            const built = await build(operation, {
-                model,
-                box,
-                checks,
-                attempts: this.#opts.attempts,
-                onAttempt: (attempt, diagnostics, source, limit) =>
-                    this.#rejected(operation, attempt, diagnostics, source, limit, false),
-            });
-            if (!ephemeral) {
-                this.#store.put(operation.key, {
-                    source: built.source,
-                    meta: {
-                        operationId: operation.operationId,
-                        method: operation.method,
-                        path: operation.path,
-                        source: operation.source,
-                        model: model.id,
-                        attempts: built.attempts,
-                        rulesVersion: GENERATOR_RULES_VERSION,
-                        createdAt: new Date().toISOString(),
-                    },
-                } satisfies Stored);
-            }
+            const built = await build(operation, this.#builder(operation, false));
+            this.#keep(operation, built);
             this.#opts.onReady?.({ operation, cached: false, attempts: built.attempts });
             await this.#finished(operation);
             return { key: operation.key, source: built.source, cached: false };
@@ -273,9 +309,9 @@ export class Cache {
 
     /**
      * An attempt the judge threw out. The report is rewritten with the file
-     * still in it before the next attempt overwrites `gen.py` — for a timeout
-     * that source is the only evidence there will ever be, since a generator
-     * that hangs leaves no traceback behind.
+     * still in it before the next test overwrites `handler.ts` — for a timeout
+     * that source is the only evidence there will ever be, since a handler
+     * that hangs leaves no stack behind.
      */
     async #rejected(
         operation: Operation,
@@ -302,7 +338,7 @@ export class Cache {
     }
 
     /** A report that cannot be written is not worth failing a build over. */
-    async #report(record: BuildRecord, gaveUp = false): Promise<void> {
+    async #report(record: BuildRecord, gaveUp = false, report?: string): Promise<void> {
         try {
             record.path = await saveBuildDump(this.#dumpDir, {
                 started: record.started,
@@ -315,6 +351,7 @@ export class Cache {
                 model: this.#opts.model.id,
                 attempts: record.attempts,
                 gaveUp,
+                report,
             });
         } catch {
             // no report, then — the narration still says what failed
@@ -333,21 +370,31 @@ export class Cache {
             return undefined;
         }
         if (error instanceof BuildFailed) {
-            await this.#report(record, true);
+            await this.#report(record, true, error.report);
             error.dump = record.path;
         }
         return record.path;
     }
 
     /**
-     * A hit is written into the box before it is returned. The container runs
-     * files under its mount and nothing else, and the mount is scratch that any
+     * A hit is written into the box before it is returned. The worker imports
+     * files from the box and nothing else, and the box is scratch that any
      * `cache clear` is free to delete.
      */
     async #read(box: Box, key: string): Promise<string | undefined> {
         const found = this.#store.get<Stored>(key);
         if (!found?.source?.trim()) {
             return undefined;
+        }
+        // Written against a placement that no longer holds: it would read and
+        // write somewhere nobody else looks.
+        const bindings = Object.entries(found.bindings ?? {});
+        if (bindings.some(([type, b]) => this.#opts.bindings.conflict(type, b))) {
+            return undefined;
+        }
+        // A cleared bindings store gets back what its handlers relied on.
+        for (const [type, b] of bindings) {
+            this.#opts.bindings.bind(type, b);
         }
         try {
             await box.write(key, found.source);
@@ -356,6 +403,12 @@ export class Cache {
             return undefined;
         }
         return found.source;
+    }
+
+    /** Opened on the first build, so a server that never writes one never opens it. */
+    #leases(): WorldStore {
+        this.#leaseStore ??= new WorldStore(this.#leaseFile);
+        return this.#leaseStore;
     }
 
     #enter(): Promise<void> {
