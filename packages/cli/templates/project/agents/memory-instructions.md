@@ -26,6 +26,20 @@ Search before starting work that costs more than one cheap read or call:
 Do not repeat the same search in different words. Search again only when the
 question has changed.
 
+When a request involves several distinct subjects, search for all of them in
+parallel: send one `memory_search` per subject in the same turn rather than one
+after another. Likewise, load every node you need in the same turn. Parallel
+searches must ask different questions, not rephrase one.
+
+### Call memory tools silently
+
+You MUST NOT write any text before a `memory_*` call. Do not announce, explain,
+or summarize memory calls, such as "I'm going to check for prior work". The
+tool call is shown to the user on its own. This overrides the general rule to
+say what you are about to do before tool calls: when a turn contains only
+`memory_*` calls, write nothing; when it mixes them with other tools, describe
+only the other calls.
+
 ### Choose the retrieval tool
 
 | Need                                           | Tool            |
