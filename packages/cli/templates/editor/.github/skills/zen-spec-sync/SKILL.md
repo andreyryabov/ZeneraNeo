@@ -1,6 +1,6 @@
 ---
 name: zen-spec-sync
-description: Running `/spec-sync-project` as an incremental pass - the committed `.spec-sync` baseline of what the last pass applied, how to scope a pass from the specification and feedback diffs and from what moved in the project itself, the five checks a narrow pass may never skip, which skills a pass must load before editing (`zen-instructions` for any house rule it touches), the iteration history format, and why the baseline is written last. Load before every `/spec-sync-project`, including the first one on a project that has no baseline yet.
+description: Running `/spec-sync-project` as an incremental pass - the committed `.spec-sync` baseline of what the last pass applied, how to scope a pass from the specification and feedback diffs and from what moved in the project itself, which input wins when they disagree, the five checks a narrow pass may never skip, which skills a pass must load before editing (`zen-instructions` for any house rule it touches), the iteration history format, and why the baseline is written last. Load before every `/spec-sync-project`, including the first one on a project that has no baseline yet.
 ---
 
 # Syncing a project with its specification, one change at a time
@@ -103,9 +103,64 @@ editing anything, and report it in the chat as the pass's scope.
    covers it, and you say which line, or it does not, and it is an **extra**
    reported under `➕`.
 
+## When the inputs disagree
+
+Two inputs can ask for different things - a ticked answer and a later edit to
+the same specification line, say. Decide by this order, highest first, and do
+not weigh them again:
+
+1. **The user's message that started this pass**, where it says more than the
+   command name. It is the newest and most direct statement of intent there is.
+2. **`SPECIFICATION.md` as it stands now.** An edit to the specification is
+   made on purpose and after the questions were written, so it outranks them.
+3. **An answer ticked in `SPECIFICATION-FEEDBACK.md`** and not yet folded in.
+4. **What the last pass left open.**
+
+A ticked answer that the current specification text contradicts was
+**superseded**, not ignored: do not fold its text back in over the newer line.
+Strike the question with one line naming the specification line that replaced
+it, and say in the chat that you did.
+
+Facts outrank all four. `zen --version` decides the sandbox pin (below); a
+specification line asking for something impossible is a question, not an order.
+Where the order above does not decide, build what the higher-ranked input asks
+for, write **one** question in `SPECIFICATION-FEEDBACK.md`, and carry on.
+
+### Do not reconstruct intent
+
+The diffs say what changed. The order above says what wins. A feedback question
+covers whatever is left. Do not use anything else to work out _why_ somebody
+changed something: no session history or chat transcripts, no file timestamps,
+no `git log` or `git blame`, no older history entries beyond the one `applied:`
+names. If a pass catches itself guessing at what the human meant, that guess is
+the text of a question, and the pass moves on.
+
+### The `zen` version in the specification
+
+The `@zenera/cli` and `@zenera/rag` pin in `sandbox/Dockerfile` always follows
+`zen --version` - `zen check` warns on any other number, older or newer. Nothing
+outranks that, not a specification line and not the user's message: the image
+cannot hold a `zen` other than the one building it. If a version was asked for
+that is not the one in hand, say so in the chat - `zen` has to be upgraded on the
+host first.
+
+When `SPECIFICATION.md` names an exact version other than `zen --version`, pin
+the Dockerfile to `zen --version` and keep **one** `✏️` question open for that
+line. If one is already open, update it instead of adding another. Offer these
+answers:
+
+- State the pin without a number - "pinned to the `zen` version that builds the
+  image" - so the next upgrade does not raise the question again
+  _(recommended)_.
+- Replace the number with the one `zen --version` reports.
+- Keep the number, upgrade `zen` on the host to it, and run the pass again.
+
+That is the whole of the work. A version mismatch is not a reason to look for
+anything else.
+
 ## The five checks a narrow pass may never skip
 
-However small the diff:
+However small the diff - with the one narrowing for a spec-only pass below:
 
 1. **`zen check` passes.** Run it before the first edit and again after the
    last.
@@ -130,6 +185,28 @@ However small the diff:
    requirement into one of them has implemented nothing: the next `open` reverts
    it, the history entry claims it, and the baseline records it as applied.
    Specification-driven rules go in a topic file of the project's own beside it.
+
+### The spec-only pass
+
+A pass qualifies when **all** of the following hold:
+
+- the implementation diff (input 4) is empty
+- the pass edits nothing except `SPECIFICATION.md`, `SPECIFICATION-FEEDBACK.md`
+  and the `@zenera/*` pin in `sandbox/Dockerfile`
+- no changed specification hunk names an agent, tool, model, embedding, skill,
+  house rule, handoff, memory, index, asset or setup step
+
+A pass like that changes nothing an agent reads, so it has no capability
+obligation to re-check. Checks 4 and 5 drop out: load no capability skill and no
+`zen-instructions`. `zen check` still runs before and after, and it still
+reports `rules.stale`. Check 2 shrinks to `scripts/_setup.sh --check`, which
+must report every step `skipped`. If it reports anything else, run
+`scripts/_setup.sh` in full as written. Check 3 shrinks to the §9
+**Specification** group and the groups covering any file the pass edited.
+
+Decide this before loading anything, and say it in the chat - "spec-only pass:"
+followed by the reason. If any edit turns out to reach further, the pass is no
+longer spec-only: run all five checks.
 
 A narrow diff narrows reading and editing. It does not narrow verification.
 

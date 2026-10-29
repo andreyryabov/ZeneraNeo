@@ -55,7 +55,10 @@ code, `zen-topology` for `handoffs:` or `fork:` on any agent,
 configured and already passing `zen check` is exactly the case that looks
 finished and is not: the obligation lives in the skill, so a review that never
 opens the skill cannot find what is missing. This applies whatever prompted the
-change - a task scoped to `SPECIFICATION.md` does not narrow it.
+change - a task scoped to `SPECIFICATION.md` does not narrow it. There is one
+exception: a `/spec-sync-project` pass that the `zen-spec-sync` skill classes as
+**spec-only**. It touches no agent, prompt, skill or wiring, so there is no
+obligation for it to meet.
 
 **Load `zen-instructions` before writing, editing, reviewing or deleting any
 `agents/*instructions.md`.** They are the house rules, prepended to every
@@ -1990,8 +1993,9 @@ candidates; these are the judgements to make about each one)**
       and says so honestly - an unchanged specification line is not evidence
       that anything implements it
 - [ ] No question in `SPECIFICATION-FEEDBACK.md` has a box marked `[x]`, or
-      exactly one answer left under it, without a matching `✅ Answered` entry -
-      that is an answer given and never folded into the specification
+      exactly one answer left under it, without a matching `✅ Answered` entry
+      or a strike naming the specification line that superseded it - that is
+      an answer given and never folded into the specification
 - [ ] `.spec-sync/` is committed and `.tmp/` is not
 
 ---

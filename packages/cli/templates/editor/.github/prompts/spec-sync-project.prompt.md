@@ -32,7 +32,14 @@ accounted for against the specification.
 
 The scope decides what you **read and edit**. It never decides what you
 **verify**: §6, §7 and the five checks in the skill run at full size on every
-pass, however small the diff.
+pass, however small the diff. The one exception is the skill's **spec-only
+pass**, and only under the conditions the skill sets.
+
+When inputs disagree - a ticked answer against a later specification edit, the
+specification against `zen --version` - use the order of precedence in the
+skill. The user's own message comes first. Do not use session history, file
+timestamps or `git log` to work out why something changed. Whatever the order
+does not settle becomes a question in `SPECIFICATION-FEEDBACK.md`.
 
 ## 1. Read before changing anything
 
@@ -121,7 +128,9 @@ the model to compute or remember. Specifically:
   the host on the next image build; a stale pin leaves the container holding an
   older `zen` than the session outside it. `zen check` reports both, as
   `sandbox.pin.absent` and `sandbox.pin.stale`, but will not repair either - the
-  Dockerfile is the project's file, so this edit is yours to make.
+  Dockerfile is the project's file, so this edit is yours to make. The pin
+  follows `zen --version` even when `SPECIFICATION.md` names another number.
+  The `zen-spec-sync` skill gives the one question to raise in that case.
 
 Never delete an **extra** without saying so. Report it, say why the
 specification does not cover it, and leave it unless I tell you to remove it.
@@ -379,11 +388,17 @@ since the last pass is work to close, not a question to ask again. If a question
 has a box marked `[x]`, or one answer left under it, and no `✅` entry, the
 reader answered it and never ran `/spec-apply-feedback` - implement that
 answer, fold its text into `SPECIFICATION.md` yourself, and say so in the chat.
+Do this unless the specification has since been edited on the same point. In
+that case the edit supersedes the answer: strike the question, naming the line
+that replaced it, and leave the newer text alone.
 
 ## 6. Run `scripts/_setup.sh` and watch it finish
 
 After `zen check` passes, run `scripts/_setup.sh` yourself. A pass is not done
-until it has run to completion in this session.
+until it has run to completion in this session. The exception is a spec-only
+pass, as the `zen-spec-sync` skill defines it: there `scripts/_setup.sh --check`
+reporting every step `skipped` is enough, and anything else sends you back to
+the full run below.
 
 It is slow - embedding a large corpus is hours, and the progress line says how
 many - so start it in the background and follow the logs instead of waiting
