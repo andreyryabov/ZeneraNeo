@@ -388,7 +388,7 @@ describe('logging and regeneration', () => {
     const FAILS_ON_999 = `
 export default async function handle(req: any, ctx: any) {
     if (req.pathParams.user_id === '999') { throw new RangeError('no user 999'); }
-    return await ctx.lookup('users', req.pathParams.user_id, { type: 'User', idField: 'user_id' });
+    return await ctx.lookup('User', req.pathParams.user_id, { idField: 'user_id' });
 }`;
 
     const start = async (builder?: Script, regenLimit = 3): Promise<Booted> => {

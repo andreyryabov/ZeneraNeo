@@ -1,6 +1,13 @@
 import { pathToFileURL } from 'node:url';
 import { parentPort } from 'node:worker_threads';
-import { createContext, HttpError, type HandlerRequest, type SynthesisRequest } from './runtime.ts';
+import {
+    createContext,
+    HttpError,
+    type Bindings,
+    type HandlerRequest,
+    type SynthesisRequest,
+    type Use,
+} from './runtime.ts';
 import { WorldStore } from './store.ts';
 
 // ---------------------------------------------------------------------------
@@ -18,14 +25,22 @@ import { WorldStore } from './store.ts';
 // ---------------------------------------------------------------------------
 
 export type ToWorker =
-    | { type: 'run'; id: number; file: string; version: string; db: string; input: HandlerRequest }
+    | {
+          type: 'run';
+          id: number;
+          file: string;
+          version: string;
+          db: string;
+          input: HandlerRequest;
+          bindings: Bindings;
+      }
     | { type: 'synthesized'; id: number; call: number; records?: unknown[]; error?: string }
     | { type: 'close'; db: string };
 
 export type FromWorker =
     | { type: 'synthesize'; id: number; call: number; db: string; request: SynthesisRequest }
-    | { type: 'done'; id: number; ok: true; value: unknown; status?: number }
-    | { type: 'done'; id: number; ok: false; fault: string; stderr?: string };
+    | { type: 'done'; id: number; ok: true; value: unknown; status?: number; used: Use[] }
+    | { type: 'done'; id: number; ok: false; fault: string; stderr?: string; used: Use[] };
 
 const port = parentPort;
 if (!port) {
@@ -67,7 +82,12 @@ port.on('message', (message: ToWorker) => {
 
 async function run(message: Extract<ToWorker, { type: 'run' }>): Promise<void> {
     const { id } = message;
-    const reply = (m: FromWorker): void => port!.postMessage(m);
+    const used = new Map<string, Use>();
+    const record = (use: Use): void => {
+        used.set(`${use.collection}\u0000${use.type ?? ''}\u0000${use.idField ?? ''}`, use);
+    };
+    const reply = (m: DistributiveOmit<FromWorker, 'used'>): void =>
+        port!.postMessage({ ...m, used: [...used.values()] } as FromWorker);
     try {
         const mod = (await import(`${pathToFileURL(message.file).href}?v=${message.version}`)) as {
             default?: unknown;
@@ -85,13 +105,25 @@ async function run(message: Extract<ToWorker, { type: 'run' }>): Promise<void> {
             return;
         }
         const store = storeFor(message.db);
-        const ctx = createContext(message.input, store, (request) => {
-            const call = ++calls;
-            return new Promise<unknown[]>((resolve, reject) => {
-                pending.set(`${id}:${call}`, { resolve, reject });
-                reply({ type: 'synthesize', id, call, db: message.db, request });
-            }) as Promise<Record<string, unknown>[]>;
-        });
+        const ctx = createContext(
+            message.input,
+            store,
+            (request) => {
+                const call = ++calls;
+                return new Promise<unknown[]>((resolve, reject) => {
+                    pending.set(`${id}:${call}`, { resolve, reject });
+                    port!.postMessage({
+                        type: 'synthesize',
+                        id,
+                        call,
+                        db: message.db,
+                        request,
+                    } satisfies FromWorker);
+                }) as Promise<Record<string, unknown>[]>;
+            },
+            message.bindings,
+            record,
+        );
         const value = await handle(structuredClone(message.input), ctx);
         reply({ type: 'done', id, ok: true, value: value === undefined ? null : value });
     } catch (err) {
@@ -109,3 +141,5 @@ async function run(message: Extract<ToWorker, { type: 'run' }>): Promise<void> {
         });
     }
 }
+
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;

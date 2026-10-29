@@ -229,7 +229,7 @@ and propose the next improvement with evidence.
 | [`@zenera/neo`](packages/neo/README.md)       | The TypeScript runtime for applications that need agents, models, tools, skills, memory, trajectories and project loading directly in code.    |
 | [`@zenera/engine`](packages/engine/README.md) | Runs a project the way `zen run` does - keyring, sandbox, sessions, run records - for a server or any other host that is not the CLI.          |
 | [`@zenera/rag`](packages/rag/README.md)       | Advanced retrieval for agent knowledge: semantic, full-text and hybrid search over documents, plus graph-aware API schema indexing and search. |
-| [`@zenera/gym`](packages/gym/README.md)       | Mock API generation from OpenAPI and Swagger descriptions, with generated behavior validated against the API contract.                         |
+| [`@zenera/gym`](packages/gym/README.md)       | Stateful mock APIs from OpenAPI and Swagger descriptions, populated from a story of the world and reference documents.                         |
 
 `@zenera/cli` installs `zen`; `@zenera/rag` and `@zenera/gym` extend it with
 their own subcommands. Install only the capabilities a project needs.

@@ -1,4 +1,4 @@
-import { cacheItems } from '@zenera/cli/lib';
+import { cacheItems, Cache as Store } from '@zenera/cli/lib';
 import type { Model } from '@zenera/neo';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -10,12 +10,14 @@ import {
     GET_USER,
     GET_USER_CONSTANT,
     GET_USER_NO_EMAIL,
+    knowing,
     op,
     rig,
     say,
     scripted,
     writes,
     type Rig,
+    type Script,
 } from './helpers.ts';
 
 const options = (r: Rig, model: Model, attempts = 3): BuildOptions => ({
@@ -24,6 +26,7 @@ const options = (r: Rig, model: Model, attempts = 3): BuildOptions => ({
     checks: r.checks,
     catalog: r.catalog,
     world: r.world,
+    bindings: r.bindings,
     operations: r.operations,
     sourceOf: (o) => r.cache.getSource(o.key),
     attempts,
@@ -132,7 +135,7 @@ describe('the handler agent', () => {
         r = await rig('petstore.yaml', model);
         vi.spyOn(r.cache, 'getSource').mockResolvedValue(GET_USER);
         await build(op(r, 'getSelf'), options(r, model)).catch(() => undefined);
-        expect(model.builder[1]!.results[0]!.content).toContain("ctx.lookup('users'");
+        expect(model.builder[1]!.results[0]!.content).toContain("ctx.lookup('User'");
     });
 
     it('rejects pages that answer with the token they were given', async () => {
@@ -162,6 +165,171 @@ export default async function handle(req: any, ctx: any) {
     });
 });
 
+describe('what the handler agent is told', () => {
+    let r: Rig | undefined;
+    afterEach(async () => {
+        await r?.close();
+        r = undefined;
+    });
+
+    // The operations share nothing but a type: no path prefix, no name.
+    it('finds the operations that carry the same records, however far apart their paths', async () => {
+        const model = scripted({
+            builder: writes('export default () => ({ id: "x", label: "y" });'),
+        });
+        r = await rig('shared.yaml', model);
+        expect(r.catalog.itemType(op(r, 'listThings'))).toBe('Thing');
+        expect(r.catalog.itemType(op(r, 'getThing'))).toBe('Thing');
+        await build(op(r, 'getThing'), options(r, model)).catch(() => undefined);
+        const brief = model.builder[0]!.brief;
+        expect(brief).toContain('This operation is about `Thing` records.');
+        expect(brief).toMatch(/GET \/b\/thing-list\s+listThings\s+→ Thing/);
+        expect(brief).toMatch(/POST \/c\/make\s+makeThing/);
+        expect(brief).not.toContain('getOther');
+    });
+
+    it('can trace and grep the API graph without an index', async () => {
+        const model = scripted({
+            builder: (turn) =>
+                turn.call === 1
+                    ? call('trace_api', { of: 'Thing', kind: 'type' })
+                    : call('test_handler', {
+                          source: 'export default () => ({ id: "x", label: "y" });',
+                      }),
+        });
+        r = await rig('shared.yaml', model);
+        await build(op(r, 'getThing'), options(r, model)).catch(() => undefined);
+        const names = model.builder[0]!.req.tools.map((t) => t.name);
+        expect(names).toEqual(expect.arrayContaining(['trace_api', 'grep_api', 'list_api']));
+        const traced = model.builder[1]!.results[0]!.content;
+        expect(traced).toContain('/b/thing-list');
+        expect(traced).toContain('/c/make');
+    });
+
+    it('quotes the reference documents about the operation, and can search them', async () => {
+        const search = {
+            name: 'search_docs',
+            description: 'search',
+            parameters: { type: 'object' as const, properties: {} },
+            execute: () => ({ found: 0 }),
+        };
+        const model = scripted({ builder: writes(GET_USER) });
+        r = await rig('petstore.yaml', model, {
+            knowledge: knowing(undefined, {
+                tools: [search],
+                recall: (q) =>
+                    Promise.resolve(`kb/users.md:4 | ${q.split(' — ')[0]} refuses unknown ids`),
+            }),
+        });
+        await build(op(r, 'getUserById'), options(r, model));
+        const turn = model.builder[0]!;
+        expect(turn.brief).toContain('FROM THE REFERENCE DOCUMENTS');
+        expect(turn.brief).toContain('One user by id. refuses unknown ids');
+        expect(turn.req.tools.map((t) => t.name)).toContain('search_docs');
+    });
+});
+
+describe('where types live', () => {
+    let r: Rig | undefined;
+    afterEach(async () => {
+        await r?.close();
+        r = undefined;
+    });
+
+    const GET_THING = `export default (req: any, ctx: any) => ctx.lookup('Thing', req.pathParams.id);`;
+
+    it('binds a type to the collection its first handler used, once that handler passes', async () => {
+        const model = scripted({ builder: writes(GET_THING) });
+        r = await rig('shared.yaml', model);
+        const built = await build(op(r, 'getThing'), options(r, model));
+        expect(built.bindings).toEqual({ Thing: { collection: 'things', idField: 'id' } });
+        expect(r.bindings.of('Thing')).toEqual({ collection: 'things', idField: 'id' });
+    });
+
+    it('tells the next handler, which finds the records by type alone', async () => {
+        r = await rig('shared.yaml', scripted({}));
+        r.bindings.bind('Thing', { collection: 'stuff', idField: 'id' });
+        const list = `
+export default async (req: any, ctx: any) => ({ results: await ctx.ensure('Thing', { count: 2 }) });`;
+        const model = scripted({ builder: writes(list) });
+        const again = await rig('shared.yaml', model, { root: r.root });
+        try {
+            await build(op(again, 'listThings'), options(again, model));
+            expect(model.builder[0]!.brief).toContain('Thing → stuff (keyed by id)');
+        } finally {
+            await again.box.dispose();
+        }
+    });
+
+    it('refuses a handler that stores a type somewhere else, and says where it lives', async () => {
+        const model = scripted({
+            builder: writes(
+                `export default (req: any, ctx: any) => ctx.lookup('elsewhere', req.pathParams.id, { type: 'Thing' });`,
+                GET_THING,
+            ),
+        });
+        r = await rig('shared.yaml', model);
+        r.bindings.bind('Thing', { collection: 'things', idField: 'id' });
+        await build(op(r, 'getThing'), options(r, model));
+        const verdict = model.builder[1]!.results.at(-1)!.content;
+        expect(verdict).toContain('`Thing` lives in `things`, not `elsewhere`');
+    });
+
+    it('refuses a collection used without a type', async () => {
+        const model = scripted({
+            builder: writes(
+                `export default (req: any, ctx: any) => ctx.lookup('things', req.pathParams.id);`,
+                GET_THING,
+            ),
+        });
+        r = await rig('shared.yaml', model);
+        await build(op(r, 'getThing'), options(r, model));
+        expect(model.builder[1]!.results.at(-1)!.content).toContain('used without a type');
+    });
+
+    it('refuses a type the documents do not declare', async () => {
+        const model = scripted({
+            builder: writes(
+                `export default (req: any, ctx: any) => ctx.lookup('Widget', req.pathParams.id);`,
+                GET_THING,
+            ),
+        });
+        r = await rig('shared.yaml', model);
+        await build(op(r, 'getThing'), options(r, model));
+        expect(model.builder[1]!.results.at(-1)!.content).toContain('`Widget` is not a type');
+    });
+
+    // A handler written against a placement that no longer holds would read and
+    // write where nobody else looks.
+    it('treats a cached handler whose bindings disagree as a miss', async () => {
+        const first = scripted({ builder: writes(GET_THING) });
+        r = await rig('shared.yaml', first);
+        await r.cache.ensure(op(r, 'getThing'));
+
+        const other = scripted({ builder: writes(GET_THING) });
+        const again = await rig('shared.yaml', other, {
+            root: r.root,
+            cacheDir: join(r.root, 'elsewhere'),
+        });
+        try {
+            // A fresh bindings store, where Thing lives elsewhere: the old handler's
+            // placement no longer holds.
+            again.bindings.bind('Thing', { collection: 'other_things', idField: 'id' });
+            const kept = new Store(GYM_KIND, { dir: join(r.root, 'store') }).get<unknown>(
+                op(r, 'getThing').key,
+            );
+            new Store(GYM_KIND, { dir: join(r.root, 'elsewhere') }).put(
+                op(r, 'getThing').key,
+                kept,
+            );
+            const got = await again.cache.ensure(op(again, 'getThing'));
+            expect(got.cached).toBe(false);
+        } finally {
+            await again.box.dispose();
+        }
+    });
+});
+
 describe('the cache', () => {
     let r: Rig | undefined;
     afterEach(async () => {
@@ -177,6 +345,35 @@ describe('the cache', () => {
         );
         expect(model.builder).toHaveLength(1);
         expect(new Set(all.map((g) => g.source)).size).toBe(1);
+    });
+
+    // Two processes serving the same documents: one writes, the other waits
+    // and reads what was written.
+    it('writes a handler once across processes sharing the cache', async () => {
+        let starts = 0;
+        const slow: Script = async (turn) => {
+            if (turn.call === 1) {
+                starts++;
+            }
+            await new Promise((res) => setTimeout(res, 200));
+            return writes(GET_USER)(turn);
+        };
+        r = await rig('petstore.yaml', scripted({ builder: slow }));
+        const other = await rig('petstore.yaml', scripted({ builder: slow }), {
+            root: r.root,
+            cacheDir: join(r.root, 'store'),
+        });
+        try {
+            const [mine, theirs] = await Promise.all([
+                r.cache.ensure(op(r, 'getUserById')),
+                other.cache.ensure(op(other, 'getUserById')),
+            ]);
+            expect(starts).toBe(1);
+            expect(mine.source).toBe(theirs.source);
+            expect([mine.cached, theirs.cached].sort()).toEqual([false, true]);
+        } finally {
+            await other.box.dispose();
+        }
     });
 
     it('reads what is cached on a later start instead of asking again', async () => {
@@ -195,7 +392,7 @@ describe('the cache', () => {
             expect(second.builder).toHaveLength(0);
             // A hit is copied back into the box, which runs only what is on its disk.
             expect(readFileSync(again.box.sourceOf(got.key), 'utf8')).toContain(
-                "ctx.lookup('users'",
+                "ctx.lookup('User'",
             );
         } finally {
             await again.box.dispose();
@@ -211,7 +408,7 @@ describe('the cache', () => {
         expect(meta).toMatchObject({
             model: 'scripted',
             operationId: 'getUserById',
-            rulesVersion: 3,
+            rulesVersion: 4,
         });
     });
 

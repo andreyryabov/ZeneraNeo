@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GYM_KIND } from '../src/cache.ts';
-import { chooseModel, readSettings, writeSettings } from '../src/setup.ts';
+import { chooseEmbedding, chooseModel, readSettings, writeSettings } from '../src/setup.ts';
 
 describe('Gym setup', () => {
     let root: string;
@@ -22,7 +22,7 @@ describe('Gym setup', () => {
 
     it('uses Gym workspace and cache names', () => {
         expect(paths.gym()).toBe(join(root, 'gym'));
-        expect(GYM_KIND).toBe('gym-generator');
+        expect(GYM_KIND).toBe('gym-handler');
     });
 
     it('reads and writes Gym settings, including a cleared model', async () => {
@@ -53,5 +53,40 @@ describe('Gym setup', () => {
         expect(await chooseModel(undefined, keys)).toEqual({ ref: 'openai:stored', from: 'store' });
         writeSettings({ version: 1 });
         expect(await chooseModel(undefined, keys)).toMatchObject({ from: 'default' });
+    });
+
+    it('embeds the docs only when --embedding asks', async () => {
+        const keys = await KeyStore.open();
+        vi.stubEnv('OPENAI_API_KEY', undefined);
+        vi.stubEnv('ZENERA_GYM_EMBEDDING', undefined);
+        await expect(chooseEmbedding('on', keys)).rejects.toThrow('no embedding model');
+
+        keys.add('openai', 'default', 'sk-test');
+        vi.stubEnv('OPENAI_API_KEY', 'sk-test');
+        writeSettings({ version: 1, embedding: 'openai:stored' });
+        vi.stubEnv('ZENERA_GYM_EMBEDDING', 'openai:env');
+        // Configured everywhere, yet off without the flag.
+        for (const off of [undefined, '', 'off', 'none']) {
+            expect(await chooseEmbedding(off, keys)).toEqual({ from: 'none' });
+        }
+        expect(await chooseEmbedding('openai:flag', keys)).toEqual({
+            ref: 'openai:flag',
+            from: 'flag',
+        });
+
+        // `on` takes the variable, then the setting, then the keys' default.
+        expect(await chooseEmbedding('on', keys)).toEqual({ ref: 'openai:env', from: 'env' });
+        vi.stubEnv('ZENERA_GYM_EMBEDDING', '');
+        expect(await chooseEmbedding('default', keys)).toEqual({
+            ref: 'openai:stored',
+            from: 'store',
+        });
+        writeSettings({ version: 1 });
+        expect(await chooseEmbedding('on', keys)).toMatchObject({
+            ref: expect.stringMatching(/^openai:/),
+            from: 'default',
+        });
+        vi.stubEnv('ZENERA_GYM_EMBEDDING', 'none');
+        expect(await chooseEmbedding('on', keys)).toEqual({ from: 'env' });
     });
 });

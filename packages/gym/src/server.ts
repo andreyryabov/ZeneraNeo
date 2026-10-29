@@ -3,9 +3,9 @@ import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
-import { SandboxUnavailable, type Box, type Outcome } from './box.ts';
+import { WorkerUnavailable, type Box, type Outcome } from './box.ts';
 import { BuildFailed, type Cache } from './cache.ts';
-import type { GeneratorInput } from './envelope.ts';
+import type { HandlerRequest } from './runtime.ts';
 import { reason } from './generate.ts';
 import {
     formatLogLine,
@@ -35,7 +35,7 @@ import { describeIssues, issues, type Checks, type Issue } from './validate.ts';
 //
 // `node:http` and a switch. A framework would earn its place if there were
 // middleware to compose, and there is not: one route table, one validation
-// step, one generator.
+// step, one handler.
 //
 // The rules that are not obvious from the code are the ones about what does not
 // travel. Request headers are filtered before a handler sees them, because the
@@ -45,7 +45,7 @@ import { describeIssues, issues, type Checks, type Issue } from './validate.ts';
 // words.
 // ---------------------------------------------------------------------------
 
-/** Headers that are none of a generator's business. */
+/** Headers that are none of a handler's business. */
 const REDACTED = /^(authorization|cookie|set-cookie|proxy-authorization)$/i;
 const SECRETISH = /key|token|secret|password|credential/i;
 
@@ -274,15 +274,14 @@ async function handle(
     const { operation, pathParams } = match;
     res.setHeader('x-gym-operation', operation.operationId);
 
-    /** The container could not run anything: say so, and never blame the generator. */
-    const sandboxDown = async (
-        err: SandboxUnavailable,
+    /** The worker could not run anything: say so, and never blame the handler. */
+    const workerDown = async (
+        err: WorkerUnavailable,
         extra: { requestBody?: unknown; cacheStatus?: 'hit' | 'miss' | 'regenerated' } = {},
     ): Promise<void> => {
         const bodyObj = {
             error: err.message,
             hint: err.hint,
-            container: err.container,
             stderr: err.stderr,
         };
         res.setHeader('retry-after', '1');
@@ -292,12 +291,12 @@ async function handle(
             routePath: operation.path,
             pathParams,
             ...extra,
-            errorKind: 'SANDBOX_UNAVAILABLE',
+            errorKind: 'WORKER_UNAVAILABLE',
             errorMessage: err.message,
             hint: err.hint,
             stderr: err.stderr,
             responseBody: bodyObj,
-            note: 'container engine failed',
+            note: 'worker unavailable',
         });
         end();
     };
@@ -345,12 +344,12 @@ async function handle(
         return;
     }
 
-    let generator;
+    let handler;
     try {
-        generator = await opts.cache.ensure(operation);
+        handler = await opts.cache.ensure(operation);
     } catch (err) {
-        if (err instanceof SandboxUnavailable) {
-            await sandboxDown(err, { requestBody: body });
+        if (err instanceof WorkerUnavailable) {
+            await workerDown(err, { requestBody: body });
             return;
         }
         const status = err instanceof BuildFailed ? 501 : 500;
@@ -368,7 +367,7 @@ async function handle(
             routePath: operation.path,
             pathParams,
             requestBody: body,
-            errorKind: 'GENERATOR_BUILD_FAILED',
+            errorKind: 'HANDLER_BUILD_FAILED',
             errorMessage: `no handler: ${detail}`,
             buildDump: err instanceof BuildFailed ? err.dump : undefined,
             responseBody: bodyObj,
@@ -377,10 +376,10 @@ async function handle(
         end();
         return;
     }
-    res.setHeader('x-gym-cache', generator.cached ? 'hit' : 'miss');
-    let cacheStatus: 'hit' | 'miss' | 'regenerated' = generator.cached ? 'hit' : 'miss';
+    res.setHeader('x-gym-cache', handler.cached ? 'hit' : 'miss');
+    let cacheStatus: 'hit' | 'miss' | 'regenerated' = handler.cached ? 'hit' : 'miss';
 
-    const input: GeneratorInput = {
+    const input: HandlerRequest = {
         operationId: operation.operationId,
         method: operation.method,
         path: operation.path,
@@ -395,8 +394,8 @@ async function handle(
     try {
         outcome = await opts.box.run(operation.key, input);
     } catch (err) {
-        if (err instanceof SandboxUnavailable) {
-            await sandboxDown(err, { requestBody: body, cacheStatus });
+        if (err instanceof WorkerUnavailable) {
+            await workerDown(err, { requestBody: body, cacheStatus });
             return;
         }
         throw err;
@@ -459,10 +458,10 @@ async function handle(
     if (!outcome.ok) {
         const urlKey = url.pathname;
         const errorKind: ErrorKind = outcome.fault?.includes('longer than')
-            ? 'GENERATOR_TIMEOUT'
+            ? 'HANDLER_TIMEOUT'
             : schemaMismatch
-              ? 'GENERATOR_SCHEMA_MISMATCH'
-              : 'GENERATOR_FAULT';
+              ? 'HANDLER_SCHEMA_MISMATCH'
+              : 'HANDLER_FAULT';
 
         // Check regeneration limit for this URL
         if (opts.limiter!.isLimitHit(urlKey)) {
@@ -470,7 +469,7 @@ async function handle(
                 formatRegenLimitHit(urlKey, opts.limiter!.limit, operation.operationId),
             );
             const bodyObj = {
-                error: `the generator for ${operation.operationId} ${outcome.fault}`,
+                error: `the handler for ${operation.operationId} ${outcome.fault}`,
                 stderr: outcome.stderr || undefined,
                 regenerationLimitHit: true,
                 regenerationLimit: opts.limiter!.limit,
@@ -487,7 +486,7 @@ async function handle(
                 responseBody: bodyObj,
                 cacheStatus,
                 regenLimitHit: true,
-                note: 'generator faulted (limit hit)',
+                note: 'handler faulted (limit hit)',
             });
             end();
             return;
@@ -506,7 +505,7 @@ async function handle(
         );
 
         const regenStarted = Date.now();
-        let currentSource = generator.source;
+        let currentSource = handler.source;
         if (!currentSource?.trim()) {
             currentSource = (await opts.cache.getSource?.(operation.key)) ?? '';
         }
@@ -514,7 +513,7 @@ async function handle(
             try {
                 currentSource = await readFile(opts.box.sourceOf(operation.key), 'utf8');
             } catch {
-                currentSource = '# generator';
+                currentSource = '# handler';
             }
         }
 
@@ -524,7 +523,7 @@ async function handle(
             await opts.cache.regenerate(operation, {
                 currentSource,
                 failingInput: input,
-                fault: outcome.fault ?? 'generator faulted',
+                fault: outcome.fault ?? 'handler faulted',
                 stderr: outcome.stderr,
                 examples,
             });
@@ -540,7 +539,7 @@ async function handle(
                 ),
             );
 
-            // Re-run the request with the newly regenerated generator
+            // Re-run the request with the newly regenerated handler
             outcome = await opts.box.run(operation.key, input);
             if (
                 outcome.ok &&
@@ -556,8 +555,8 @@ async function handle(
                 };
             }
         } catch (regenErr) {
-            if (regenErr instanceof SandboxUnavailable) {
-                await sandboxDown(regenErr, { requestBody: body, cacheStatus });
+            if (regenErr instanceof WorkerUnavailable) {
+                await workerDown(regenErr, { requestBody: body, cacheStatus });
                 return;
             }
             const detail = reason(regenErr);
@@ -586,7 +585,7 @@ async function handle(
 
         if (!outcome.ok) {
             const bodyObj = {
-                error: `the regenerated generator for ${operation.operationId} ${outcome.fault}`,
+                error: `the regenerated handler for ${operation.operationId} ${outcome.fault}`,
                 stderr: outcome.stderr || undefined,
                 regenerated: true,
             };
@@ -597,13 +596,13 @@ async function handle(
                 pathParams,
                 requestBody: body,
                 errorKind,
-                errorMessage: `regenerated generator ${outcome.fault}`,
+                errorMessage: `regenerated handler ${outcome.fault}`,
                 stderr: outcome.stderr,
                 responseBody: bodyObj,
                 cacheStatus,
                 regenerated: true,
                 regenAttempts: attempt,
-                note: 'regenerated generator faulted',
+                note: 'regenerated handler faulted',
             });
             end();
             return;
@@ -649,7 +648,7 @@ async function handle(
 }
 
 /**
- * The generator on disk was written before the pagination rule existed, and a
+ * The handler on disk was written before the pagination rule existed, and a
  * cache is not rebuilt just because the rule changed. A body offering back the
  * token it was handed is therefore still possible, and it is the one bug here
  * that costs the client rather than the mock: it hangs.
@@ -691,7 +690,7 @@ function check(
     const out: Issue[] = [];
 
     // Coercion rewrites what it is given, so the copies are validated and the
-    // originals are what reach the generator.
+    // originals are what reach the handler.
     if (!compiled.path({ ...pathParams })) {
         out.push(...issues('path', compiled.path.errors));
     }

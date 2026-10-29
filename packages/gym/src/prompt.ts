@@ -1,5 +1,5 @@
 import type { Catalog } from './catalog.ts';
-import type { GeneratorInput } from './envelope.ts';
+import type { HandlerRequest } from './runtime.ts';
 import type { Paging } from './paging.ts';
 import { called, type Operation } from './spec.ts';
 
@@ -29,37 +29,39 @@ THE HANDLER is one TypeScript module, run by Node.js as it is:
   \`type\` aliases are fine; enums, namespaces and parameter properties are not.
 - No network, no files, no timers, no global state between calls.
 
-THE WORLD. All content lives in a shared world of collections of JSON records, keyed
-by an id field. Several APIs share it, so a message listed here is the message read
-there. Your handler owns the mechanics — which collection, which filter, what a write
-changes — and never invents content itself. When the world lacks what a request needs,
-ask for it and an agent writes it, consistent with everything else:
+THE WORLD. All content lives in a shared world of records, grouped by type. Several
+APIs share it, so a message listed here is the message read there. Your handler owns
+the mechanics — which type, which filter, what a write changes — and never invents
+content itself. Name records by their schema TYPE (a name with a capital: "Message",
+"Tier0"); the world knows which collection and id field each type has. When the world
+lacks what a request needs, ask for it and an agent writes it, consistent with
+everything else:
 
-  ctx.db.collection(name)            sync: all(), get(id), has(id), find(fn), count(),
+  ctx.db.collection(Type)            sync: all(), get(id), has(id), find(fn), count(),
                                      put(id, record), putMany([{id, value}]), delete(id)
-  await ctx.lookup(collection, id, { type, idField?, where?, hint? })
+  await ctx.lookup(Type, id, { where?, hint?, idField? })
                                      the record with that id, made if missing
-  await ctx.ensure(collection, { type, min?, count?, where?, hint?, idField? })
+  await ctx.ensure(Type, { min?, count?, where?, hint? })
                                      all records (matching where), making some if fewer than min
-  await ctx.synthesize({ collection, type, count?, ids?, where?, hint?, idField? })
+  await ctx.synthesize({ collection: Type, count?, ids?, where?, hint? })
                                      make new records now; returns them, already stored
+  await ctx.owner()                  the account the API is called as: { id, email, displayName, timeZone? }
   ctx.page(items, { token?, offset?, size?, defaultSize? })
                                      -> { items, nextToken, nextOffset, hasMore, total }
-  await ctx.owner()                  the account the API is called as: { id, email, displayName, timeZone? }
   ctx.fail(status, body?)            answer with an HTTP error instead
   ctx.newId(pattern?)  ctx.fromPattern(regex)  ctx.now()  ctx.random()  ctx.int(a, b)  ctx.pick(list)
 
-\`type\` names the schema type the records must satisfy (one of the TYPES shown, e.g.
-"Message"); \`where\` pins values every made record must carry (e.g. { calendarId });
-\`hint\` says in a sentence what the request is after (a search query, a filter), so the
-made records actually answer it.
+\`idField\` is for the first use of a type whose id property is not \`id\` (e.g. "user_id");
+after that the binding remembers it. \`where\` pins values every made record must carry
+(e.g. { calendarId }); \`hint\` says in a sentence what the request is after (a search
+query, a filter), so the made records actually answer it.
 
 HOW EACH KIND OF OPERATION WORKS
-- Read one (GET /things/{id}): \`await ctx.lookup('things', req.pathParams.id, { type: 'Thing' })\`.
-- List (GET /things): \`await ctx.ensure('things', { type, where, hint })\`, then filter by the
+- Read one (GET /things/{id}): \`await ctx.lookup('Thing', req.pathParams.id)\`.
+- List (GET /things): \`await ctx.ensure('Thing', { where, hint })\`, then filter by the
   query parameters that describe content (search text, dates, labels, owner…) in code,
   sort as the API would, then \`ctx.page\`. If filtering leaves nothing for a query that
-  plainly expects results, \`await ctx.synthesize({ ..., hint: <the query> })\` and filter again.
+  plainly expects results, \`await ctx.synthesize({ collection: 'Thing', hint: <the query> })\` and filter again.
 - Create (POST): build the stored record from the request body plus the server-assigned
   fields (id via ctx.newId(<the id pattern>), timestamps via ctx.now(), status…),
   \`put\` it, return it. Later reads must see it.
@@ -67,8 +69,8 @@ HOW EACH KIND OF OPERATION WORKS
 - Actions and computed answers (free/busy, search, stats…): derive the answer from the
   collections they are about, ensuring those exist first.
 - Store whole records — the richest type the API has for the thing (e.g. a full
-  \`Message\`, not a \`MessageRef\`) — and project to the response shape. Use the same
-  collection name and type that sibling operations use: read their handlers first.
+  \`Message\`, not a \`MessageRef\`) — and project to the response shape. Use the type
+  sibling operations use: read their handlers first.
 - People come from the world, never from code. Ids that stand for the caller — "me",
   "primary", "self", "default" — mean \`await ctx.owner()\`: resolve them to the owner's
   email (or whatever id the other records use for that person) before you store or
@@ -80,19 +82,30 @@ HOW EACH KIND OF OPERATION WORKS
   The token is opaque and always advances; on the last page leave the next token out
   (or null, if the schema allows) and set any has-more flag false.
 
+REFERENCE DOCUMENTS. When the brief quotes documentation, or search_docs is among your
+tools, the documents describe behaviour the schema cannot: what a write changes
+elsewhere, what is refused and with which status, defaults, state transitions.
+Implement what they say. Content still comes from the world, never from the documents.
+
 WORKFLOW
-1. Look before writing: list_operations for siblings, read_handler for the ones already
-   written, list_collections for what the world holds, describe_types for types you
-   were not shown.
+1. Look before writing: read_handler for the related operations already built,
+   list_collections for what the world holds, describe_types for types you were not
+   shown. In a large API, trace_api on the record type finds every operation that
+   carries it, and grep_api / list_api find the rest. Read the reference documents
+   when the operation's behaviour is not obvious from its schema.
 2. test_handler with the whole module. It runs the handler against probe requests in a
    copy of the world and reports every problem. Fix and test again until it passes.
    A passing test is the end of the job.`;
 
 export interface BriefOptions {
     catalog: Catalog;
-    /** operations sharing a path prefix or a type with this one, and whether each has a handler */
-    siblings: readonly { operation: Operation; built: boolean }[];
+    /** operations this one must agree with, closest first, and whether each has a handler */
+    siblings: readonly { operation: Operation; built: boolean; type?: string }[];
     collections: readonly { name: string; count: number }[];
+    /** where each type lives, fixed by the handlers before this one */
+    bindings: Readonly<Record<string, { collection: string; idField: string }>>;
+    /** reference passages about this operation, quoted; '' when there are none */
+    passages?: string;
 }
 
 export function brief(operation: Operation, opts: BriefOptions): string {
@@ -108,12 +121,9 @@ export function brief(operation: Operation, opts: BriefOptions): string {
     }
     lines.push('', opts.catalog.describe(operation) || fallback(operation));
 
-    const types = opts.catalog.responseTypes(operation);
-    if (types.length > 0) {
-        lines.push(
-            '',
-            `Candidate record types (from the response): ${types.slice(0, 12).join(', ')}`,
-        );
+    const record = opts.catalog.itemType(operation);
+    if (record) {
+        lines.push('', `This operation is about \`${record}\` records.`);
     }
     if (!operation.success.schema) {
         lines.push('', 'This operation answers with no body: return null.');
@@ -126,9 +136,25 @@ export function brief(operation: Operation, opts: BriefOptions): string {
             '',
             'RELATED OPERATIONS (read the built ones with read_handler and reuse their collections)',
             ...opts.siblings.map(
-                ({ operation: o, built }) =>
-                    `  ${built ? '[built]' : '[     ]'} ${o.method.toUpperCase()} ${called(o)}  ${o.operationId}`,
+                ({ operation: o, built, type }) =>
+                    `  ${built ? '[built]' : '[     ]'} ${o.method.toUpperCase()} ${called(o)}  ${o.operationId}` +
+                    (type ? `  → ${type}` : ''),
             ),
+        );
+    }
+    const bound = Object.entries(opts.bindings).filter(([type]) => !type.startsWith('@'));
+    lines.push(
+        '',
+        'WHERE TYPES LIVE (fixed: name the type and the binding finds its collection)',
+        ...(bound.length > 0
+            ? bound.map(([type, b]) => `  ${type} → ${b.collection} (keyed by ${b.idField})`)
+            : ['  (nothing yet — the first handler to use a type gives it its place)']),
+    );
+    if (opts.passages) {
+        lines.push(
+            '',
+            'FROM THE REFERENCE DOCUMENTS (what the API does, beyond its schema)',
+            opts.passages.trimEnd(),
         );
     }
     lines.push(
@@ -191,10 +217,10 @@ function pagination(paging: Paging): string[] {
 
 export interface Repair {
     currentSource: string;
-    failingInput: GeneratorInput;
+    failingInput: HandlerRequest;
     fault: string;
     stderr?: string;
-    examples?: readonly { input: GeneratorInput; output?: unknown }[];
+    examples?: readonly { input: HandlerRequest; output?: unknown }[];
 }
 
 export function repairBrief(repair: Repair): string {

@@ -48,7 +48,8 @@ cd api-integration
 ## 3. Start both mock APIs
 
 First, from the root of `api-integration`, download the two OpenAPI specs
-that Gym will serve, and the story of the world behind them:
+that Gym will serve, the story of the world behind them, and a small knowledge
+base the world draws on:
 
 ```sh
 mkdir -p mock-apis/specs
@@ -56,9 +57,13 @@ for f in calendar mail; do
   curl -fsSL -o "mock-apis/specs/$f.yaml" \
     "https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/examples/mock-apis/specs/$f.yaml"
 done
-mkdir -p mock-apis/stories
+mkdir -p mock-apis/stories mock-apis/kb
 curl -fsSL -o mock-apis/stories/northwind-launch.md \
   "https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/examples/mock-apis/stories/northwind-launch.md"
+for f in meetings release-process support; do
+  curl -fsSL -o "mock-apis/kb/$f.md" \
+    "https://raw.githubusercontent.com/zenera-ai/ZeneraNeo/main/examples/mock-apis/kb/$f.md"
+done
 ```
 
 The folder should now look like this:
@@ -66,6 +71,10 @@ The folder should now look like this:
 ```
 api-integration/
 └── mock-apis/
+    ├── kb/
+    │   ├── meetings.md
+    │   ├── release-process.md
+    │   └── support.md
     ├── specs/
     │   ├── calendar.yaml
     │   └── mail.yaml
@@ -78,17 +87,18 @@ Then run the Gym server from `@zenera/gym`, also from the root of
 
 ```sh
 zen gym serve \
-  mock-apis/specs/calendar.yaml \
-  mock-apis/specs/mail.yaml \
+  --schema mock-apis/specs \
   --story mock-apis/stories/northwind-launch.md \
+  --docs mock-apis/kb \
   --host 0.0.0.0 \
   --port 8787 \
   --requests-dir .tmp/gym-requests
 ```
 
 Gym serves both specs from one mock server, over one world that follows the
-story: Alex Rivera's mailbox and calendar in the week of a product launch. The
-first request to an operation takes longer while Gym writes and checks that
+story: Alex Rivera's mailbox and calendar in the week of a product launch, with
+room names, release steps and escalation numbers taken from the knowledge base.
+The first start indexes the knowledge base. The first request to an operation takes longer while Gym writes and checks that
 operation's handler, and the first read of the inbox or a calendar takes longer
 while Gym writes its content; later calls are immediate. Keep this command
 running while you try the project.

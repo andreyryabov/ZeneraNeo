@@ -1,12 +1,22 @@
 import { tool, type AnyTool, type Model } from '@zenera/neo';
+import type { Bindings } from './bindings.ts';
 import type { SynthesizeHook } from './box.ts';
 import type { Catalog } from './catalog.ts';
-import type { GeneratorInput } from './envelope.ts';
+import type { HandlerRequest } from './runtime.ts';
 import { runAgent } from './agents.ts';
 import { sample } from './fake.ts';
-import { ACCOUNTS, matches, OWNER, populatedKey, type SynthesisRequest } from './runtime.ts';
-import { WorldStore } from './store.ts';
-import type { Story } from './story.ts';
+import {
+    ACCOUNTS,
+    collectionFor,
+    matches,
+    OWNER,
+    OWNER_TYPE,
+    populatedKey,
+    same,
+    type SynthesisRequest,
+} from './runtime.ts';
+import { leaseOwner, WorldStore } from './store.ts';
+import type { Knowledge } from './knowledge.ts';
 
 // ---------------------------------------------------------------------------
 // The world agent
@@ -52,6 +62,9 @@ const ACCOUNT_DECLARATION = `interface Account {
 }`;
 
 const MAX_RECORDS = 50;
+/** Longer than any world-agent run; a crashed holder's lease lapses at once. */
+const FILL_LEASE_MS = 10 * 60_000;
+const LEASE_POLL_MS = 250;
 const DEFAULT_COUNT = 5;
 const MAX_TOOL_CALLS = 14;
 /** What one read of a collection may put into the prompt. */
@@ -62,14 +75,20 @@ export interface WorldEvent {
     made: number;
     /** the agent did not deliver and sampled records stood in */
     fallback?: string;
+    /** records of other types made along the way, because these refer to them */
+    dependents?: number;
+    /** references in what was made that point at nothing in the world */
+    dangling?: string[];
     report?: string;
     durationMs: number;
 }
 
 export interface WorldOptions {
     model: Model;
-    story: Story;
+    knowledge: Knowledge;
     catalog: Catalog;
+    /** where each type lives; the world agent may place a type nobody has used yet */
+    bindings: Bindings;
     /** the live world */
     store: WorldStore;
     reportDir?: string;
@@ -78,13 +97,17 @@ export interface WorldOptions {
 
 export class World {
     readonly store: WorldStore;
+    /** what the agents know: the story, and the docs with the tools that read them */
+    readonly knowledge: Knowledge;
     readonly #opts: WorldOptions;
     readonly #stores = new Map<string, WorldStore>();
     readonly #locks = new Map<string, Promise<unknown>>();
+    readonly #owner = leaseOwner();
 
     constructor(opts: WorldOptions) {
         this.#opts = opts;
         this.store = opts.store;
+        this.knowledge = opts.knowledge;
     }
 
     /** Given to the box: every request a handler makes for content lands here. */
@@ -139,29 +162,78 @@ export class World {
         return store;
     }
 
+    /**
+     * One filler per collection across every process on this world. The lock
+     * above serialises this process; the lease serialises the others, which
+     * wait and then find the records made for them.
+     */
     async #make(
         store: WorldStore,
         req: Required<Pick<SynthesisRequest, 'collection' | 'idField'>> & SynthesisRequest,
-        input: GeneratorInput,
+        input: HandlerRequest,
     ): Promise<Record<string, unknown>[]> {
-        const col = store.collection(req.collection);
-        // Whoever held the lock may already have made what is wanted.
-        if (req.ids?.length && req.ids.every((id) => col.has(id))) {
-            return req.ids.map((id) => col.get(id)!);
+        const ready = (): Record<string, unknown>[] | undefined => this.#ready(store, req);
+        const already = ready();
+        if (already) {
+            return already;
         }
-        const key = populatedKey(req.collection, req.where);
-        if (!req.ids?.length && req.min !== undefined) {
+        const lease = `fill:${req.collection}:${JSON.stringify(
+            req.ids?.length ? req.ids.map(String).sort() : (req.where ?? {}),
+        )}`;
+        while (!store.claim(lease, this.#owner, FILL_LEASE_MS)) {
+            await new Promise((settle) => setTimeout(settle, LEASE_POLL_MS));
+            const made = ready();
+            if (made) {
+                return made;
+            }
+        }
+        try {
+            return ready() ?? (await this.#fill(store, req, input));
+        } finally {
+            store.release(lease, this.#owner);
+        }
+    }
+
+    /** What is wanted, if the world already has it. */
+    #ready(
+        store: WorldStore,
+        req: SynthesisRequest & { idField: string },
+    ): Record<string, unknown>[] | undefined {
+        const col = store.collection(req.collection);
+        if (req.ids?.length) {
+            return req.ids.every((id) => col.has(id))
+                ? req.ids.map((id) => col.get(id)!)
+                : undefined;
+        }
+        if (req.min !== undefined) {
             const have = col.all().filter((r) => matches(r, req.where));
-            if (have.length >= req.min && (!req.populate || store.getMeta(key))) {
+            const populated = store.getMeta(populatedKey(req.collection, req.where));
+            if (have.length >= req.min && (!req.populate || populated)) {
                 return have;
             }
         }
+        return undefined;
+    }
 
+    async #fill(
+        store: WorldStore,
+        req: Required<Pick<SynthesisRequest, 'collection' | 'idField'>> & SynthesisRequest,
+        input: HandlerRequest,
+    ): Promise<Record<string, unknown>[]> {
+        const key = populatedKey(req.collection, req.where);
         const started = Date.now();
         const saved = new Map<string, Record<string, unknown>>();
+        const dependents = new Map<string, Record<string, unknown>>();
         const wanted = req.ids?.length ?? Math.min(req.count ?? DEFAULT_COUNT, MAX_RECORDS);
-        const done = (): boolean =>
-            req.ids?.length ? req.ids.every((id) => saved.has(String(id))) : saved.size >= wanted;
+        // A first fill makes what the story says exists, however many that is:
+        // the count is only a suggestion, and what is required is what the
+        // handler cannot answer without.
+        const required = req.ids?.length ?? (req.populate ? Math.max(req.min ?? 1, 1) : wanted);
+        const enough = (): boolean =>
+            req.ids?.length ? req.ids.every((id) => saved.has(String(id))) : saved.size >= required;
+        // Stopped as soon as it is provably done — except a first fill, whose
+        // end only the agent knows.
+        const done = req.populate && !req.ids?.length ? undefined : enough;
 
         let report: string | undefined;
         let failure: string | undefined;
@@ -171,15 +243,18 @@ export class World {
                 name: 'world',
                 label: req.collection,
                 instructions: this.#instructions(),
-                tools: [...this.#opts.story.tools, ...this.#tools(store, req, saved)],
-                input: this.#brief(store, req, input, wanted),
+                tools: [
+                    ...this.#opts.knowledge.tools,
+                    ...this.#tools(store, req, saved, dependents),
+                ],
+                input: await this.#brief(store, req, input, wanted),
                 maxToolCalls: MAX_TOOL_CALLS,
                 done,
                 reportDir: this.#opts.reportDir,
             });
             report = run.report;
-            if (!done()) {
-                failure = `the world agent saved ${saved.size} of ${wanted} records`;
+            if (!enough()) {
+                failure = `the world agent saved ${saved.size} of ${required} records`;
             }
         } catch (err) {
             failure = `the world agent failed: ${err instanceof Error ? err.message : String(err)}`;
@@ -196,15 +271,18 @@ export class World {
                 ...made,
                 ...this.#stub(
                     store,
-                    { ...req, ids: missing(req, saved), count: wanted - saved.size },
+                    { ...req, ids: missing(req, saved), count: required - saved.size },
                     input.seed,
                 ),
             ];
         }
+        const dangling = this.#dangling(store, req, [...saved.values()]);
         this.#opts.onMade?.({
             collection: req.collection,
             made: made.length,
             fallback: failure,
+            ...(dependents.size > 0 ? { dependents: dependents.size } : {}),
+            ...(dangling.length > 0 ? { dangling } : {}),
             report,
             durationMs: Date.now() - started,
         });
@@ -250,8 +328,19 @@ export class World {
             'You populate the world behind a simulated API. A request handler needs records',
             'that do not exist yet; you write them and save them with save_records.',
             '',
-            this.#opts.story.brief,
+            this.#opts.knowledge.story,
             '',
+            ...(this.#opts.knowledge.docs
+                ? [
+                      'REFERENCE DOCUMENTS. The world also has documentation: a knowledge base,',
+                      'guides, runbooks. The brief quotes the passages most likely to matter;',
+                      'search_docs, grep_docs and read_docs find more. Take realistic values',
+                      'from them — names, codes, settings, valid ranges, how things relate —',
+                      'and where a record would cite or quote a document, cite or quote it',
+                      'truly. The story wins where the two disagree.',
+                      '',
+                  ]
+                : []),
             'RULES',
             '- Agree with the story. Use its people, names, addresses, dates, projects and',
             '  themes. Where it is silent, invent what fits it.',
@@ -261,6 +350,10 @@ export class World {
             '- Agree with the world. Look at what other collections already hold',
             '  (list_collections, read_collection) and reuse the same people, ids and',
             '  facts: the world is shared by several APIs and must read as one place.',
+            '- Never point at what does not exist. A field that names another entity — an',
+            '  id, a path, a parent, an owner — names one the world holds: reuse it, or make',
+            '  it in this same run with save_records({ type, records }) and point at that.',
+            '  Records you make that way are saved in their own collections.',
             '- Every record must satisfy the type you are given. Required fields always;',
             '  optional ones where they make the record more realistic.',
             '- Write content a person would recognise: real-sounding subjects, bodies,',
@@ -272,19 +365,21 @@ export class World {
         ].join('\n');
     }
 
-    #brief(
+    async #brief(
         store: WorldStore,
         req: SynthesisRequest & { idField: string },
-        input: GeneratorInput,
+        input: HandlerRequest,
         wanted: number,
-    ): string {
+    ): Promise<string> {
         const catalog = this.#opts.catalog;
         const typed = req.type && catalog.hasType(req.type);
         const lines = [
             `Make records for the collection \`${req.collection}\`, keyed by \`${req.idField}\`.`,
             req.ids?.length
                 ? `They must have exactly these ${req.idField} values: ${JSON.stringify(req.ids)}.`
-                : `Make ${wanted} new records.`,
+                : req.populate
+                  ? `Make the records the story says exist; where it does not say, about ${wanted}.`
+                  : `Make ${wanted} new records.`,
         ];
         if (req.populate) {
             lines.push(
@@ -328,6 +423,37 @@ export class World {
                 'No schema type was named: make records shaped like the response the request expects.',
             );
         }
+        const references = req.type ? catalog.references(req.type) : [];
+        if (references.length > 0) {
+            lines.push(
+                '',
+                'REFERENCES — fields that name other entities. Each must name one the world holds:',
+                ...references.map(
+                    (r) => `  ${r.name}: ${r.signature}${r.doc ? `  — ${r.doc}` : ''}`,
+                ),
+            );
+        }
+        const placed = Object.entries(this.#opts.bindings.all()).filter(
+            ([type]) => type !== OWNER_TYPE && type !== req.type,
+        );
+        if (placed.length > 0) {
+            lines.push(
+                '',
+                'OTHER TYPES IN THE WORLD (save one with save_records({ type, records }))',
+                ...placed.map(
+                    ([type, b]) =>
+                        `  ${type} → ${b.collection}, keyed by ${b.idField}: ${store.collection(b.collection).count()} records`,
+                ),
+            );
+        }
+        const passages = await this.#opts.knowledge.recall(
+            [req.type, req.collection, req.hint, `${input.method.toUpperCase()} ${input.path}`]
+                .filter(Boolean)
+                .join(' — '),
+        );
+        if (passages) {
+            lines.push('', 'FROM THE REFERENCE DOCUMENTS', passages.trimEnd());
+        }
         const world = store.collections();
         lines.push(
             '',
@@ -345,6 +471,7 @@ export class World {
         store: WorldStore,
         req: SynthesisRequest & { idField: string },
         saved: Map<string, Record<string, unknown>>,
+        dependents: Map<string, Record<string, unknown>>,
     ): AnyTool[] {
         const catalog = this.#opts.catalog;
         const validate = req.type
@@ -405,47 +532,152 @@ export class World {
             },
         });
 
-        const save = tool<{ records: Record<string, unknown>[] }>({
+        const save = tool<{ records: Record<string, unknown>[]; type?: string }>({
             name: 'save_records',
             description:
-                `Validates records and saves the valid ones to \`${req.collection}\`. ` +
-                'Reports every invalid record with what is wrong, so it can be fixed and saved again.',
+                `Validates records and saves the valid ones — to \`${req.collection}\` by default, ` +
+                'or, with `type`, to the collection of that type: how the entities these records ' +
+                'refer to are made. Reports every invalid record with what is wrong, so it can be ' +
+                'fixed and saved again.',
             parameters: {
                 type: 'object',
                 properties: {
                     records: { type: 'array', items: { type: 'object' } },
+                    type: {
+                        type: 'string',
+                        description:
+                            'Save records of another schema type, e.g. one these records refer to.',
+                    },
                 },
                 required: ['records'],
                 additionalProperties: false,
             },
-            execute: ({ records }) => {
-                const col = store.collection(req.collection);
+            execute: ({ records, type }) => {
+                const other = type && type !== req.type ? this.#placeOf(type) : undefined;
+                if (other && 'error' in other) {
+                    return other;
+                }
+                const target = other ?? {
+                    collection: req.collection,
+                    idField: req.idField,
+                    request: req,
+                    validate,
+                };
+                const col = store.collection(target.collection);
                 const errors: { index: number; problems: string[] }[] = [];
                 let ok = 0;
                 (Array.isArray(records) ? records : []).forEach((record, index) => {
-                    const problems = this.#problems(record, req, validate);
+                    const problems = this.#problems(record, target.request, target.validate);
                     if (problems.length > 0) {
                         errors.push({ index, problems });
                         return;
                     }
-                    const id = String(record[req.idField]);
+                    const id = String(record[target.idField]);
                     col.put(id, record);
-                    saved.set(id, record);
+                    if (other) {
+                        dependents.set(`${target.collection}/${id}`, record);
+                    } else {
+                        saved.set(id, record);
+                    }
                     ok++;
                 });
+                if (other) {
+                    return { saved: ok, errors, collection: target.collection };
+                }
                 const left = missing(req, saved);
                 return {
                     saved: ok,
                     errors,
                     ...(left?.length ? { stillMissing: left } : {}),
                     ...(!req.ids?.length
-                        ? { stillNeeded: Math.max(0, (req.count ?? DEFAULT_COUNT) - saved.size) }
+                        ? req.populate
+                            ? { savedSoFar: saved.size }
+                            : {
+                                  stillNeeded: Math.max(
+                                      0,
+                                      (req.count ?? DEFAULT_COUNT) - saved.size,
+                                  ),
+                              }
                         : {}),
                 };
             },
         });
 
         return [list, read, describe, save];
+    }
+
+    /**
+     * Where records of another type go, placing the type if nobody has: the
+     * world agent can be first to need a transport zone, before any handler has
+     * served one.
+     */
+    #placeOf(type: string):
+        | {
+              collection: string;
+              idField: string;
+              request: SynthesisRequest & { idField: string };
+              validate: ReturnType<Catalog['validator']>;
+          }
+        | { error: string; hint?: string } {
+        const catalog = this.#opts.catalog;
+        if (!catalog.hasType(type)) {
+            return {
+                error: `no type called ${type}`,
+                hint: 'describe_types shows the ones there are',
+            };
+        }
+        const binding = this.#opts.bindings.of(type) ?? {
+            collection: collectionFor(type),
+            idField: catalog.idField(type),
+        };
+        const problem = this.#opts.bindings.bind(type, binding);
+        if (problem) {
+            return { error: problem };
+        }
+        return {
+            collection: binding.collection,
+            idField: binding.idField,
+            request: { collection: binding.collection, type, idField: binding.idField },
+            validate: catalog.validator(type),
+        };
+    }
+
+    /**
+     * References in the records just made that point at nothing. Judged loosely:
+     * a value counts as found if any collection holds a record under it, or
+     * under its last path segment — `/infra/tier-1s/t1-app` names `t1-app`.
+     * Reported, never repaired: a guess at the missing entity would be worse.
+     */
+    #dangling(
+        store: WorldStore,
+        req: SynthesisRequest & { idField: string },
+        made: readonly Record<string, unknown>[],
+    ): string[] {
+        const catalog = this.#opts.catalog;
+        const references = (req.type ? catalog.references(req.type) : []).filter((r) =>
+            catalog.referent(r.name),
+        );
+        if (references.length === 0 || made.length === 0) {
+            return [];
+        }
+        const collections = store.collections().map((c) => store.collection(c.name));
+        const exists = (value: string): boolean => {
+            const tail = value.split('/').filter(Boolean).at(-1) ?? value;
+            return collections.some((c) => c.has(value) || c.has(tail));
+        };
+        const out = new Set<string>();
+        for (const record of made) {
+            for (const { name } of references) {
+                const value = record[name];
+                const values = Array.isArray(value) ? value : [value];
+                for (const v of values) {
+                    if (typeof v === 'string' && v && !exists(v)) {
+                        out.add(`${name}=${v}`);
+                    }
+                }
+            }
+        }
+        return [...out];
     }
 
     #problems(
@@ -465,7 +697,7 @@ export class World {
             out.push(`\`${req.idField}\` ${JSON.stringify(id)} is not one of the ids asked for`);
         }
         for (const [k, v] of Object.entries(req.where ?? {})) {
-            if (String(r[k]) !== String(v)) {
+            if (!same(r[k], v)) {
                 out.push(`\`${k}\` must be ${JSON.stringify(v)}`);
             }
         }
@@ -492,6 +724,8 @@ function normalizeRequest(
     return {
         ...request,
         collection: request.collection.trim(),
+        // The owner's type is gym's own, not a document's: accounts are shaped below.
+        type: request.type === OWNER_TYPE ? undefined : request.type,
         idField: request.idField ?? 'id',
         ids: request.ids?.slice(0, MAX_RECORDS),
     };

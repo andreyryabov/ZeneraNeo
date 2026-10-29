@@ -51,9 +51,9 @@ The project keeps copies of both OpenAPI contracts in the `mock-apis/spec`:
 
 ```sh
 zen gym serve \
-  mock-apis/specs/calendar.yaml \
-  mock-apis/specs/mail.yaml \
+  --schema mock-apis/specs \
   --story mock-apis/stories/northwind-launch.md \
+  --docs mock-apis/kb \
   --host 0.0.0.0 \
   --port 8787 \
   --requests-dir .tmp/gym-requests

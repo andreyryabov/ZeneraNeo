@@ -5,317 +5,294 @@ Scope: `packages/gym`
 
 ## 1. What it is
 
-A mock HTTP server for one or more OpenAPI/Swagger documents, backed by a
-**stateful world** that can follow a **story**. Two agents do the writing:
+A mock HTTP server for OpenAPI/Swagger documents, backed by a **stateful world**
+that follows a **story** and draws on **reference documents**. Two agents do the
+writing:
 
 - the **handler agent** writes one TypeScript handler per operation: the API's
-  _mechanics_ (which collection, which filter, what a write changes, how it pages);
+  _mechanics_ (which type, which filter, what a write changes, how it pages);
 - the **world agent** writes the _content_ those handlers read: records that
-  agree with the story and with everything already in the world.
+  agree with the story, the docs, and everything already in the world.
 
-Handlers are cached per operation shape and run in a worker thread. Content
-lives in a SQLite file that several `zen gym` processes can share.
+The split is the whole design. A handler holds no content, so one cached handler
+serves every story: change the story and the world changes, the code does not.
 
-The split is the whole design: because a handler holds no content, one cached
-handler serves every story. Change the story and the world changes; the code
-does not.
-
-## 2. Components
+## 2. Inputs
 
 ```
-                         zen gym serve mail.yaml --story world.md
-                                          │
-                                          ▼
- ┌──────────────────────────────────────────────────────────────────────────────┐
- │ command.ts    flags → setup → listen; build / cache / model subcommands      │
- └──────────────────────────────────────┬───────────────────────────────────────┘
-                                        ▼
- ┌──────────────────────────────────────────────────────────────────────────────┐
- │ setup.ts      assembles everything below, in dependency order                │
- └──┬──────────┬──────────┬──────────┬──────────┬──────────┬──────────┬─────────┘
-    │          │          │          │          │          │          │
-    ▼          ▼          ▼          ▼          ▼          ▼          ▼
- spec.ts   catalog.ts  story.ts   store.ts   synth.ts   box.ts    cache.ts
- router.ts (rag graph, (--story)  (SQLite    (World:    (worker   (handler
- validate  TS types,              world)     world      runner)   store +
- .ts       validators)                       agent)               builder)
-    │          │          │          │          │          │          │
-    └──────────┴──────────┴────┬─────┴──────────┴──────────┴──────────┘
-                               ▼
- ┌──────────────────────────────────────────────────────────────────────────────┐
- │ server.ts     node:http: route → check → ensure handler → run → validate     │
- │               → page backstop → answer; regeneration on handler faults       │
- └──────────────────────────────────────────────────────────────────────────────┘
+zen gym serve [spec…] --schema <path>… --story <path>… --docs <path>… --world <name|file>
+                 │            │                │                 │                │
+                 ▼            ▼                ▼                 ▼                ▼
+            inputs.ts    inputs.ts       knowledge.ts       knowledge.ts       store.ts
+            expandSchemas: files,        story: read,       docs: indexed      worldPath
+            dirs (only files that        quoted whole in    (rag), searched
+            declare swagger/openapi),    every world-agent  by both agents
+            quoted globs                 prompt
+                 │
+                 ├──▶ spec.ts     Operation[] (dereferenced, 2020-12)  → router, validate, probes
+                 └──▶ catalog.ts  rag graph (bundled, named types)     → TS briefs, graph tools,
+                                                                         record types, references
 ```
 
-How they depend on each other at run time:
+Nothing in the interface mentions indexes: the API graph is built in memory, and
+the docs index lives under `<cache>/indexes/`, keyed by the docs' content and the
+embedding model, if `--embedding` asked for one (by default there is none, and
+the docs are searched by wording through the index's full-text half). `serve` and `build`
+both index everything **before** anything else happens; `build` then writes
+every handler and exits.
+
+## 3. Threads
 
 ```
-   HTTP request
-        │
-        ▼
-   ┌─────────┐ match  ┌──────────┐
-   │ server  │───────▶│ router   │
-   │         │ check  ┌──────────┐
-   │         │───────▶│ validate │ (Ajv, request + response)
-   │         │        └──────────┘
-   │         │ ensure ┌──────────┐ build  ┌──────────────┐ tools ┌──────────┐
-   │         │───────▶│ cache    │───────▶│ generate     │──────▶│ catalog  │
-   │         │        └──────────┘        │ (handler     │       │ store    │
-   │         │                            │  agent)      │──┐    └──────────┘
-   │         │                            └──────────────┘  │ test_handler
-   │         │ run    ┌──────────┐                          │ (probes, judge)
-   │         │───────▶│ box      │◀─────────────────────────┘
-   │         │        └────┬─────┘
-   └─────────┘             │ postMessage
-                           ▼
-                    ┌──────────────┐  ctx.db  ┌──────────────┐
-                    │ worker.ts    │─────────▶│ world.sqlite │◀──┐
-                    │ + runtime.ts │          └──────────────┘   │ save_records
-                    │ (handler.ts) │ ctx.ensure / lookup         │
-                    └──────┬───────┘ (record missing)            │
-                           │ 'synthesize' message                │
-                           ▼                                     │
-                    ┌──────────────┐  story tools  ┌─────────┐   │
-                    │ synth.ts     │──────────────▶│ story   │   │
-                    │ (world agent)│───────────────┴─────────┴───┘
-                    └──────────────┘
+ main thread (the server process)                    worker thread
+ ────────────────────────────────                    ─────────────
+ server.ts    HTTP: route, check, answer
+ cache.ts     which handler; builds, one at a time
+ generate.ts  handler agent ─── model calls ─▶ LLM
+ synth.ts     world agent   ─── model calls ─▶ LLM
+ box.ts       talks to the worker ◀── messages ──▶  worker.ts + runtime.ts
+                                                     imports handler.ts, runs handle(req, ctx)
+                  │                                          │
+                  └────────── world.sqlite (WAL) ────────────┘
+                         both open the same file
 ```
 
-## 3. File map
+Agents, the model and the keys stay on the main thread. The worker has an empty
+environment and runs model-written code only; a handler stuck in a loop costs one
+request and a worker restart.
 
-| File                             | Role                                                                                                               |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| [command.ts](./src/command.ts)   | `zen gym serve / build / cache / model`; flags, narration                                                          |
-| [setup.ts](./src/setup.ts)       | Credentials → model → documents → catalog → story → world → box → cache                                            |
-| [spec.ts](./src/spec.ts)         | Documents → `Operation[]`, dereferenced and normalised; cache key per operation (`GENERATOR_RULES_VERSION`)        |
-| [schema.ts](./src/schema.ts)     | OpenAPI 3.0 / Swagger 2 → JSON Schema 2020-12; property walking                                                    |
-| [router.ts](./src/router.ts)     | Method + path (+ pinned query) → operation                                                                         |
-| [validate.ts](./src/validate.ts) | Ajv checks for path, query, body and response                                                                      |
-| [catalog.ts](./src/catalog.ts)   | The documents as `@zenera/rag` reads them: TypeScript declarations, named-type validators, request/response briefs |
-| [story.ts](./src/story.ts)       | `--story`: inline brief or `list_docs` / `grep_docs` / `read_docs` tools; content digest                           |
-| [store.ts](./src/store.ts)       | `WorldStore`: SQLite collections of JSON records, meta, snapshots; `statePath`                                     |
-| [runtime.ts](./src/runtime.ts)   | The `ctx` a handler gets: `db`, `lookup`, `ensure`, `synthesize`, `owner`, `page`, `fail`, seeded randomness       |
-| [worker.ts](./src/worker.ts)     | Worker-thread entry: imports a handler, builds `ctx`, relays synthesis requests                                    |
-| [box.ts](./src/box.ts)           | Host side of the worker: run, timeouts that pause while an agent works, restart on hang, snapshot release          |
-| [agents.ts](./src/agents.ts)     | Runs a `@zenera/neo` agent with a tool-call budget, early stop, HTML report                                        |
-| [generate.ts](./src/generate.ts) | The handler agent: brief, tools, `test_handler`, the judge (probes, echo rule, page walk)                          |
-| [prompt.ts](./src/prompt.ts)     | The handler contract (`SYSTEM`), per-operation brief, repair brief                                                 |
-| [probe.ts](./src/probe.ts)       | Synthetic probe requests, the echo rule, page-walk helpers                                                         |
-| [synth.ts](./src/synth.ts)       | `World`: the world agent, its tools, record validation, per-collection locking, sampled fallback                   |
-| [fake.ts](./src/fake.ts)         | Schema sampler: valid content for judging and fallbacks                                                            |
-| [cache.ts](./src/cache.ts)       | Handlers in the shared cache; one build per operation at a time; concurrency slots; build reports                  |
-| [server.ts](./src/server.ts)     | The HTTP pipeline, regeneration, pagination backstop                                                               |
-| [paging.ts](./src/paging.ts)     | Recognising paged operations; cutting looping tokens; `PaginationLimiter`                                          |
-| [logger.ts](./src/logger.ts)     | Log lines, request dumps, build reports, regeneration limits                                                       |
-| [page.ts](./src/page.ts)         | The `GET /` contents page with a Run form per operation                                                            |
-| [envelope.ts](./src/envelope.ts) | `GeneratorInput`: the one request shape handlers, probes and the world agent share                                 |
+## 4. File map
 
-## 4. One request
+| File                               | Role                                                                                                                    |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| [command.ts](./src/command.ts)     | `zen gym serve / build / cache / world / model`; flags, narration                                                       |
+| [quiet.ts](./src/quiet.ts)         | Quiets LanceDB's logger before anything loads it                                                                        |
+| [setup.ts](./src/setup.ts)         | Credentials → model → inputs → catalog → embedding → knowledge → world → bindings → box → cache                         |
+| [inputs.ts](./src/inputs.ts)       | `--schema` expansion (files, directories, globs); keeps story/docs and API documents apart                              |
+| [spec.ts](./src/spec.ts)           | Documents → `Operation[]`; handler key (`CONTRACT_VERSION`, shape without annotations)                                  |
+| [schema.ts](./src/schema.ts)       | OpenAPI 3.0 / Swagger 2 → JSON Schema 2020-12                                                                           |
+| [router.ts](./src/router.ts)       | Method + path (+ pinned query) → operation; clash errors                                                                |
+| [validate.ts](./src/validate.ts)   | Ajv checks for path, query, body and response                                                                           |
+| [catalog.ts](./src/catalog.ts)     | The documents as `@zenera/rag` reads them: TS declarations, validators, graph tools, record types, carriers, references |
+| [knowledge.ts](./src/knowledge.ts) | Story (inlined) and docs (indexed, searched, recalled); text-only fallback                                              |
+| [store.ts](./src/store.ts)         | `WorldStore`: SQLite records + meta, snapshots, leases; world paths, listing                                            |
+| [bindings.ts](./src/bindings.ts)   | Type → collection + id field, add-only, machine-wide                                                                    |
+| [runtime.ts](./src/runtime.ts)     | The `ctx` a handler gets; type → collection resolution; structural `where`; paging                                      |
+| [worker.ts](./src/worker.ts)       | Worker entry: imports a handler, builds `ctx`, relays synthesis, reports what was used                                  |
+| [box.ts](./src/box.ts)             | Host side of the worker: run, timeouts paused while an agent works, restart on hang                                     |
+| [agents.ts](./src/agents.ts)       | Runs a `@zenera/neo` agent with a tool budget, early stop, HTML report                                                  |
+| [generate.ts](./src/generate.ts)   | The handler agent: brief, siblings, tools, `test_handler`, the judge, binding checks                                    |
+| [prompt.ts](./src/prompt.ts)       | The handler contract (`SYSTEM`), per-operation brief, repair brief                                                      |
+| [probe.ts](./src/probe.ts)         | Probe requests, the echo rule, page-walk helpers                                                                        |
+| [synth.ts](./src/synth.ts)         | `World`: the world agent, its tools, dependents, dangling references, locks and leases, sampled fallback                |
+| [fake.ts](./src/fake.ts)           | Schema sampler: content for judging and fallbacks                                                                       |
+| [cache.ts](./src/cache.ts)         | Handlers in the shared cache with the bindings they used; one build per operation, across processes                     |
+| [server.ts](./src/server.ts)       | The HTTP pipeline, regeneration, pagination backstop                                                                    |
+| [paging.ts](./src/paging.ts)       | Recognising paged operations; cutting looping tokens                                                                    |
+| [logger.ts](./src/logger.ts)       | Log lines, request dumps, build reports                                                                                 |
+| [page.ts](./src/page.ts)           | The `GET /` contents page                                                                                               |
+
+## 5. One request
 
 ```
-client          server.ts            cache.ts         box.ts / worker.ts       synth.ts
+client          server.ts            cache.ts          box.ts / worker.ts        synth.ts
   │  GET /x/{id}     │                   │                    │                    │
-  │─────────────────▶│ router.match      │                    │                    │
-  │                  │ validate request  │                    │                    │
-  │                  │ ── 400 on issues  │                    │                    │
-  │                  │ ensure(operation)▶│ hit: copy source   │                    │
-  │                  │                   │  into the box      │                    │
-  │                  │                   │ miss: build (§5)   │                    │
-  │                  │◀──────────────────│                    │                    │
-  │                  │ run(key, input) ─────────────────────▶ │ import handler.ts  │
-  │                  │                   │                    │ handle(req, ctx)   │
-  │                  │                   │                    │  ctx.lookup miss ─▶│ world agent
-  │                  │                   │  (handler clock    │                    │ writes records
-  │                  │                   │   paused)          │◀── records ────────│ into the world
-  │                  │◀─────────────────── outcome ───────────│                    │
-  │                  │ ok + status   → answer as is (ctx.fail)                     │
-  │                  │ agentFault    → 502, no regeneration                        │
-  │                  │ fault/mismatch→ regenerate (§5, repair) and run again       │
-  │                  │ ok            → validate response, page backstop            │
-  │◀─────────────────│ 200 + body (or declared status, no body)                    │
+  │─────────────────▶│ route, validate   │                    │                    │
+  │                  │ ensure(op) ──────▶│ hit (bindings still │                    │
+  │                  │                   │   agree) or build §6│                    │
+  │                  │ run(key, req) ───────────────────────▶ │ handle(req, ctx)   │
+  │                  │                   │                    │ ctx.lookup('Thing')│
+  │                  │                   │                    │  → bindings: things│
+  │                  │                   │                    │  → missing ───────▶│ world agent §7
+  │                  │                   │  (handler clock    │◀── records ────────│ (stored first)
+  │                  │                   │   paused)          │                    │
+  │                  │◀───────────────────── outcome ─────────│                    │
+  │                  │ ok + status    → that status (ctx.fail)                     │
+  │                  │ agentFault     → 502, never a rebuild                       │
+  │                  │ fault/mismatch → rebuild with a repair brief, run again     │
+  │                  │ ok             → validate, page backstop                    │
+  │◀─────────────────│ 200 + body                                                  │
 ```
 
-Requests to operations with no response body still run their handler, so a
-`DELETE` actually deletes.
-
-## 5. Writing a handler
+## 6. Writing a handler
 
 ```
-cache.ensure(op) ── miss ──▶ generate.build(op)
-                                 │
-              brief: operation as TypeScript (catalog.describe),
-                     candidate record types, paging rules,
-                     related operations [built?], world collections
+cache.ensure(op) ── miss ──▶ lease build:<key> (machine-wide; another process waits, then reads)
                                  │
                                  ▼
-                ┌──────────────────────────────────┐
-                │ handler agent  (agents.runAgent) │
-                │ tools:                           │
-                │   list_operations  read_handler  │
-                │   list_collections read_collection│
-                │   describe_types   test_handler  │
-                └───────────────┬──────────────────┘
-                                │ test_handler(source)
-                                ▼
-          box.write(key, source)
-          world.snapshot ──▶ scratch/<key>-<n>.sqlite
-          judge, all with { db: scratch, probe: true }:
-            probes (probe.ts, path ids fitted to response patterns)
-              → runs ok?  answered a body, not ctx.fail?
-              → response schema (validate.ts)
-              → echo rule (probe.ts)
-            page walk if paged: token advances, never repeats, ends
-          release + delete the scratch copy
-                                │
-            ┌───────────────────┴───────────────────┐
-            ▼                                       ▼
-        no problems                             problems
-     run stops at once                 handed back as the tool result;
-     source kept (cache.ts)            after --attempts failures:
-                                       BuildFailed + builds/<…>.md
+  brief:  operation as TypeScript (catalog.describe)
+          "this operation is about `Thing` records" (catalog.itemType: unwraps list envelopes)
+          RELATED OPERATIONS, closest first: same record type, same resource,
+              carriers traced through the graph, nearby paths — [built] marked
+          WHERE TYPES LIVE: the bindings
+          FROM THE REFERENCE DOCUMENTS: recalled passages about the operation
+          THE WORLD SO FAR
+  tools:  read_handler, list_operations, list_collections, read_collection,
+          describe_types, trace_api, grep_api, list_api, find_types_with_property,
+          search_docs, grep_docs, list_docs, read_docs, test_handler
+                                 │ test_handler(source)
+                                 ▼
+          snapshot the world → scratch copy; run probes there (probe: true → fake.ts content)
+          judge: runs? a body, not ctx.fail? response schema? echo rule? page walk?
+          placement: every (collection, type, idField) the runs touched —
+              untyped collection → refused; unknown type → refused;
+              disagrees with a binding → refused; two ways in one handler → refused
+                                 │
+              pass ──────────────┴────────────── fail
+       bind new types; keep the source        problems back to the agent;
+       with the bindings it used              after --attempts: BuildFailed + report
 ```
 
-The agent cannot declare itself finished: the first passing test ends the run.
-If it stops without passing, it is started again with its last version and the
-last problems (twice at most). Repair after a live fault is the same build with
-a repair brief: the current source, the failing request, the stack and earlier
-successful requests.
-
-Content during judging comes from [fake.ts](./src/fake.ts) instead of the world
-agent, so judging costs no model calls and writes nothing real requests can
-see.
-
-## 6. Writing the world
+## 7. Writing the world
 
 ```
-handler (worker)                 box.ts (host)              synth.ts World
-  ctx.ensure('messages',            │                           │
-    { type, min, where, hint })     │                           │
-  ── populated:<col>:<where> unset  │                           │
-     or fewer than min ──▶ 'synthesize' ─▶ synthesize hook ────▶│
-                                    │   (clock paused)          │ probe? → fake.ts sample
-                                    │                           │ lock per (db, collection)
-                                    │                           │ recheck: made meanwhile?
-                                    │                           │
-                                    │            ┌──────────────▼───────────────┐
-                                    │            │ world agent                  │
-                                    │            │ instructions: story brief +  │
-                                    │            │   rules (agree with story,   │
-                                    │            │   with the world, negatives) │
-                                    │            │ brief: collection, type as   │
-                                    │            │   TS, ids / count / where,   │
-                                    │            │   the request, world so far  │
-                                    │            │ tools: story tools,          │
-                                    │            │   list_collections,          │
-                                    │            │   read_collection,           │
-                                    │            │   describe_types,            │
-                                    │            │   save_records (validated)   │
-                                    │            └──────────────┬───────────────┘
-                                    │                           │ stops as soon as
-                                    │                           │ the request is met
-                                    │                           │ short? sampled stand-ins
-                                    │◀────── records ───────────│ mark populated
-   re-reads ctx.db ◀── 'synthesized'│                           │
+handler (worker)                   box.ts (host)            synth.ts World
+  ctx.ensure('Event', { where })      │                          │
+  first read of (collection, where),  │                          │
+  or fewer than min ──▶ 'synthesize' ─▶ hook ──────────────────▶ │ probe → fake.ts
+                                      │  (clock paused)          │ lock (db, collection)
+                                      │                          │ lease fill:<col>:<where|ids>
+                                      │                          │   (other processes wait,
+                                      │                          │    then read what was made)
+                                      │                          │ ready already? → return
+                                      │            ┌─────────────▼──────────────┐
+                                      │            │ world agent                │
+                                      │            │ instructions: STORY whole; │
+                                      │            │   REFERENCE DOCUMENTS;     │
+                                      │            │   rules: agree with story, │
+                                      │            │   docs, world; never point │
+                                      │            │   at what does not exist   │
+                                      │            │ brief: type as TS, ids /   │
+                                      │            │   "what the story says     │
+                                      │            │   exists", REFERENCES,     │
+                                      │            │   OTHER TYPES, recalled    │
+                                      │            │   passages, the world      │
+                                      │            │ tools: docs tools,         │
+                                      │            │   list/read_collection,    │
+                                      │            │   describe_types,          │
+                                      │            │   save_records({type?})    │
+                                      │            └─────────────┬──────────────┘
+                                      │                          │ requested records → its collection
+                                      │                          │ save_records({type}) → that type's
+                                      │                          │   collection (bound if new);
+                                      │                          │   not marked populated
+                                      │                          │ check: references that name a type
+                                      │                          │   and point at nothing → reported
+                                      │◀────────── records ──────│ short of what was required → sampled
+   re-reads ctx.db ◀──── 'synthesized'│                          │
 ```
 
-- `ctx.lookup(col, id)` asks for exactly that id; `ctx.ensure` asks for a
-  population. A collection that only holds what clients wrote is not
-  _populated_: the first read still fills it as the story has it.
-- `ctx.owner()` is `lookup('accounts', '@me')`. The `accounts` shape is gym's
-  own (no document declares it). Handlers resolve `me`, `primary` and `self`
-  through it, so `primary` and the owner's email are one calendar.
-- `save_records` checks the id, the `where` pins and the named schema type, and
-  reports every invalid record so the agent can fix it.
+- `ctx.lookup(Type, id)` asks for exactly that id; `ctx.ensure(Type, …)` asks
+  for a population. A collection that only holds what clients wrote is not
+  _populated_ until its first read fills it as the story has it.
+- `where` matches structurally: scalars as text, objects as subsets, a scalar
+  against a list as membership.
+- `ctx.owner()` is the `accounts` record `@me`, shaped by gym (no document
+  declares it). Handlers resolve `me` / `primary` / `self` through it.
 
-## 7. The worker
+## 8. The worker
 
 ```
- host thread (box.ts)                         worker thread (worker.ts)
- ───────────────────                          ─────────────────────────
- run ── { type: 'run', id, file, version,  ──▶ import(file?v=version)
-          db, input }                          ctx = createContext(input, store, …)
- start timer (--timeout)                       await handle(input, ctx)
-                                                 │ ctx.synthesize
- pause timer ◀── { type: 'synthesize',      ◀────┘
-                   id, call, db, request }
- World.synthesize(...)
- resume timer ── { type: 'synthesized',     ──▶ resolve / reject
-                   id, call, records|error }
- settle      ◀── { type: 'done', id, ok,    ◀── body | HttpError(status) | throw
-                   value|status|fault }
- release(db) ── { type: 'close', db }       ──▶ close that SQLite handle
-
- timeout: settle the call as a fault, terminate the worker, fail what was in
- flight, start a new worker on the next run.
+ host (box.ts)                                   worker (worker.ts)
+ run ── { type: 'run', id, file, version,     ──▶ import(file?v=version)
+          db, input, bindings }                    ctx = createContext(input, store,
+ start timer (--timeout)                                   synthesize, bindings, record)
+ pause  ◀── { type: 'synthesize', id, call,  ◀──── await handle(input, ctx)
+              db, request }                         │
+ World.synthesize(...)                              │
+ resume ── { type: 'synthesized', … }        ──▶   │
+ settle ◀── { type: 'done', id, ok,           ◀────┘ body | HttpError(status) | throw
+              value|status|fault, used[] }          used: every (collection, type, idField)
+ release(db) ── { type: 'close', db }         ──▶ close a snapshot's connection
 ```
 
-The worker gets an empty environment, so no credentials are in reach. It does
-not get a network wall: handlers come from the model this process asked, and
-are judged before they are kept.
+`runtime.ts` and `store.ts` load inside the worker, so they import only `node:`
+built-ins and `randexp`, and use only erasable TypeScript.
 
-[runtime.ts](./src/runtime.ts) and [store.ts](./src/store.ts) are loaded inside
-the worker, so they import only `node:` built-ins and `randexp`, and use only
-erasable TypeScript.
+## 9. Bindings
 
-## 8. One world, several processes
+```
+handler names a type ── ctx.lookup('Message', id) ──▶ resolve():
+                                                        bound?   → binding's collection, idField
+                                                        unbound? → collectionFor('Message') = 'messages'
+                                                        lowercase name → a collection; its type
+                                                                         from the bindings, if any
+judge: placement(used) ──▶ conflicts? refused : new pairs bound on a pass
+cache: stored { source, meta, bindings } ──▶ on a hit, any disagreement → miss (rebuilt);
+                                              a cleared store is refilled from its handlers
+world agent: save_records({ type }) ──▶ binds a type nobody has used yet
+```
+
+Bindings are add-only and live in the machine-wide cache (`gym-bindings`), keyed
+by the documents' type names — the same documents share them from anywhere, like
+their handlers.
+
+## 10. Several processes
 
 ```
  zen gym serve mail.yaml --story w.md        zen gym serve calendar.yaml --story w.md
-          │ port 8787                                   │ port 8788
-          ▼                                             ▼
-   story digest = sha256(story content) ──── same ──── story digest
-          │                                             │
-          └────────────▶ <cache>/worlds/story-<digest>.sqlite ◀────┘
-                         (WAL, busy_timeout, one connection per process,
-                          one more per worker)
-            table records(collection, id, data, updated_at)
-            table meta(key, value)   populated:<collection>:<where>
+          │ :8787                                      │ :8788
+          ▼                                            ▼
+   <cache>/worlds/story-<digest(w.md)>.sqlite  ◀── same file ──▶  (or --world <name|file>)
+       records(collection, id, data, updated_at)
+       meta(key, value):  populated:<collection>:<where>
+                          lease:fill:<collection>:<where|ids>     one world agent per fill
+ ~/.zenera/neo/cache/gym-handler/leases.sqlite:
+                          lease:build:<key>                       one handler build per key
+ ~/.zenera/neo/cache/gym-bindings/…                               one set of bindings
 ```
 
-`--state <file>` names the world explicitly; with no story there is one
-`default.sqlite`; `--reset` empties it. World-agent runs are serialised per
-collection within a process; two processes filling the same collection at the
-same moment can both write.
+A lease lapses when its time is up or its process is gone, so a crash never
+costs anyone the whole lease.
 
-## 9. On disk
+## 11. On disk
 
 ```
 ~/.zenera/neo/
-├── gym.json                         the stored model (zen gym model)
-├── cache/gym-generator/<ab>/<sha>.json
-│                                    handler source + meta, keyed by operation shape
-└── gym/                             --cache (default)
-    ├── generators/
-    │   ├── package.json             {"type":"module"} for the handlers
-    │   └── <key>/handler.ts         what the worker runs (a copy of the cache)
-    ├── worlds/story-<digest>.sqlite the worlds (data, kept by cache clear)
-    ├── scratch/                     judging snapshots, deleted after each test
-    ├── reports/<time>-<agent>-<label>.html
-    │                                every agent run (@zenera/neo report)
-    ├── builds/<time>-build-….md     failed or retried builds, with every version
-    └── requests/<time>-….md         request dumps (or --requests-dir)
+├── gym.json                          stored chat and embedding models
+├── cache/
+│   ├── gym-handler/<ab>/<sha>.json   handler source + meta + bindings used, by operation key
+│   ├── gym-handler/leases.sqlite     build leases
+│   ├── gym-bindings/<ab>/<sha>.json  type → collection, by the documents' type names
+│   ├── vectors/, docs-parse/         @zenera/rag's shared caches (docs embeddings, parses)
+└── gym/                              --cache (default)
+    ├── handlers/<key>/handler.ts     what the worker runs (a copy of the cache)
+    ├── indexes/docs-<digest>-<model>/  the docs index
+    ├── worlds/<name>.sqlite          worlds (data: `cache clear` keeps them)
+    ├── scratch/                      judging snapshots, deleted after each test
+    ├── reports/<time>-<agent>-<label>.html   every agent run
+    ├── builds/<time>-build-….md      failed or retried builds
+    └── requests/<time>-….md          request dumps (or --requests-dir)
 ```
 
-## 10. Cache identity
+## 12. Keys
 
-`Operation.key` in [spec.ts](./src/spec.ts) hashes what a handler must
-produce: method, path, operationId, parameters, request and response schemas,
-paging shape and `GENERATOR_RULES_VERSION`. Not the story, and not the file the
-document came from. Editing a spec yields a new key; changing the handler
-contract (`prompt.ts`, `runtime.ts`) is a version bump. Nothing is ever
-invalidated, because nothing is ever looked up under a stale key.
+```
+handler   = sha256(CONTRACT_VERSION, method, path, operationId, parameters,
+                   request and response schemas without annotations, paging)
+            + the bindings it used, checked on every hit
+bindings  = sha256(the documents' type names)
+docs idx  = sha256(docs content) + embedding model
+world     = --world <name|file>  |  sha256(story content)  |  default
+not keyed : the model, the story and docs (for handlers), the file a spec came from
+```
 
-## 11. What happens when things fail
+Nothing is ever invalidated: a changed input is a different key, and the old
+artefact is simply never looked up again.
 
-| What failed                                      | Answer                                      | Regenerates the handler?           |
-| ------------------------------------------------ | ------------------------------------------- | ---------------------------------- |
-| Request does not match the document              | 400 / 404 / 405                             | no                                 |
-| Handler build never passed the judge             | 501 + build report link                     | no (remembered)                    |
-| Model unreachable while building                 | 500                                         | no (retried next request)          |
-| Handler threw, timed out, or answered off-schema | rebuilt with a repair brief, then run again | yes, up to `--regen-limit` per URL |
-| Handler chose `ctx.fail(status)`                 | that status and body                        | no                                 |
-| World agent failed inside a handler              | 502 `WORLD_AGENT_FAILED`                    | no                                 |
-| World agent saved too few records                | sampled records fill in                     | no                                 |
-| Worker could not start                           | 503                                         | no                                 |
-| Client loops past the last page                  | token cut, items emptied                    | no                                 |
+## 13. When things fail
+
+| What failed                                      | Answer                        | Rebuilds the handler?              |
+| ------------------------------------------------ | ----------------------------- | ---------------------------------- |
+| Request does not match the document              | 400 / 404 / 405               | no                                 |
+| Two documents define the same route              | refuses to start, names both  | —                                  |
+| Handler build never passed the judge             | 501 + build report link       | no (remembered for the process)    |
+| Model unreachable while building                 | 500                           | no (retried on the next request)   |
+| Handler threw, timed out, or answered off-schema | rebuilt with a repair brief   | yes, up to `--regen-limit` per URL |
+| Handler chose `ctx.fail(status)`                 | that status and body          | no                                 |
+| World agent failed inside a handler              | 502 `WORLD_AGENT_FAILED`      | no                                 |
+| World agent made fewer than required             | sampled records fill in       | no                                 |
+| A made record points at nothing                  | reported in the narration     | no                                 |
+| Embedding the docs failed                        | docs searched by wording only | —                                  |
+| Worker could not start                           | 503                           | no                                 |
+| Client loops past the last page                  | token cut, items emptied      | no                                 |

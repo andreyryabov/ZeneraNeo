@@ -54,6 +54,19 @@ export interface SynthesisRequest {
 
 export type Synthesize = (request: SynthesisRequest) => Promise<Record<string, unknown>[]>;
 
+/** Key order is an accident of how a handler wrote it; it must not change a key. */
+function canonical(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.map(canonical);
+    }
+    if (value !== null && typeof value === 'object') {
+        return Object.keys(value)
+            .sort()
+            .map((k) => [k, canonical((value as Record<string, unknown>)[k])]);
+    }
+    return value;
+}
+
 /** Where accounts live, and the id of the one the API is called as. */
 export const ACCOUNTS = 'accounts';
 
@@ -63,10 +76,7 @@ export const ACCOUNTS = 'accounts';
  * only message is the one the client just sent is not an inbox yet.
  */
 export function populatedKey(collection: string, where?: Record<string, unknown>): string {
-    const pins = Object.keys(where ?? {})
-        .sort()
-        .map((k) => [k, String(where![k])]);
-    return `populated:${collection}:${JSON.stringify(pins)}`;
+    return `populated:${collection}:${JSON.stringify(canonical(where ?? {}))}`;
 }
 export const OWNER = '@me';
 
@@ -99,11 +109,14 @@ export interface PageOptions {
 }
 
 export interface HandlerContext {
-    /** the shared world: `ctx.db.collection('messages').get(id)` */
+    /**
+     * The shared world, by type: `ctx.db.collection('Message').get(id)`. A
+     * lowercase name is taken as a collection name instead.
+     */
     db: { collection<T = Record<string, unknown>>(name: string): Collection<T> };
     /** a record by id, made up by the world agent if the world does not have it */
     lookup<T = Record<string, unknown>>(
-        collection: string,
+        type: string,
         id: string | number,
         options?: Omit<SynthesisRequest, 'collection' | 'ids' | 'count'>,
     ): Promise<T>;
@@ -112,7 +125,7 @@ export interface HandlerContext {
      * `min` (default 1) matching `where`. The way a list endpoint starts.
      */
     ensure<T = Record<string, unknown>>(
-        collection: string,
+        type: string,
         options?: Omit<SynthesisRequest, 'collection' | 'ids'>,
     ): Promise<T[]>;
     /** asks the world agent for new records directly; they are stored before this returns */
@@ -150,11 +163,82 @@ export class HttpError extends Error {
     }
 }
 
+/** Where a type's records live, and which property holds their id. */
+export interface Binding {
+    collection: string;
+    idField: string;
+}
+
+export type Bindings = Readonly<Record<string, Binding>>;
+
+/** One collection a handler touched, and as which type. */
+export interface Use {
+    collection: string;
+    type?: string;
+    idField?: string;
+}
+
+/** The type gym gives the owner account; no document declares one. */
+export const OWNER_TYPE = '@owner';
+
+/** A name that starts with a capital is a type: `Message`, not `messages`. */
+export const isTypeName = (name: string): boolean => /^[A-Z]/.test(name);
+
+/**
+ * The collection an unbound type gets: `Message` → `messages`,
+ * `PolicyTransportZone` → `policy_transport_zones`. Only ever a first guess —
+ * once bound, the binding is the answer.
+ */
+export function collectionFor(type: string): string {
+    const snake = type
+        .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+        .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
+        .replace(/[^A-Za-z0-9]+/g, '_')
+        .toLowerCase()
+        .replace(/^_+|_+$/g, '');
+    return /s$/.test(snake) ? snake : `${snake}s`;
+}
+
+/**
+ * A name as a handler wrote it, made concrete. A type name finds its
+ * collection through the bindings; a collection name finds its type the same
+ * way, backwards. Whatever was asked is reported to `record`, which is how the
+ * judge learns which types a handler stores where.
+ */
+export function resolve(
+    name: string,
+    options: { type?: string; idField?: string },
+    bindings: Bindings,
+): Required<Pick<Use, 'collection'>> & Use {
+    if (name === ACCOUNTS) {
+        return { collection: ACCOUNTS, type: OWNER_TYPE, idField: 'id' };
+    }
+    if (isTypeName(name)) {
+        const bound = bindings[name];
+        return {
+            collection: bound?.collection ?? collectionFor(name),
+            type: name,
+            idField: options.idField ?? bound?.idField,
+        };
+    }
+    const type =
+        options.type ?? Object.entries(bindings).find(([, b]) => b.collection === name)?.[0];
+    const bound = type ? bindings[type] : undefined;
+    return { collection: name, type, idField: options.idField ?? bound?.idField };
+}
+
 export function createContext(
     input: HandlerRequest,
     store: WorldStore,
     synthesize: Synthesize,
+    bindings: Bindings = {},
+    record: (use: Use) => void = () => {},
 ): HandlerContext {
+    const at = (name: string, options: { type?: string; idField?: string } = {}) => {
+        const where = resolve(name, options, bindings);
+        record(where);
+        return where;
+    };
     const random = mulberry32(input.seed || 1);
     const int = (min: number, max: number): number => min + Math.floor(random() * (max - min + 1));
     const fromPattern = (pattern: string): string => {
@@ -165,21 +249,23 @@ export function createContext(
     };
 
     const ctx: HandlerContext = {
-        db: { collection: (name) => store.collection(name) },
-        async lookup(collection, id, options = {}) {
+        db: { collection: (name) => store.collection(at(name).collection) },
+        async lookup(name, id, options = {}) {
+            const { collection, type, idField } = at(name, options);
             const col = store.collection(collection);
             const found = col.get(id);
             if (found !== undefined) {
                 return found as never;
             }
-            await synthesize({ ...options, collection, ids: [id] });
+            await synthesize({ ...options, collection, type, idField, ids: [id] });
             const made = col.get(id);
             if (made === undefined) {
                 throw new Error(`the world agent did not create ${collection}/${String(id)}`);
             }
             return made as never;
         },
-        async ensure(collection, options = {}) {
+        async ensure(name, options = {}) {
+            const { collection, type, idField } = at(name, options);
             const min = options.min ?? 1;
             const col = store.collection(collection);
             const matching = (): Record<string, unknown>[] =>
@@ -190,6 +276,8 @@ export function createContext(
                 await synthesize({
                     ...options,
                     collection,
+                    type,
+                    idField,
                     min,
                     populate,
                     count: options.count ?? (populate ? Math.max(min, 8) : Math.max(min - have, 5)),
@@ -197,7 +285,10 @@ export function createContext(
             }
             return matching() as never;
         },
-        synthesize,
+        synthesize: (request) => {
+            const { collection, type, idField } = at(request.collection, request);
+            return synthesize({ ...request, collection, type, idField });
+        },
         owner: () =>
             ctx.lookup<Account>(ACCOUNTS, OWNER, {
                 hint: 'the person whose mailbox, calendar and data this API serves',
@@ -220,11 +311,35 @@ export function createContext(
 }
 
 /** Every key in `where` present on the record with an equal value, compared as text. */
+/** Every key in `where` matched by the record: see `same`. */
 export function matches(record: Record<string, unknown>, where?: Record<string, unknown>): boolean {
-    if (!where) {
-        return true;
+    return !where || same(record, where);
+}
+
+/**
+ * Whether a value is what was asked for. Scalars compare as text (a path
+ * segment is text, the stored id may be a number); an object asks for a subset
+ * of the same shape; a list asks for every item it names; and a scalar asked
+ * of a list asks whether the list holds it — `{ labelIds: 'INBOX' }` finds the
+ * messages labelled INBOX.
+ */
+export function same(actual: unknown, wanted: unknown): boolean {
+    if (wanted !== null && typeof wanted === 'object') {
+        if (Array.isArray(wanted)) {
+            return Array.isArray(actual) && wanted.every((w) => actual.some((a) => same(a, w)));
+        }
+        return (
+            actual !== null &&
+            typeof actual === 'object' &&
+            Object.entries(wanted).every(([k, v]) =>
+                same((actual as Record<string, unknown>)[k], v),
+            )
+        );
     }
-    return Object.entries(where).every(([k, v]) => String(record[k]) === String(v));
+    if (Array.isArray(actual)) {
+        return actual.some((a) => same(a, wanted));
+    }
+    return actual !== undefined && String(actual) === String(wanted);
 }
 
 /**

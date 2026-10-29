@@ -14,7 +14,7 @@ const addFormats = addFormatsDefault as unknown as (ajv: Ajv2020) => void;
 //
 // One Ajv instance, one dialect, two customers. Requests are checked so a
 // caller learns it sent the wrong thing here rather than three layers into a
-// generated body; responses are checked so a generator that drifts from its
+// generated body; responses are checked so a handler that drifts from its
 // schema is caught by the build loop instead of by whoever is using the mock.
 //
 // `coerceTypes` is on and is not a shortcut. A path segment and a query string

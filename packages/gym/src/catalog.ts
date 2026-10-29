@@ -1,3 +1,4 @@
+import type { AnyTool } from '@zenera/neo';
 import addFormatsDefault from 'ajv-formats';
 import { Ajv2020, type ValidateFunction } from 'ajv/dist/2020.js';
 import * as rag from '@zenera/rag';
@@ -171,6 +172,132 @@ export class Catalog {
         return out.join('\n');
     }
 
+    /**
+     * `list_api`, `grep_api`, `trace_api` and `find_types_with_property` over
+     * the graph — exact, and needing no embedder. `describe_types` is gym's own.
+     */
+    tools(): AnyTool[] {
+        return rag
+            .graphTools({
+                graph: this.graph,
+                sources: this.corpus.docs.map((d) => d.source),
+                schemas: () => Promise.resolve(this.types),
+            })
+            .filter((t) => t.name !== 'describe_types');
+    }
+
+    /**
+     * The type of the records an operation is about: its response type, or —
+     * when that is a list envelope with no identity of its own — the type its
+     * list holds. `Tier0ListResult` is about `Tier0`; `Event` is about `Event`.
+     */
+    itemType(operation: Operation): string | undefined {
+        const op = this.find(operation);
+        const schema = op?.responses[0]?.schema ?? op?.requestBody?.schema;
+        const root =
+            rag.refName(schema) ?? rag.refName(isObject(schema) ? schema.items : undefined);
+        const type = root ? this.types[root] : undefined;
+        if (!root || !type) {
+            return undefined;
+        }
+        const properties = isObject(type.properties) ? type.properties : {};
+        if (Object.keys(properties).some((k) => IDENTITY.test(k))) {
+            return root;
+        }
+        const lists = Object.entries(properties)
+            .map(([name, p]) => [name, isObject(p) ? rag.refName(p.items) : undefined] as const)
+            .filter((entry): entry is readonly [string, string] => Boolean(entry[1]));
+        const preferred = lists.find(([name]) => LIST_NAMES.test(name)) ?? lists[0];
+        return preferred?.[1] ?? root;
+    }
+
+    /**
+     * A type's own properties and the ones it inherits through `allOf`, which is
+     * how most documents spell inheritance — an NSX `Tier0` declares little of
+     * what it holds itself.
+     */
+    properties(type: string): { name: string; schema: rag.Schema; required: boolean }[] {
+        const out = new Map<string, { name: string; schema: rag.Schema; required: boolean }>();
+        const visit = (schema: unknown, depth: number): void => {
+            if (!isObject(schema) || depth > 6) {
+                return;
+            }
+            const ref = rag.refName(schema);
+            if (ref) {
+                visit(this.types[ref], depth + 1);
+                return;
+            }
+            for (const member of Array.isArray(schema.allOf) ? schema.allOf : []) {
+                visit(member, depth + 1);
+            }
+            const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+            for (const [name, sub] of Object.entries(
+                isObject(schema.properties) ? schema.properties : {},
+            )) {
+                if (isObject(sub)) {
+                    out.set(name, { name, schema: sub, required: required.has(name) });
+                }
+            }
+        };
+        visit(this.types[type], 0);
+        return [...out.values()];
+    }
+
+    /** The property a type's records are known by. */
+    idField(type: string): string {
+        const names = this.properties(type).map((p) => p.name);
+        return names.find((n) => n === 'id') ?? names.find((n) => IDENTITY.test(n)) ?? 'id';
+    }
+
+    /**
+     * Fields that point at other entities, judged by name: `*_id`, `*_path`,
+     * `*Ref`, `parent`, `owner`… Names rather than the schema because the
+     * schema rarely says: an NSX `connectivity_path` is a string, and only its
+     * name and its description say it names a Tier-1.
+     */
+    references(type: string): { name: string; signature: string; doc: string }[] {
+        const own = this.idField(type);
+        return this.properties(type)
+            .filter((p) => p.name !== own && REFERENCE.test(p.name) && stringy(p.schema))
+            .map((p) => ({
+                name: p.name,
+                signature: this.signature(p.schema),
+                doc: oneLine(typeof p.schema.description === 'string' ? p.schema.description : ''),
+            }));
+    }
+
+    /**
+     * The type a reference field most likely names, from the field's name:
+     * `labelIds` → `Label`, `transport_zone_path` → `PolicyTransportZone`. A
+     * field that names no type — a `threadId` where threads are not a schema —
+     * has no referent, and cannot dangle.
+     */
+    referent(field: string): string | undefined {
+        const base = squash(field.replace(REFERENCE, ''));
+        if (!base) {
+            return undefined;
+        }
+        const types = Object.keys(this.types);
+        return (
+            types.find((t) => squash(t) === base) ??
+            types.filter((t) => squash(t).endsWith(base)).sort((a, b) => a.length - b.length)[0]
+        );
+    }
+
+    /** Every operation that accepts or returns a type, as method and path. */
+    carriers(type: string, maxHops = 4): { method: string; path: string; direction: string }[] {
+        const id = `Type:${type}`;
+        if (!this.graph.hasNode(id)) {
+            return [];
+        }
+        const traced = rag.traceNodes(this.graph, { ids: [id], maxHops, maxRoutes: 100 });
+        return (traced.traces[0]?.routes ?? []).map((r) => ({
+            method: r.attributes.httpMethod.toLowerCase(),
+            path: r.attributes.path.split('?')[0]!,
+            direction: r.direction,
+        }));
+    }
+
     /** The component types a response carries, nearest first: the candidates for a collection. */
     responseTypes(operation: Operation): string[] {
         const op = this.find(operation);
@@ -188,6 +315,31 @@ function stripSchemaKeys(types: Record<string, rag.Schema>): Record<string, rag.
         }),
     );
 }
+
+/** A property that makes an object a record rather than an envelope. */
+const IDENTITY = /^(id|uid|uuid|_id|key|name)$/i;
+
+/** A field named for the thing it points at. */
+const REFERENCE =
+    /(_id|Id|_ids|Ids|_path|Path|_paths|Paths|_ref|Ref|_refs|Refs|_uri|Uri)$|^(parent|owner|organizer|assignee|author|creator|manager)$/;
+
+const squash = (name: string): string => name.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+/** A string, or a list of them: what an id or a path is written as. */
+function stringy(schema: rag.Schema): boolean {
+    const type = schema.type;
+    if (type === 'string' || (Array.isArray(type) && type.includes('string'))) {
+        return true;
+    }
+    const items = schema.items;
+    return type === 'array' && isObject(items) && items.type === 'string';
+}
+
+/** What an envelope usually calls its list. */
+const LIST_NAMES = /^(items|results|data|records|entries|values|objects|list|content)$/i;
+
+const isObject = (v: unknown): v is Record<string, unknown> =>
+    typeof v === 'object' && v !== null && !Array.isArray(v);
 
 const pointer = (name: string): string =>
     encodeURIComponent(name.replace(/~/g, '~0').replace(/\//g, '~1'));

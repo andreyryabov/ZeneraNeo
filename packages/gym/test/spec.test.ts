@@ -1,3 +1,5 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -147,6 +149,56 @@ describe('loading documents', () => {
 });
 
 describe('cache keys', () => {
+    const withUser = async (user: string): Promise<string> => {
+        const dir = mkdtempSync(join(tmpdir(), 'gym-key-'));
+        const file = join(dir, 'api.yaml');
+        writeFileSync(
+            file,
+            [
+                'openapi: 3.0.3',
+                'info: { title: T, version: 1.0.0 }',
+                'paths:',
+                '    /users/{id}:',
+                '        get:',
+                '            operationId: getUser',
+                '            parameters: [{ name: id, in: path, required: true, schema: { type: string } }]',
+                '            responses:',
+                "                '200':",
+                '                    description: ok',
+                '                    content:',
+                "                        application/json: { schema: { $ref: '#/components/schemas/User' } }",
+                'components:',
+                '    schemas:',
+                `        User: ${user}`,
+            ].join('\n'),
+        );
+        try {
+            return (await loadSpec(file))[0]!.key;
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    };
+
+    // Rewording a field's documentation must not cost a rebuild of every
+    // handler that returns it.
+    it('ignore descriptions, titles and examples', async () => {
+        const plain = await withUser('{ type: object, properties: { id: { type: string } } }');
+        const documented = await withUser(
+            '{ type: object, title: A user, description: Someone, example: { id: x }, ' +
+                'properties: { id: { type: string, description: The id, x-internal: true } } }',
+        );
+        expect(documented).toBe(plain);
+    });
+
+    // ...but a *property* called `description` is shape.
+    it('keep a property that happens to be called description', async () => {
+        const plain = await withUser('{ type: object, properties: { id: { type: string } } }');
+        const more = await withUser(
+            '{ type: object, properties: { id: { type: string }, description: { type: string } } }',
+        );
+        expect(more).not.toBe(plain);
+    });
+
     it('are a function of shape, so two loads agree', async () => {
         const a = await loadSpec(spec('petstore.yaml'));
         const b = await loadSpec(spec('petstore.yaml'));

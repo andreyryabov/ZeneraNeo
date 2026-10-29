@@ -1,10 +1,11 @@
 import { loose, matcher, PatternError, tool, type AnyTool } from '@zenera/neo';
-import type { NodeKind } from './graph.ts';
+import type { ApiGraph, NodeKind } from './graph.ts';
 import { toTypeScript } from './hydrate.ts';
 import { fields, grepNodes, listNodes, propertyCount, type Row } from './lookup.ts';
 import { FORMATS, isFormat, present, type Format } from './present.ts';
 import { isEmpty, parseQuery, QueryError } from './query.ts';
 import { sourceTag } from './render.ts';
+import type { Schema } from './schema.ts';
 import type { SchemaIndex, SchemaQuery } from './search.ts';
 import { stitch, type Subgraph } from './subgraph.ts';
 import { chainOf, traceNodes } from './trace.ts';
@@ -53,6 +54,19 @@ export interface SchemaToolOptions {
     docs?: boolean;
     /** name the document each answer came from; on by default past one document */
     source?: boolean;
+}
+
+/**
+ * An API graph without an index around it: what every tool but `search_api`
+ * needs. A caller that built the graph itself — from the documents, in memory —
+ * gets the exact tools without paying for vectors it would never search.
+ */
+export interface GraphSource {
+    graph: ApiGraph;
+    /** the documents' names, as each node's `source` says them */
+    sources: readonly string[];
+    /** the raw schemas by type id, for TypeScript declarations */
+    schemas(): Promise<Readonly<Record<string, Schema>>>;
 }
 
 export function schemaTools<TCtx = unknown>(
@@ -171,6 +185,27 @@ export function schemaTools<TCtx = unknown>(
         },
     });
 
+    return [
+        searchApi,
+        ...graphTools<TCtx>(
+            { graph: index.graph, sources: names, schemas: () => index.schemas() },
+            options,
+        ),
+    ];
+}
+
+/**
+ * The five exact tools — no ranking, no embedder — over a graph alone:
+ * `describe_types`, `find_types_with_property`, `list_api`, `grep_api` and
+ * `trace_api`. `schemaTools` is these plus `search_api`.
+ */
+export function graphTools<TCtx = unknown>(
+    api: GraphSource,
+    options: SchemaToolOptions = {},
+): AnyTool<TCtx>[] {
+    const docs = options.docs ?? true;
+    const source = options.source ?? api.sources.length > 1;
+
     const describeTypes = tool<{ names: string[]; only?: string[] }, TCtx>({
         name: 'describe_types',
         group: GROUP,
@@ -188,7 +223,7 @@ export function schemaTools<TCtx = unknown>(
             additionalProperties: false,
         },
         execute: async ({ names, only }) => {
-            const known = names.filter((name) => index.graph.hasNode(`Type:${name}`));
+            const known = names.filter((name) => api.graph.hasNode(`Type:${name}`));
             const missing = names.filter((name) => !known.includes(name));
             if (known.length === 0) {
                 return {
@@ -196,9 +231,9 @@ export function schemaTools<TCtx = unknown>(
                     hint: 'search for it first',
                 };
             }
-            const schemas = await index.schemas();
+            const schemas = await api.schemas();
             const sub = subgraphOf(
-                index,
+                api.graph,
                 known.map((name) => `Type:${name}`),
             );
             const code = toTypeScript(sub, schemas, { docs, onlyHits: false });
@@ -233,11 +268,11 @@ export function schemaTools<TCtx = unknown>(
             const wanted = property.toLowerCase();
             const candidates: Record<string, unknown>[] = [];
 
-            index.graph.forEachNode((id, a) => {
+            api.graph.forEachNode((id, a) => {
                 if (a.kind !== 'property' || a.name.toLowerCase() !== wanted || !a.parent) {
                     return;
                 }
-                const owner = index.graph.getNodeAttributes(`Type:${a.parent}`) ?? a;
+                const owner = api.graph.getNodeAttributes(`Type:${a.parent}`) ?? a;
                 if (direction && direction !== 'any' && !onSide(owner.direction, direction)) {
                     return;
                 }
@@ -334,7 +369,7 @@ export function schemaTools<TCtx = unknown>(
             }
             let result;
             try {
-                result = listNodes(index.graph, {
+                result = listNodes(api.graph, {
                     kind: subject,
                     name: name ? [loose(name, { regex })] : undefined,
                     path: path ? [loose(path, { regex })] : undefined,
@@ -349,7 +384,7 @@ export function schemaTools<TCtx = unknown>(
             return {
                 found: result.found,
                 truncated: result.truncated,
-                [PLURALS[subject]]: result.rows.map((r) => line(index.graph, subject, r, source)),
+                [PLURALS[subject]]: result.rows.map((r) => line(api.graph, subject, r, source)),
             };
         },
     });
@@ -410,7 +445,7 @@ export function schemaTools<TCtx = unknown>(
         execute: async ({ pattern, regex, kind, name, path, source: only, limit }) => {
             let result;
             try {
-                result = grepNodes(index.graph, matcher(pattern, { regex }), {
+                result = grepNodes(api.graph, matcher(pattern, { regex }), {
                     kinds: kind ? [kind] : undefined,
                     name: name ? [loose(name)] : undefined,
                     path: path ? [loose(path)] : undefined,
@@ -497,10 +532,10 @@ export function schemaTools<TCtx = unknown>(
         execute: async ({ of: wanted, kind, direction, source: only, limit, routes }) => {
             let result;
             try {
-                result = traceNodes(index.graph, {
-                    ids: index.graph.hasNode(wanted) ? [wanted] : undefined,
+                result = traceNodes(api.graph, {
+                    ids: api.graph.hasNode(wanted) ? [wanted] : undefined,
                     kinds: kind ? [kind as NodeKind] : undefined,
-                    name: index.graph.hasNode(wanted) ? undefined : [loose(wanted)],
+                    name: api.graph.hasNode(wanted) ? undefined : [loose(wanted)],
                     source: only,
                     limit: Math.min(limit ?? DEFAULT_TRACES, MAX_TRACES),
                     maxRoutes: Math.min(routes ?? DEFAULT_ROUTES, MAX_ROWS),
@@ -529,14 +564,14 @@ export function schemaTools<TCtx = unknown>(
                                 `${r.attributes.httpMethod} ${r.attributes.path}  ` +
                                 `${r.attributes.name}  (${r.direction})${
                                     source ? `  ${sourceTag(r.attributes.source)}` : ''
-                                }  ${chainOf(index.graph, t.id, r)}`,
+                                }  ${chainOf(api.graph, t.id, r)}`,
                         ),
                 })),
             };
         },
     });
 
-    return [searchApi, describeTypes, findTypesWithProperty, listApi, grepApi, traceApi];
+    return [describeTypes, findTypesWithProperty, listApi, grepApi, traceApi];
 }
 
 // ---------------------------------------------------------------------------
@@ -555,7 +590,7 @@ const PLURALS: Record<NodeKind, string> = {
 };
 
 /** One row, as the line a model reads rather than an object it has to walk. */
-function line(graph: SchemaIndex['graph'], kind: NodeKind, row: Row, source = false): string {
+function line(graph: ApiGraph, kind: NodeKind, row: Row, source = false): string {
     const from = source ? `  ${sourceTag(row.source)}` : '';
     if (kind === 'method') {
         return `${row.httpMethod} ${row.path}  ${row.name}${from}${row.doc ? ` — ${row.doc}` : ''}`;
@@ -583,9 +618,9 @@ function onSide(direction: string, wanted: string): boolean {
     return direction === wanted || direction === 'both';
 }
 
-function subgraphOf(index: SchemaIndex, ids: readonly string[]): Subgraph {
+function subgraphOf(graph: ApiGraph, ids: readonly string[]): Subgraph {
     const [first] = stitch(
-        index.graph,
+        graph,
         ids.map((id) => ({ id, term: id, field: 'describe', score: 1 })),
         { maxNodes: DEFAULT_MAX_NODES * ids.length },
     );

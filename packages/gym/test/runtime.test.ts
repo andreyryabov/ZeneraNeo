@@ -3,11 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Box, type SynthesizeHook } from '../src/box.ts';
-import type { GeneratorInput } from '../src/envelope.ts';
-import { createContext, page, populatedKey } from '../src/runtime.ts';
-import { statePath, WorldStore } from '../src/store.ts';
+import type { HandlerRequest } from '../src/runtime.ts';
+import { collectionFor, createContext, matches, page, populatedKey } from '../src/runtime.ts';
+import { worldPath, WorldStore } from '../src/store.ts';
 
-const input = (over: Partial<GeneratorInput> = {}): GeneratorInput => ({
+const input = (over: Partial<HandlerRequest> = {}): HandlerRequest => ({
     operationId: 'op',
     method: 'get',
     path: '/things',
@@ -99,13 +99,59 @@ describe('the world store', () => {
     });
 
     it('names one world per story, so processes given the same story share it', () => {
-        expect(statePath({ root: '/r', storyDigest: 'abc' })).toBe(
-            join('/r', 'worlds', 'story-abc.sqlite'),
-        );
-        expect(statePath({ root: '/r' })).toBe(join('/r', 'worlds', 'default.sqlite'));
-        expect(statePath({ root: '/r', state: '/x/w.sqlite', storyDigest: 'abc' })).toBe(
-            '/x/w.sqlite',
-        );
+        const at = (world?: string, storyDigest?: string): string =>
+            worldPath({ root: '/r', cwd: '/c', world, storyDigest });
+        expect(at(undefined, 'abc')).toBe(join('/r', 'worlds', 'story-abc.sqlite'));
+        expect(at()).toBe(join('/r', 'worlds', 'default.sqlite'));
+        expect(at('northwind', 'abc')).toBe(join('/r', 'worlds', 'northwind.sqlite'));
+        expect(at('./w.sqlite')).toBe(join('/c', 'w.sqlite'));
+        expect(at('/x/w.db')).toBe('/x/w.db');
+        expect(() => at('no spaces')).toThrow(/not a world name/);
+    });
+});
+
+describe('leases', () => {
+    let root: string;
+    let a: WorldStore;
+    let b: WorldStore;
+
+    beforeEach(() => {
+        root = mkdtempSync(join(tmpdir(), 'gym-lease-'));
+        a = new WorldStore(join(root, 'w.sqlite'));
+        b = new WorldStore(join(root, 'w.sqlite'));
+    });
+
+    afterEach(() => {
+        a.close();
+        b.close();
+        rmSync(root, { recursive: true, force: true });
+    });
+
+    const me = (tag: string): string => `${process.pid}:${tag}`;
+
+    it('go to one holder at a time, across connections', () => {
+        expect(a.claim('fill:x', me('a'), 60_000)).toBe(true);
+        expect(b.claim('fill:x', me('b'), 60_000)).toBe(false);
+        expect(a.claim('fill:x', me('a'), 60_000)).toBe(true);
+        a.release('fill:x', me('a'));
+        expect(b.claim('fill:x', me('b'), 60_000)).toBe(true);
+    });
+
+    it('cannot be given back by someone else', () => {
+        a.claim('fill:x', me('a'), 60_000);
+        b.release('fill:x', me('b'));
+        expect(b.claim('fill:x', me('b'), 60_000)).toBe(false);
+    });
+
+    it('lapse when their time is up', () => {
+        expect(a.claim('fill:x', me('a'), -1)).toBe(true);
+        expect(b.claim('fill:x', me('b'), 60_000)).toBe(true);
+    });
+
+    // A crash must not cost the next process the whole lease.
+    it('lapse when their process is gone', () => {
+        expect(a.claim('fill:x', '999999:dead', 60_000)).toBe(true);
+        expect(b.claim('fill:x', me('b'), 60_000)).toBe(true);
     });
 });
 
@@ -159,6 +205,49 @@ describe('the handler context', () => {
         expect(all.length).toBeGreaterThan(1);
         await ctx.ensure('messages', { min: 1 });
         expect(asked).toHaveLength(1);
+    });
+
+    it('finds a type through its binding, and records what was used', async () => {
+        const used: unknown[] = [];
+        store.collection('mail').put('m1', { id: 'm1' });
+        const ctx = createContext(
+            input() as never,
+            store,
+            synth,
+            { Message: { collection: 'mail', idField: 'id' } },
+            (u) => used.push(u),
+        );
+        expect(await ctx.lookup('Message', 'm1')).toEqual({ id: 'm1' });
+        ctx.db.collection('Event').put('e1', { id: 'e1' });
+        expect(store.collection('events').get('e1')).toEqual({ id: 'e1' });
+        ctx.db.collection('mail').count();
+        expect(used).toEqual([
+            { collection: 'mail', type: 'Message', idField: 'id' },
+            { collection: 'events', type: 'Event', idField: undefined },
+            { collection: 'mail', type: 'Message', idField: 'id' },
+        ]);
+    });
+
+    it('names a collection for a type nobody has bound', () => {
+        expect(collectionFor('Message')).toBe('messages');
+        expect(collectionFor('PolicyTransportZone')).toBe('policy_transport_zones');
+        expect(collectionFor('Tier0')).toBe('tier0s');
+        expect(collectionFor('Address')).toBe('address');
+    });
+
+    it('matches nested values, list members, and scalars as text', () => {
+        const event = { id: 7, organizer: { email: 'a@x.io', name: 'A' }, labels: ['INBOX', 'X'] };
+        expect(matches(event, { id: '7' })).toBe(true);
+        expect(matches(event, { organizer: { email: 'a@x.io' } })).toBe(true);
+        expect(matches(event, { organizer: { email: 'b@x.io' } })).toBe(false);
+        expect(matches(event, { labels: 'INBOX' })).toBe(true);
+        expect(matches(event, { labels: ['X', 'INBOX'] })).toBe(true);
+        expect(matches(event, { labels: ['SENT'] })).toBe(false);
+        expect(matches(event, { missing: 'undefined' })).toBe(false);
+        expect(populatedKey('events', { organizer: { email: 'a@x.io' } })).not.toBe(
+            populatedKey('events', { organizer: { email: 'b@x.io' } }),
+        );
+        expect(populatedKey('e', { b: 1, a: 2 })).toBe(populatedKey('e', { a: 2, b: 1 }));
     });
 
     it('seeds its randomness from the request', () => {

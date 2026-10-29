@@ -2,7 +2,7 @@ import { bold, cyan, dim, green, red, yellow } from '@zenera/cli/lib';
 import { mkdirSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import type { GeneratorInput } from './envelope.ts';
+import type { HandlerRequest } from './runtime.ts';
 
 // ---------------------------------------------------------------------------
 // Error Classification
@@ -14,11 +14,11 @@ export type ErrorKind =
     | 'CLIENT_ERROR: BAD_REQUEST'
     | 'CLIENT_ERROR: VALIDATION_FAILED'
     | 'CLIENT_ERROR: PAYLOAD_TOO_LARGE'
-    | 'GENERATOR_FAULT'
-    | 'GENERATOR_TIMEOUT'
-    | 'GENERATOR_SCHEMA_MISMATCH'
-    | 'GENERATOR_BUILD_FAILED'
-    | 'SANDBOX_UNAVAILABLE'
+    | 'HANDLER_FAULT'
+    | 'HANDLER_TIMEOUT'
+    | 'HANDLER_SCHEMA_MISMATCH'
+    | 'HANDLER_BUILD_FAILED'
+    | 'WORKER_UNAVAILABLE'
     | 'WORLD_AGENT_FAILED'
     | 'SERVER_INTERNAL_ERROR'
     | 'REGENERATION_LIMIT_HIT'
@@ -44,10 +44,10 @@ export interface RequestDumpData {
     responseBody?: unknown;
     errorKind?: ErrorKind;
     errorMessage?: string;
-    /** what to do about it, when the fix is not in the generator */
+    /** what to do about it, when the fix is not in the handler */
     hint?: string;
     stderr?: string;
-    /** the build report, when the answer was "there is no generator" */
+    /** the build report, when the answer was "there is no handler" */
     buildDump?: string;
     cacheStatus?: 'hit' | 'miss' | 'regenerated';
     regenerated?: boolean;
@@ -305,7 +305,7 @@ export interface BuildDumpData {
     /** the operation's cache key, which is also its directory in the box */
     key: string;
     limit: number;
-    /** rewriting a generator that already existed rather than writing the first */
+    /** rewriting a handler that already existed rather than writing the first */
     regeneration?: boolean;
     model?: string;
     attempts: readonly BuildAttempt[];
@@ -441,7 +441,7 @@ export function formatRegenerating(
     const ts = dim(`[${formatTimestamp(new Date())}]`);
     const op = operationId ? ` (${operationId})` : '';
     const r = reason ? ` [${reason}]` : '';
-    const head = `${ts} ${yellow(bold('[REGENERATING]'))} Error in generator for "${urlPath}"${op}${r}. Attempting regeneration (${attempt}/${limit})...`;
+    const head = `${ts} ${yellow(bold('[REGENERATING]'))} Error in handler for "${urlPath}"${op}${r}. Attempting regeneration (${attempt}/${limit})...`;
     const tail = stderr?.trim().split('\n').slice(-3).join('\n    ');
     return tail ? `${head}\n  ${dim('stderr:')} ${red(tail)}` : head;
 }
@@ -454,7 +454,7 @@ export function formatRegenerated(
 ): string {
     const ts = dim(`[${formatTimestamp(new Date())}]`);
     const op = operationId ? ` (${operationId})` : '';
-    return `${ts} ${green(bold('[REGENERATED]'))} Successfully regenerated generator for "${urlPath}"${op} in attempt ${attempt} (${durationMs}ms).`;
+    return `${ts} ${green(bold('[REGENERATED]'))} Successfully regenerated handler for "${urlPath}"${op} in attempt ${attempt} (${durationMs}ms).`;
 }
 
 // ---------------------------------------------------------------------------
@@ -462,7 +462,7 @@ export function formatRegenerated(
 // ---------------------------------------------------------------------------
 
 export interface ExampleRequest {
-    input: GeneratorInput;
+    input: HandlerRequest;
     output?: unknown;
 }
 
@@ -474,7 +474,7 @@ export class RequestHistory {
         this.#maxExamples = maxExamples;
     }
 
-    recordSuccess(operationKey: string, input: GeneratorInput, output: unknown): void {
+    recordSuccess(operationKey: string, input: HandlerRequest, output: unknown): void {
         let list = this.#successful.get(operationKey);
         if (!list) {
             list = [];

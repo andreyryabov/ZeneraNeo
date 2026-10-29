@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -183,6 +183,47 @@ export class WorldStore {
         return target;
     }
 
+    /**
+     * Takes a lease, or says someone else holds it. A lease is a row in `meta`
+     * claimed inside one immediate transaction, so two processes on the same
+     * file cannot both win; it lapses when its time is up or its process is
+     * gone, so a crash costs nobody a wait.
+     */
+    claim(key: string, owner: string, ttlMs: number): boolean {
+        const name = `lease:${key}`;
+        const now = Date.now();
+        this.#db.exec('BEGIN IMMEDIATE');
+        try {
+            const row = this.#db.prepare('SELECT value FROM meta WHERE key = ?').get(name) as
+                { value: string } | undefined;
+            const held = row ? (JSON.parse(row.value) as Lease) : undefined;
+            if (held && held.owner !== owner && held.until > now && alive(held.owner)) {
+                this.#db.exec('COMMIT');
+                return false;
+            }
+            this.#db
+                .prepare(
+                    'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+                )
+                .run(name, JSON.stringify({ owner, until: now + ttlMs } satisfies Lease));
+            this.#db.exec('COMMIT');
+            return true;
+        } catch (err) {
+            this.#db.exec('ROLLBACK');
+            throw err;
+        }
+    }
+
+    /** Gives a lease back, if it is still this owner's. */
+    release(key: string, owner: string): void {
+        const name = `lease:${key}`;
+        const row = this.#db.prepare('SELECT value FROM meta WHERE key = ?').get(name) as
+            { value: string } | undefined;
+        if (row && (JSON.parse(row.value) as Lease).owner === owner) {
+            this.#db.prepare('DELETE FROM meta WHERE key = ?').run(name);
+        }
+    }
+
     /** Throws away every entity, keeping the file and its schema. */
     reset(): void {
         this.#db.exec('DELETE FROM records; DELETE FROM meta;');
@@ -204,17 +245,109 @@ export class WorldStore {
 
 const db = (store: WorldStore): DatabaseSync => store.raw;
 
+interface Lease {
+    /** `<pid>:<anything>`, so a lease outlives nobody's process */
+    owner: string;
+    /** epoch ms */
+    until: number;
+}
+
+/** A lease owner `<pid>:…` whose process still runs; anything else is taken as alive. */
+function alive(owner: string): boolean {
+    const pid = Number(owner.split(':')[0]);
+    if (!Number.isInteger(pid) || pid <= 0) {
+        return true;
+    }
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (err) {
+        return (err as NodeJS.ErrnoException).code === 'EPERM';
+    }
+}
+
+/** A lease owner for this process. */
+export const leaseOwner = (): string => `${process.pid}:${Math.random().toString(36).slice(2, 10)}`;
+
+/** A world named rather than given as a path: letters, digits, `.`, `_`, `-`. */
+const WORLD_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
 /**
- * Where the world lives. `--state` wins; otherwise a story names its own file,
- * keyed by what the story says, so two processes handed the same story share
- * one world without being told to; with neither, there is one default world.
+ * Where the world lives. `--world` wins: a name is a file under
+ * `<root>/worlds`, anything that looks like a path is that path. Otherwise the
+ * story names its own world, keyed by what the story says, so two processes
+ * handed the same story share one world without being told to; with neither,
+ * there is one default world.
  */
-export function statePath(opts: { root: string; state?: string; storyDigest?: string }): string {
-    if (opts.state) {
-        return resolve(opts.state);
+export function worldPath(opts: {
+    root: string;
+    cwd: string;
+    world?: string;
+    storyDigest?: string;
+}): string {
+    const named = opts.world?.trim();
+    if (named) {
+        if (/[\\/]/.test(named) || /\.(sqlite|db)$/i.test(named)) {
+            return resolve(opts.cwd, named);
+        }
+        if (!WORLD_NAME.test(named)) {
+            throw new Error(
+                `"${named}" is not a world name: use letters, digits, ".", "_" and "-", or a path`,
+            );
+        }
+        return join(worldsDir(opts.root), `${named}.sqlite`);
     }
     const name = opts.storyDigest ? `story-${opts.storyDigest.slice(0, 16)}` : 'default';
-    return join(opts.root, 'worlds', `${name}.sqlite`);
+    return join(worldsDir(opts.root), `${name}.sqlite`);
+}
+
+export const worldsDir = (root: string): string => join(root, 'worlds');
+
+export interface WorldFile {
+    name: string;
+    path: string;
+    bytes: number;
+    usedAt: Date;
+    collections: CollectionSummary[];
+}
+
+/** Every world under `<root>/worlds`, most recently used first. */
+export function listWorlds(root: string): WorldFile[] {
+    const dir = worldsDir(root);
+    let names: string[];
+    try {
+        names = readdirSync(dir).filter((n) => n.endsWith('.sqlite'));
+    } catch {
+        return [];
+    }
+    return names
+        .map((file): WorldFile => {
+            const path = join(dir, file);
+            const info = statSync(path);
+            let collections: CollectionSummary[] = [];
+            try {
+                const store = new WorldStore(path);
+                collections = store.collections();
+                store.close();
+            } catch {
+                // unreadable: listed, with nothing in it
+            }
+            return {
+                name: file.replace(/\.sqlite$/, ''),
+                path,
+                bytes: info.size,
+                usedAt: info.mtime,
+                collections,
+            };
+        })
+        .sort((a, b) => b.usedAt.getTime() - a.usedAt.getTime());
+}
+
+/** Deletes a world and the journal files SQLite keeps beside it. */
+export function removeWorld(path: string): void {
+    for (const suffix of ['', '-wal', '-shm']) {
+        rmSync(`${path}${suffix}`, { force: true });
+    }
 }
 
 export const digest = (text: string): string =>

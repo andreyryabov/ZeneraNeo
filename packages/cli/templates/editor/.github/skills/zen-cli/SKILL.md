@@ -33,7 +33,7 @@ zen version
 
 zen meta     <run|prompts|resume|model|dataset> [project] [args]
 
-zen gym      <serve|build|cache|model> [spec...]
+zen gym      <serve|build|cache|world|model> [spec...]
 zen rag      schema <index|restore|ready|search|list|grep|trace|show|stats> [spec...]
 zen rag      docs <index|restore|ready|search|list|grep|show|stats> [path...]
 ```

@@ -9,7 +9,7 @@ import { normalize, type Dialect, type Schema } from './schema.ts';
  * Bumping it gives every operation a new cache key, so nothing written to an
  * older contract is ever run against a newer one.
  */
-export const GENERATOR_RULES_VERSION = 3;
+export const CONTRACT_VERSION = 4;
 
 // ---------------------------------------------------------------------------
 // Documents, flattened
@@ -19,9 +19,10 @@ export const GENERATOR_RULES_VERSION = 3;
 // document it came from, and which of the three dialects that document was
 // written in, stops mattering here.
 //
-// `dereference` is used rather than `bundle` on purpose: the generator is asked
-// to produce a body for one operation, and it should see that operation's
-// shapes rather than a pointer into a components section it was never shown.
+// `dereference` is used rather than `bundle` on purpose: requests and responses
+// are checked one operation at a time, and a check wants the whole shape in
+// hand. The agents see the other view — named, bundled types — through
+// catalog.ts.
 // ---------------------------------------------------------------------------
 
 export const METHODS = ['get', 'put', 'post', 'delete', 'patch', 'head', 'options'] as const;
@@ -181,7 +182,7 @@ function splitQuery(template: string): { path: string; fixed?: Record<string, st
     return Object.keys(fixed).length > 0 ? { path, fixed } : { path };
 }
 
-/** A one-value enum, so the check, the page and the generator all see the rule. */
+/** A one-value enum, so the check, the page and the handler all see the rule. */
 function pinned(fixed: Record<string, string> | undefined): ParamSpec[] {
     return Object.entries(fixed ?? {}).map(([name, value]) => ({
         name,
@@ -227,31 +228,82 @@ function build(b: Built): Operation {
 }
 
 /**
- * Cache identity. Everything that changes what a generator must produce is in
+ * Cache identity. Everything that changes what a handler must produce is in
  * here and nothing else is — not the file it came from, not its summary, not
- * the order of its keys. Editing a spec therefore yields a new key and the old
- * artefact is simply never looked up again, so there is no invalidation step
- * to get wrong.
+ * the wording of a field's description, not the order of its keys. Editing a
+ * spec's shape therefore yields a new key and the old artefact is simply never
+ * looked up again, so there is no invalidation step to get wrong.
+ *
+ * The world's type bindings are part of a handler's identity too, but they are
+ * known only once it is written; `cache.ts` adds them on top of this key.
  */
 function keyOf(op: Operation): string {
     const shape = {
-        version: GENERATOR_RULES_VERSION,
+        version: CONTRACT_VERSION,
         method: op.method,
         path: op.path,
         operationId: op.operationId,
         params: [...op.params]
             .sort((a, b) => `${a.in}:${a.name}`.localeCompare(`${b.in}:${b.name}`))
-            .map((p) => [p.in, p.name, p.required, canonical(p.schema)]),
-        body: op.requestBody ? [op.requestBody.required, canonical(op.requestBody.schema)] : null,
-        success: [op.success.status, op.success.schema ? canonical(op.success.schema) : null],
-        // Derived from the two above, so it adds nothing to the identity — it is
-        // here to *change* it, once, for the operations whose generator now has
-        // a pagination rule to obey. Absent rather than null when there is no
-        // paging, so that everything else hashes to exactly what it did before
-        // and no one else is asked to rebuild.
-        ...(op.paging ? { paging: canonical(op.paging) } : {}),
+            .map((p) => [p.in, p.name, p.required, canonical(bare(p.schema))]),
+        body: op.requestBody
+            ? [op.requestBody.required, canonical(bare(op.requestBody.schema))]
+            : null,
+        success: [op.success.status, op.success.schema ? canonical(bare(op.success.schema)) : null],
+        paging: op.paging ? canonical(op.paging) : null,
     };
     return createHash('sha256').update(JSON.stringify(shape)).digest('hex').slice(0, 16);
+}
+
+/** Keywords that annotate a schema and change nothing a handler must produce. */
+const ANNOTATIONS = new Set([
+    '$schema',
+    '$comment',
+    'title',
+    'description',
+    'example',
+    'examples',
+    'externalDocs',
+    'deprecated',
+]);
+
+/** Keywords whose value is a map of names to schemas, not a schema itself. */
+const SCHEMA_MAPS = new Set([
+    'properties',
+    'patternProperties',
+    '$defs',
+    'definitions',
+    'dependentSchemas',
+]);
+
+/** Keywords whose value is data, kept verbatim whatever keys it happens to have. */
+const DATA = new Set(['enum', 'const', 'default']);
+
+/**
+ * A schema without its annotations. Schema-aware rather than a blanket key
+ * filter, because a *property* called `description` is shape, not prose.
+ */
+function bare(schema: unknown): unknown {
+    if (Array.isArray(schema)) {
+        return schema.map(bare);
+    }
+    if (!isObject(schema)) {
+        return schema;
+    }
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(schema)) {
+        if (ANNOTATIONS.has(key) || key.startsWith('x-')) {
+            continue;
+        }
+        if (DATA.has(key)) {
+            out[key] = value;
+        } else if (SCHEMA_MAPS.has(key) && isObject(value)) {
+            out[key] = Object.fromEntries(Object.entries(value).map(([k, v]) => [k, bare(v)]));
+        } else {
+            out[key] = bare(value);
+        }
+    }
+    return out;
 }
 
 /** Key order is a formatting accident; it must not change a cache key. */
@@ -362,7 +414,7 @@ function requestBody(
  * The response a call gets answered with: the lowest 2xx that carries a JSON
  * body, or the lowest 2xx at all when none of them do. An operation whose
  * success response has no JSON schema is answered `204` and never gets a
- * generator — there is nothing for one to produce.
+ * handler — there is nothing for one to produce.
  */
 function successOf(
     op: Record<string, unknown>,

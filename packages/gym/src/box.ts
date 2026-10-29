@@ -3,8 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
-import type { GeneratorInput } from './envelope.ts';
-import type { HandlerRequest, SynthesisRequest } from './runtime.ts';
+import type { Bindings, HandlerRequest, SynthesisRequest, Use } from './runtime.ts';
 import type { FromWorker, ToWorker } from './worker.ts';
 
 // ---------------------------------------------------------------------------
@@ -13,8 +12,7 @@ import type { FromWorker, ToWorker } from './worker.ts';
 // A worker thread, not a container. The code is TypeScript that Node runs as
 // it is, the world is a SQLite file the worker opens itself, and the only thing
 // that crosses back to this thread is a request for content an agent has to
-// write. That is the whole of what podman used to be for, minus the image
-// build, the mounts that went stale, and the cost of `exec` on every call.
+// write.
 //
 // What a thread does not give is a wall between the handler and the network.
 // The handler is written by the model this process asked, from documents the
@@ -22,23 +20,25 @@ import type { FromWorker, ToWorker } from './worker.ts';
 // environment, so no credential is in reach either way.
 // ---------------------------------------------------------------------------
 
-export const GENERATORS = 'generators';
+export const HANDLERS = 'handlers';
 const ENTRY = 'handler.ts';
 
 /** Asked when a handler wants content the world does not have yet. */
 export type SynthesizeHook = (
     request: SynthesisRequest,
-    context: { db: string; probe: boolean; input: GeneratorInput },
+    context: { db: string; probe: boolean; input: HandlerRequest },
 ) => Promise<Record<string, unknown>[]>;
 
 export interface BoxOptions {
-    /** holds generators/ */
+    /** holds handlers/ */
     root: string;
     /** the live world every real request reads and writes */
     db: string;
     /** seconds one handler may run, not counting time spent waiting on an agent */
     timeout?: number;
     synthesize?: SynthesizeHook;
+    /** where each type lives, as of now; asked on every run */
+    bindings?: () => Bindings;
 }
 
 export interface RunOptions {
@@ -46,22 +46,22 @@ export interface RunOptions {
     db?: string;
     /** the call is a judgement, not traffic: content is sampled, not written by an agent */
     probe?: boolean;
+    /** bindings to run with instead of the current ones */
+    bindings?: Bindings;
 }
 
 /**
  * The worker could not be started at all. This says nothing about the handler
  * and must never be fed back to a model as a fault in its code.
  */
-export class SandboxUnavailable extends Error {
+export class WorkerUnavailable extends Error {
     readonly hint: string;
-    readonly container: string;
     readonly stderr?: string;
 
     constructor(message: string, opts: { hint: string; stderr?: string }) {
         super(message);
-        this.name = 'SandboxUnavailable';
+        this.name = 'WorkerUnavailable';
         this.hint = opts.hint;
-        this.container = 'worker';
         this.stderr = opts.stderr;
     }
 }
@@ -77,6 +77,8 @@ export interface Outcome {
     stderr?: string;
     /** the handler failed because the world agent did, not because of its code */
     agentFault?: boolean;
+    /** the collections the run touched, and as which types */
+    used?: Use[];
     durationMs: number;
 }
 
@@ -91,7 +93,7 @@ interface Call {
     /** agent calls in flight; the clock is stopped while there are any */
     waiting: number;
     probe: boolean;
-    input: GeneratorInput;
+    input: HandlerRequest;
     /** why the world agent failed this call, when it did */
     agentError?: string;
 }
@@ -100,6 +102,7 @@ export class Box {
     readonly root: string;
     readonly db: string;
     synthesize?: SynthesizeHook;
+    readonly #bindings: () => Bindings;
     readonly #timeout: number;
     readonly #calls = new Map<number, Call>();
     readonly #versions = new Map<string, string>();
@@ -111,26 +114,27 @@ export class Box {
         this.db = opts.db;
         this.#timeout = (opts.timeout ?? 30) * 1000;
         this.synthesize = opts.synthesize;
-        mkdirSync(join(opts.root, GENERATORS), { recursive: true });
+        this.#bindings = opts.bindings ?? (() => ({}));
+        mkdirSync(join(opts.root, HANDLERS), { recursive: true });
         // Handlers are ES modules whatever the directory above them says.
         writeFileSync(
-            join(opts.root, GENERATORS, 'package.json'),
+            join(opts.root, HANDLERS, 'package.json'),
             '{ "type": "module", "private": true }\n',
         );
     }
 
     /** Host path of a handler's source file. */
     sourceOf(key: string): string {
-        return join(this.root, GENERATORS, key, ENTRY);
+        return join(this.root, HANDLERS, key, ENTRY);
     }
 
     async write(key: string, source: string): Promise<void> {
-        mkdirSync(join(this.root, GENERATORS, key), { recursive: true });
+        mkdirSync(join(this.root, HANDLERS, key), { recursive: true });
         await writeFile(this.sourceOf(key), source, 'utf8');
         this.#versions.set(key, hash(source));
     }
 
-    run(key: string, input: GeneratorInput, opts: RunOptions = {}): Promise<Outcome> {
+    run(key: string, input: HandlerRequest, opts: RunOptions = {}): Promise<Outcome> {
         const worker = this.#ensure();
         const id = ++this.#next;
         const message: ToWorker = {
@@ -139,7 +143,8 @@ export class Box {
             file: this.sourceOf(key),
             version: this.#versions.get(key) ?? this.#version(key),
             db: opts.db ?? this.db,
-            input: input as unknown as HandlerRequest,
+            input,
+            bindings: opts.bindings ?? this.#bindings(),
         };
         return new Promise<Outcome>((settle) => {
             const call: Call = {
@@ -182,7 +187,7 @@ export class Box {
         try {
             worker = new Worker(entry, { stdout: true, stderr: true, env: {} });
         } catch (err) {
-            throw new SandboxUnavailable(
+            throw new WorkerUnavailable(
                 `could not start the handler worker: ${err instanceof Error ? err.message : String(err)}`,
                 { hint: 'Node.js 24 or later is required to run TypeScript handlers' },
             );
@@ -206,6 +211,7 @@ export class Box {
         }
         if (m.type === 'done') {
             this.#finish(m.id, call, {
+                used: m.used,
                 ...(m.ok
                     ? { ok: true, value: m.value, status: m.status }
                     : call.agentError

@@ -1,0 +1,78 @@
+openapi: 3.0.3
+info:
+    title: Shared
+    version: 1.0.0
+paths:
+    /a/things/{id}:
+        get:
+            operationId: getThing
+            summary: One thing.
+            parameters:
+                - { name: id, in: path, required: true, schema: { type: string } }
+            responses:
+                '200':
+                    description: the thing
+                    content:
+                        application/json:
+                            schema: { $ref: '#/components/schemas/Thing' }
+    /b/thing-list:
+        get:
+            operationId: listThings
+            responses:
+                '200':
+                    description: every thing
+                    content:
+                        application/json:
+                            schema: { $ref: '#/components/schemas/ThingListResult' }
+    /c/make:
+        post:
+            operationId: makeThing
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema: { $ref: '#/components/schemas/Thing' }
+            responses:
+                '200':
+                    description: made
+                    content:
+                        application/json:
+                            schema: { $ref: '#/components/schemas/Thing' }
+    /z/other:
+        get:
+            operationId: getOther
+            responses:
+                '200':
+                    description: unrelated
+                    content:
+                        application/json:
+                            schema: { $ref: '#/components/schemas/Other' }
+components:
+    schemas:
+        Thing:
+            type: object
+            required: [id, label]
+            properties:
+                id: { type: string }
+                label: { type: string }
+                zone_path:
+                    type: string
+                    description: Path of the zone this thing belongs to.
+        ThingListResult:
+            type: object
+            required: [results]
+            properties:
+                results:
+                    type: array
+                    items: { $ref: '#/components/schemas/Thing' }
+                cursor: { type: string }
+        Other:
+            type: object
+            properties:
+                id: { type: string }
+        Zone:
+            type: object
+            required: [id, name]
+            properties:
+                id: { type: string }
+                name: { type: string }

@@ -3,9 +3,10 @@ import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import RandExp from 'randexp';
 import { runAgent } from './agents.ts';
+import type { Bindings } from './bindings.ts';
 import type { Box } from './box.ts';
 import type { Catalog } from './catalog.ts';
-import type { GeneratorInput } from './envelope.ts';
+import { ACCOUNTS, OWNER_TYPE, type Binding, type HandlerRequest, type Use } from './runtime.ts';
 import { tokenOf, type Paging } from './paging.ts';
 import { echoIssues, nextPage, probesFor, walkStart } from './probe.ts';
 import { brief, repairBrief, retryNudge, SYSTEM, type Repair } from './prompt.ts';
@@ -43,6 +44,8 @@ export interface BuildOptions {
     checks: Checks;
     catalog: Catalog;
     world: World;
+    /** where each type lives; a passing handler adds the ones it was first to use */
+    bindings: Bindings;
     /** every operation being served, for siblings and list_operations */
     operations: readonly Operation[];
     /** the cached handler of another operation, if one has been written */
@@ -64,6 +67,8 @@ export interface Built {
     source: string;
     attempts: number;
     report?: string;
+    /** where the handler stores each type it uses: part of its identity */
+    bindings: Record<string, Binding>;
 }
 
 export class BuildFailed extends Error {
@@ -124,6 +129,7 @@ export async function build(
 ): Promise<Built> {
     const limit = Math.max(1, opts.attempts ?? DEFAULT_ATTEMPTS);
     const state = {
+        bindings: {} as Record<string, Binding>,
         failures: 0,
         passed: undefined as string | undefined,
         last: [] as string[],
@@ -136,6 +142,17 @@ export async function build(
             catalog: opts.catalog,
             siblings: await siblings(operation, opts),
             collections: opts.world.store.collections(),
+            bindings: opts.bindings.all(),
+            passages: await opts.world.knowledge.recall(
+                [
+                    operation.summary,
+                    operation.operationId,
+                    `${operation.method.toUpperCase()} ${operation.path}`,
+                ]
+                    .filter(Boolean)
+                    .join(' — '),
+                3,
+            ),
         }),
         ...(repair ? ['', repairBrief(repair)] : []),
     ].join('\n');
@@ -170,7 +187,12 @@ export async function build(
     }
 
     if (state.passed) {
-        return { source: state.passed, attempts: Math.max(1, state.failures + 1), report };
+        return {
+            source: state.passed,
+            attempts: Math.max(1, state.failures + 1),
+            report,
+            bindings: state.bindings,
+        };
     }
     const failed = new BuildFailed(
         operation,
@@ -183,7 +205,13 @@ export async function build(
 function tools(
     operation: Operation,
     opts: BuildOptions,
-    state: { failures: number; passed?: string; last: string[]; lastSource: string },
+    state: {
+        failures: number;
+        passed?: string;
+        last: string[];
+        lastSource: string;
+        bindings: Record<string, Binding>;
+    },
     limit: number,
 ): AnyTool[] {
     const listOperations = tool<{ path?: string; name?: string }>({
@@ -306,11 +334,17 @@ function tools(
             }
             const code = unfence(String(source ?? ''));
             state.lastSource = code;
-            const problems = code.trim()
+            const { problems, placed } = code.trim()
                 ? await test(operation, code, opts)
-                : ['- the module is empty'];
+                : { problems: ['- the module is empty'], placed: {} };
             if (problems.length === 0) {
+                // Bound only on a pass: a failing handler must not fix where a
+                // type lives for everyone after it.
+                for (const [type, binding] of Object.entries(placed)) {
+                    opts.bindings.bind(type, binding);
+                }
                 state.passed = code;
+                state.bindings = placed;
                 return { ok: true };
             }
             state.failures++;
@@ -330,12 +364,18 @@ function tools(
         listCollections,
         readCollection,
         describeTypes,
+        ...opts.catalog.tools(),
+        ...opts.world.knowledge.tools,
         testHandler,
     ];
 }
 
 /** Writes the module and judges it in a copy of the world nobody else can see. */
-async function test(operation: Operation, source: string, opts: BuildOptions): Promise<string[]> {
+async function test(
+    operation: Operation,
+    source: string,
+    opts: BuildOptions,
+): Promise<{ problems: string[]; placed: Record<string, Binding> }> {
     await opts.box.write(operation.key, source);
     const scratch = join(
         opts.box.root,
@@ -344,7 +384,10 @@ async function test(operation: Operation, source: string, opts: BuildOptions): P
     );
     opts.world.store.snapshot(scratch);
     try {
-        return await judge(operation, opts, scratch);
+        const used: Use[] = [];
+        const problems = await judge(operation, opts, scratch, used);
+        const { problems: misplaced, placed } = placement(used, opts);
+        return { problems: [...problems, ...misplaced], placed };
     } finally {
         opts.box.release(scratch);
         opts.world.release(scratch);
@@ -354,12 +397,18 @@ async function test(operation: Operation, source: string, opts: BuildOptions): P
     }
 }
 
-async function judge(operation: Operation, opts: BuildOptions, db: string): Promise<string[]> {
+async function judge(
+    operation: Operation,
+    opts: BuildOptions,
+    db: string,
+    used: Use[],
+): Promise<string[]> {
     const response = opts.checks.for(operation).response;
     const out: string[] = [];
 
     for (const probe of fitted(operation, probesFor(operation))) {
         const outcome = await opts.box.run(operation.key, probe, { db, probe: true });
+        used.push(...(outcome.used ?? []));
         const what = `request ${JSON.stringify({ pathParams: probe.pathParams, query: probe.query, ...(probe.body !== undefined ? { body: probe.body } : {}) }).slice(0, 600)}`;
         if (!outcome.ok) {
             out.push(`- ${what}: the handler ${outcome.fault}.`);
@@ -387,7 +436,7 @@ async function judge(operation: Operation, opts: BuildOptions, db: string): Prom
         }
     }
     if (out.length === 0 && operation.paging?.next) {
-        out.push(...(await walk(operation, operation.paging, opts, db)));
+        out.push(...(await walk(operation, operation.paging, opts, db, used)));
     }
     return out;
 }
@@ -397,7 +446,7 @@ async function judge(operation: Operation, opts: BuildOptions, db: string): Prom
  * response's own pattern. Asking for message `ada` when ids are sixteen hex
  * digits is a test no handler can pass.
  */
-function fitted(operation: Operation, probes: GeneratorInput[]): GeneratorInput[] {
+function fitted(operation: Operation, probes: HandlerRequest[]): HandlerRequest[] {
     const schema = operation.success.schema;
     if (!schema) {
         return probes;
@@ -428,6 +477,71 @@ function fitted(operation: Operation, probes: GeneratorInput[]): GeneratorInput[
     });
 }
 
+/**
+ * Where the handler put each type it touched, checked against where every
+ * handler before it put them. Untyped access is refused outright: a collection
+ * nobody can name a type for is a collection the next handler cannot find.
+ */
+function placement(
+    used: readonly Use[],
+    opts: BuildOptions,
+): { problems: string[]; placed: Record<string, Binding> } {
+    const problems = new Set<string>();
+    const byType = new Map<string, { collections: Set<string>; idFields: Set<string> }>();
+    for (const use of used) {
+        if (use.collection === ACCOUNTS || use.type === OWNER_TYPE) {
+            continue;
+        }
+        if (!use.type) {
+            problems.add(
+                `- \`${use.collection}\` is used without a type. Name the type instead — ` +
+                    `ctx.lookup('Message', id), ctx.ensure('Message', …), ctx.db.collection('Message') — ` +
+                    'so every handler finds the same records in the same place.',
+            );
+            continue;
+        }
+        if (!opts.catalog.hasType(use.type)) {
+            problems.add(
+                `- \`${use.type}\` is not a type the documents declare; ` +
+                    'describe_types, list_api or grep_api finds the right name.',
+            );
+            continue;
+        }
+        const seen = byType.get(use.type) ?? { collections: new Set(), idFields: new Set() };
+        seen.collections.add(use.collection);
+        if (use.idField) {
+            seen.idFields.add(use.idField);
+        }
+        byType.set(use.type, seen);
+    }
+
+    const placed: Record<string, Binding> = {};
+    for (const [type, seen] of byType) {
+        if (seen.collections.size > 1 || seen.idFields.size > 1) {
+            problems.add(
+                `- \`${type}\` is stored two ways in this handler ` +
+                    `(${[...seen.collections].join(', ')}; keyed by ${[...seen.idFields].join(', ') || 'id'}). ` +
+                    'Use one type name and one id field throughout.',
+            );
+            continue;
+        }
+        const binding: Binding = {
+            collection: [...seen.collections][0]!,
+            idField: [...seen.idFields][0] ?? opts.bindings.of(type)?.idField ?? 'id',
+        };
+        const conflict = opts.bindings.conflict(type, binding);
+        if (conflict) {
+            problems.add(
+                `- ${conflict} — fixed by an earlier handler. Use the type name ` +
+                    `(ctx.lookup('${type}', …)) and leave the collection and id field to the binding.`,
+            );
+            continue;
+        }
+        placed[type] = binding;
+    }
+    return { problems: [...problems], placed };
+}
+
 /** How many pages a judged handler may offer before it is not terminating. */
 const MAX_PAGES = 8;
 
@@ -436,6 +550,7 @@ async function walk(
     paging: Paging,
     opts: BuildOptions,
     db: string,
+    used: Use[],
 ): Promise<string[]> {
     let input = walkStart(operation, paging);
     const seen = new Set<string>();
@@ -447,6 +562,7 @@ async function walk(
 
     for (let page = 1; page <= MAX_PAGES; page++) {
         const outcome = await opts.box.run(operation.key, input, { db, probe: true });
+        used.push(...(outcome.used ?? []));
         const what = `page ${page} of ${operation.method.toUpperCase()} ${called(operation)}`;
         if (!outcome.ok) {
             return [`- ${what}: the handler ${outcome.fault}.`];
@@ -480,7 +596,7 @@ async function walk(
     ];
 }
 
-function setSize(input: GeneratorInput, paging: Paging, size: number): GeneratorInput {
+function setSize(input: HandlerRequest, paging: Paging, size: number): HandlerRequest {
     if (!paging.size) {
         return input;
     }
@@ -491,32 +607,50 @@ function setSize(input: GeneratorInput, paging: Paging, size: number): Generator
 }
 
 /** Operations sharing this one's resource path, or a response type with it. */
+/**
+ * The operations a handler must agree with, closest first. Same record type and
+ * same resource are the strongest ties; operations that merely carry the type
+ * somewhere (traced through the graph) come next; nearby paths last. In a large
+ * API the list is cut, and the cut must fall on the weakest.
+ */
 async function siblings(
     operation: Operation,
     opts: BuildOptions,
-): Promise<{ operation: Operation; built: boolean }[]> {
+): Promise<{ operation: Operation; built: boolean; type?: string }[]> {
     const base = resourceOf(operation.path);
-    const mine = new Set(opts.catalog.responseTypes(operation).slice(0, 3));
-    const related = opts.operations.filter((o) => {
-        if (o === operation) {
-            return false;
-        }
-        const other = resourceOf(o.path);
-        return (
-            other === base ||
-            o.path.startsWith(`${base}/`) ||
-            base.startsWith(`${other}/`) ||
-            opts.catalog
-                .responseTypes(o)
-                .slice(0, 3)
-                .some((t) => mine.has(t))
-        );
-    });
-    return Promise.all(
-        related
-            .slice(0, 25)
-            .map(async (o) => ({ operation: o, built: Boolean(await opts.sourceOf(o)) })),
+    const mine = opts.catalog.itemType(operation);
+    const carriers = new Set(
+        (mine ? opts.catalog.carriers(mine) : []).map((c) => `${c.method} ${c.path}`),
     );
+    const scored = opts.operations
+        .filter((o) => o !== operation)
+        .map((o) => {
+            const type = opts.catalog.itemType(o);
+            const other = resourceOf(o.path);
+            const score =
+                (mine && type === mine ? 4 : 0) +
+                (other === base ? 3 : 0) +
+                (carriers.has(`${o.method} ${o.path}`) ? 2 : 0) +
+                (near(o.path, base) ? 1 : 0);
+            return { operation: o, type, score };
+        })
+        .filter((x) => x.score > 0)
+        .sort((a, b) => b.score - a.score || a.operation.path.localeCompare(b.operation.path))
+        .slice(0, 25);
+    return Promise.all(
+        scored.map(async ({ operation: o, type }) => ({
+            operation: o,
+            type,
+            built: Boolean(await opts.sourceOf(o)),
+        })),
+    );
+}
+
+/** One or two segments above or below. */
+function near(path: string, base: string): boolean {
+    const depth = (p: string): number => p.split('/').filter(Boolean).length;
+    const [short, long] = path.length < base.length ? [path, base] : [base, path];
+    return long.startsWith(`${short}/`) && depth(long) - depth(short) <= 2;
 }
 
 /** `/users/{userId}/messages/{id}` → `/users/{userId}/messages`. */

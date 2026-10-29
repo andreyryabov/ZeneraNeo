@@ -3,12 +3,13 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Bindings } from '../src/bindings.ts';
 import { Box } from '../src/box.ts';
 import { Cache, type CacheOptions } from '../src/cache.ts';
 import { Catalog } from '../src/catalog.ts';
 import { loadSpec, type Operation } from '../src/spec.ts';
 import { WorldStore } from '../src/store.ts';
-import { NO_STORY, type Story } from '../src/story.ts';
+import { NO_STORY, type Knowledge } from '../src/knowledge.ts';
 import { World } from '../src/synth.ts';
 import { Checks } from '../src/validate.ts';
 
@@ -113,8 +114,22 @@ export function idsAsked(brief: string): string[] {
     return m ? (JSON.parse(m[1]!) as unknown[]).map(String) : [];
 }
 
+/** What the agents know, for a test: a story, and optionally docs that answer anything. */
+export function knowing(story = NO_STORY, over: Partial<Knowledge> = {}): Knowledge {
+    return {
+        story,
+        storyDigest: '',
+        storyFiles: 0,
+        tools: [],
+        recall: () => Promise.resolve(''),
+        close: () => {},
+        ...over,
+    };
+}
+
 export interface Rig {
     root: string;
+    bindings: Bindings;
     operations: Operation[];
     store: WorldStore;
     world: World;
@@ -128,19 +143,29 @@ export interface Rig {
 export async function rig(
     file: string,
     model: Model,
-    opts: Partial<CacheOptions> & { story?: Story; timeout?: number; root?: string } = {},
+    opts: Partial<CacheOptions> & { knowledge?: Knowledge; timeout?: number; root?: string } = {},
 ): Promise<Rig> {
     const root = opts.root ?? mkdtempSync(join(tmpdir(), 'gym-'));
     const operations = await loadSpec(spec(file));
     const catalog = await Catalog.open([spec(file)]);
     const checks = new Checks();
     const store = new WorldStore(join(root, 'world.sqlite'));
-    const world = new World({ model, story: opts.story ?? NO_STORY, catalog, store });
+    const bindings = new Bindings(Object.keys(catalog.types), {
+        cacheDir: opts.cacheDir ?? join(root, 'store'),
+    });
+    const world = new World({
+        model,
+        knowledge: opts.knowledge ?? knowing(),
+        catalog,
+        bindings,
+        store,
+    });
     const box = new Box({
         root,
         db: store.path,
         timeout: opts.timeout ?? 10,
         synthesize: world.synthesize,
+        bindings: () => bindings.all(),
     });
     const cache = new Cache({
         box,
@@ -148,12 +173,14 @@ export async function rig(
         model,
         catalog,
         world,
+        bindings,
         operations,
         cacheDir: join(root, 'store'),
         ...opts,
     });
     return {
         root,
+        bindings,
         operations,
         store,
         world,
@@ -188,13 +215,13 @@ export const op = (r: Rig, id: string): Operation => {
 export const GET_USER = `
 interface User { user_id: number; email: string }
 export default async function handle(req: any, ctx: any): Promise<User> {
-    return await ctx.lookup('users', req.pathParams.user_id, { type: 'User', idField: 'user_id' });
+    return await ctx.lookup('User', req.pathParams.user_id, { idField: 'user_id' });
 }`;
 
 /** The same, forgetting the required email. */
 export const GET_USER_NO_EMAIL = `
 export default async function handle(req: any, ctx: any) {
-    const u = await ctx.lookup('users', req.pathParams.user_id, { type: 'User', idField: 'user_id' });
+    const u = await ctx.lookup('User', req.pathParams.user_id, { idField: 'user_id' });
     return { user_id: u.user_id };
 }`;
 
@@ -206,7 +233,7 @@ export default async function handle() {
 
 export const CREATE_USER = `
 export default async function handle(req: any, ctx: any) {
-    ctx.db.collection('users').put(req.body.user_id, req.body);
+    ctx.db.collection('User').put(req.body.user_id, req.body);
     return req.body;
 }`;
 

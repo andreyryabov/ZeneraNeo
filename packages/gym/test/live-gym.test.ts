@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { openStory } from '../src/story.ts';
+import { openKnowledge } from '../src/knowledge.ts';
 import { op, rig, type Rig } from './helpers.ts';
 
 // ---------------------------------------------------------------------------
@@ -40,7 +40,7 @@ describe.runIf(Boolean(MODEL))('a handler and a world, for real', () => {
             ].join('\n'),
         );
         r = await rig('petstore.yaml', createModel(MODEL!), {
-            story: await openStory('story.md', dir),
+            knowledge: await openKnowledge({ story: ['story.md'], docs: [], cwd: dir, root: dir }),
             attempts: 4,
         });
     }, 60_000);
