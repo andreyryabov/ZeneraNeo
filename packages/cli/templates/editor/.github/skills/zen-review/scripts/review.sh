@@ -4,6 +4,8 @@
 #
 #   review.sh            zen check, then paths and the spec-sync record
 #   review.sh fast       the same, with `zen check --no-models --no-sandbox`
+#   review.sh check [full|no-sandbox|fast] [--fix]   check and save a receipt
+#   review.sh --skip-check [full|no-sandbox|fast]   verify and reuse that receipt
 #
 # What it prints is findings. What it cannot see — whether an agent has one job,
 # whether a description is a condition, whether a fact belongs in a skill — is
@@ -20,15 +22,34 @@ cd "$(dirname "$0")/../../../.."
 
 SKILLS=.github/skills
 CHECK_FLAGS=""
+REUSE=0
+RECEIPT="$SKILLS/zen-review/scripts/check-receipt.mjs"
+
+if [ "${1:-}" = check ]; then
+    shift
+    if [ "${1:-}" = --fix ]; then
+        set -- full "$@"
+    fi
+    exec node "$RECEIPT" run "$@"
+fi
+if [ "${1:-}" = --skip-check ]; then
+    REUSE=1
+    shift
+fi
 
 case "${1:-full}" in
     full) ;;
+    no-sandbox) CHECK_FLAGS="--no-sandbox" ;;
     fast) CHECK_FLAGS="--no-models --no-sandbox" ;;
     *)
-        echo "usage: review.sh [full|fast]" >&2
+        echo "usage: review.sh [check|--skip-check] [full|no-sandbox|fast] [--fix (check only)]" >&2
         exit 2
         ;;
 esac
+if [ "$#" -gt 1 ]; then
+    echo "review.sh: unexpected arguments" >&2
+    exit 2
+fi
 
 SUMMARY=""
 WORST=0
@@ -47,7 +68,11 @@ step() {
 }
 
 step 'zen check'
-if command -v zen >/dev/null 2>&1; then
+if [ "$REUSE" -eq 1 ]; then
+    node "$RECEIPT" verify "${1:-full}"
+    rc=$?
+    verdict 'zen check' "receipt exit $rc" "$rc"
+elif command -v zen >/dev/null 2>&1; then
     # Unquoted on purpose: empty means no flags rather than one empty argument.
     # shellcheck disable=SC2086
     zen check $CHECK_FLAGS

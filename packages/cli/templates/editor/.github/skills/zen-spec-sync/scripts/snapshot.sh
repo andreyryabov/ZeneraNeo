@@ -4,6 +4,7 @@
 #
 #   snapshot.sh status    full | incremental | tampered, and what differs
 #   snapshot.sh diff      the difference the next pass has to work
+#   snapshot.sh record    write a history entry, without moving the baseline
 #   snapshot.sh commit    move the baseline on, once the pass has finished
 #
 # Run it from anywhere; it finds the project root from its own location, which
@@ -73,6 +74,13 @@ differs() {
     ! cmp -s "$(side "$BASE/$1")" "$(side "$1")"
 }
 
+owned() {
+    case "$1" in
+        agents/files-instructions.md|agents/fork-instructions.md|agents/memory-instructions.md|agents/tools-instructions.md) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Which baseline files no longer hash to what the manifest says they do.
 # `FAILED` covers a changed file; `FAILED open or read` covers a missing one.
 broken() {
@@ -109,7 +117,11 @@ EOF
     fi
     while IFS= read -r file; do
         if [ -n "$file" ] && differs "$file"; then
-            echo "changed: $file"
+            if owned "$file"; then
+                echo "maintenance: $file"
+            else
+                echo "changed: $file"
+            fi
         fi
     done <<EOF
 $(scope)
@@ -125,6 +137,74 @@ show_diff() {
     done <<EOF
 $(scope)
 EOF
+}
+
+record() {
+    mode=""
+    scope_text=""
+    changed_text=""
+    feedback_text=""
+    open_text=""
+    checks_text=""
+    while [ "$#" -gt 0 ]; do
+        if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+            echo "snapshot.sh record: every option needs a non-empty value" >&2
+            return 2
+        fi
+        case "$1" in
+            --mode)
+                case "$2" in
+                    full|incremental) mode="$2" ;;
+                    *) echo "snapshot.sh record: mode must be full or incremental" >&2; return 2 ;;
+                esac
+                ;;
+            --scope) scope_text="$scope_text- $2
+" ;;
+            --changed) changed_text="$changed_text- $2
+" ;;
+            --feedback) feedback_text="$feedback_text- $2
+" ;;
+            --still-open) open_text="$open_text- $2
+" ;;
+            --checks) checks_text="$checks_text- $2
+" ;;
+            *) echo "snapshot.sh record: unknown option $1" >&2; return 2 ;;
+        esac
+        shift 2
+    done
+    if [ -z "$mode" ] || [ -z "$scope_text" ] || [ -z "$changed_text" ] ||
+        [ -z "$feedback_text" ] || [ -z "$open_text" ] || [ -z "$checks_text" ]; then
+        echo "usage: snapshot.sh record --mode full|incremental --scope <text> --changed <text> --feedback <text> --still-open <text> --checks <text> (repeat sections as needed; use 'None' explicitly)" >&2
+        return 2
+    fi
+    if [ ! -f SPECIFICATION.md ]; then
+        echo "snapshot.sh record: SPECIFICATION.md is missing" >&2
+        return 1
+    fi
+    spec_sum="$(shasum -a 256 SPECIFICATION.md)"
+    spec_sha="${spec_sum%% *}"
+    stamp="$(date -u +%Y-%m-%dT%H%M%SZ)"
+    entry="$HISTORY/$stamp.md"
+    draft="$(mktemp "$HISTORY/.record.XXXXXX")"
+    trap 'rm -f "$draft"' EXIT
+    {
+        printf '# Sync pass %s\n\n' "$stamp"
+        printf -- '- **Mode** - %s\n- **Spec sha** - %s\n' "$mode" "$spec_sha"
+        printf '\n## Scope\n\n%s' "$scope_text"
+        printf '\n## Changed\n\n%s' "$changed_text"
+        printf '\n## Feedback\n\n%s' "$feedback_text"
+        printf '\n## Still open\n\n%s' "$open_text"
+        printf '\n## Checks\n\n%s' "$checks_text"
+    } >"$draft"
+    # Linking refuses to replace an existing entry, even within the same second.
+    if ! ln "$draft" "$entry"; then
+        echo "snapshot.sh record: could not create $entry; no entry was overwritten" >&2
+        return 1
+    fi
+    rm -f "$draft"
+    trap - EXIT
+    echo "history: $entry"
+    echo "baseline: unchanged (run snapshot.sh commit only after verification)"
 }
 
 commit() {
@@ -192,9 +272,10 @@ EOF
 case "${1:-status}" in
     status) status ;;
     diff) show_diff ;;
+    record) shift; record "$@" ;;
     commit) commit ;;
     *)
-        echo "usage: snapshot.sh [status|diff|commit]" >&2
+        echo "usage: snapshot.sh [status|diff|record|commit]" >&2
         exit 2
         ;;
 esac

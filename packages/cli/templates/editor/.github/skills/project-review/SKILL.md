@@ -20,6 +20,10 @@ spec-sync record, in the order they matter. Load the `zen-review` skill for what
 each one owns and how to read its output. Do not re-verify by hand anything it
 already decided, and do not go further while `zen check` fails - nothing below
 matters until it passes.
+If `review.sh check` already passed in this conversation and nothing has been
+edited since, run `review.sh --skip-check` instead: it verifies that receipt
+rather than probing again, and fails if the project changed. Reusing the check
+does not narrow the review - everything below still covers the whole project.
 
 **Then list the capabilities this project turns on** — a `memory:` block, a
 `zen rag` index, a sandbox, an agent that writes code (`zen-code-python`), a

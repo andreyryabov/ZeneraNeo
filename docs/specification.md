@@ -116,6 +116,38 @@ outline it:
 Read the feedback file first, every time. It is the shortest description of what
 your specification does not yet say.
 
+#### Incremental passes
+
+After the first completed pass, `.spec-sync/` records the specification,
+wiring, agent files and unresolved work that pass left behind. The next sync
+reads their diffs instead of starting from nothing. Generated house-rule drift
+is reported separately as maintenance and repaired by `zen check --fix`.
+
+Two narrow tiers avoid a full audit:
+
+- **Spec-only:** no project implementation change or requirement affecting
+  runtime behavior, under the sync skill's eligibility rules.
+- **Model-reference-only:** replace an existing chat model reference without
+  changing providers, agent assignments, prompts, skills or setup. Embedding
+  changes and sandbox version pins are not eligible model-reference changes.
+
+Outstanding implementation work in feedback or the previous pass's `Still open`
+prevents these narrow tiers. Other incremental passes load only capability
+skills their changes reach; the first pass still checks every enabled capability.
+When setup has no steps, one successful `scripts/_setup.sh --check` suffices.
+
+A model-reference-only pass validates configuration and probes models once.
+It may skip the sandbox probe only after confirming the sandbox and its build
+inputs are unchanged. Pin repairs require a sandbox check. The shipped
+`review.sh check` and `review.sh --skip-check` commands allow the final review
+to reuse successful validation for unchanged project inputs, rather than
+probing again. Receipts are for the same pass, not a long-lived health cache.
+
+`snapshot.sh record` fills in a history entry's timestamp and specification hash
+from explicitly supplied outcomes and unresolved items. It does not certify
+those claims or move the baseline: `snapshot.sh commit` remains the separate,
+last step after verification.
+
 ### `/spec-apply-feedback`
 
 Answering the feedback file is a tick or a delete. Under every question are two

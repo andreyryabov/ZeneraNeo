@@ -35,12 +35,15 @@ programmed: what an agent knows, which model answers, and which of the tools
 6. Every change must still load: `agents.yaml` is validated strictly at load,
    and `zen check` says so before a model is ever called.
 
-### 0.1 Copilot is the meta-agent: load the skill for every capability in use
+### 0.1 Copilot is the meta-agent: load skills for the capabilities in scope
 
 Copilot is always the meta-agent that creates and changes target projects. Load
 the editor's `zen-cli` skill before deciding how a target project should run,
 be validated, or use command-line capabilities. It is the command contract; do
 not reconstruct `zen` arguments from memory or call `--help` to discover them.
+When the task is to bring a project into compliance with `SPECIFICATION.md`,
+load `zen-spec-sync` first; its narrow tiers contain the exact validation
+commands and do not require loading `zen-cli` as well.
 
 **Every runtime capability a project turns on carries obligations that are not
 visible in `agents.yaml` and that `zen check` does not report.** Before
@@ -54,20 +57,23 @@ code, `zen-topology` for `handoffs:` or `fork:` on any agent,
 `zen-cli` always. A capability that is already
 configured and already passing `zen check` is exactly the case that looks
 finished and is not: the obligation lives in the skill, so a review that never
-opens the skill cannot find what is missing. This applies whatever prompted the
-change - a task scoped to `SPECIFICATION.md` does not narrow it. There is one
-exception: a `/spec-sync-project` pass that the `zen-spec-sync` skill classes as
-**spec-only**. It touches no agent, prompt, skill or wiring, so there is no
-obligation for it to meet.
+opens the skill cannot find what is missing. Outside a specification-sync pass,
+this applies whatever prompted the change. During an incremental sync, load only
+skills for capabilities its changed requirements, files, keys or unresolved
+work touch. A full pass still loads every enabled capability's skill. The
+**spec-only** and **model-reference-only** tiers load no capability skill unless
+the work expands beyond their eligibility rules.
 
 **Load `zen-instructions` before writing, editing, reviewing or deleting any
 `agents/*instructions.md`.** They are the house rules, prepended to every
-agent's prompt, and three of them are `zen`'s own copies rather than the
+agent's prompt, and four of them are `zen`'s own copies rather than the
 project's: an edit made inside one is lost at the next `zen check --fix`, `zen
 init` or `zen open`, with no diff to show for it. The skill is what says which
-three those are, where a project's own rules on the same subjects go instead,
+four those are, where a project's own rules on the same subjects go instead,
 how `requires:` conditions a document, and what filename order decides. None of
 that is visible in the file being edited.
+Replacing generated copies with `zen check --fix` is maintenance, not manual
+house-rule editing, and does not by itself require loading `zen-instructions`.
 
 **Load `zen-code-python` before writing, editing or reviewing any prompt, skill
 or house rule for an agent that writes or runs code** - any agent holding
@@ -1887,6 +1893,11 @@ the spec-sync record, in that order:
 
 Run it first and read what it says. Everything else below is judgement, which is
 why it is still a list. The `zen-review` skill has the detail.
+Within a specification-sync pass, reuse its final check with
+`review.sh --skip-check` instead of probing again, and apply the sync skill's
+explicit tier scope to this checklist. Use `--skip-check no-sandbox` only for an
+eligible model-reference-only pass. Independent reviews still cover the whole
+checklist.
 
 Before finishing any change here:
 
