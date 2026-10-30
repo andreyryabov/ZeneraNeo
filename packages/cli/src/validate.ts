@@ -41,9 +41,10 @@ import {
     realpathSync,
     rmSync,
     statSync,
+    writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { probeModels, type ModelTarget } from './liveness.ts';
 import { BuildError, ensurePodmanReady } from './podman.ts';
 import { ownVersion, staleShared } from './scaffold.ts';
@@ -1769,7 +1770,7 @@ function checkPin(path: string, rel: string, add: Add): void {
         }
     }
 
-    const fix = `pin them to ${mine}, the version \`zen --version\` reports`;
+    const fix = `pin them to ${mine}, the version \`zen --version\` reports — \`zen check --fix\` does it`;
     if (stale.size > 0) {
         add({
             severity: 'warning',
@@ -1792,6 +1793,52 @@ function checkPin(path: string, rel: string, add: Add): void {
             fix,
         });
     }
+}
+
+/**
+ * Pins every `@zenera/*` install in the project's Dockerfile to this `zen`,
+ * which is what `zen check --fix` does about `sandbox.pin.stale` and
+ * `sandbox.pin.absent`. Only the version after each name is touched, and only
+ * on lines `checkPin` reads, so whatever else the file holds is left alone.
+ *
+ * Returns the project-relative path when the file was rewritten, and nothing
+ * when there is no Dockerfile, it resolves outside the project, or it already
+ * pins this version — a project that does not load is the report's to explain.
+ */
+export function repinDockerfile(root: string): string[] {
+    let rel: string | undefined;
+    try {
+        const ref = readProjectConfig(root).config.sandbox?.build?.dockerfile;
+        rel = ref === undefined ? undefined : normalise(root, ref);
+    } catch {
+        return [];
+    }
+    if (rel === undefined) {
+        return [];
+    }
+
+    const path = join(root, rel);
+    let text: string;
+    try {
+        text = readFileSync(path, 'utf8');
+    } catch {
+        return [];
+    }
+
+    const mine = ownVersion();
+    const next = text
+        .split('\n')
+        .map((line) =>
+            /^\s*#/.test(line)
+                ? line
+                : line.replace(ZENERA_INSTALL, (_, name: string) => `@zenera/${name}@${mine}`),
+        )
+        .join('\n');
+    if (next === text) {
+        return [];
+    }
+    writeFileSync(path, next);
+    return [rel.split(sep).join('/')];
 }
 
 /** Written by the smoke test and read back, to prove the mount is real. */

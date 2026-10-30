@@ -55,7 +55,8 @@ checked too. A word that is neither is a usage error (exit 2), not a report.
   is written once, by `zen init`, and nothing rewrites it afterwards, so it falls
   behind the host on the next upgrade and the container ends up holding a
   different `zen` than the session outside it. Read rather than run, so this one
-  is reported with `--no-sandbox` too.
+  is reported with `--no-sandbox` too. `--fix` rewrites the pins to this `zen`'s
+  version and touches nothing else in the Dockerfile.
 
 ### Findings
 

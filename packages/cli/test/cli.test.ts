@@ -142,7 +142,7 @@ import {
     type Block,
 } from '../src/tui/wrap.ts';
 import { LEDGER_ENV, ledgerPath } from '../src/usage.ts';
-import { validateProject, type Report } from '../src/validate.ts';
+import { repinDockerfile, validateProject, type Report } from '../src/validate.ts';
 
 // ---------------------------------------------------------------------------
 // The parts of the CLI that are pure functions of their input. Everything else
@@ -3181,6 +3181,25 @@ describe('the sandbox check', () => {
             });
 
             expect(of(report, 'warning')).not.toContain('sandbox.pin.stale');
+        });
+
+        it('is repinned to this `zen` by --fix, leaving the rest of the file alone', async () => {
+            const mine = await versionOf(cliManifest);
+            const dir = project(
+                'FROM node:22\n# was @zenera/cli@0.0.1\n' +
+                    'RUN npm install -g @zenera/cli@0.0.1 \\\n    @zenera/rag typescript@5\n',
+            );
+
+            expect(repinDockerfile(dir)).toEqual(['sandbox/Dockerfile']);
+            expect(readFileSync(join(dir, 'sandbox', 'Dockerfile'), 'utf8')).toBe(
+                'FROM node:22\n# was @zenera/cli@0.0.1\n' +
+                    `RUN npm install -g @zenera/cli@${mine} \\\n    @zenera/rag@${mine} typescript@5\n`,
+            );
+            // A second pass has nothing left to do, and the check agrees.
+            expect(repinDockerfile(dir)).toEqual([]);
+            const report = await validateProject({ dir, sandbox: { enabled: false } });
+            expect(of(report, 'warning')).not.toContain('sandbox.pin.stale');
+            expect(of(report, 'warning')).not.toContain('sandbox.pin.absent');
         });
     });
 });

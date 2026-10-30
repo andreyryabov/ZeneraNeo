@@ -127,8 +127,8 @@ the model to compute or remember. Specifically:
   the container is the same one that built it. An unpinned name drifts away from
   the host on the next image build; a stale pin leaves the container holding an
   older `zen` than the session outside it. `zen check` reports both, as
-  `sandbox.pin.absent` and `sandbox.pin.stale`, but will not repair either - the
-  Dockerfile is the project's file, so this edit is yours to make. The pin
+  `sandbox.pin.absent` and `sandbox.pin.stale`, and `zen check --fix` repairs
+  both by rewriting only the version after each `@zenera/*` name. The pin
   follows `zen --version` even when `SPECIFICATION.md` names another number.
   The `zen-spec-sync` skill gives the one question to raise in that case.
 

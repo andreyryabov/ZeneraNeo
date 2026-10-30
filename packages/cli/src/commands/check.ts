@@ -23,6 +23,7 @@ import {
     yellow,
 } from '../term.ts';
 import {
+    repinDockerfile,
     validateProject,
     type AgentReport,
     type Finding,
@@ -93,8 +94,10 @@ export const check: Command = {
         '(.vscode/ and .github/). They restate how this version of zen behaves,',
         'so a copy left behind by an upgrade is worse than none — they are',
         'replaced whether or not they were edited, and the report that follows is',
-        'of the project as repaired. Nothing else is touched: agents.yaml, the',
-        'prompts, the specification and agents/instructions.md are yours.',
+        'of the project as repaired. It also pins the @zenera/* installs in the',
+        'sandbox Dockerfile to this zen\u2019s version, changing nothing else in it.',
+        'Nothing else is touched: agents.yaml, the prompts, the specification and',
+        'agents/instructions.md are yours.',
         '',
         'The argument is a directory if one is there and a registered project',
         'name otherwise; with neither, the project you are standing in.',
@@ -130,7 +133,7 @@ export const check: Command = {
         // the files that are there now and the exit code answers the repaired
         // project. A fix that left an error behind in the output would be read
         // as a fix that failed.
-        const fixed = values.fix ? refreshShared(dir) : [];
+        const fixed = values.fix ? [...refreshShared(dir), ...repinDockerfile(dir)] : [];
 
         // Materialised first, so the credential verdicts are the ones a run
         // would reach: a key in the environment and a key in the keyring are
@@ -422,7 +425,7 @@ function fixedLines(fixed: readonly string[]): string[] {
         return [];
     }
     return [
-        `${bold('Replaced')} ${dim(`${count(fixed.length, 'file')} \u2014 ours, not the project's`)}`,
+        `${bold('Fixed')} ${dim(count(fixed.length, 'file'))}`,
         ...fixed.map((f) => `  ${green('wrote')} ${f}`),
         '',
     ];

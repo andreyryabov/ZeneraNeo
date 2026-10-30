@@ -1362,9 +1362,10 @@ the file parses, the image builds and the only symptom is a tool inside the
 container behaving unlike the documentation outside it. The check reads the
 `npm install -g` line and reports `sandbox.pin.stale`, or `sandbox.pin.absent`
 for a name with no version on it. Both are warnings: the project runs, it just
-runs a different `zen` than the one you are holding. Neither is repaired by
-`--fix`, because that command replaces only the files that are ours and this
-one is the project's - a rewrite would discard whatever else was added to it.
+runs a different `zen` than the one you are holding. `--fix` repairs both, but
+narrowly: the file is the project's, so rather than replacing it the way it
+replaces the rules, it rewrites only the version after each `@zenera/*` name
+outside comments, and leaves whatever else was added to the file alone.
 The reading is textual and needs no engine, which is the point: `--no-sandbox`
 and a laptop with no podman are exactly the cases nothing else would tell.
 
