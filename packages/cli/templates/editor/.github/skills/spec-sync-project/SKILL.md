@@ -227,7 +227,9 @@ not a paragraph of instructions for a human.
   Deleting `.tmp/` must leave the project runnable and `scripts/_setup.sh`
   re-runnable.
 - Steps that need credentials run on the host, not in the sandbox. Read keys
-  from the environment or `.env`; never inline one into a script.
+  from the environment or `.env`; never inline one into a script. Model
+  provider keys are not among them: `zen` supplies those from its keyring, so
+  no step checks for, requires or documents one.
 - Anything the sandbox always needs belongs in `sandbox/Dockerfile`, not in a
   setup script that installs it again on every run.
 

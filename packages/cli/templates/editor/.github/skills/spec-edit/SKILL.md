@@ -1,6 +1,6 @@
 ---
 name: spec-edit
-description: Change SPECIFICATION.md as the request given with the command asks - written in the specification's own structure and voice, checked against what the runtime can actually do - and nothing else.
+description: Change SPECIFICATION.md as the request given with the command asks - written in the specification's own structure and voice, checked against what the runtime can actually do - and nothing else. Never explores the project or the environment; discovering how things work is /spec-sync-project's job.
 argument-hint: 'what to add, change or remove in the specification'
 disable-model-invocation: true
 ---
@@ -13,72 +13,101 @@ runs after this.
 You change one file: `SPECIFICATION.md`. Not `agents.yaml`, not a prompt, not a
 skill, not `SPECIFICATION-FEEDBACK.md`.
 
-## 0. Read everything you need first
+## 0. Size the edit, then read only what it needs
 
-These are the files the work depends on. Read them before anything else, so
-the work starts from all of them rather than from a round of reads later.
+If no request was given with the command, ask what to change and stop.
 
-The project:
+### Decide the kind of edit first
+
+From the request and `SPECIFICATION.md` alone, before reading anything else:
+
+- **Greenfield** - `SPECIFICATION.md` is still the `zen init` scaffold (generic
+  placeholders such as "Carry out work inside a workspace on request…",
+  "Currently: no steps", "the only agent; nobody to hand work to"), or the
+  request asks to define or make a specification for a project or domain.
+- **Incremental** - anything else: the specification already describes a real
+  project and the request asks for a specific change.
+
+Then decide which sections the request touches (§1), because that decides
+which skills you read.
+
+### Read in one batch
+
+Always:
 
 - [SPECIFICATION.md](../../../SPECIFICATION.md) - the file you are editing.
 - [SPECIFICATION-FEEDBACK.md](../../../SPECIFICATION-FEEDBACK.md) - the questions
   still open against it, and the ones already answered. It may not exist; that
   only means nothing is open.
 
-What the runtime can do, so that what you write is something it can build:
+What the runtime can do, so that what you write is something it can build. On
+a **greenfield** edit read all of them. On an **incremental** edit read only the
+ones for the sections the request touches; when unsure whether a section is
+touched, read its skill:
 
-- [zen-cli](../zen-cli/SKILL.md) - every `zen` command, and
-  [its models reference](../zen-cli/references/models.md) - how to find
-  which models this machine can actually use.
-- [zen-instructions](../zen-instructions/SKILL.md) - house rules: what
-  every agent is told, and what belongs there rather than in a prompt.
-- [zen-topology](../zen-topology/SKILL.md) - one agent or several,
-  hand-off or fork, and what each costs.
-- [zen-memory](../zen-memory/SKILL.md) - what memory is, who may read and
-  write it, and what a strategy for it has to say.
-- [zen-rag-docs](../zen-rag-docs/SKILL.md) - an index over a folder of
-  markdown documents.
-- [zen-rag-schema](../zen-rag-schema/SKILL.md) - an index over an OpenAPI
-  description.
-- [zen-sandbox](../zen-sandbox/SKILL.md) - the container: what it mounts,
-  what it can reach, what persists.
-- [zen-code-python](../zen-code-python/SKILL.md) - reusable scripts as
-  tools, where they live, and which agents own them.
+| Section touched                                             | Skill                                                                                                                                               |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agents** (split, hand-off, fork)                          | [zen-topology](../zen-topology/SKILL.md) - one agent or several, hand-off or fork, and what each costs                                              |
+| **Tools and boundaries** (scripts, writing or running code) | [zen-code-python](../zen-code-python/SKILL.md) - reusable scripts as tools, where they live, and which agents own them                              |
+| **Knowledge** / **Setup** (index over OpenAPI)              | [zen-rag-schema](../zen-rag-schema/SKILL.md) - an index over an OpenAPI description                                                                 |
+| **Knowledge** / **Setup** (index over documents)            | [zen-rag-docs](../zen-rag-docs/SKILL.md) - an index over a folder of markdown documents                                                             |
+| **Memory**                                                  | [zen-memory](../zen-memory/SKILL.md) - what memory is, who may read and write it, and what a strategy for it has to say                             |
+| **Environment** (image, packages, network, persistence)     | [zen-sandbox](../zen-sandbox/SKILL.md) - the container: what it mounts, what it can reach, what persists                                            |
+| Rules every agent is told                                   | [zen-instructions](../zen-instructions/SKILL.md) - house rules, and what belongs there rather than in a prompt                                      |
+| **Models**                                                  | [zen-cli](../zen-cli/SKILL.md) and [its models reference](../zen-cli/references/models.md) - how to find which models this machine can actually use |
 
 Any of these already in your context - attached, or loaded as a skill - you
-need not read again. Read the rest in **one** batch of parallel reads before
-doing anything else, `SPECIFICATION-FEEDBACK.md` included if it exists. Never one at a
-time, and never skip one because the request seems not to need it: a request
-about an agent's job can still decide what that agent may remember.
+need not read again. Read the rest in **one** batch of parallel reads, never
+one at a time.
 
-In the same first step, run once from the project root and keep the output:
+### Models
+
+Run this once from the project root, in the same batch, only when the edit is
+greenfield, the request names or changes a model, or the specification will use
+`memory/`, `assets/docs-db` or `assets/schema-db` and **Models** has no
+embedding model yet:
 
 ```sh
 zen models && zen models ls --chat && zen models ls --embeddings
 ```
 
 That is the list of models with a credential on this machine - the only ones a
-**Models** line may name. A model the request names that is not in it: run
+new **Models** line may name. A model the request names that is not in it: run
 `zen models search <name>` once; if it is still absent, say so in the chat and
-do not write it.
+do not write it. A model already in `SPECIFICATION.md` that the request does not
+mention is kept as it is and not checked.
 
-If no request was given with the command, ask what to change and stop.
+### What you never read
+
+This command changes intent, not implementation, so it needs nothing from the
+project beyond the files above. Do not open, list or search anything else in
+the project: not `agents/`, `scripts/`, `sandbox/`, `resources/`, `assets/`,
+`gym/`, examples, code or data, and not the skills' own `references/` beyond
+the models reference. Do not run any command other than the `zen models` ones
+above, and do not inspect environment variables, the network, running
+processes or installed tools. A path the request names is written into the
+specification as named; you do not read it to find out what is in it.
+
+What you would have looked up - an endpoint, an auth scheme, a base URL, a
+file layout, how an existing script works - is either stated by role in the
+specification (§3, "Unknowns are named, not researched") or settled later by
+`/spec-sync-project`, which reads the project.
+
+### Then edit
+
+Once that one batch is read, your next action is the edit to
+`SPECIFICATION.md`. If you feel the need to read something more, do not: put it
+in the report as an open question instead.
 
 ## 1. Understand the request against what is there
 
-Before writing a line, work out:
+Before writing a line, work out - from the request, `SPECIFICATION.md`, the
+feedback file and the skills you read, nothing else:
 
-- **Whether this is defining the project from the initial scaffold or editing an
-  existing domain specification.** A freshly initialised `SPECIFICATION.md` is a
-  generic placeholder ("Carry out work inside a workspace on request…",
-  "Currently: no steps", "the only agent; nobody to hand work to") written as
-  meta-commentary about what each section does. When the request asks to make or
-  define a specification for a project or domain on top of that scaffold, it
-  reaches **every** section: replace all generic template sentences and
-  meta-explanations with a complete, concrete specification for that domain.
-  When `SPECIFICATION.md` already describes a real domain project and the
-  request asks for a specific change, keep the pass narrow and touch only the
-  sections the change implicates.
+- **How far the edit reaches.** A **greenfield** edit (§0) reaches **every**
+  section: replace all generic template sentences and meta-explanations with a
+  complete, concrete specification for that domain. An **incremental** edit
+  stays narrow: touch only the sections the change implicates.
 - **Which sections the request touches.** Usually more than the one it names: a
   new agent changes **Agents**, **Tools and boundaries** and **Done means**; an
   index changes **Setup**, **Knowledge** and **Environment**.
@@ -87,11 +116,35 @@ Before writing a line, work out:
 - **What it settles in the feedback file.** An open question the request
   answers, or an answered one it reverses. Do not edit the feedback file; say
   which questions in the chat.
-- **Whether the runtime can do it.** Check the request against the skills above.
-  Something no tool, agent setting or script can provide is not written into the
-  specification as if it could be: say so in the chat, offer the nearest thing
-  the runtime does do, and write that only if the request leaves no doubt it is
-  wanted.
+- **Whether the runtime can do it.** Check the request against the skills you
+  read. Something no tool, agent setting or script can provide is not written
+  into the specification as if it could be: say so in the chat, offer the
+  nearest thing the runtime does do, and write that only if the request leaves
+  no doubt it is wanted.
+
+### Example: a narrow incremental request
+
+Request: _"let the agent write code against our appliance's REST API, index the
+API specs in `resources/apis/*.yaml`, and add a skill on how to write code for
+that API"_, on a specification that already describes the project.
+
+- Kind: incremental.
+- Sections: **Agents** (which agent writes and runs the code), **Tools and
+  boundaries** (scripts in `/workspace/scripts/`, the API it may call, what
+  stays read-only), **Setup** and **Knowledge** (a `zen rag schema` index over
+  `resources/apis/*.yaml` in `assets/schema-db`, and the new skill under
+  `agents/skills/` with what it holds), **Environment** (the libraries and the
+  network access the code needs, credentials by env-var name), **Models** only
+  if no embedding model is listed yet, **Done means** (one checkable line per
+  new behaviour).
+- Skills read: zen-topology, zen-code-python, zen-rag-schema, zen-sandbox -
+  plus zen-cli only if an embedding model has to be added.
+- Not read: the API spec files, existing scripts, agents, examples, the
+  environment.
+- In the report: the base URL, auth scheme and any other value only the reader
+  has, written into the specification by role and env-var name.
+
+Once these are worked out, your next action is the edit.
 
 ## 2. The structure of a specification
 
@@ -169,8 +222,9 @@ What each one answers:
 - **Environment** - the sandbox (`sandbox/Dockerfile`, persistence, network),
   the exact languages, CLI tools, and libraries pre-installed in the image so
   agents never install packages at run time, where scripts and data outputs
-  live under `/workspace`, and optional environment variables or credentials by
-  name - see **zen-sandbox**.
+  live under `/workspace`, and the environment variables or credentials the
+  project itself needs (an external API, a service) by name - see
+  **zen-sandbox**. Never the credentials of chat or embedding models (§3).
 - **Testing** - how a change to the project is checked: `zen check`,
   `scripts/_setup.sh --check`, `scripts/_setup.sh` run twice in a row reporting
   `skipped` the second time, and a concrete verification request the project
@@ -199,12 +253,13 @@ What each one answers:
   `agents.yaml` in prose. Name the agents, skills, setup steps, indexes, APIs,
   packages, paths, and behavioural rules clearly, without pasting raw YAML
   snippets or shell implementation internals that `/spec-sync-project` derives.
-- **Turn high-level domain requests into concrete architectural choices.** When
-  a request asks to design a project in broad terms (for example, "make a
-  specification for financial analytics using open APIs"), do not repeat vague
-  phrases like "open APIs" or "packages for data analysis". Make the concrete
-  domain choices upfront so `/spec-sync-project` can build a working system
-  without guessing:
+- **On a greenfield request, turn high-level domain requests into concrete
+  architectural choices.** When a request asks to design a project in broad
+  terms (for example, "make a specification for financial analytics using open
+  APIs"), do not repeat vague phrases like "open APIs" or "packages for data
+  analysis". Make the concrete domain choices upfront, from what you know of
+  public APIs and libraries and from the skills you read, so
+  `/spec-sync-project` can build a working system without guessing:
     - Name specific, working zero-key public APIs and endpoints as primary
       sources (with required headers such as `User-Agent` and rate limits),
       optional keyed free-tier APIs as secondary sources with clean zero-key
@@ -218,6 +273,16 @@ What each one answers:
     - State explicit numeric limits (such as the maximum entities/tickers per
       request before refusing with a count), retry/fallback rules, and required
       citation fields.
+- **On an incremental request, write what the request states.** Add what it
+  asks for, plus the changes it forces in other sections (§1), in the same
+  level of detail the specification already uses. Do not design beyond it.
+- **Unknowns are named, not researched.** A value the request and the
+  specification do not give - an endpoint, a base URL, an auth scheme, a
+  credential, a file layout - is written by role and env-var name (for example
+  "the appliance base URL from `APPLIANCE_URL`, credentials from
+  `APPLIANCE_USER` and `APPLIANCE_PASSWORD`") and listed in the report as a
+  value only the reader has. Never look for it in the project or the
+  environment, and do not stop to ask for it.
 - **Be specific where a reader could decide either way.** A limit is a number,
   a model is an id, a failure has a stated outcome. "Handles large inputs" is
   not implementable; "a request over 25 tickers is refused with a count, never
@@ -225,9 +290,14 @@ What each one answers:
 - **Never invent a model id or a user-owned secret.** Keep the model already in
   `SPECIFICATION.md` unless the request asks to change it, and take any new
   chat or embedding model strictly from the `zen models` output on this machine,
-  never from memory. Ask before editing only when a required value belongs
-  exclusively to the user (such as a private server URL or proprietary rule)
-  and cannot be satisfied by a standard public default.
+  never from memory.
+- **Never name a model provider's credential.** `OPENAI_API_KEY`,
+  `ANTHROPIC_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS` and the like live in
+  the zen keyring and reach every run, setup step and sandbox without the
+  specification saying so. A **Models** line names the model id, not the key
+  behind it; **Environment** and the report list only the credentials of
+  external services the project calls. If `SPECIFICATION.md` already names a
+  model key, remove it as part of any edit to that section.
 - **Make it checkable.** Every behaviour the request adds gets a line under
   **Done means** that a reviewer could verify against a recorded run.
 - **Name what is now excluded.** When the request narrows the system, the thing
@@ -243,8 +313,9 @@ In the chat:
 - every edit the request did not name but made necessary, and why
 - every open question in `SPECIFICATION-FEEDBACK.md` the change settles or
   reopens, by number
-- anything you did not write because the runtime cannot do it, or because it
-  needs a value only the reader has
+- anything you did not write because the runtime cannot do it
+- every value written by role or env-var name that only the reader has, and
+  anything you would have wanted to look up but did not (§0)
 - then, in one line: send `/spec-sync-project` to make the project match.
 
 ## 5. The request
