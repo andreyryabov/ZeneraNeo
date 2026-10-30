@@ -16,6 +16,7 @@ answers once on stdout and exits.
 | `--new`                 | Start a new session rather than continuing one           |
 | `--input <file>`        | Read the whole request from JSON; `-` is stdin           |
 | `--workspace <dir>`     | What the agent may read and write                        |
+| `--here`                | `--workspace` with the directory you are in              |
 | `--memory <dir>`        | Where the agents remember into, instead of the project's |
 | `--memory-read-only`    | Recall from it; write nothing back                       |
 | `--model <ref>`         | Override the default model for this run                  |
@@ -270,7 +271,7 @@ question of what the agents know without changing what they know.
 
 ### What means nothing in a batch
 
-`--session`, `--new`, `--workspace`, `--plain` and `--theme` are refused by
+`--session`, `--new`, `--workspace`, `--here`, `--plain` and `--theme` are refused by
 name rather than ignored. Every item is a new session of its own, they cannot
 share a workspace, and a batch never draws the TUI.
 
@@ -297,10 +298,17 @@ git diff | zen run "summarise this diff"
 ## What a prompt on the command line implies
 
 A prompt is a request for an answer, not a conversation to pick up, so it
-answers the three questions itself: **a fresh session**, **the directory you are
-in** as the workspace, and **no confirmation**. Every flag still wins -
-`--session`, `--workspace` and `--read-only` override it - and the TUI, where
+answers the three questions itself: **a fresh session**, **a fresh, empty
+directory inside it** (`<session>/workspace/`) as the workspace, and **no
+confirmation**. To have it read and write the directory you are in, say
+`--here` (the same as `--workspace .`). Every flag still wins - `--session`,
+`--workspace`, `--here` and `--read-only` override it - and the TUI, where
 there is someone to ask, still asks.
+
+```
+zen run "draft a release note"            works in sessions/<id>/workspace/
+zen run --here "what changed?"            reads and writes the directory you are in
+```
 
 There is no `resume`. A session continues itself, because its state is what it
 is; `--session <id>` picks which one.

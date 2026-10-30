@@ -70,7 +70,8 @@ guess a flag, and do not read them all.
 zen init                              scaffold a project here, pick a model
 zen check                             validate everything before spending a turn
 zen run                               the TUI
-zen run "what changed?"               one answer, this directory as the workspace
+zen run "what changed?"               one answer, in a fresh session directory
+zen run --here "what changed?"        ... about the files in this directory
 zen run batch --input cases.json      many questions at once, each isolated
 zen inspect --open                    what the model was actually given
 zen inspect graph --dir <run dir>     the same run as a graph you can read

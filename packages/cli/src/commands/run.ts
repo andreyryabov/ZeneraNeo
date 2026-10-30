@@ -35,6 +35,7 @@ interface Flags {
     new?: boolean;
     input?: string;
     workspace?: string;
+    here?: boolean;
     memory?: string;
     'memory-read-only'?: boolean;
     model?: string;
@@ -70,6 +71,8 @@ export const run: Command = {
         '  --new                  Start a new session without asking which one.',
         '  --input <file>         Read the whole request from JSON. `-` is stdin.',
         '  --workspace <dir>      Directory the agent can read and write.',
+        '                         Default: a fresh one inside the new session.',
+        '  --here                 Same as --workspace with the directory you are in.',
         '  --memory <dir>         Directory the agents remember into.',
         '  --memory-read-only     Recall from it, write nothing back.',
         '  --model <ref>          Use this model instead of the default.',
@@ -96,7 +99,9 @@ export const run: Command = {
         'the answer alone and `2>/dev/null` hides the progress.',
         '',
         'A prompt always starts a new session, so --new is for the TUI, where the',
-        'alternative is being asked which session to continue.',
+        'alternative is being asked which session to continue. Its workspace is a',
+        'fresh, empty directory inside that session; to ask about the files where',
+        'you are, say --here.',
         '',
         '--input names a file holding the whole request - project, input, workspace,',
         'memory - and what it says wins over the same flag on the line. Its paths are',
@@ -135,6 +140,7 @@ export const run: Command = {
         '  zen run                               open the TUI in this project',
         '  zen run acme                          open the TUI in the acme project',
         '  zen run "what changed?"               ask that, print the answer, exit',
+        '  zen run --here "what changed?"        ... about the files in this directory',
         '  git diff | zen run                    take the prompt from stdin',
         '  zen run "what changed?" > out.md      redirect the answer into a file',
         '  zen run --out out.md "what changed?"  write the answer to out.md only',
@@ -157,6 +163,7 @@ export const run: Command = {
                 new: { type: 'boolean' },
                 input: { type: 'string' },
                 workspace: { type: 'string' },
+                here: { type: 'boolean' },
                 memory: { type: 'string' },
                 'memory-read-only': { type: 'boolean' },
                 model: { type: 'string' },
@@ -203,6 +210,9 @@ export const run: Command = {
         if (values.theme !== undefined && !parseChoice(values.theme)) {
             throw usageError(`unknown theme: ${values.theme}`, 'dark, light or auto');
         }
+        if (values.here && values.workspace !== undefined) {
+            throw usageError('--here and --workspace both name the workspace', 'keep one');
+        }
 
         // With `--input -` the pipe carries the request, not the prompt, so it
         // is read here and never looked at again below.
@@ -211,10 +221,11 @@ export const run: Command = {
 
         // A prompt on the command line is a request for an answer, not a
         // conversation to pick up. So it answers the three questions itself:
-        // a fresh session, the directory it was typed in as the workspace,
-        // and no confirmation for it — `zen run acme "what changed?"` should
-        // read the code that is right there. Every flag still wins, and the
-        // TUI, where there is someone to ask, still asks.
+        // a fresh session, a fresh directory inside it as the workspace, and
+        // no confirmation for any of it. Reading the files where it was typed
+        // takes --here: an agent that can write should not land in whatever
+        // directory the shell happened to be in. Every flag still wins, and
+        // the TUI, where there is someone to ask, still asks.
         const input = request ? request.input : prompt;
         const shot = Boolean(prompt) || Boolean(request);
         if (values.events && !shot) {
@@ -226,7 +237,9 @@ export const run: Command = {
             project: request?.project ?? values.project ?? (named ? head : undefined),
             session: values.session,
             fresh: values.new || (shot && !values.session),
-            workspace: request?.workspace ?? values.workspace ?? (shot ? ctx.cwd : undefined),
+            workspace:
+                request?.workspace ?? values.workspace ?? (values.here ? ctx.cwd : undefined),
+            ask: !shot,
             yes: values.yes || shot,
         });
 
@@ -292,6 +305,7 @@ const NOT_IN_A_BATCH: [keyof Flags, string][] = [
     ['session', 'every item is a new session of its own'],
     ['new', 'every item is new already'],
     ['workspace', 'they cannot share one; each item gets its own, or names one in the file'],
+    ['here', 'they cannot share one; each item gets its own, or names one in the file'],
     ['plain', 'a batch never draws the TUI'],
     ['theme', 'a batch never draws the TUI'],
     ['events', 'each item already has its own output.json'],

@@ -639,11 +639,13 @@ run whose agents all lack `memory: true` is warned rather than left looking
 broken.
 
 A prompt on the command line answers all three questions by itself: `zen run
-acme "what changed?"` starts a **fresh** session with the **current directory**
-as the workspace, writable, and asks nothing - the point of typing a question
-where you are is to have it answered about what is there. The path is still
-named on stderr, and `--session`, `--workspace` and `--read-only` override it.
-The TUI, where there is someone to ask, still asks.
+acme "what changed?"` starts a **fresh** session with a **fresh, empty
+directory inside it** as the workspace, and asks nothing. Not the current
+directory: an agent that can write should not land wherever the shell happened
+to be, so `--here` (short for `--workspace .`) is the one word that asks for
+that. The path is still named on stderr, and `--session`, `--workspace`,
+`--here` and `--read-only` override it. The TUI, where there is someone to ask,
+still asks.
 
 ### 7.2 One shot or a TUI
 

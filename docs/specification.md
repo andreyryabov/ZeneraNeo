@@ -213,7 +213,7 @@ Check it, then point it at a real directory:
 ```sh
 zen check                                  # validates every file it names
 cd ~/code/some-repo
-zen run repo-notes "summarise this repo"   # the current directory is the workspace
+zen run repo-notes --here "summarise this repo"   # --here: the current directory is the workspace
 zen inspect --project repo-notes --open    # what it actually did
 ```
 

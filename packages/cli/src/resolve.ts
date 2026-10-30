@@ -27,6 +27,8 @@ export interface Wanted {
     session?: string;
     fresh?: boolean;
     workspace?: string;
+    /** false to take the session's own workspace without offering a choice */
+    ask?: boolean;
     yes?: boolean;
     cwd: string;
 }
@@ -194,7 +196,7 @@ export async function chooseWorkspace(session: SessionPaths, want: Wanted): Prom
         await approve(at, session, want);
         return at;
     }
-    if (!term.isInteractive()) {
+    if (want.ask === false || !term.isInteractive()) {
         return own;
     }
     const chosen = await term.choose('Workspace — what the agent can read and write', [

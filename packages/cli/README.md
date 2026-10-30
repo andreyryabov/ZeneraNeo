@@ -115,7 +115,7 @@ in line with it, validate the setup, and run it:
 ```sh
 zen meta run my-project /spec-sync-project
 zen check my-project
-zen run my-project "Summarize this repository and write NOTES.md"
+zen run my-project --here "Summarize this repository and write NOTES.md"
 zen inspect
 ```
 
@@ -127,13 +127,15 @@ than silently guessing. After you answer, apply that feedback with
 ## Run it your way
 
 With no prompt, `zen run` opens the terminal UI. Provide a prompt for a
-one-shot run, or use JSON and batch mode to integrate with other tools:
+one-shot run, or use JSON and batch mode to integrate with other tools. A
+one-shot run works in a fresh directory inside its session; `--here` points it
+at the directory you are in instead:
 
 ```sh
 zen run my-project                         # interactive terminal UI
-zen run my-project "Review the latest changes"
+zen run my-project --here "Review the latest changes"
 git diff | zen run my-project
-zen run my-project "Summarize the changes" --read-only
+zen run my-project --here "Summarize the changes" --read-only
 zen run my-project "Triage these alerts" --json | jq
 zen run batch --input cases.json           # run a set of requests
 ```

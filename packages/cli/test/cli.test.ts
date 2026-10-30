@@ -46,7 +46,7 @@ import {
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { platform, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { extract, split } from '../src/args.ts';
 import { bannerLines, NEO_BANNER } from '../src/banner.ts';
@@ -1961,6 +1961,19 @@ describe('choosing the workspace', () => {
             spy.mockRestore();
             chooseSpy.mockRestore();
             confirmSpy.mockRestore();
+            interactiveSpy.mockRestore();
+        }
+    });
+
+    it('takes the session workspace without asking when told not to ask', async () => {
+        const chooseSpy = vi.spyOn(term, 'choose');
+        const interactiveSpy = vi.spyOn(term, 'isInteractive').mockReturnValue(true);
+        try {
+            const target = await chooseWorkspace(session, { cwd: root, ask: false, yes: true });
+            expect(target).toBe(resolve(session.workspace));
+            expect(chooseSpy).not.toHaveBeenCalled();
+        } finally {
+            chooseSpy.mockRestore();
             interactiveSpy.mockRestore();
         }
     });
