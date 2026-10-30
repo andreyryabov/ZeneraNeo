@@ -169,6 +169,8 @@ describe('collecting a project', () => {
         expect(excluded('sessions', true)).toBe('sessions');
         expect(excluded('assets/docs/sessions', true)).toBeUndefined();
         expect(excluded('.env', false)).toBe('env');
+        expect(excluded('.env.test', false)).toBe('env');
+        expect(excluded('.env.example', false)).toBeUndefined();
         expect(excluded('assets/docs/.env', false)).toBeUndefined();
     });
 

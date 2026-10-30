@@ -14,8 +14,9 @@ memory/.lock
 # Scratch, inside the workspace so the sandbox can reach it.
 .tmp/
 
-# Credentials.
+# Credentials, and the ones test chats use instead.
 .env
+.env.test
 
 # A rag index commits everything except its vectors: they are binary, they are
 # large, and `zen rag <subject> restore` rebuilds them from the copies of the

@@ -15,6 +15,7 @@ import {
     mask,
     parseRef,
     projectMounts,
+    readProjectEnv,
     sessionPaths,
     stamp,
     stampInstant,
@@ -2340,22 +2341,22 @@ describe('the scaffold', () => {
      * under its own name - this repository ignores `.env` too - so the one
      * thing worth pinning is that it arrives with the dot on.
      */
-    it('writes a .env, ignored, beside a committed .env.example and .env.gym', () => {
+    it('writes .env and .env.test, ignored, beside a committed .env.example', () => {
         const dir = join(root, 'env');
         mkdirSync(dir, { recursive: true });
         const written = scaffold({ dir, model: 'gpt-4o' });
 
         expect(written.files).toContain('.env');
+        expect(written.files).toContain('.env.test');
         expect(readFileSync(join(dir, '.env'), 'utf8')).not.toContain('{{');
         const ignore = readFileSync(join(dir, '.gitignore'), 'utf8');
         expect(ignore).toMatch(/^\.env$/m);
+        expect(ignore).toMatch(/^\.env\.test$/m);
 
-        // The two that are committed: no secrets, and nothing ignores them.
-        for (const name of ['.env.example', '.env.gym']) {
-            expect(written.files).toContain(name);
-            expect(readFileSync(join(dir, name), 'utf8')).not.toMatch(/^[A-Z_]+=\S/m);
-            expect(ignore).not.toContain(name);
-        }
+        // Committed, so it holds names and no values, and nothing ignores it.
+        expect(written.files).toContain('.env.example');
+        expect(readFileSync(join(dir, '.env.example'), 'utf8')).not.toMatch(/^[A-Z_]+=\S/m);
+        expect(ignore).not.toContain('.env.example');
     });
 
     it('leaves a filled-in .env alone', () => {
@@ -2477,7 +2478,7 @@ describe("a project's .env", () => {
 
     afterAll(() => rmSync(root, { recursive: true, force: true }));
     afterEach(() => {
-        for (const name of [...names, 'GOOGLE_APPLICATION_CREDENTIALS']) {
+        for (const name of [...names, 'GOOGLE_APPLICATION_CREDENTIALS', 'ZEN_ENV_FILE']) {
             delete process.env[name];
         }
     });
@@ -2506,6 +2507,38 @@ describe("a project's .env", () => {
         mkdirSync(dir, { recursive: true });
 
         expect(loadProjectEnv(dir)).toBeUndefined();
+    });
+
+    /**
+     * `ZEN_ENV_FILE` names the one file read instead of `.env` - nothing of
+     * `.env` comes through - and only reading touches nothing.
+     */
+    it('reads the file ZEN_ENV_FILE names, instead of .env', () => {
+        const dir = join(root, 'other');
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, '.env'), 'ZEN_TEST_SET=real\nZEN_TEST_UNSET=real\n');
+        writeFileSync(join(dir, '.env.test'), 'ZEN_TEST_SET=test\n');
+        process.env['ZEN_ENV_FILE'] = '.env.test';
+
+        const read = readProjectEnv(dir);
+
+        expect(read?.path).toBe(join(dir, '.env.test'));
+        expect(read?.values).toEqual({ ZEN_TEST_SET: 'test' });
+        expect(process.env['ZEN_TEST_SET']).toBeUndefined();
+
+        loadProjectEnv(dir);
+        expect(process.env['ZEN_TEST_SET']).toBe('test');
+        expect(process.env['ZEN_TEST_UNSET']).toBeUndefined();
+    });
+
+    it('does not fall back to .env when the named file is missing', () => {
+        const dir = join(root, 'missing');
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, '.env'), 'ZEN_TEST_SET=real\n');
+        process.env['ZEN_ENV_FILE'] = '.env.test';
+
+        expect(loadProjectEnv(dir)).toBeUndefined();
+        expect(process.env['ZEN_TEST_SET']).toBeUndefined();
     });
 
     it('reads a credential file path as relative to the project', () => {

@@ -77,7 +77,7 @@ export const pack: Command = {
         '',
         'Leaves behind what belongs to this machine: sessions/, .tmp/, .git/,',
         'node_modules/, lock files, any *.zip at the top of the project, and',
-        `.env. Unless the project keeps its own ${ENV_EXAMPLE}, the names in .env`,
+        `.env and .env.test. Unless the project keeps its own ${ENV_EXAMPLE}, the names in .env`,
         'become one with no values, so the other end knows what to fill in.',
         '',
         'Vectors travel by default — memory has no other source, and a rag',

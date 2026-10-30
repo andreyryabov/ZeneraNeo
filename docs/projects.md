@@ -47,7 +47,7 @@ my-project/
     .spec-sync/                      what the last sync with the specification applied
     .env                             this project's environment - git-ignored
     .env.example                     the names .env needs, without values
-    .env.gym                         the same names, pointed at `zen gym`
+    .env.test                        read instead of .env by Zenera Lite's test chats - git-ignored
     sessions/                        one workspace, memory and trajectory each
         <id>/
             workspace/               what the agents can read and write

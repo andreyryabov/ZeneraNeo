@@ -141,8 +141,9 @@ export function excluded(rel: string, isDir: boolean, opts: CollectOptions = {})
     }
     // The credentials never travel, in any form and behind no flag. What the
     // project needs is described by `.env.example`, which `export` synthesizes
-    // from the names in this file.
-    if (rel === ENV_FILE) {
+    // from the names in this file. Its variants (`.env.test`, `.env.local`, what
+    // `ZEN_ENV_FILE` names) are credentials just the same.
+    if (rel === ENV_FILE || (rel.startsWith(`${ENV_FILE}.`) && rel !== ENV_EXAMPLE)) {
         return 'env';
     }
     if (name === '.lock') {

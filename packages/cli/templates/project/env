@@ -14,6 +14,9 @@
 # It is in .gitignore, and should stay there. Everything else in the project is
 # meant to be read, copied and shared; this is the one file that is not.
 #
+# ZEN_ENV_FILE, set in the shell, names another file to read instead of this
+# one — `.env.test`, say — relative to the project.
+#
 # A credential *file* — GOOGLE_APPLICATION_CREDENTIALS — may be named by a path
 # relative to this directory. It is mounted into the sandbox where the agent
 # can read it, which is worth knowing before you point at one.

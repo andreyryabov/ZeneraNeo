@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { isAbsolute, join, resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import { parseEnv } from 'node:util';
 import { FILE_ENVS } from './keys.ts';
 
@@ -26,17 +26,50 @@ import { FILE_ENVS } from './keys.ts';
 /** The file, relative to the project directory. */
 export const ENV_FILE = '.env';
 
+/**
+ * Names another file to read instead of `.env` — relative to the project
+ * directory, or absolute. A host running the same project for different
+ * purposes points each process at its own file this way.
+ */
+export const ENV_FILE_ENV = 'ZEN_ENV_FILE';
+
 export interface ProjectEnv {
     /** the file it was read from */
     path: string;
     /** every name the file declares, whether or not its value won */
     names: string[];
+    /** what the file says, credential paths made absolute */
+    values: Record<string, string>;
+}
+
+/** The env file a project in `dir` reads: `$ZEN_ENV_FILE` when set, `.env` otherwise. */
+export function projectEnvPath(dir: string): string {
+    return resolve(dir, process.env[ENV_FILE_ENV]?.trim() || ENV_FILE);
 }
 
 /**
- * Reads `<dir>/.env` into `process.env`, without overwriting anything already
- * set, and returns the names it found. A project with no such file is not a
- * problem to report — most have none — so the answer is simply `undefined`.
+ * Reads the project's env file without touching `process.env`. `undefined`
+ * when there is no such file.
+ */
+export function readProjectEnv(dir: string): ProjectEnv | undefined {
+    const path = projectEnvPath(dir);
+    if (!existsSync(path)) {
+        return undefined;
+    }
+    const values: Record<string, string> = {};
+    for (const [name, value] of Object.entries(parseEnv(readFileSync(path, 'utf8')))) {
+        if (value !== undefined) {
+            values[name] = located(dir, name, value);
+        }
+    }
+    return { path, names: Object.keys(values), values };
+}
+
+/**
+ * Reads the project's env file (`.env`, or `$ZEN_ENV_FILE`) into
+ * `process.env`, without overwriting anything already set, and returns the
+ * names it found. A project with no such file is not a problem to report —
+ * most have none — so the answer is simply `undefined`.
  *
  * The names are returned in full, including the ones the environment already
  * answered: the variable is in play either way, and the sandbox forwards by
@@ -44,24 +77,16 @@ export interface ProjectEnv {
  * two sources supplied them.
  */
 export function loadProjectEnv(dir: string): ProjectEnv | undefined {
-    const path = join(dir, ENV_FILE);
-    if (!existsSync(path)) {
-        return undefined;
-    }
-    const names: string[] = [];
-    for (const [name, value] of Object.entries(parseEnv(readFileSync(path, 'utf8')))) {
-        if (value === undefined) {
-            continue;
-        }
-        names.push(name);
+    const env = readProjectEnv(dir);
+    for (const [name, value] of Object.entries(env?.values ?? {})) {
         // An empty string is not an answer: tools test for absence, and a
         // commented-out line someone half-filled in should not shadow a key
         // the keyring has.
         if (!process.env[name]) {
-            process.env[name] = located(dir, name, value);
+            process.env[name] = value;
         }
     }
-    return { path, names };
+    return env;
 }
 
 /**

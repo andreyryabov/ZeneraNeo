@@ -158,15 +158,15 @@ export interface CopyOptions {
  * out of a published tarball, and git would read this one as rules about
  * `packages/cli/templates/` rather than as content. The `env` files cannot have
  * their dot for a plainer reason — this repository ignores `.env` and `.env.*`
- * everywhere, so the templates would never be committed at all. Of the three,
- * only `.env` is ignored in the project: `.env.example` and `.env.gym` hold no
- * secrets and are meant to be shared.
+ * everywhere, so the templates would never be committed at all. In the project
+ * `.env` and `.env.test` are ignored, being credentials; `.env.example` holds
+ * no values and is meant to be shared.
  */
 const DOTFILES: Record<string, string> = {
     gitignore: '.gitignore',
     env: '.env',
     'env.example': '.env.example',
-    'env.gym': '.env.gym',
+    'env.test': '.env.test',
 };
 
 /** The name a template file lands under. */
