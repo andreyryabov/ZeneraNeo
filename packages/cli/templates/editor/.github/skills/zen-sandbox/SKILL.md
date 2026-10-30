@@ -1,6 +1,7 @@
 ---
 name: zen-sandbox
-description: How the container sandbox works, when and how to configure it in `agents.yaml` (`sandbox:` and `agents[].sandbox`), the four `sandbox:*` tools, mount layout (/workspace, $HOME, /tmp, /run/zenera/keys), lifecycle and persistence (`persist: true`), credential forwarding by name, resource ceilings (cpus, memory, pids), standard vs strict hardening profiles, path rules, and debugging container issues with `zen sandbox`. Refers to `zen-cli` (`.github/skills/zen-cli/references/sandbox.md`).
+description: 'How the container sandbox works, when and how to configure it in `agents.yaml` (`sandbox:` and `agents[].sandbox`), the four `sandbox:*` tools, mount layout (/workspace, $HOME, /tmp, /run/zenera/keys), lifecycle and persistence (`persist: true`), credential forwarding by name, resource ceilings (cpus, memory, pids), standard vs strict hardening profiles, path rules, and debugging container issues with `zen sandbox`. Refers to `zen-cli` (`.github/skills/zen-cli/references/sandbox.md`).'
+user-invocable: false
 ---
 
 # The Container Sandbox

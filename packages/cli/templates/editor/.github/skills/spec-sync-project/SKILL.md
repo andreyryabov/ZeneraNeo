@@ -1,5 +1,8 @@
 ---
+name: spec-sync-project
 description: Bring the project into compliance with SPECIFICATION.md, and record every open question in SPECIFICATION-FEEDBACK.md.
+argument-hint: '[file or area to focus on]'
+disable-model-invocation: true
 ---
 
 Make this project match `SPECIFICATION.md`. The specification is the intent;
@@ -55,7 +58,7 @@ Read, in this order, and do not edit until all of it is read:
 6. `SPECIFICATION-FEEDBACK.md`, if it exists - do not re-raise something already
    open there.
 
-Never read `.tmp/logs/meta.*` - those are other runs of this prompt, not
+Never read `.tmp/logs/meta.*` - those are other runs of this command, not
 evidence - nor anything of `zen`'s own (copilot instructions §0.2).
 
 On an incremental pass this list narrows to the artefacts the scope implicates,

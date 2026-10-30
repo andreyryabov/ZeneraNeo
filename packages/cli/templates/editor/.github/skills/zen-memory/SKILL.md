@@ -1,6 +1,7 @@
 ---
 name: zen-memory
 description: Agent memory in Zenera projects - the `memory:` block and per-agent `access`/`sees`/`writes`/`autoRecall`, the five `memory_*` tools (when to use `memory_grep` instead of `memory_search`), kinds, relations and how recall ranks, inspecting a graph with `zen memory`, designing a memory strategy, `agents/memory-instructions.md` vs `agents/memory-policy-instructions.md`, remembering files under `/memory`, and putting memory in front of a `zen rag` index.
+user-invocable: false
 ---
 
 # Memory

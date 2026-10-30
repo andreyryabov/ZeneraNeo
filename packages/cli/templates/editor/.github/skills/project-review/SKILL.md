@@ -1,5 +1,7 @@
 ---
+name: project-review
 description: Review the project against the checklist before committing.
+disable-model-invocation: true
 ---
 
 Review this project the way a maintainer would, then report. Read

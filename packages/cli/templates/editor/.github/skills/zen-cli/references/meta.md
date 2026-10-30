@@ -2,8 +2,8 @@
 
 ```
 zen meta run [project] "<question>"        ask it something
-zen meta run [project] /<name> [words]     run .github/prompts/<name>.prompt.md
-zen meta prompts [project]                 list the stored prompts
+zen meta run [project] /<name> [words]     run the command .github/skills/<name>/SKILL.md
+zen meta prompts [project]                 list the commands (skills without zen-)
 zen meta resume [project] [session]        carry on a run that stopped
 zen meta model [ref]                       show or set the model it uses
 zen meta dataset <verb>                    see dataset.md

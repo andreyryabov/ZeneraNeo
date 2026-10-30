@@ -38,7 +38,7 @@ NOISE='^(and/or|he/she|his/her|input/output|read/write|w/o|n/a|N/A|24/7|km/h)$|^
 # second half is indistinguishable from a real absolute path once it is alone.
 #
 # A meta agent command, `zen meta run /spec-edit`, goes the same way: its
-# `/<name>` is a stored prompt, not a file the running agent is told to open.
+# `/<name>` is a command (a skill), not a file the running agent is told to open.
 strip_urls() {
     sed -E -e 's#[a-zA-Z][a-zA-Z0-9+.-]*://[^][ )"'"'"'`>]*##g' \
         -e 's#(zen meta run( [A-Za-z0-9_.-]+)?) /[A-Za-z0-9_-]+#\1#g' "$1"

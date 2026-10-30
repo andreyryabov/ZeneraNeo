@@ -1,5 +1,7 @@
 ---
+name: spec-apply-feedback
 description: Fold the answers left in SPECIFICATION-FEEDBACK.md back into SPECIFICATION.md, and mark each answered question as answered.
+disable-model-invocation: true
 ---
 
 `SPECIFICATION-FEEDBACK.md` is a questionnaire. Each question carries two to

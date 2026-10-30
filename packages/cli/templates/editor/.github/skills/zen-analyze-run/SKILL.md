@@ -1,6 +1,7 @@
 ---
 name: zen-analyze-run
 description: 'Use when asked to analyze, audit or review one recorded Zenera run as a whole - how healthy it was, whether memory was used and saved correctly, whether delegation and forking were right, where tools were misused and time or tokens wasted - and which sentence in the prompts, skills, house rules or tool descriptions to change so the next run does better. Needs a run directory or run id.'
+user-invocable: false
 ---
 
 # Analyze a run

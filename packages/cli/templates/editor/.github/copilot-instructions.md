@@ -1,7 +1,7 @@
 # Copilot instructions - agent projects
 
 > Written by `zen init` into `.github/copilot-instructions.md`, alongside the
-> prompt files and skills in the same tree (§2.4). VS Code loads it
+> skills and commands in the same tree (§2.4). VS Code loads it
 > automatically for every request in this folder, so it is the standing brief
 > for anyone - human or agent - editing this project.
 >
@@ -251,8 +251,7 @@ Two consequences that drive nearly every design rule in this document:
 my-project/
 ├── .github/                      the editor's brief - §2.4
 │   ├── copilot-instructions.md   this file
-│   ├── prompts/*.prompt.md       tasks you invoke by name
-│   └── skills/*/SKILL.md         reference the editor loads on demand
+│   └── skills/*/SKILL.md         zen-* reference loaded on demand; the rest /commands
 ├── .env                          this project's environment - NEVER committed
 ├── .spec-sync/                   what the last /spec-sync-project applied - §0.1
 ├── agents.yaml                   who exists, what they may reach for
@@ -349,15 +348,18 @@ agents do, for the same reason - it is a prefix somebody pays for:
 
 - **`copilot-instructions.md`** is always on. Everything in it is loaded for
   every request in this folder, so it holds only what is true of every task.
-- **`.github/skills/<name>/SKILL.md`** is reference the editor loads when its
-  `description` matches what you asked. Put long, occasional material here -
-  a command surface, a vendor's quirks, a format spec - not in the file above.
-  The `description` is the routing key; §3.4 applies to these as much as to the
-  project's own skills.
-- **`.github/prompts/<name>.prompt.md`** is a task you invoke by name (`/name`),
-  with `mode: agent` and a `description` in its frontmatter. Write one when a
-  job is done repeatedly and has a right order - adding an agent, adding a
-  skill, reviewing before a commit.
+- **`.github/skills/zen-<name>/SKILL.md`** is reference the editor loads when
+  its `description` matches what you asked. Put long, occasional material here
+    - a command surface, a vendor's quirks, a format spec - not in the file above.
+      The `description` is the routing key; §3.4 applies to these as much as to the
+      project's own skills. `user-invocable: false` keeps them out of the `/` menu.
+- **`.github/skills/<name>/SKILL.md`** without the `zen-` prefix is a command
+  you invoke by name (`/name`, or `zen meta run /name`), with
+  `disable-model-invocation: true` so the model never starts one on a hunch,
+  and an `argument-hint` when it takes words. Write one when a job is done
+  repeatedly and has a right order - adding an agent, adding a skill, reviewing
+  before a commit. It holds the order of the work and loads the `zen-*` skills
+  that hold the rules.
 
 `zen init` and `zen open` rewrite this whole tree from the version of `zen` in
 hand, so **edits inside `.github/` do not survive**. Project-specific conventions
@@ -2086,8 +2088,8 @@ install` is an `image:` that was never set - §3.7.
 
 This file is loaded on every request in this repository, so it is subject to its
 own rules: stable, factual, no hedging. Before adding a section, ask whether it
-is true of every task - if it is not, it is a skill under `.github/skills/`, or
-a prompt file under `.github/prompts/` if it is a procedure (§2.4).
+is true of every task - if it is not, it is a `zen-*` skill under
+`.github/skills/`, or a command skill there if it is a procedure (§2.4).
 
 Update it when:
 

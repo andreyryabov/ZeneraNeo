@@ -1,6 +1,8 @@
 ---
-mode: agent
+name: new-agent
 description: Add an agent to agents.yaml, with its prompt, tools and handoffs.
+argument-hint: "[the agent's job in one sentence]"
+disable-model-invocation: true
 ---
 
 Add an agent to this project. Ask for the one sentence that states its job

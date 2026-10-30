@@ -1,6 +1,7 @@
 ---
 name: zen-review
 description: Checking a project before committing - the three mechanical checks `/project-review` makes before any judgement (`zen check`, the §2.5 path sweep, the spec-sync record), what each one owns, what their exit codes mean, which findings hand off to `zen-instructions`, and what deliberately has no check because no tool can make it. Load before running `/project-review`, before saying a project is ready, and whenever a review finding needs verifying rather than restating.
+user-invocable: false
 ---
 
 # Reviewing a project

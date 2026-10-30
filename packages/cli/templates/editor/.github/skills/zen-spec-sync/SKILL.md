@@ -1,6 +1,7 @@
 ---
 name: zen-spec-sync
 description: Running `/spec-sync-project` as an incremental pass - the committed `.spec-sync` baseline of what the last pass applied, how to scope a pass from the specification and feedback diffs and from what moved in the project itself, which input wins when they disagree, the five checks a narrow pass may never skip, which skills a pass must load before editing (`zen-instructions` for any house rule it touches), the iteration history format, and why the baseline is written last. Load before every `/spec-sync-project`, including the first one on a project that has no baseline yet.
+user-invocable: false
 ---
 
 # Syncing a project with its specification, one change at a time

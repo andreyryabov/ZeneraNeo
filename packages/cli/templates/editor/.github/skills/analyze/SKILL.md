@@ -1,5 +1,8 @@
 ---
+name: analyze
 description: Analyze one recorded run of this project - its health, what it wasted, and what to change in the instructions. Name the run (directory or id) after the command, or get the most recent one.
+argument-hint: '[run directory or run id]'
+disable-model-invocation: true
 ---
 
 Load the **zen-analyze-run** skill and follow it to analyze one run of this
@@ -10,10 +13,10 @@ audit cannot be graded without it.
 
 ## Which run
 
-The line after this prompt may name the run - a run directory or a run id.
-If it does, use it. Words after it like `case=<id> ... feedback=<file>` mean
+The words given with the command may name the run - a run directory or a run
+id. If they do, use it. Words after it like `case=<id> ... feedback=<file>` mean
 the tuning loop sent you: follow section 7 of the skill and write that file.
-A `## The brief` section below that line is what the loop already ran for
+A `## The brief` section below them is what the loop already ran for
 you: section 1 of the skill says how to use it.
 
 If it does not, list this project's most recent runs, newest first:

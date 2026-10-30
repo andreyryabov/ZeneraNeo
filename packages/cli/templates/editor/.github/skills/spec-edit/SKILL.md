@@ -1,9 +1,11 @@
 ---
-description: Change SPECIFICATION.md as the request after the command asks - written in the specification's own structure and voice, checked against what the runtime can actually do - and nothing else.
-argument-hint: what to add, change or remove in the specification
+name: spec-edit
+description: Change SPECIFICATION.md as the request given with the command asks - written in the specification's own structure and voice, checked against what the runtime can actually do - and nothing else.
+argument-hint: 'what to add, change or remove in the specification'
+disable-model-invocation: true
 ---
 
-Edit `SPECIFICATION.md` the way the request after this command asks. The
+Edit `SPECIFICATION.md` the way the request given with this command asks. The
 specification is the intent of the project; you are changing the intent, not
 the implementation. Making the project match it is `/spec-sync-project`, which
 runs after this.
@@ -11,41 +13,41 @@ runs after this.
 You change one file: `SPECIFICATION.md`. Not `agents.yaml`, not a prompt, not a
 skill, not `SPECIFICATION-FEEDBACK.md`.
 
-## 0. Everything you need is already attached
+## 0. Read everything you need first
 
-These files are attached to this prompt so the work starts without a round of
-reads. Use them as they are; do not read them again with a tool.
+These are the files the work depends on. Read them before anything else, so
+the work starts from all of them rather than from a round of reads later.
 
 The project:
 
-- [SPECIFICATION.md](../../SPECIFICATION.md) - the file you are editing.
-- [SPECIFICATION-FEEDBACK.md](../../SPECIFICATION-FEEDBACK.md) - the questions
+- [SPECIFICATION.md](../../../SPECIFICATION.md) - the file you are editing.
+- [SPECIFICATION-FEEDBACK.md](../../../SPECIFICATION-FEEDBACK.md) - the questions
   still open against it, and the ones already answered. It may not exist; that
   only means nothing is open.
 
 What the runtime can do, so that what you write is something it can build:
 
-- [zen-cli](../skills/zen-cli/SKILL.md) - every `zen` command, and
-  [its models reference](../skills/zen-cli/references/models.md) - how to find
+- [zen-cli](../zen-cli/SKILL.md) - every `zen` command, and
+  [its models reference](../zen-cli/references/models.md) - how to find
   which models this machine can actually use.
-- [zen-instructions](../skills/zen-instructions/SKILL.md) - house rules: what
+- [zen-instructions](../zen-instructions/SKILL.md) - house rules: what
   every agent is told, and what belongs there rather than in a prompt.
-- [zen-topology](../skills/zen-topology/SKILL.md) - one agent or several,
+- [zen-topology](../zen-topology/SKILL.md) - one agent or several,
   hand-off or fork, and what each costs.
-- [zen-memory](../skills/zen-memory/SKILL.md) - what memory is, who may read and
+- [zen-memory](../zen-memory/SKILL.md) - what memory is, who may read and
   write it, and what a strategy for it has to say.
-- [zen-rag-docs](../skills/zen-rag-docs/SKILL.md) - an index over a folder of
+- [zen-rag-docs](../zen-rag-docs/SKILL.md) - an index over a folder of
   markdown documents.
-- [zen-rag-schema](../skills/zen-rag-schema/SKILL.md) - an index over an OpenAPI
+- [zen-rag-schema](../zen-rag-schema/SKILL.md) - an index over an OpenAPI
   description.
-- [zen-sandbox](../skills/zen-sandbox/SKILL.md) - the container: what it mounts,
+- [zen-sandbox](../zen-sandbox/SKILL.md) - the container: what it mounts,
   what it can reach, what persists.
-- [zen-code-python](../skills/zen-code-python/SKILL.md) - reusable scripts as
+- [zen-code-python](../zen-code-python/SKILL.md) - reusable scripts as
   tools, where they live, and which agents own them.
 
-If any of these did not arrive attached - your editor does not resolve links in
-prompt files - read all of them in **one** batch of parallel reads before doing
-anything else, `SPECIFICATION-FEEDBACK.md` included if it exists. Never one at a
+Any of these already in your context - attached, or loaded as a skill - you
+need not read again. Read the rest in **one** batch of parallel reads before
+doing anything else, `SPECIFICATION-FEEDBACK.md` included if it exists. Never one at a
 time, and never skip one because the request seems not to need it: a request
 about an agent's job can still decide what that agent may remember.
 
@@ -60,7 +62,7 @@ That is the list of models with a credential on this machine - the only ones a
 `zen models search <name>` once; if it is still absent, say so in the chat and
 do not write it.
 
-If there is no request after the command, ask what to change and stop.
+If no request was given with the command, ask what to change and stop.
 
 ## 1. Understand the request against what is there
 
@@ -245,6 +247,7 @@ In the chat:
   needs a value only the reader has
 - then, in one line: send `/spec-sync-project` to make the project match.
 
-## 5. User Request:
+## 5. The request
 
-Following is the user request that the specification should address (if any):
+The words given with the command are the request the specification should
+address. Without them, ask what to change and stop (§0).

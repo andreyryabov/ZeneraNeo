@@ -30,7 +30,7 @@ tries used up  ->  difficult
 - **A parked case gives its worker back**, so another case runs while it waits
   for an apply; once woken, it takes a worker before any new case does.
 - **Applies are batched.** Parked cases' improvement requests are applied
-  together by `/finetune-apply` once **M** cases are parked, or once nothing is
+  together by `/zen-finetune-apply` once **M** cases are parked, or once nothing is
   running and no case is left to start. `-M` is at least 2 (`-M 1` needs
   `--force`): one case is an anecdote. No run starts during an apply; runs in
   flight finish first. Each apply gets its own `applies/<NNN>/APPLY.md`: every
