@@ -1,10 +1,13 @@
 ---
-description: Apply a batch of improvement requests from the tuning loop to the project's prose - merge them into patterns, edit prompts, skills and policy files, tidy up every file touched, and record what was done with each. Run by `zen meta finetune`; the line after the prompt names the apply directory, and a brief follows it.
+name: zen-finetune-apply
+description: Apply a batch of improvement requests from the tuning loop to the project's prose - merge them into patterns, edit prompts, skills and policy files, tidy up every file touched, and record what was done with each. Run only by `zen meta finetune`, never by hand; the words given with it name the apply directory, and a brief follows them.
+user-invocable: false
+disable-model-invocation: true
 ---
 
 The tuning loop has collected improvement requests from several cases and
-wants them applied **together**. The line after this prompt names the apply
-directory.
+wants them applied **together**. The words given with this skill name the
+apply directory.
 
 Every sentence you add is read by every later call of every agent that loads
 it, so prose has a price even when it fixes the case in front of you. The loop
@@ -14,7 +17,7 @@ your edit; one it broke comes back to the next apply as a request.
 
 ## What you are given
 
-A `## The brief` section after that line is what the loop already read and
+A `## The brief` section after them is what the loop already read and
 worked out for you, from the files below. Work from it:
 
 - Do not read a file the brief shows, and do not run a command it shows -

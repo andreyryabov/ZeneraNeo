@@ -1,6 +1,7 @@
 ---
 name: zen-rag-docs
 description: What a document index is, how to build one from a folder of `.md` files with `zen rag docs index` (or `npx @zenera/cli`), and how to ask it something - searching by meaning and narrowing to a release, a heading or a table, listing and grepping it exactly instead of reaching for shell `grep`/`rg`, reading a section back verbatim, giving it to an agent as tools, and writing the project skill that a wired-in index requires. For an OpenAPI description instead of prose, see `zen-rag-schema`.
+user-invocable: false
 ---
 
 # The document index

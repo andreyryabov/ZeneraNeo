@@ -1,6 +1,7 @@
 ---
 name: zen-inspect
 description: 'Use when an LLM agent must diagnose a recorded Zenera run non-interactively: read `zen inspect graph`, open selected nodes, replay an `llm_call` with `zen inspect ask`, identify loops, failed tools, wrong prompts, missed skills, early hand-offs, failed branches, compaction, latency, or token waste. Requires explicit run, node, and question arguments so commands remain deterministic and never prompt.'
+user-invocable: false
 ---
 
 # Diagnose a run non-interactively

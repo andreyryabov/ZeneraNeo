@@ -45,7 +45,7 @@ import {
     MODEL_ENV,
     openLog,
     ORDER,
-    PROMPT_DIR,
+    SKILL_DIR,
     providersWarning,
     readMeta,
     recordSession,
@@ -201,8 +201,8 @@ const OPTIONS: NonNullable<ParseArgsConfig['options']> = {
 };
 const RUN_FORMS = [
     '  zen meta run [project] "<question>"      ask it something',
-    '  zen meta run [project] /<name> [words]   run a stored prompt',
-    '  zen meta run [project]                   pick one of its stored prompts',
+    '  zen meta run [project] /<name> [words]   run one of its commands',
+    '  zen meta run [project]                   pick one of its commands',
 ];
 
 const RUN_ARGUMENTS = [
@@ -210,8 +210,8 @@ const RUN_ARGUMENTS = [
     '  [project]   Name of a project. Default: the one you are in.',
     '  [prompt]    Your question, in quotes. Or --prompt, or piped in when neither',
     '              it nor --prompt-file is given.',
-    '  /<name>     A prompt file in .github/prompts/<name>.prompt.md.',
-    '  [words]     Appended to that prompt as a final line.',
+    '  /<name>     A command: the skill in .github/skills/<name>/SKILL.md.',
+    '  [words]     Given to that command, after its text.',
 ];
 
 const RUN_OPTIONS = [
@@ -246,7 +246,7 @@ export const meta: Command = {
     details: [
         'Forms:',
         ...RUN_FORMS,
-        '  zen meta prompts [project]               list the stored prompts',
+        '  zen meta prompts [project]               list its commands',
         '  zen meta resume [project] [session]      carry on a run that stopped',
         '  zen meta model [ref]                     show or set the model it uses',
         '  zen meta dataset <verb>                  the cases it tunes against',
@@ -254,7 +254,7 @@ export const meta: Command = {
         '',
         'The project may come before the verb instead: `zen meta acme run`.',
         '`zen meta dataset --help`, `zen meta finetune --help` and `zen meta run --help`',
-        'have their own pages; the last lists the stored prompts.',
+        'have their own pages; the last lists the commands.',
         '',
         ...RUN_ARGUMENTS,
         '',
@@ -426,7 +426,7 @@ async function runHelp(ctx: Context, words: string[]): Promise<void> {
     );
     page({
         usage: 'zen meta run [project] [/<name> [words] | "<question>"] [options]',
-        summary: 'Ask the meta agent a question, or run one of the stored prompts.',
+        summary: 'Ask the meta agent a question, or run one of the commands.',
         details: lines,
     });
 }
@@ -513,7 +513,7 @@ async function stored(ctx: Context, values: Flags, args: string[]): Promise<void
     if (question) {
         return await go(ctx, values, project, question);
     }
-    // Nothing said and nothing piped: the stored prompts are what is left to offer.
+    // Nothing said and nothing piped: the commands are what is left to offer.
     return await runPrompt(ctx, values, project, await pickPrompt(ctx, project), []);
 }
 
@@ -698,7 +698,7 @@ async function prompts(ctx: Context, values: Flags, args: string[]): Promise<voi
         return json(found.map(({ name, description, path }) => ({ name, description, path })));
     }
     if (found.length === 0) {
-        note(dim(`no prompts in ${project.name}/${PROMPT_DIR}`));
+        note(dim(`no commands in ${project.name}/${SKILL_DIR}`));
         return;
     }
     writeAll(table(found.map((p) => [`/${p.name}`, p.description ? dim(p.description) : ''])));

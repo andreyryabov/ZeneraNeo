@@ -1,3 +1,4 @@
+import { existsSync, readdirSync, rmdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { copyTree, TEMPLATES } from './host.ts';
 
@@ -28,8 +29,8 @@ import { copyTree, TEMPLATES } from './host.ts';
 // assistant still needs a brief of its own, and what it needs to know is how
 // this kind of project is put together — the file formats, how a prompt is
 // written, when to add a skill rather than an agent. That is what the
-// `.github/` tree is: the standing brief, plus the prompt files and skills the
-// editor picks up from the same place.
+// `.github/` tree is: the standing brief, plus the skills the editor picks up
+// from the same place - `zen-*` for the model to load, the rest as `/commands`.
 // ---------------------------------------------------------------------------
 
 /**
@@ -40,5 +41,46 @@ import { copyTree, TEMPLATES } from './host.ts';
  * none. Returns the relative paths that actually changed.
  */
 export function editorFiles(dir: string): string[] {
-    return copyTree(join(TEMPLATES, 'editor'), dir, '', {});
+    return [...copyTree(join(TEMPLATES, 'editor'), dir, '', {}), ...retirePrompts(dir)];
+}
+
+// Every `.github/prompts/*.prompt.md` `zen` has ever shipped. Copilot dropped
+// prompt files for skills, and these are now `.github/skills/<name>/` - so the
+// old copy would only offer a second, stale `/name`. A prompt file the project
+// wrote itself is not on this list, and stays.
+const RETIRED_PROMPTS = [
+    'analyze',
+    'dataset',
+    'finetune',
+    'finetune-apply',
+    'finetune-consolidate',
+    'inspect',
+    'new-agent',
+    'new-skill',
+    'project-review',
+    'review-project',
+    'spec-apply-feedback',
+    'spec-edit',
+    'spec-sync-project',
+    'sync-with-spec',
+    'update-spec-from-feedback',
+];
+
+function retirePrompts(dir: string): string[] {
+    const folder = join(dir, '.github', 'prompts');
+    if (!existsSync(folder)) {
+        return [];
+    }
+    const removed: string[] = [];
+    for (const name of RETIRED_PROMPTS) {
+        const file = join(folder, `${name}.prompt.md`);
+        if (existsSync(file)) {
+            rmSync(file);
+            removed.push(join('.github', 'prompts', `${name}.prompt.md`));
+        }
+    }
+    if (readdirSync(folder).length === 0) {
+        rmdirSync(folder);
+    }
+    return removed;
 }

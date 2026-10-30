@@ -88,7 +88,7 @@ else in the project has changed yet - the files still implement the old one.
 zen meta run rag-example /spec-sync-project
 ```
 
-`/spec-sync-project` is a stored prompt under `.github/prompts/`. It reads the
+`/spec-sync-project` is a command - a skill under `.github/skills/`. It reads the
 specification, reads every file the project ships, and edits the files until
 they match: the model and embedding refs in `agents.yaml`, the `default` agent
 and its instructions, the search skill, and `scripts/_setup.sh` to download the

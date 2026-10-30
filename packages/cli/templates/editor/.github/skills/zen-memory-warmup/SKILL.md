@@ -1,6 +1,7 @@
 ---
 name: zen-memory-warmup
 description: Pre-populating an agent project's memory graph before production by running a curated file of seed queries through `zen run batch` — one parallel batch instead of a hand-rolled fan-out, with per-item workspaces and per-item memories the command makes for you, choosing the source graph with --memory, bounding the parallelism with --concurrency, warming with a stronger --model, reading what each query learned from batch.json and per-item output.json, folding it all back with zen memory merge, validating with zen memory stats, atomic promotion into the project, and generating the population script in scripts/memory_warmup.sh.
+user-invocable: false
 ---
 
 # Memory Warmup

@@ -1,6 +1,7 @@
 ---
 name: zen-review
 description: Checking a project before committing - the three mechanical checks `/project-review` makes before any judgement (`zen check`, the §2.5 path sweep, the spec-sync record), what each one owns, what their exit codes mean, which findings hand off to `zen-instructions`, and what deliberately has no check because no tool can make it. Load before running `/project-review`, before saying a project is ready, and whenever a review finding needs verifying rather than restating.
+user-invocable: false
 ---
 
 # Reviewing a project
@@ -39,6 +40,39 @@ nothing about the model id it is spent on.
 
 Nothing below matters while `zen check` fails. Report what it said and fix that
 first.
+
+## Reusing a check within the same pass
+
+Instead of calling `zen check` separately and repeating it in the review, run:
+
+```sh
+.github/skills/zen-review/scripts/review.sh check full --fix
+.github/skills/zen-review/scripts/review.sh --skip-check
+```
+
+`check` runs only the CLI check and saves a receipt in `.tmp/review-check.json`
+on success. `--skip-check` verifies that receipt, then still runs the path sweep
+and spec-sync checks. It fails explicitly for a missing, failed, stale or
+insufficient check; it never silently treats a skipped check as success.
+
+Receipts cover project file contents, permissions, additions and deletions, and the CLI
+version. They exclude only root `.git/`, `.tmp/` and `.spec-sync/`, so writing
+history does not invalidate a result. Symlinks and special files are unsupported:
+run the ordinary review instead. Hashing includes assets and dependencies and
+can itself be costly for large projects; the ordinary review remains available.
+
+This is same-pass reuse, not a persistent health cache. Do not reuse after
+changing credentials, environment variables, external files, ignored scratch
+inputs or remote resources: those are not certified by the receipt. Run a fresh
+check instead. Only use reuse for a self-contained project's stable inputs.
+
+`check no-sandbox` and `--skip-check no-sandbox` are for the spec-sync skill's
+eligible model-reference-only pass. They still probe models. `check fast` and
+`--skip-check fast` omit both expensive probes and are for iteration only.
+A full receipt covers either partial mode, but a partial receipt cannot stand
+in for a full one. If a partial check repairs or otherwise changes files, no
+reusable receipt is issued: run `check full`, because a repair may have changed
+the sandbox pin. Finish setup and all edits before saving the final receipt.
 
 ## The script this skill ships
 

@@ -1,6 +1,8 @@
 ---
-mode: agent
+name: new-skill
 description: Add a skill under agents/skills, with a description that routes.
+argument-hint: '[what the skill says and when it applies]'
+disable-model-invocation: true
 ---
 
 Add a skill to this project. A skill is curated instruction content - and

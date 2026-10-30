@@ -1,6 +1,7 @@
 ---
 name: zen-code-python
 description: Code an agent writes must be a reusable tool that can be remembered and re-run, never a one-off. Holds the coding rules (`references/code_python.md`) and decides where they go in the target project - a section of a dedicated code agent's system prompt, or a coding skill for generic agents that sometimes run code - how to adapt them, and what a prompt or skill for a code-writing agent must never say. Load before writing, editing or reviewing any agent prompt, skill or house rule for an agent that writes or runs code - any agent holding `sandbox:*` or `run_command` - and before shipping a script inside a skill.
+user-invocable: false
 ---
 
 # Code an agent writes is a tool

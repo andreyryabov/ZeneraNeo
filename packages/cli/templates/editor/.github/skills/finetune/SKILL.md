@@ -1,5 +1,8 @@
 ---
+name: finetune
 description: Fine-tune this project against a training set, a batch at a time - every batch first with no memory, fixing the instructions, then with the memory it just built, making the same work cheaper - starting from a 3-case smoke test and doubling each smooth batch, until every case is used and no difficult case is open.
+argument-hint: '[training set] [limit]'
+disable-model-invocation: true
 ---
 
 Tune this project against real queries. Nothing here touches model weights: what
@@ -9,7 +12,7 @@ queries produce.
 
 **Load the `zen-finetune` skill before anything else**, and load `zen-inspect`,
 `zen-analyze-run`, `zen-topology` and `zen-inspect-ask` before you grade, and
-`zen-instructions` before you write a policy file. This prompt is the order of the work; the skill
+`zen-instructions` before you write a policy file. This command is the order of the work; the skill
 is how each step is done, and it holds the rules that are easy to get wrong. If
 loading a skill fails, read `.github/skills/<name>/SKILL.md` with your file tool
 before going on - never carry on without it.
@@ -28,7 +31,7 @@ command:
 | one memory node in full                      | `zen memory show <node-id> --dir "$RUN/batch/<id>/memory"`        |
 | a whole memory, or what one added to another | `zen memory ls --dir <dir>`, `zen memory diff <base> --dir <dir>` |
 
-This prompt is **reentrant**. Tuning is long and gets interrupted - a run dies, a
+This command is **reentrant**. Tuning is long and gets interrupted - a run dies, a
 session ends, I stop you mid-batch. Every step leaves its result on disk under
 `finetune/`, so a second invocation does not start over: it reads that state,
 works out where the work stopped, says so, and carries on from there unless I
@@ -199,7 +202,7 @@ in your reports instead of re-typing it.
 
 ## Where you are - work this out before anything else
 
-Do this every time this prompt runs, including the first:
+Do this every time this command runs, including the first:
 
 ```sh
 .github/skills/zen-finetune/scripts/next.mjs
@@ -208,7 +211,7 @@ Do this every time this prompt runs, including the first:
 ```
 
 `next.mjs` reads the whole `finetune/` tree and prints the next step. Do not
-re-derive the state from an `ls`. Map what it says onto this prompt:
+re-derive the state from an `ls`. Map what it says onto this command:
 
 | What `next.mjs` says                                             | Go to                                                                             |
 | ---------------------------------------------------------------- | --------------------------------------------------------------------------------- |

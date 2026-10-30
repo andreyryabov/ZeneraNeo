@@ -1,6 +1,7 @@
 ---
 name: zen-instructions
 description: The house rules - `agents/instructions.md` and every `agents/<topic>-instructions.md` prepended to every agent's system prompt. How the set is discovered and ordered, the `requires:` frontmatter and its closed vocabulary (`files`, `files-write`, `fork`, `memory`, `memory-write`, `memory-forget`), which four documents are `zen`'s own and are replaced by `zen check --fix`, how a project writes its own customisable topic prompts beside them (`files-policy-instructions.md`, `memory-policy-instructions.md`, `fork-<topic>-instructions.md`, `tools-<topic>-instructions.md`) without losing the copy, what belongs in a house rule as against an agent prompt or a skill, and every `zen check` finding these files can produce. Load before creating, editing, reviewing or deleting any `agents/*instructions.md`, before adding a capability whose rules arrive as one, and whenever `rules.stale`, `rules.unreached`, `files.uninstructed`, `memory.uninstructed` or `fork.uninstructed` is reported.
+user-invocable: false
 ---
 
 # House rules

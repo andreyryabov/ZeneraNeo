@@ -1,6 +1,7 @@
 ---
 name: zen-dataset
 description: Keep a project's evaluation dataset in `dataset/` with `zen meta dataset` - every case read from its sources with a class, a complexity, tags, a verbatim rubric and an anchor to the section it came from. Covers extracting a training set of any shape into a proposal, applying it as a revision, finding which cases their sources moved under (drift) and re-reading only those sections, settling gone and uncovered sections, overriding a field by hand, leaving notes and verdicts on a case, reading a case's history and the sessions that touched it, and drawing samples by criteria (class, complexity, tag, rubric, revision, verdict, note kind, source, text) stratified, weighted and seeded. Load before building or refreshing a dataset, before running /dataset, before choosing which cases to run, and before writing a note or verdict on a case.
+user-invocable: false
 ---
 
 # The dataset

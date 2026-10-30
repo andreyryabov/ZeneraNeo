@@ -1,6 +1,7 @@
 ---
 name: zen-spec-sync
-description: Running `/spec-sync-project` as an incremental pass - the committed `.spec-sync` baseline of what the last pass applied, how to scope a pass from the specification and feedback diffs and from what moved in the project itself, which input wins when they disagree, the five checks a narrow pass may never skip, which skills a pass must load before editing (`zen-instructions` for any house rule it touches), the iteration history format, and why the baseline is written last. Load before every `/spec-sync-project`, including the first one on a project that has no baseline yet.
+description: Running `/spec-sync-project` incrementally - the committed `.spec-sync` baseline, scope and precedence, spec-only and model-reference-only verification tiers, affected capability skills, generated-rule maintenance, reusable validation, explicit history recording and why the baseline moves last. Load before every `/spec-sync-project`, including a project's first pass.
+user-invocable: false
 ---
 
 # Syncing a project with its specification, one change at a time
@@ -13,7 +14,8 @@ one already made, and re-raises questions someone has already answered.
 A pass is worth repeating cheaply, so it keeps a record of **what it applied**.
 The next pass diffs the specification against that record and works the
 difference. What it must not do is confuse a narrow diff with a narrow
-obligation: the record scopes what you _read and edit_, never what you _verify_.
+obligation: the record scopes what you _read and edit_. The tiers below also
+scope verification, with explicit escalation when the work reaches further.
 
 ## What this owns
 
@@ -59,6 +61,14 @@ It prints one `mode:` line, the `applied:` stamp the baseline belongs to, and a
 `changed:` line per file that differs - specification, feedback, `agents.yaml`
 or anything under `agents/`:
 
+The four generated `agents/{files,fork,memory,tools}-instructions.md` copies
+print as `maintenance:` rather than `changed:`. Their diffs remain visible and
+their bytes remain in the baseline. They are not project implementation edits:
+`zen check` checks them against this version's templates, and `--fix` replaces
+them. Account for repairs in history, but do not widen the pass merely because
+one of these copies moved. A project requirement found in one must be moved to
+a project-owned topic file; that is substantive work and widens the pass.
+
 | Mode          | Means                                      | Do                                                                                    |
 | ------------- | ------------------------------------------ | ------------------------------------------------------------------------------------- |
 | `full`        | no manifest - no pass has ever completed   | the whole prompt as written, then write the first baseline                            |
@@ -94,7 +104,7 @@ editing anything, and report it in the chat as the pass's scope.
    changed since the baseline is **not therefore implemented**: the baseline
    records what the pass applied, and a pass can complete with items open. This
    is the only place that says which.
-4. **The implementation diff.** `agents.yaml` and every file under `agents/` -
+4. **The implementation diff.** `agents.yaml` and project-owned files under `agents/` -
    instructions, prompts and skills. This side is what was built rather than
    what was asked for, so it never narrows a pass: it says what moved under you
    since the last one. An agent, tool grant, handoff, model, house rule, prompt
@@ -158,12 +168,68 @@ answers:
 That is the whole of the work. A version mismatch is not a reason to look for
 anything else.
 
-## The five checks a narrow pass may never skip
+## Choose a verification tier before loading capability skills
 
-However small the diff - with the one narrowing for a spec-only pass below:
+Use `full` for a missing or untrusted baseline. On an incremental pass, first
+read the diffs and the applied entry's `Still open`, then choose `spec-only`,
+`model-reference-only`, or the normal incremental checks below. Unresolved
+items or feedback requiring other work disqualify a narrow tier. Say the tier,
+its scope and the omitted work in the chat. Escalate as soon as the actual work
+exceeds that scope; a small original diff is not permission to skip new work.
 
-1. **`zen check` passes.** Run it before the first edit and again after the
-   last.
+### The model-reference-only pass
+
+All of these must hold:
+
+- The only substantive requirement change replaces an existing **chat model
+  reference**, with an explicit replacement in the specification or user input.
+- The only project implementation change is that corresponding scalar in
+  `agents.yaml`, either pending or already edited. No agent assignment, provider
+  configuration, tool, prompt, skill, capability or setup step changes.
+- There is no other outstanding work from feedback or `Still open`.
+
+Embedding references are not eligible: indexes may need rebuilding. Version
+pins are not model references; a pin repair requires sandbox validation.
+
+Read only the affected requirement hunks, wiring and their direct references.
+Load no capability skill for a model swap alone. After editing, run:
+
+```sh
+.github/skills/zen-review/scripts/review.sh check no-sandbox
+scripts/_setup.sh --check
+.github/skills/zen-review/scripts/review.sh --skip-check no-sandbox
+```
+
+The check still validates the whole configuration and probes its models; do not
+also run `zen models test`. Every tier must resolve `rules.stale` and sandbox
+pin findings before completion, even when the CLI reports them as warnings.
+`--no-sandbox` is allowed only after confirming the
+sandbox configuration, Dockerfile and build context are unchanged. Compare
+them with git, inspect pending edits and account for any setup-generated build
+inputs: the spec-sync baseline does not track those paths. If that cannot be
+established, use `check full`. Use maintenance diffs and, when needed, a cheap
+`zen check --no-models --no-sandbox` diagnostic to identify repairs before
+probing models. If rules or pins need repair, load
+`zen-instructions` only if a project-owned house rule needs editing, then run
+`review.sh check full --fix`. It repairs before validating, including the
+sandbox. No separate pre-repair model probe is required.
+
+Work only the §9 **Models** and **Specification** groups, plus any group reached
+by additional work (which may require escalation). If setup is empty, one
+successful `--check` is all the setup proof. If existing steps all report
+`skipped`, that also suffices for this tier; otherwise run setup, prove
+re-entrancy and repeat the final check. Finish all builds before recording.
+
+### The normal incremental checks
+
+Outside the two narrow tiers:
+
+1. **`zen check` passes after the last edit and setup.** Use
+   `review.sh check full --fix` to repair generated copies and pins before
+   validating. When an initial diagnostic is needed, use
+   `zen check --no-models --no-sandbox`; do not repeat expensive probes before
+   and after editing. Reuse the final receipt with `review.sh --skip-check`
+   rather than invoking a third check during review.
 2. **`scripts/_setup.sh` has run to completion in this session, and re-runs
    clean.** A one-line specification change can still break a setup step, and a
    pass that did not run it does not know. Then `scripts/_setup.sh --check` must
@@ -171,15 +237,16 @@ However small the diff - with the one narrowing for a spec-only pass below:
    doing the work, which is what tells a real `skipped` from a step that only
    looked done. A step that tests for a committed `manifest.json` skips on a
    fresh clone whose git-ignored `lance/` vectors are missing, and the project
-   cannot search.
+   cannot search. When `STEPS` is empty, one successful `--check` is sufficient;
+   there is no execution or re-entrancy work to prove.
 3. **§9 of the copilot instructions, worked as a checklist**, group by group.
-4. **The capability obligations in §0.1.** For every capability the project has
-   turned on, load that capability's skill and re-check what it requires - in
-   particular that `zen check` reports no `rules.stale`: a newer `zen` ships
-   newer house rules, so they drift without anybody editing the project.
-5. **`zen-instructions` is loaded before any house rule is touched.** A pass
+4. **The capability obligations in §0.1.** Load a capability skill only when
+   changed requirements, files, keys or unresolved work reach that capability.
+   For a full pass, every enabled capability is in scope. `zen check` must
+   still report no `rules.stale`, whether or not its capability was in scope.
+5. **`zen-instructions` is loaded before editing a project-owned house rule.** A pass
    whose scope reaches `agents/*instructions.md` - and input 4 puts it there
-   whenever one of them moved - has to know that `tools-instructions.md`,
+   whenever a project-owned one moved - has to know that `tools-instructions.md`,
    `files-instructions.md`, `memory-instructions.md` and `fork-instructions.md`
    are `zen`'s and are replaced by `zen check --fix`. A pass that writes a
    requirement into one of them has implemented nothing: the next `open` reverts
@@ -188,7 +255,8 @@ However small the diff - with the one narrowing for a spec-only pass below:
 
 ### The spec-only pass
 
-A pass qualifies when **all** of the following hold:
+A pass qualifies when **all** of the following hold, and no outstanding
+feedback or `Still open` item requires implementation work:
 
 - the implementation diff (input 4) is empty
 - the pass edits nothing except `SPECIFICATION.md`, `SPECIFICATION-FEEDBACK.md`
@@ -196,10 +264,14 @@ A pass qualifies when **all** of the following hold:
 - no changed specification hunk names an agent, tool, model, embedding, skill,
   house rule, handoff, memory, index, asset or setup step
 
+Generated copies and the editor tree repaired by `--fix` are maintenance, not
+project implementation edits for this test.
+
 A pass like that changes nothing an agent reads, so it has no capability
 obligation to re-check. Checks 4 and 5 drop out: load no capability skill and no
-`zen-instructions`. `zen check` still runs before and after, and it still
-reports `rules.stale`. Check 2 shrinks to `scripts/_setup.sh --check`, which
+`zen-instructions`. One final `review.sh check full --fix` repairs generated
+copies and pins, validates the result and saves a reusable receipt. Check 2
+shrinks to `scripts/_setup.sh --check`, which
 must report every step `skipped`. If it reports anything else, run
 `scripts/_setup.sh` in full as written. Check 3 shrinks to the §9
 **Specification** group and the groups covering any file the pass edited.
@@ -208,15 +280,18 @@ Decide this before loading anything, and say it in the chat - "spec-only pass:"
 followed by the reason. If any edit turns out to reach further, the pass is no
 longer spec-only: run all five checks.
 
-A narrow diff narrows reading and editing. It does not narrow verification.
+Verification is narrowed only by these explicit tier rules.
 
 ## What else an incremental pass still owes
 
 The reverse pass of §2 - reading each line and naming the specification item it
-serves - runs over every file this pass touched, plus every file the
+serves - runs over every project-owned file this pass touched, plus every file the
 implementation diff named. It is the only pass that finds a line contradicting
 another file, and an edit made this session, or made by hand since the last
 pass, is exactly where a new contradiction comes from.
+Do not audit generated house-rule copies or the generated editor tree line by
+line; byte comparison and repair belong to `zen check`. Inspect maintenance
+diffs only to identify any project policy that must be preserved in an owned file.
 
 ## The history entry
 
@@ -225,6 +300,26 @@ filename-safe: `date -u +%Y-%m-%dT%H%M%SZ`. Never edit a file that is already
 there; a pass that did nothing still writes one saying so.
 
 These headings, in this order, because the next pass reads them:
+
+Prefer `snapshot.sh record` over writing boilerplate by hand. Every section
+must be supplied explicitly; repeat section flags for multiple items, and use
+`None` for an empty section. Review the applied entry's unresolved items and
+carry forward each one not closed; the script never silently copies or closes
+them.
+
+```sh
+.github/skills/zen-spec-sync/scripts/snapshot.sh record \
+  --mode incremental \
+  --scope "model-reference-only: replace the main chat model" \
+  --changed "agents.yaml: model reference now matches the specification" \
+  --feedback "None" \
+  --still-open "None" \
+  --checks "configuration and models pass; setup check passes; Models and Specification reviewed"
+```
+
+This fills in the UTC stamp and specification hash, refuses to overwrite an
+entry and leaves the baseline unchanged. It does not run checks or certify the
+claims supplied to it. Run `commit` separately, only after verification.
 
 ```markdown
 # Sync pass 2026-09-13T104500Z
@@ -264,7 +359,7 @@ The one rule that must not be got wrong.
 .github/skills/zen-spec-sync/scripts/snapshot.sh commit
 ```
 
-runs **after** `zen check` passes, **after** `scripts/_setup.sh` has completed,
+runs **after** `zen check` passes, **after** setup satisfies the selected tier,
 and **after** the history file is on disk. It takes the newest entry in
 `.spec-sync/history/` - the stamps sort chronologically by name - records it in
 `applied.txt`, and writes `manifest.txt` last of all. It refuses to run when

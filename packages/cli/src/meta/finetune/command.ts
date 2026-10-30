@@ -129,7 +129,7 @@ export const FINETUNE_DETAILS = [
     'has its own private memory; passing memories are merged into finetune/memories/.',
     '',
     'A parked case gives its worker back; woken cases take a worker before new ones.',
-    '/finetune-apply fixes the parked cases together: when -M wait, or once nothing',
+    '/zen-finetune-apply fixes the parked cases together: when -M wait, or once nothing',
     'else can run. No run starts during an apply. What it may do:',
     '  - Every call reads the house rules, the prompt, preloaded skills and one line per',
     '    skill, so that is what --budget counts. A skill body is paid only once loaded:',
@@ -620,7 +620,7 @@ async function gate(
     if (!g || existsSync(join(dir, 'applied.json'))) {
         throw invalidError(
             `${at} is not an apply in progress`,
-            'pass the apply directory named on the line after /finetune-apply',
+            'pass the apply directory named after /zen-finetune-apply',
         );
     }
     const after = await measure(project.dir);

@@ -1,6 +1,7 @@
 ---
 name: zen-cli
 description: How to drive this project from the terminal with `zen` - running it, validating it, credentials, the sandbox, run reports, and the `gym` and `rag` modules.
+user-invocable: false
 ---
 
 # The `zen` command line
@@ -44,25 +45,25 @@ The full reference lives next to this file, one document per part of the command
 line. **Read the one that covers the question before answering it** - do not
 guess a flag, and do not read them all.
 
-| The question is about                                               | Read                                                            |
-| ------------------------------------------------------------------- | --------------------------------------------------------------- |
-| Global flags, `--json`, exit codes, environment, where files live   | [frame.md](./references/frame.md)                               |
-| Creating, finding or opening a project                              | [projects.md](./references/projects.md)                         |
-| Running: the TUI, one-shot answers, sessions, workspaces, overrides | [run.md](./references/run.md)                                   |
-| Many questions at once: `zen run batch`, its file, where answers go | [run.md](./references/run.md)                                   |
-| Validating: `zen check`, what it can and cannot see                 | [check.md](./references/check.md)                               |
-| API keys, providers, the keyring, "no credential" errors            | [keys.md](./references/keys.md)                                 |
-| Which models exist, whether one works, recovering from a refusal    | [models.md](./references/models.md)                             |
-| The container shell commands run in, images, `persist`              | [sandbox.md](./references/sandbox.md) (and `zen-sandbox` skill) |
-| Run reports, trajectories, what a session directory holds           | [inspect.md](./references/inspect.md)                           |
-| Reading a run yourself: the node graph, opening a node by id        | [inspect.md](./references/inspect.md) (and `zen-inspect` skill) |
-| What the agents remember, why something was recalled, forgetting    | [memory.md](./references/memory.md)                             |
-| The meta agent: `zen meta run`, stored prompts, its `--json` object | [meta.md](./references/meta.md)                                 |
-| The evaluation dataset: cases, drift, notes, drawing a sample       | [dataset.md](./references/dataset.md) (and `zen-dataset` skill) |
-| Tuning the prose on the dataset: workers, applies, STATUS.md        | [finetune.md](./references/finetune.md)                         |
-| Sharing a project: archives, what travels, importing one safely     | [export.md](./references/export.md)                             |
-| `zen gym` - a mock API from an OpenAPI/Swagger document             | [gym.md](./references/gym.md)                                   |
-| `zen rag` - searching an API description, or a pile of markdown     | [rag.md](./references/rag.md)                                   |
+| The question is about                                                | Read                                                            |
+| -------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Global flags, `--json`, exit codes, environment, where files live    | [frame.md](./references/frame.md)                               |
+| Creating, finding or opening a project                               | [projects.md](./references/projects.md)                         |
+| Running: the TUI, one-shot answers, sessions, workspaces, overrides  | [run.md](./references/run.md)                                   |
+| Many questions at once: `zen run batch`, its file, where answers go  | [run.md](./references/run.md)                                   |
+| Validating: `zen check`, what it can and cannot see                  | [check.md](./references/check.md)                               |
+| API keys, providers, the keyring, "no credential" errors             | [keys.md](./references/keys.md)                                 |
+| Which models exist, whether one works, recovering from a refusal     | [models.md](./references/models.md)                             |
+| The container shell commands run in, images, `persist`               | [sandbox.md](./references/sandbox.md) (and `zen-sandbox` skill) |
+| Run reports, trajectories, what a session directory holds            | [inspect.md](./references/inspect.md)                           |
+| Reading a run yourself: the node graph, opening a node by id         | [inspect.md](./references/inspect.md) (and `zen-inspect` skill) |
+| What the agents remember, why something was recalled, forgetting     | [memory.md](./references/memory.md)                             |
+| The meta agent: `zen meta run`, its `/commands`, its `--json` object | [meta.md](./references/meta.md)                                 |
+| The evaluation dataset: cases, drift, notes, drawing a sample        | [dataset.md](./references/dataset.md) (and `zen-dataset` skill) |
+| Tuning the prose on the dataset: workers, applies, STATUS.md         | [finetune.md](./references/finetune.md)                         |
+| Sharing a project: archives, what travels, importing one safely      | [export.md](./references/export.md)                             |
+| `zen gym` - a mock API from an OpenAPI/Swagger document              | [gym.md](./references/gym.md)                                   |
+| `zen rag` - searching an API description, or a pile of markdown      | [rag.md](./references/rag.md)                                   |
 
 ## The short version
 
@@ -82,7 +83,7 @@ zen import a.zip                      unpack one somebody sent, run nothing in i
 zen key ls --check                    which credentials still work
 zen models test <ref>                 whether one model actually answers
 zen models ls --embeddings            the embedders this machine can reach
-zen meta run acme /analyze --json > analyze.json   a stored prompt, the result as JSON
+zen meta run acme /analyze --json > analyze.json   a command, the result as JSON
 ```
 
 ## Searching documents without help

@@ -1,6 +1,7 @@
 ---
 name: zen-topology
 description: 'Use when designing, reviewing or auditing how a Zenera project divides work between agents - whether to hand off, fork one branch to delegate, fan out several branches, or keep the work in one conversation; which fork `context` to pick; what each choice costs in tokens, prompt cache and elapsed time; and how to read a recorded run for topology mistakes (missed fan-out, a forked sequence, an early or looping hand-off, a delegation that cost more than it saved). Load before adding or changing `handoffs:` or `fork:` in agents.yaml, before writing a prompt line that says when to delegate, and before grading Delegation or Forking in a run audit.'
+user-invocable: false
 ---
 
 # Agent topology

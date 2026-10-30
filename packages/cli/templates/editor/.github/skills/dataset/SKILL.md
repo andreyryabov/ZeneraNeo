@@ -1,17 +1,20 @@
 ---
+name: dataset
 description: Build or refresh this project's dataset - every case read from its sources with a class, complexity, tags, a verbatim rubric and an anchor - re-reading only the sections that changed since the last revision. Name a source after the command to add it, `rebuild` to read everything again, or a case and what to fix.
+argument-hint: '[source file | rebuild | <case id> <what to fix>]'
+disable-model-invocation: true
 ---
 
 Keep `dataset/` in step with its sources. **Load the `zen-dataset` skill before
 anything else**, and `zen-cli` for the command reference. The skill holds the
-extraction rules and every verb; this prompt is the order of the work. If
+extraction rules and every verb; this command is the order of the work. If
 loading a skill fails, read `.github/skills/<name>/SKILL.md` with your file tool
 before going on.
 
 You never run cases, never edit `agents/`, and never edit a source. Only
 `zen meta dataset` writes `dataset/` - never a file tool, never a script.
 
-This prompt is **reentrant**: the state on disk says what to do, so running it
+This command is **reentrant**: the state on disk says what to do, so running it
 twice in a row does nothing the second time.
 
 ## 1. Where things stand
@@ -27,7 +30,7 @@ sections are `changed`, `gone` or `uncovered`.
 
 ## 2. What to do
 
-The last line of this prompt may hold words. Then read the table top down and
+Words may be given with the command. Then read the table top down and
 take the first row that fits:
 
 | State                                    | Do                                                                    |

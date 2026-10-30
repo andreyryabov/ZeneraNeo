@@ -236,7 +236,7 @@ function fakeZen(
             );
             return { code: 0, stdout: '' };
         }
-        if (args[0] === 'meta' && args.includes('/finetune-apply')) {
+        if (args[0] === 'meta' && args.includes('/zen-finetune-apply')) {
             const dir = args.at(-1)!;
             appendFileSync(join(root, 'agents', 'instructions.md'), applyText(++applies));
             if (applyMs) {
@@ -606,7 +606,7 @@ describe('zen meta finetune', () => {
         );
         expect(second.system).toBe(2);
         expect(existsSync(join(root, 'finetune', 'applies', '001', 'diff.patch'))).toBe(true);
-        const applyCall = fake.calls.find((a) => a.includes('/finetune-apply'))!;
+        const applyCall = fake.calls.find((a) => a.includes('/zen-finetune-apply'))!;
         const applyDir = join(root, 'finetune', 'applies', '001');
         expect(applyCall[applyCall.indexOf('--session-id') + 1]).toBe(
             readFileSync(join(applyDir, 'session'), 'utf8').trim(),
@@ -654,7 +654,7 @@ describe('zen meta finetune', () => {
         await start(fake.zen, '-N', '1', '-M', '2');
         const index = (pred: (a: string[]) => boolean) => fake.calls.findIndex(pred);
         const b1Run = index((a) => a[0] === 'run' && a.some((x) => x.includes('/cases/b1/')));
-        const apply = index((a) => a.includes('/finetune-apply'));
+        const apply = index((a) => a.includes('/zen-finetune-apply'));
         expect(b1Run).toBeGreaterThan(-1);
         expect(b1Run).toBeLessThan(apply);
         expect(result('a1')).toMatchObject({ state: 'completed' });
@@ -757,7 +757,7 @@ describe('zen meta finetune', () => {
         await start(second.zen, '-N', '1', '--tries', '2');
         expect(result('a1')).toMatchObject({ state: 'completed' });
         expect(second.applies).toBe(1);
-        const apply = second.calls.find((a) => a.includes('/finetune-apply'))!;
+        const apply = second.calls.find((a) => a.includes('/zen-finetune-apply'))!;
         const inputs = JSON.parse(readFileSync(join(apply.at(-1)!, 'inputs.json'), 'utf8'));
         expect(inputs.map((f: { id: string }) => f.id)).toEqual(['a1#2@nomem-1']);
     });
@@ -1036,13 +1036,13 @@ describe('zen meta finetune', () => {
         await dataset(['a1']);
         const fake = fakeZen((_c, _p, _a, applies) => ({ done: applies > 1 }));
         await start(fake.zen, '-N', '1');
-        const second = fake.calls.filter((a) => a.includes('/finetune-apply'))[1]!;
+        const second = fake.calls.filter((a) => a.includes('/zen-finetune-apply'))[1]!;
         const dir = join(root, 'finetune', 'applies', '002');
         expect(second.at(-1)).toBe(dir);
         expect(second.slice(-4)).toEqual([
             '--prompt-file',
             join(dir, 'brief.md'),
-            '/finetune-apply',
+            '/zen-finetune-apply',
             dir,
         ]);
         const brief = readFileSync(join(dir, 'brief.md'), 'utf8');

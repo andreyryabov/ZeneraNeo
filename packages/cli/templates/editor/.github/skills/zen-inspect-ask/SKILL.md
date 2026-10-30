@@ -1,6 +1,7 @@
 ---
 name: zen-inspect-ask
 description: 'Use when formulating a question for `zen inspect ask` about an `llm_call` node of a recorded Zenera run - especially a "why did you NOT do X" question (why no `memory_search` first, why no `fork` for independent research branches, why no skill, why no test run). Covers choosing the node, ruling out missing tools before asking, wording the counterfactual so the answer quotes the instruction that blocked the better behaviour, and verifying that quote against the recorded request.'
+user-invocable: false
 ---
 
 # Asking a run why it did not do the better thing

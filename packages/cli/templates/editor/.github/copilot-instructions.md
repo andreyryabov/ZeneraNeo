@@ -1,7 +1,7 @@
 # Copilot instructions - agent projects
 
 > Written by `zen init` into `.github/copilot-instructions.md`, alongside the
-> prompt files and skills in the same tree (§2.4). VS Code loads it
+> skills and commands in the same tree (§2.4). VS Code loads it
 > automatically for every request in this folder, so it is the standing brief
 > for anyone - human or agent - editing this project.
 >
@@ -35,12 +35,15 @@ programmed: what an agent knows, which model answers, and which of the tools
 6. Every change must still load: `agents.yaml` is validated strictly at load,
    and `zen check` says so before a model is ever called.
 
-### 0.1 Copilot is the meta-agent: load the skill for every capability in use
+### 0.1 Copilot is the meta-agent: load skills for the capabilities in scope
 
 Copilot is always the meta-agent that creates and changes target projects. Load
 the editor's `zen-cli` skill before deciding how a target project should run,
 be validated, or use command-line capabilities. It is the command contract; do
 not reconstruct `zen` arguments from memory or call `--help` to discover them.
+When the task is to bring a project into compliance with `SPECIFICATION.md`,
+load `zen-spec-sync` first; its narrow tiers contain the exact validation
+commands and do not require loading `zen-cli` as well.
 
 **Every runtime capability a project turns on carries obligations that are not
 visible in `agents.yaml` and that `zen check` does not report.** Before
@@ -54,20 +57,23 @@ code, `zen-topology` for `handoffs:` or `fork:` on any agent,
 `zen-cli` always. A capability that is already
 configured and already passing `zen check` is exactly the case that looks
 finished and is not: the obligation lives in the skill, so a review that never
-opens the skill cannot find what is missing. This applies whatever prompted the
-change - a task scoped to `SPECIFICATION.md` does not narrow it. There is one
-exception: a `/spec-sync-project` pass that the `zen-spec-sync` skill classes as
-**spec-only**. It touches no agent, prompt, skill or wiring, so there is no
-obligation for it to meet.
+opens the skill cannot find what is missing. Outside a specification-sync pass,
+this applies whatever prompted the change. During an incremental sync, load only
+skills for capabilities its changed requirements, files, keys or unresolved
+work touch. A full pass still loads every enabled capability's skill. The
+**spec-only** and **model-reference-only** tiers load no capability skill unless
+the work expands beyond their eligibility rules.
 
 **Load `zen-instructions` before writing, editing, reviewing or deleting any
 `agents/*instructions.md`.** They are the house rules, prepended to every
-agent's prompt, and three of them are `zen`'s own copies rather than the
+agent's prompt, and four of them are `zen`'s own copies rather than the
 project's: an edit made inside one is lost at the next `zen check --fix`, `zen
 init` or `zen open`, with no diff to show for it. The skill is what says which
-three those are, where a project's own rules on the same subjects go instead,
+four those are, where a project's own rules on the same subjects go instead,
 how `requires:` conditions a document, and what filename order decides. None of
 that is visible in the file being edited.
+Replacing generated copies with `zen check --fix` is maintenance, not manual
+house-rule editing, and does not by itself require loading `zen-instructions`.
 
 **Load `zen-code-python` before writing, editing or reviewing any prompt, skill
 or house rule for an agent that writes or runs code** - any agent holding
@@ -251,8 +257,7 @@ Two consequences that drive nearly every design rule in this document:
 my-project/
 ├── .github/                      the editor's brief - §2.4
 │   ├── copilot-instructions.md   this file
-│   ├── prompts/*.prompt.md       tasks you invoke by name
-│   └── skills/*/SKILL.md         reference the editor loads on demand
+│   └── skills/*/SKILL.md         zen-* reference loaded on demand; the rest /commands
 ├── .env                          this project's environment - NEVER committed
 ├── .spec-sync/                   what the last /spec-sync-project applied - §0.1
 ├── agents.yaml                   who exists, what they may reach for
@@ -349,15 +354,18 @@ agents do, for the same reason - it is a prefix somebody pays for:
 
 - **`copilot-instructions.md`** is always on. Everything in it is loaded for
   every request in this folder, so it holds only what is true of every task.
-- **`.github/skills/<name>/SKILL.md`** is reference the editor loads when its
-  `description` matches what you asked. Put long, occasional material here -
-  a command surface, a vendor's quirks, a format spec - not in the file above.
-  The `description` is the routing key; §3.4 applies to these as much as to the
-  project's own skills.
-- **`.github/prompts/<name>.prompt.md`** is a task you invoke by name (`/name`),
-  with `mode: agent` and a `description` in its frontmatter. Write one when a
-  job is done repeatedly and has a right order - adding an agent, adding a
-  skill, reviewing before a commit.
+- **`.github/skills/zen-<name>/SKILL.md`** is reference the editor loads when
+  its `description` matches what you asked. Put long, occasional material here
+    - a command surface, a vendor's quirks, a format spec - not in the file above.
+      The `description` is the routing key; §3.4 applies to these as much as to the
+      project's own skills. `user-invocable: false` keeps them out of the `/` menu.
+- **`.github/skills/<name>/SKILL.md`** without the `zen-` prefix is a command
+  you invoke by name (`/name`, or `zen meta run /name`), with
+  `disable-model-invocation: true` so the model never starts one on a hunch,
+  and an `argument-hint` when it takes words. Write one when a job is done
+  repeatedly and has a right order - adding an agent, adding a skill, reviewing
+  before a commit. It holds the order of the work and loads the `zen-*` skills
+  that hold the rules.
 
 `zen init` and `zen open` rewrite this whole tree from the version of `zen` in
 hand, so **edits inside `.github/` do not survive**. Project-specific conventions
@@ -1885,6 +1893,11 @@ the spec-sync record, in that order:
 
 Run it first and read what it says. Everything else below is judgement, which is
 why it is still a list. The `zen-review` skill has the detail.
+Within a specification-sync pass, reuse its final check with
+`review.sh --skip-check` instead of probing again, and apply the sync skill's
+explicit tier scope to this checklist. Use `--skip-check no-sandbox` only for an
+eligible model-reference-only pass. Independent reviews still cover the whole
+checklist.
 
 Before finishing any change here:
 
@@ -2086,8 +2099,8 @@ install` is an `image:` that was never set - §3.7.
 
 This file is loaded on every request in this repository, so it is subject to its
 own rules: stable, factual, no hedging. Before adding a section, ask whether it
-is true of every task - if it is not, it is a skill under `.github/skills/`, or
-a prompt file under `.github/prompts/` if it is a procedure (§2.4).
+is true of every task - if it is not, it is a `zen-*` skill under
+`.github/skills/`, or a command skill there if it is a procedure (§2.4).
 
 Update it when:
 
