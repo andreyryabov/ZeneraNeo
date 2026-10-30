@@ -92,9 +92,9 @@ export interface OpenIndex {
 
 export async function writeIndex(dir: string, index: WrittenIndex): Promise<void> {
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, GRAPH_FILE), JSON.stringify(index.graph.export()));
-    await writeFile(join(dir, SCHEMAS_FILE), JSON.stringify(index.types));
-    await writeFile(join(dir, OPERATIONS_FILE), JSON.stringify(index.operations));
+    await writeFile(join(dir, GRAPH_FILE), JSON.stringify(index.graph.export(), null, 2));
+    await writeFile(join(dir, SCHEMAS_FILE), JSON.stringify(index.types, null, 2));
+    await writeFile(join(dir, OPERATIONS_FILE), JSON.stringify(index.operations, null, 2));
 
     const documents = Object.entries(index.documents);
     if (documents.length > 0) {
