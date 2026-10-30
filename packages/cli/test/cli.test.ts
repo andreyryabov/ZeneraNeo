@@ -81,6 +81,8 @@ import {
     masked,
     metaCompatible,
     misspelledProvider,
+    editorFiles,
+    listPrompts,
     promptPath,
     readPrompt,
     readSpan,
@@ -2158,25 +2160,66 @@ describe('the scaffold', () => {
     });
 
     /**
-     * A prompt's filename is the slash command the editor offers, so renaming
+     * A skill's folder name is the slash command the editor offers, so renaming
      * one unbinds every mention of it in the help text, the docs and the
      * skills without breaking anything that compiles.
      */
-    it('ships the prompts the editor offers as slash commands', () => {
+    it('ships the commands the editor offers as slash commands', async () => {
         const dir = join(root, 'prompts');
         mkdirSync(dir, { recursive: true });
         const written = scaffold({ dir, model: 'gpt-4o' });
 
         for (const name of [
-            'analyze.prompt.md',
-            'project-review.prompt.md',
-            'spec-apply-feedback.prompt.md',
-            'spec-sync-project.prompt.md',
+            'analyze',
+            'dataset',
+            'finetune',
+            'new-agent',
+            'new-skill',
+            'project-review',
+            'spec-apply-feedback',
+            'spec-edit',
+            'spec-sync-project',
         ]) {
-            const path = join('.github', 'prompts', name);
+            const path = join('.github', 'skills', name, 'SKILL.md');
             expect(written.editor).toContain(path);
-            expect(readFileSync(join(dir, path), 'utf8').trim()).not.toBe('');
+            const text = readFileSync(join(dir, path), 'utf8');
+            expect(text).toContain(`\nname: ${name}\n`);
+            // Typed by a person, never loaded by the model on a hunch.
+            expect(text).toContain('\ndisable-model-invocation: true\n');
         }
+        expect(existsSync(join(dir, '.github', 'prompts'))).toBe(false);
+
+        // The `zen-*` skills are the model's; the tuning loop's one is nobody's to type.
+        const listed = await listPrompts(dir);
+        expect(listed).toContain('spec-edit');
+        expect(listed.filter((n) => n.startsWith('zen-'))).toEqual([]);
+        for (const skill of readdirSync(join(dir, '.github', 'skills'))) {
+            if (skill.startsWith('zen-')) {
+                expect(
+                    readFileSync(join(dir, '.github', 'skills', skill, 'SKILL.md'), 'utf8'),
+                ).toContain('\nuser-invocable: false\n');
+            }
+        }
+    });
+
+    /**
+     * Copilot dropped prompt files, so the copies an older `zen` wrote would
+     * offer a second, stale `/name`. A prompt file of the project's own stays.
+     */
+    it('retires the prompt files it used to ship, and only those', () => {
+        const dir = join(root, 'retired');
+        const prompts = join(dir, '.github', 'prompts');
+        mkdirSync(prompts, { recursive: true });
+        writeFileSync(join(prompts, 'spec-edit.prompt.md'), 'old\n');
+        writeFileSync(join(prompts, 'mine.prompt.md'), 'mine\n');
+
+        expect(editorFiles(dir)).toContain(join('.github', 'prompts', 'spec-edit.prompt.md'));
+        expect(readdirSync(prompts)).toEqual(['mine.prompt.md']);
+
+        rmSync(join(prompts, 'mine.prompt.md'));
+        writeFileSync(join(prompts, 'analyze.prompt.md'), 'old\n');
+        editorFiles(dir);
+        expect(existsSync(prompts)).toBe(false);
     });
 
     /** It is the project's file once written, and editing it is the point. */
@@ -2336,9 +2379,9 @@ describe('the scaffold', () => {
         expect(written.editor).toContain(join('.github', 'skills', 'zen-spec-sync', 'SKILL.md'));
         expect(written.editor).toContain(script);
         expect(statSync(join(dir, script)).mode & 0o777).toBe(0o755);
-        // The prompt sends the agent to that path, so the two have to agree.
+        // The command sends the agent to that path, so the two have to agree.
         expect(
-            readFileSync(join(dir, '.github', 'prompts', 'spec-sync-project.prompt.md'), 'utf8'),
+            readFileSync(join(dir, '.github', 'skills', 'spec-sync-project', 'SKILL.md'), 'utf8'),
         ).toContain(script);
 
         // Called from anywhere, and honest about a project that has never had
@@ -2391,9 +2434,9 @@ describe('the scaffold', () => {
             expect(written.editor).toContain(script);
             expect(statSync(join(dir, script)).mode & 0o777).toBe(0o755);
         }
-        // The prompt sends the agent to the entry point, so the two must agree.
+        // The command sends the agent to the entry point, so the two must agree.
         expect(
-            readFileSync(join(dir, '.github', 'prompts', 'project-review.prompt.md'), 'utf8'),
+            readFileSync(join(dir, '.github', 'skills', 'project-review', 'SKILL.md'), 'utf8'),
         ).toContain(entry);
 
         const run = (script: string) =>
@@ -4066,12 +4109,38 @@ describe('the vertex Claude relay', () => {
     });
 });
 
-describe('a stored prompt', () => {
+describe('a stored command', () => {
     it('accepts the four ways one gets named', () => {
-        expect(promptPath('/p', '/review')).toBe('/p/.github/prompts/review.prompt.md');
-        expect(promptPath('/p', 'review')).toBe('/p/.github/prompts/review.prompt.md');
+        expect(promptPath('/p', '/review')).toBe('/p/.github/skills/review/SKILL.md');
+        expect(promptPath('/p', 'review')).toBe('/p/.github/skills/review/SKILL.md');
         expect(promptPath('/p', 'notes.md')).toBe('/p/notes.md');
         expect(promptPath('/p', 'agents/prompts/x.md')).toBe('/p/agents/prompts/x.md');
+    });
+
+    // A project's own prompt file still runs, unless a skill has taken its name.
+    it('falls back to a legacy prompt file', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'zen-prompt-'));
+        try {
+            mkdirSync(join(dir, '.github', 'prompts'), { recursive: true });
+            writeFileSync(join(dir, '.github', 'prompts', 'mine.prompt.md'), 'x\n');
+            expect(promptPath(dir, '/mine')).toBe(`${dir}/.github/prompts/mine.prompt.md`);
+
+            mkdirSync(join(dir, '.github', 'skills', 'mine'), { recursive: true });
+            writeFileSync(join(dir, '.github', 'skills', 'mine', 'SKILL.md'), 'y\n');
+            expect(promptPath(dir, '/mine')).toBe(`${dir}/.github/skills/mine/SKILL.md`);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('reads user-invocable: false as the model’s, not a command', () => {
+        const hidden = readPrompt(
+            '/p/s/SKILL.md',
+            's',
+            '---\nname: s\nuser-invocable: false\n---\nx\n',
+        );
+        expect(hidden.invocable).toBe(false);
+        expect(readPrompt('/p/s/SKILL.md', 's', 'x\n').invocable).toBe(true);
     });
 
     // Frontmatter is the editor's business; copilot is handed the body alone.

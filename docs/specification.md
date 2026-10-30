@@ -41,8 +41,8 @@ Then, in that window:
 
 Back in the terminal: `zen check`, `scripts/_setup.sh`, `zen run`.
 
-`zen init` installs five prompt files under `.github/prompts/`, which VS Code
-and its forks offer as chat slash-commands:
+`zen init` installs these commands as skills under `.github/skills/`, which
+VS Code and the Copilot CLI offer as chat slash-commands:
 
 | In chat                | Does                                                             |
 | ---------------------- | ---------------------------------------------------------------- |
@@ -52,8 +52,8 @@ and its forks offer as chat slash-commands:
 | `/new-agent`           | Adds an agent - prompt, wiring and hand-offs.                    |
 | `/new-skill`           | Adds a skill under `agents/skills/`.                             |
 
-In an editor with no support for prompt files, paste the contents of
-`.github/prompts/spec-sync-project.prompt.md` into its chat instead - it is only a
+In an editor with no support for skills, paste the contents of
+`.github/skills/spec-sync-project/SKILL.md` into its chat instead - it is only a
 prompt, and it says everything it needs about where to look.
 
 ## The loop
@@ -84,7 +84,7 @@ project whose specification is no longer true is a project with no specification
 
 ### `/spec-sync-project`
 
-`zen init` installs `.github/prompts/spec-sync-project.prompt.md`, so the command
+`zen init` installs `.github/skills/spec-sync-project/SKILL.md`, so the command
 is available in your editor's chat from the first minute - type `/` in the chat
 panel and it is in the list. It is a long prompt and worth reading once; in
 outline it:

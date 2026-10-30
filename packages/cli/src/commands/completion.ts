@@ -17,7 +17,7 @@ interface Flags {
 
 /**
  * Prints the shell's side of tab completion. The script is a few lines that
- * call back into `zen __complete`, so the project names and stored prompts it
+ * call back into `zen __complete`, so the project names and commands it
  * offers are always read from the machine it runs on, never baked in.
  */
 export const completion: Command = {
@@ -38,12 +38,12 @@ export const completion: Command = {
         '  zen completion zsh --install --yes       without asking',
         '',
         'Then, in a new shell:',
-        '  zen meta run my-project /<Tab>           the project’s stored prompts',
+        '  zen meta run my-project /<Tab>           the project’s commands',
         '  zen meta <Tab>                           run, prompts, resume, model …',
         '  zen run <Tab>                            your projects',
         '',
-        'The prompts are the files in .github/prompts/ — the same ones an editor',
-        'offers as slash commands. Where there is nothing to offer, file names are.',
+        'The commands are the skills in .github/skills/ an editor offers as slash',
+        'commands - not the zen-* ones, which are the model’s. Where there is nothing to offer, file names are.',
     ],
     run: async (ctx) => {
         const { values, positionals } = parse<Flags>(

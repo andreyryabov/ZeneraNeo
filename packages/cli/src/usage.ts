@@ -16,7 +16,7 @@ import { warn } from './term.ts';
 export const LEDGER_ENV = 'ZENERA_USAGE_LEDGER';
 /** The meta session whose agent started this process, if one did. */
 export const META_SESSION_ENV = 'ZENERA_META_SESSION';
-/** The stored prompt that meta session was started with, if any. */
+/** The stored command that meta session was started with, if any. */
 export const META_PROMPT_ENV = 'ZENERA_META_PROMPT';
 
 /**

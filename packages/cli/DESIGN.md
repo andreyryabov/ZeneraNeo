@@ -825,23 +825,23 @@ so it can be replaced: today it drives GitHub Copilot CLI, and nothing above
 
 Everything the meta agent is given lives under
 [src/meta/](packages/cli/src/meta/): the launcher, the model choice, the key
-wiring, stored prompts, the window and the `.github/` editor tree. It reaches
+wiring, stored commands, the window and the `.github/` editor tree. It reaches
 the rest of the CLI only through [meta/host.ts](packages/cli/src/meta/host.ts),
 and `test/meta-boundary.test.ts` fails on any other import - so the layer can
 become a package of its own by turning that file into a dependency.
 
 ```
 zen meta run [project] "<question>"      ask it something
-zen meta run [project] /<name> [words]   run .github/prompts/<name>.prompt.md
-zen meta run [project]                   pick one of those prompts
-zen meta prompts [project]               list those prompts
+zen meta run [project] /<name> [words]   run .github/skills/<name>/SKILL.md
+zen meta run [project]                   pick one of those commands
+zen meta prompts [project]               list those commands
 zen meta resume [project] [session]      carry on a session that stopped
 zen meta model [ref]                     show or set the model it uses
 zen meta dataset <verb>                  the cases the project is evaluated on
 ```
 
 Every prompt goes through `run`. The earlier grammar asked for the verb only in
-front of a stored prompt, which made the first bare word after `zen meta` mean
+front of a stored command, which made the first bare word after `zen meta` mean
 different things on different days: `zen meta acme run` read as the question
 "run", asked of project `acme`, and spent a model call saying so. A verb that is
 always there cannot be mistaken for the thing it introduces. The project may sit
@@ -874,11 +874,15 @@ Nothing secret reaches a command line. Every credential arrives in the child's
 environment, and `--secret-env-vars` names them so copilot redacts them from
 its own transcript too.
 
-**It knows what `.github/prompts/` is.** Copilot reads `AGENTS.md`,
-`.github/skills/` and `.github/agents/`, but not the `*.prompt.md` files an
-editor offers as slash commands. `zen meta run /project-review` reads one,
-drops the frontmatter, and sends the body - which is how the same prompt runs
-from the editor and from a script. Nothing on a terminal drops a menu down as
+**It runs a command itself.** The editor's commands are the skills in
+`.github/skills/` without the `zen-` prefix - `disable-model-invocation: true`,
+offered as `/name` - while `zen-*` skills are reference for the model,
+`user-invocable: false`. `zen meta run /project-review` reads the skill, drops
+the frontmatter, and sends the body with the words and any `--prompt-file`
+after it - which is how the same command runs from the editor and from a
+script, whatever the model. A project's own `.github/prompts/*.prompt.md`, the
+format Copilot dropped, still runs when no skill takes its name; the ones `zen`
+used to ship are deleted on refresh. Nothing on a terminal drops a menu down as
 you type a slash, so `zen meta prompts` lists them and a bare `zen meta run`
 asks.
 
@@ -979,7 +983,7 @@ case holds no worker, so the next case starts in its place, and when woken it
 takes the next free worker ahead of any new case.
 
 - **The model is used only where judgement is.** `/analyze` grades a try and
-  writes `feedback.json`; `/finetune-apply` turns a batch of requests into
+  writes `feedback.json`; `/zen-finetune-apply` turns a batch of requests into
   edits. Choosing cases, queueing, versioning and reporting are code.
 - **Applies are batched and fenced.** One fires when `-M` cases are parked, or
   once nothing is running and no case is left to start; no run starts while it is pending and runs in

@@ -18,7 +18,7 @@ import { readJson, type Tuning } from './tuning.ts';
 // ---------------------------------------------------------------------------
 // The brief an apply starts from
 //
-// What /finetune-apply would otherwise spend its first dozen calls on, done by
+// What /zen-finetune-apply would otherwise spend its first dozen calls on, done by
 // the loop: the requests and the held-back improvements grouped by the file
 // they name, the editor skills this project needs, what earlier tries of the
 // same cases asked for and what became of it, the budget, and the files to

@@ -15,7 +15,7 @@ import { completeMeta } from './commands/meta.ts';
 // One candidate per line, `value<TAB>description`. Nothing at all means "no
 // opinion", and the shell falls back to completing file names — which is the
 // right answer for `-C <dir>`, for `--events <file>`, and for the files that
-// follow a stored prompt.
+// follow a stored command.
 // ---------------------------------------------------------------------------
 
 /** Flags the frame owns, offered where a command name would be. */

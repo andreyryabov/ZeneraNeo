@@ -522,7 +522,7 @@ export class Improvements {
                     join(dir, 'apply.events.jsonl'),
                     '--prompt-file',
                     brief,
-                    '/finetune-apply',
+                    '/zen-finetune-apply',
                     dir,
                 ],
                 applyLog,
