@@ -77,8 +77,8 @@ export const pack: Command = {
         '',
         'Leaves behind what belongs to this machine: sessions/, .tmp/, .git/,',
         'node_modules/, lock files, any *.zip at the top of the project, and',
-        `.env. The names in .env become a ${ENV_EXAMPLE} with no values, so the`,
-        'other end knows what to fill in.',
+        `.env. Unless the project keeps its own ${ENV_EXAMPLE}, the names in .env`,
+        'become one with no values, so the other end knows what to fill in.',
         '',
         'Vectors travel by default — memory has no other source, and a rag',
         'index without its lance/ tree looks built and cannot search.',
@@ -122,7 +122,8 @@ export const pack: Command = {
         const collected = collect(dir, { vectors, memory });
         const extra = new Map<string, string>();
         const env = join(dir, ENV_FILE);
-        if (existsSync(env)) {
+        // A project's own `.env.example` is the curated one and travels as is.
+        if (existsSync(env) && !existsSync(join(dir, ENV_EXAMPLE))) {
             extra.set(ENV_EXAMPLE, envExample(readFileSync(env, 'utf8')));
         }
 

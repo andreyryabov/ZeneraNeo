@@ -2340,14 +2340,22 @@ describe('the scaffold', () => {
      * under its own name - this repository ignores `.env` too - so the one
      * thing worth pinning is that it arrives with the dot on.
      */
-    it('writes a .env, and ignores it', () => {
+    it('writes a .env, ignored, beside a committed .env.example and .env.gym', () => {
         const dir = join(root, 'env');
         mkdirSync(dir, { recursive: true });
         const written = scaffold({ dir, model: 'gpt-4o' });
 
         expect(written.files).toContain('.env');
         expect(readFileSync(join(dir, '.env'), 'utf8')).not.toContain('{{');
-        expect(readFileSync(join(dir, '.gitignore'), 'utf8')).toMatch(/^\.env$/m);
+        const ignore = readFileSync(join(dir, '.gitignore'), 'utf8');
+        expect(ignore).toMatch(/^\.env$/m);
+
+        // The two that are committed: no secrets, and nothing ignores them.
+        for (const name of ['.env.example', '.env.gym']) {
+            expect(written.files).toContain(name);
+            expect(readFileSync(join(dir, name), 'utf8')).not.toMatch(/^[A-Z_]+=\S/m);
+            expect(ignore).not.toContain(name);
+        }
     });
 
     it('leaves a filled-in .env alone', () => {

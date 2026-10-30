@@ -46,6 +46,8 @@ my-project/
     sandbox/Dockerfile               the container commands run in
     .spec-sync/                      what the last sync with the specification applied
     .env                             this project's environment - git-ignored
+    .env.example                     the names .env needs, without values
+    .env.gym                         the same names, pointed at `zen gym`
     sessions/                        one workspace, memory and trajectory each
         <id>/
             workspace/               what the agents can read and write
